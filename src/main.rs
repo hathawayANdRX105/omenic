@@ -9,6 +9,7 @@ mod graph;
 mod rpc;
 mod runner;
 mod store;
+mod task;
 mod worker;
 
 fn main() {
