@@ -12,7 +12,9 @@ mod store;
 mod task;
 mod worker;
 
-fn main() {
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
     // CLI entry; command routing lands in `cli` (M1.8).
-    cli::run();
+    cli::run()
 }
