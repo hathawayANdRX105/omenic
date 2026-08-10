@@ -1,0 +1,16 @@
+[package]
+name = "omenic"
+version = "0.1.0"
+edition = "2024"
+description = "Task-driven agent orchestrator: agents act as functions following Prompt → Result"
+license = "MIT"
+
+[[bin]]
+name = "omenic"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = "thin"
+panic = "abort"
+strip = true
