@@ -73,7 +73,7 @@ impl From<serde_json::Error> for RpcError {
 }
 
 /// A JSON frame received from omp, tagged by `type` field.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type")]
 pub enum Frame {
     /// Initial handshake after spawn.
@@ -306,6 +306,47 @@ impl Client {
             }
             let frame: Frame = serde_json::from_slice(&buf)?;
             return Ok(frame);
+        }
+    }
+
+    /// Read the next non-noise frame, returning the raw JSON value.
+    /// Callers can inspect the `"type"` field to distinguish response frames
+    /// from agent events (agent_start, message_update, tool_execution, etc.).
+    ///
+    /// ExtensionUiRequest and AvailableCommandsUpdate frames are filtered out.
+    /// RpcChunk frames are reassembled transparently.
+    pub fn next_frame_raw(&mut self) -> Result<serde_json::Value, RpcError> {
+        loop {
+            let mut buf = Vec::with_capacity(1024);
+            buf.clear();
+            let n = self.reader.read_until(b'\n', &mut buf)?;
+            if n == 0 {
+                let status = self.process.try_wait().ok().flatten();
+                return Err(RpcError::ProcessExited(status.and_then(|s| s.code())));
+            }
+            if buf.ends_with(b"\n") {
+                buf.pop();
+            }
+            if buf.is_empty() {
+                continue;
+            }
+            let value: serde_json::Value = serde_json::from_slice(&buf)?;
+            // Filter noise frames by type field.
+            let ty = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            match ty {
+                "extension_ui_request" | "available_commands_update" => continue,
+                "rpc_chunk" => {
+                    // Reassemble if possible; if not complete, continue reading.
+                    let chunk_frame: Frame = serde_json::from_slice(&buf)?;
+                    if let Some(assembled) = self.reassemble_chunk(chunk_frame)? {
+                        // Convert the assembled Frame back to a Value.
+                        // This is a bit roundabout, but chunk reassembly is uncommon.
+                        return Ok(serde_json::to_value(&assembled)?);
+                    }
+                    continue;
+                }
+                _ => return Ok(value),
+            }
         }
     }
 
