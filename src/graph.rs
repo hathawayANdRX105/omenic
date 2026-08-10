@@ -5,6 +5,7 @@
 //!
 //! M1.5/M1.6: would_dep_cycle, ready.
 
+use crate::task::{Task, TaskStatus};
 use std::collections::{HashMap, HashSet};
 
 /// Returns true if adding a dependency edge `task` → `depends_on` would create a cycle.
@@ -49,9 +50,44 @@ pub fn would_dep_cycle(tasks: &HashMap<String, Vec<String>>, task: &str, depends
     false
 }
 
+/// A task is ready if:
+/// - it exists in the task map
+/// - its status is Done (already completed, trivially ready)
+/// - it has no dependencies (deps empty)
+/// - all its dependencies exist and have status Done
+#[allow(dead_code)] // consumed by store/CLI in M1.8
+pub fn is_ready(tasks: &HashMap<String, Task>, task_id: &str) -> bool {
+    let Some(task) = tasks.get(task_id) else {
+        return false;
+    };
+
+    // Already done -> ready (trivially)
+    if task.status == TaskStatus::Done {
+        return true;
+    }
+
+    // No dependencies -> ready
+    if task.deps.is_empty() {
+        return true;
+    }
+
+    // All dependencies must exist and be Done
+    for dep_id in &task.deps {
+        let Some(dep) = tasks.get(dep_id) else {
+            return false; // dependency not found
+        };
+        if dep.status != TaskStatus::Done {
+            return false; // dependency not done
+        }
+    }
+
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::task::{Task, TaskKind, TaskStatus};
     use std::collections::HashMap;
 
     fn mk_tasks(pairs: &[(&str, &[&str])]) -> HashMap<String, Vec<String>> {
@@ -59,6 +95,84 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.iter().map(|s| s.to_string()).collect()))
             .collect()
+    }
+
+    fn mk_task(id: &str, deps: &[&str], status: TaskStatus) -> Task {
+        Task {
+            id: id.to_string(),
+            title: id.to_string(),
+            kind: TaskKind::Task,
+            status,
+            parent: None,
+            deps: deps.iter().map(|s| s.to_string()).collect(),
+            description: String::new(),
+            acceptance: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    fn mk_tasks_full(pairs: &[(&str, &[&str], TaskStatus)]) -> HashMap<String, Task> {
+        pairs
+            .iter()
+            .map(|(k, v, s)| (k.to_string(), mk_task(k, v, s.clone())))
+            .collect()
+    }
+
+    #[test]
+    fn no_deps_ready() {
+        let tasks = mk_tasks_full(&[("a", &[], TaskStatus::Open)]);
+        assert!(is_ready(&tasks, "a"));
+    }
+
+    #[test]
+    fn all_deps_done() {
+        let tasks = mk_tasks_full(&[
+            ("a", &["b"], TaskStatus::Open),
+            ("b", &[], TaskStatus::Done),
+        ]);
+        assert!(is_ready(&tasks, "a"));
+    }
+
+    #[test]
+    fn dep_not_done() {
+        let tasks = mk_tasks_full(&[
+            ("a", &["b"], TaskStatus::Open),
+            ("b", &[], TaskStatus::Open),
+        ]);
+        assert!(!is_ready(&tasks, "a"));
+    }
+
+    #[test]
+    fn multiple_deps_partial() {
+        let tasks = mk_tasks_full(&[
+            ("a", &["b", "c"], TaskStatus::Open),
+            ("b", &[], TaskStatus::Done),
+            ("c", &[], TaskStatus::Open),
+        ]);
+        assert!(!is_ready(&tasks, "a"));
+    }
+
+    #[test]
+    fn multiple_deps_all_done() {
+        let tasks = mk_tasks_full(&[
+            ("a", &["b", "c"], TaskStatus::Open),
+            ("b", &[], TaskStatus::Done),
+            ("c", &[], TaskStatus::Done),
+        ]);
+        assert!(is_ready(&tasks, "a"));
+    }
+
+    #[test]
+    fn task_not_found() {
+        let tasks = mk_tasks_full(&[("a", &[], TaskStatus::Open)]);
+        assert!(!is_ready(&tasks, "nonexistent"));
+    }
+
+    #[test]
+    fn self_done() {
+        let tasks = mk_tasks_full(&[("a", &[], TaskStatus::Done)]);
+        assert!(is_ready(&tasks, "a"));
     }
 
     #[test]
