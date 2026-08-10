@@ -9,7 +9,6 @@ use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
 
-#[allow(dead_code)] // consumed by CLI layer in M1.8
 /// Configuration for omenic.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -21,7 +20,6 @@ pub struct Config {
     pub model: String,
 }
 
-#[allow(dead_code)] // consumed by CLI layer in M1.8
 /// Errors that can occur during config loading.
 #[derive(Debug)]
 pub enum ConfigError {
@@ -30,6 +28,7 @@ pub enum ConfigError {
     /// TOML parsing error.
     Toml(toml::de::Error),
     /// Generic parse error with context.
+    #[allow(dead_code)] // kept for future manual parsers; not hit by toml path
     Parse(String),
 }
 
@@ -65,7 +64,6 @@ impl From<toml::de::Error> for ConfigError {
     }
 }
 
-#[allow(dead_code)] // consumed by CLI layer in M1.8
 impl Config {
     /// Load configuration with priority: env > TOML file > defaults.
     pub fn load() -> Result<Config, ConfigError> {
@@ -101,14 +99,12 @@ impl Config {
 
 /// Internal TOML config struct for deserialization (all fields optional).
 #[derive(Debug, Default, serde::Deserialize)]
-#[allow(dead_code)]
 struct TomlConfig {
     omp_path: Option<String>,
     data_dir: Option<String>,
     model: Option<String>,
 }
 
-#[allow(dead_code)]
 impl TomlConfig {
     fn merge_into(self, mut base: Config) -> Config {
         if let Some(v) = self.omp_path {
