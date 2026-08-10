@@ -37,10 +37,9 @@ fn dispatch(args: &[String]) -> Result<u8, String> {
     };
     match cmd.as_str() {
         "task" => task_cmd(&args[1..]),
-        // plan lands in M1.9; run/steer/abort land in M2.
-        "plan" | "run" | "steer" | "abort" => {
-            Err(format!("command `{cmd}` is not implemented yet"))
-        }
+        "plan" => plan_cmd(&args[1..]),
+        // run/steer/abort land in M2.
+        "run" | "steer" | "abort" => Err(format!("command `{cmd}` is not implemented yet")),
         "help" | "-h" | "--help" => {
             print!("{}", usage());
             Ok(0)
@@ -55,6 +54,7 @@ fn usage() -> String {
        task add <title> [-p <parent-id>]   create a task (repeat title for multiple)\n\
        task done <id>                      mark a task done\n\
        task status <id>                    show a task's state\n\
+       plan                                show the task tree\n\
        help                                show this help\n"
         .to_string()
 }
@@ -210,6 +210,112 @@ fn task_status(store: &Store, args: &[String]) -> Result<u8, String> {
     Ok(0)
 }
 
+/// `plan` subcommand: render the task tree.
+fn plan_cmd(args: &[String]) -> Result<u8, String> {
+    if !args.is_empty() {
+        return Err("usage: omenic plan".to_string());
+    }
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let store = Store::new(&config.data_dir);
+    let tasks = store.load_all().map_err(|e| format!("store error: {e}"))?;
+    use std::io::Write;
+    print!("{}", render_plan(&tasks));
+    std::io::stdout().flush().ok();
+    Ok(0)
+}
+
+/// Render the task tree as an indented plan view (roots first, children
+/// nested under their parent with box-drawing prefixes).
+///
+/// Tasks whose `parent` is missing (dangling) or `None` are treated as roots.
+/// A visited set guards against parent cycles in malformed stores.
+fn render_plan(tasks: &[Task]) -> String {
+    use std::collections::{HashMap, HashSet};
+
+    if tasks.is_empty() {
+        return "(no tasks)
+"
+        .to_string();
+    }
+
+    let ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+    let mut children: HashMap<&str, Vec<&Task>> = HashMap::new();
+    let mut roots: Vec<&Task> = Vec::new();
+    for t in tasks {
+        match t.parent.as_deref() {
+            Some(p) if ids.contains(p) => children.entry(p).or_default().push(t),
+            _ => roots.push(t),
+        }
+    }
+
+    fn status_str(s: &TaskStatus) -> &'static str {
+        match s {
+            TaskStatus::Open => "open",
+            TaskStatus::InProgress => "in_progress",
+            TaskStatus::Done => "done",
+        }
+    }
+
+    fn fmt_node(t: &Task) -> String {
+        format!("{} [{}]", t.id, status_str(&t.status))
+    }
+
+    fn print_children(
+        parent: &Task,
+        children: &HashMap<&str, Vec<&Task>>,
+        prefix: &str,
+        visited: &mut HashSet<String>,
+        out: &mut String,
+    ) {
+        let Some(kids) = children.get(parent.id.as_str()) else {
+            return;
+        };
+        for (i, kid) in kids.iter().enumerate() {
+            let is_last = i == kids.len() - 1;
+            let branch = if is_last { "└── " } else { "├── " };
+            // Mark before printing so a cycle back-edge is skipped, not re-printed.
+            if !visited.insert(kid.id.clone()) {
+                continue;
+            }
+            out.push_str(&format!(
+                "{prefix}{branch}{}
+",
+                fmt_node(kid)
+            ));
+            let next_prefix = format!("{prefix}{}", if is_last { "    " } else { "│   " });
+            print_children(kid, children, &next_prefix, visited, out);
+        }
+    }
+
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut out = String::new();
+    // Root tasks first; a visited guard prevents cycles from re-printing.
+    for root in &roots {
+        if !visited.insert(root.id.clone()) {
+            continue;
+        }
+        out.push_str(&format!(
+            "{}
+",
+            fmt_node(root)
+        ));
+        print_children(root, &children, "", &mut visited, &mut out);
+    }
+    // Fallback: tasks in a pure parent-cycle (no root exists) still show once.
+    for t in tasks {
+        if !visited.insert(t.id.clone()) {
+            continue;
+        }
+        out.push_str(&format!(
+            "{}
+",
+            fmt_node(t)
+        ));
+        print_children(t, &children, "", &mut visited, &mut out);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -311,5 +417,81 @@ mod tests {
         assert_eq!(s.len(), 20); // 2026-08-10T12:34:56Z
         assert!(s.ends_with('Z'));
         assert!(s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' && s.as_bytes()[10] == b'T');
+    }
+    fn mk_task(id: &str, parent: Option<&str>, status: TaskStatus) -> Task {
+        let now = "2026-08-10T00:00:00Z".to_string();
+        Task {
+            id: id.to_string(),
+            title: id.to_string(),
+            kind: TaskKind::Task,
+            status,
+            parent: parent.map(|p| p.to_string()),
+            deps: vec![],
+            description: String::new(),
+            acceptance: String::new(),
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn plan_nested_tree_indentation() {
+        let tasks = vec![
+            mk_task("dev-shell", None, TaskStatus::Open),
+            mk_task("scheme-workflow-01", Some("dev-shell"), TaskStatus::Open),
+            mk_task("imp-cli", Some("scheme-workflow-01"), TaskStatus::Open),
+            mk_task("imp-rpc", Some("scheme-workflow-01"), TaskStatus::Open),
+            mk_task("scheme-workflow-02", Some("dev-shell"), TaskStatus::Done),
+        ];
+        let expected = "\
+dev-shell [open]
+├── scheme-workflow-01 [open]
+│   ├── imp-cli [open]
+│   └── imp-rpc [open]
+└── scheme-workflow-02 [done]
+";
+        assert_eq!(render_plan(&tasks), expected);
+    }
+
+    #[test]
+    fn plan_empty_store() {
+        assert_eq!(render_plan(&[]), "(no tasks)\n");
+    }
+
+    #[test]
+    fn plan_dangling_parent_is_root() {
+        // parent id that doesn't exist in the store → treated as a root
+        let tasks = vec![
+            mk_task("a", Some("ghost"), TaskStatus::Open),
+            mk_task("b", None, TaskStatus::Open),
+        ];
+        let out = render_plan(&tasks);
+        assert!(out.starts_with("a [open]\n"));
+        assert!(out.contains("b [open]"));
+    }
+
+    #[test]
+    fn plan_cycle_does_not_hang() {
+        let tasks = vec![
+            mk_task("a", Some("b"), TaskStatus::Open),
+            mk_task("b", Some("a"), TaskStatus::Open),
+        ];
+        let out = render_plan(&tasks);
+        // Both appear exactly once; renderer terminates.
+        assert_eq!(out.matches("a [open]").count(), 1);
+        assert_eq!(out.matches("b [open]").count(), 1);
+    }
+
+    #[test]
+    fn plan_status_rendering() {
+        let tasks = vec![
+            mk_task("t-open", None, TaskStatus::Open),
+            mk_task("t-ip", None, TaskStatus::InProgress),
+            mk_task("t-done", None, TaskStatus::Done),
+        ];
+        let out = render_plan(&tasks);
+        assert!(out.contains("t-open [open]"));
+        assert!(out.contains("t-ip [in_progress]"));
+        assert!(out.contains("t-done [done]"));
     }
 }
