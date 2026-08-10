@@ -165,6 +165,33 @@ impl Store {
         file.sync_all()?;
         Ok(())
     }
+
+    /// Atomically rewrite the store: deduplicate by id (latest wins) and
+    /// write tasks id-sorted to a temp file, then rename over the original.
+    pub fn compact(&self) -> Result<(), StoreError> {
+        let tasks = self.load_all()?;
+        let tmp = self.path.with_extension("jsonl.tmp");
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp)?;
+        file.lock_exclusive()?;
+
+        for task in &tasks {
+            let mut line = serde_json::to_string(task)?;
+            line.push('\n');
+            file.write_all(line.as_bytes())?;
+        }
+        file.flush()?;
+        file.sync_all()?;
+
+        // Lock released on drop, then atomically replace the original.
+        drop(file);
+        std::fs::rename(&tmp, &self.path)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -300,6 +327,86 @@ mod tests {
 
         let none = store.load_task("nonexistent").unwrap();
         assert!(none.is_none());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn compact_dedups_duplicates() {
+        let dir = temp_dir();
+        let store = Store::new(&dir);
+        store.append(&make_task("a", "old")).unwrap();
+        store.append(&make_task("b", "b-title")).unwrap();
+        store.append(&make_task("a", "new")).unwrap();
+
+        let before_lines = fs::read_to_string(&store.path).unwrap().lines().count();
+        assert_eq!(before_lines, 3);
+
+        store.compact().unwrap();
+
+        let after = store.load_all().unwrap();
+        assert_eq!(after.len(), 2);
+        let a = after.iter().find(|t| t.id == "a").unwrap();
+        assert_eq!(a.title, "new");
+
+        let after_lines = fs::read_to_string(&store.path).unwrap().lines().count();
+        assert_eq!(after_lines, 2);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn compact_sorts_by_id() {
+        let dir = temp_dir();
+        let store = Store::new(&dir);
+        store.append(&make_task("c", "c")).unwrap();
+        store.append(&make_task("a", "a")).unwrap();
+        store.append(&make_task("b", "b")).unwrap();
+
+        store.compact().unwrap();
+
+        let content = fs::read_to_string(&store.path).unwrap();
+        let mut ids = Vec::new();
+        for line in content.lines() {
+            ids.push(serde_json::from_str::<Task>(line).unwrap().id);
+        }
+        assert_eq!(ids, vec!["a", "b", "c"]);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn compact_on_missing_file() {
+        let dir = temp_dir();
+        let store = Store::new(&dir);
+        store.compact().unwrap();
+        assert!(store.load_all().unwrap().is_empty());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn compact_no_temp_left() {
+        let dir = temp_dir();
+        let store = Store::new(&dir);
+        store.append(&make_task("a", "x")).unwrap();
+        store.compact().unwrap();
+        let tmp = store.path.with_extension("jsonl.tmp");
+        assert!(!tmp.exists(), "temp file should not remain: {:?}", tmp);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn compact_then_append() {
+        let dir = temp_dir();
+        let store = Store::new(&dir);
+        store.append(&make_task("a", "v1")).unwrap();
+        store.append(&make_task("a", "v2")).unwrap();
+        store.compact().unwrap();
+        store.append(&make_task("a", "v3")).unwrap();
+
+        let all = store.load_all().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].title, "v3");
 
         fs::remove_dir_all(&dir).ok();
     }
