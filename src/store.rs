@@ -12,7 +12,6 @@ use fs2::FileExt;
 
 use crate::task::Task;
 
-#[allow(dead_code)] // consumed by CLI layer in M1.8
 /// Errors from store operations.
 #[derive(Debug)]
 pub enum StoreError {
@@ -55,7 +54,6 @@ impl From<serde_json::Error> for StoreError {
     }
 }
 
-#[allow(dead_code)] // consumed by CLI layer in M1.8
 /// JSONL append-only task store.
 ///
 /// Thread-safe via OS-level file locking (fcntl flock).
@@ -63,11 +61,13 @@ impl From<serde_json::Error> for StoreError {
 pub struct Store {
     path: PathBuf,
 }
-
 #[allow(dead_code)] // consumed by CLI layer in M1.8
 impl Store {
     /// Create a store rooted at `data_dir/tasks.jsonl`.
     pub fn new(data_dir: &Path) -> Self {
+        // Ensure the data dir exists so the first append works even when the
+        // directory was never created explicitly (e.g. fresh CLI run).
+        let _ = std::fs::create_dir_all(data_dir);
         Store {
             path: data_dir.join("tasks.jsonl"),
         }

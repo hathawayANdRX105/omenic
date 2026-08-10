@@ -5,7 +5,6 @@
 use serde::{Deserialize, Serialize};
 
 /// Whether a task is a plain task, a dependency-only template, or a reusable template.
-#[allow(dead_code)] // consumed by store layer in M1.3
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskKind {
@@ -15,7 +14,6 @@ pub enum TaskKind {
 }
 
 /// Progress state of a task.
-#[allow(dead_code)] // consumed by store layer in M1.3
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
@@ -25,7 +23,6 @@ pub enum TaskStatus {
 }
 
 /// A single work item in the task graph.
-#[allow(dead_code)] // consumed by store layer in M1.3
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Task {
     pub id: String,
