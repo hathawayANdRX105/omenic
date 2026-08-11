@@ -97,7 +97,16 @@ pub fn run(ctx: &Ctx, task_id: &str) -> Result<RunOutcome, RunnerError> {
         return Err(RunnerError::Blocked(task_id.to_string()));
     }
 
+    // TaskContext: create `<data_dir>/tasks/<id>/` and stage brief.md before
+    // the worker starts. Failure → Blocked so the run never starts with a
+    // half-baked context.
+    let task_dir = prep_task_context(ctx, task_id).map_err(RunnerError::Blocked)?;
+    let brief_path = task_dir.join("brief.md");
+
     let brief = assemble_brief(task, ctx);
+    std::fs::write(&brief_path, &brief)
+        .map_err(|e| RunnerError::Blocked(format!("write brief {}: {e}", brief_path.display())))?;
+
     let mut worker = Worker::new(ctx.omp_path.to_str().unwrap_or("omp"))
         .map_err(|e| RunnerError::Blocked(format!("worker spawn: {e}")))?;
 
@@ -152,12 +161,11 @@ pub fn run(ctx: &Ctx, task_id: &str) -> Result<RunOutcome, RunnerError> {
     }
 }
 
-/// Assemble the MVP brief: description + acceptance + materials path.
-///
-/// MVP keeps this textual and small — `deps_results` injection is a #32
-/// concern (reads back `result.json` files from completed deps).
+/// Assemble the MVP brief: description + acceptance + materials path, plus a
+/// `deps_results` section when the task has completed dependencies (M3 §4).
 fn assemble_brief(task: &Task, ctx: &Ctx) -> String {
-    let mut brief = task.description.clone();
+    let mut brief = String::new();
+    brief.push_str(&format!("## Task: {}\n{}", task.id, task.description));
     if !task.acceptance.is_empty() {
         brief.push_str(&format!("\n## Acceptance criteria\n{}", task.acceptance));
     }
@@ -165,7 +173,28 @@ fn assemble_brief(task: &Task, ctx: &Ctx) -> String {
         "\n## Task materials\n{}",
         ctx.data_dir.join("tasks").join(&task.id).display()
     ));
+    if !task.deps.is_empty() {
+        brief.push_str("\n## Dependencies\n");
+        for dep in &task.deps {
+            let summary = ctx
+                .tasks
+                .get(dep)
+                .map(|d| format!("- {dep}: {} — status {:?}", d.title, d.status))
+                .unwrap_or_else(|| format!("- {dep}: (missing from store)"));
+            brief.push_str(&summary);
+            brief.push('\n');
+        }
+    }
     brief
+}
+
+/// Create `<data_dir>/tasks/<task_id>/` if needed. Returns the directory path.
+///
+/// Idempotent — repeated runs of the same task reuse the same directory.
+fn prep_task_context(ctx: &Ctx, task_id: &str) -> Result<PathBuf, String> {
+    let dir = ctx.data_dir.join("tasks").join(task_id);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    Ok(dir)
 }
 
 #[cfg(test)]
@@ -211,6 +240,57 @@ mod tests {
     fn run_missing_task() {
         let r = run(&ctx(vec![], "/bin/true"), "ghost");
         assert!(matches!(r, Err(RunnerError::NotFound(s)) if s == "ghost"));
+    }
+
+    fn ctx_with_tmp(tasks: Vec<Task>) -> (Ctx, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = Ctx {
+            omp_path: "/bin/true".into(),
+            tasks: tasks.into_iter().map(|t| (t.id.clone(), t)).collect(),
+            data_dir: tmp.path().to_path_buf(),
+        };
+        (ctx, tmp)
+    }
+
+    #[test]
+    fn prep_task_context_creates_dirs_idempotent() {
+        let (ctx, _tmp) = ctx_with_tmp(vec![]);
+        let dir = prep_task_context(&ctx, "my-task").unwrap();
+        assert!(dir.exists());
+        assert!(dir.ends_with("tasks/my-task"));
+        // Second call reuses — no error.
+        let dir2 = prep_task_context(&ctx, "my-task").unwrap();
+        assert_eq!(dir, dir2);
+    }
+
+    #[test]
+    fn brief_lists_completed_deps_when_present() {
+        let dep = Task {
+            id: "dep-1".into(),
+            title: "scaffold".into(),
+            kind: crate::task::TaskKind::Task,
+            status: TaskStatus::Done,
+            parent: None,
+            deps: vec![],
+            description: String::new(),
+            acceptance: String::new(),
+            created_at: "2026-01-01".into(),
+            updated_at: "2026-01-01".into(),
+        };
+        let task = mk_task("feat-x", vec!["dep-1".into()], TaskStatus::Open);
+        let (ctx, _tmp) = ctx_with_tmp(vec![dep, task.clone()]);
+        let brief = assemble_brief(&task, &ctx);
+        assert!(brief.contains("## Task materials"));
+        assert!(brief.contains("## Dependencies"));
+        assert!(brief.contains("- dep-1: scaffold — status Done"));
+    }
+
+    #[test]
+    fn brief_without_deps_omits_dependency_section() {
+        let task = mk_task("lonely", vec![], TaskStatus::Open);
+        let (ctx, _tmp) = ctx_with_tmp(vec![task.clone()]);
+        let brief = assemble_brief(&task, &ctx);
+        assert!(!brief.contains("## Dependencies"));
     }
 
     #[test]
