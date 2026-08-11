@@ -249,17 +249,6 @@ mod tests {
     }
 
     #[test]
-    fn worker_event_response_returns_none() {
-        let raw = serde_json::json!({"type": "response", "success": true});
-        // read_event returns None for response frames
-        // We can't construct a Worker here, but we test the inner logic.
-        // The event parsing is done in read_event which we test via the
-        // parse_event_test helper.
-        // For response frames, read_event returns None directly.
-        // We verify this through the WorkerEvent::Unknown fallback test.
-    }
-
-    #[test]
     fn worker_event_unknown() {
         let raw = serde_json::json!({"type": "some_future_event", "data": 42});
         let event = parse_event_test(&raw);

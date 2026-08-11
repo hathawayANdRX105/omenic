@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn is_ready_rule_blocks_until_deps_done() {
-        let tasks = vec![
+        let tasks: Vec<Task> = vec![
             mk_task("a", vec![], TaskStatus::Done),
             mk_task("b", vec!["a".into()], TaskStatus::Open),
             mk_task("c", vec!["a".into(), "b".into()], TaskStatus::Open),
