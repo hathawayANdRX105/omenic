@@ -285,6 +285,31 @@ fn run_cmd(args: &[String]) -> Result<u8, String> {
         .append(&updated)
         .map_err(|e| format!("store error: {e}"))?;
 
+    // Evidence drop per MVP §3.2: result.json in <data_dir>/tasks/<id>/.
+    // Errror here doesn't fail the run — the task state is already flipped —
+    // so we report but don't abort the CLI.
+    let task_dir = config.data_dir.join("tasks").join(id);
+    if let Err(e) = std::fs::create_dir_all(&task_dir) {
+        eprintln!("warning: could not create task context dir: {e}");
+    } else {
+        let result_payload = serde_json::json!({
+            "status": match outcome.status {
+                runner::RunStatus::Done => "done",
+                runner::RunStatus::Failed => "failed",
+            },
+            "summary": outcome.summary,
+            "events_seen": outcome.events_seen,
+            "finished_at": updated.updated_at,
+        });
+        let result_path = task_dir.join("result.json");
+        if let Err(e) = std::fs::write(
+            &result_path,
+            serde_json::to_string_pretty(&result_payload).unwrap(),
+        ) {
+            eprintln!("warning: could not write result.json: {e}");
+        }
+    }
+
     if outcome.status == runner::RunStatus::Done {
         println!("done {id}");
         Ok(0)
@@ -617,7 +642,11 @@ dev-shell [open]
         let r = dispatch(&["steer".to_string(), "t-1".to_string()]);
         assert!(r.is_err());
         // with msg should hit the handle (but not fail dispatch parse)
-        let r = dispatch(&["steer".to_string(), "t-1".to_string(), "keep chipping".to_string()]);
+        let r = dispatch(&[
+            "steer".to_string(),
+            "t-1".to_string(),
+            "keep chipping".to_string(),
+        ]);
         assert!(r.is_ok());
     }
 
