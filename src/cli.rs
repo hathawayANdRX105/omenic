@@ -324,7 +324,10 @@ fn steer_cmd(args: &[String]) -> Result<u8, String> {
     let Some(id) = args.first() else {
         return Err("usage: omenic steer <task-id> <message>".to_string());
     };
-    let msg = args.get(1..).map(|s| s.join(" ")).unwrap_or_default();
+    if args.len() < 2 {
+        return Err(format!("usage: omenic steer {id} <message>"));
+    }
+    let msg = args[1..].join(" ");
     if msg.is_empty() {
         return Err(format!("usage: omenic steer {id} <message>"));
     }
