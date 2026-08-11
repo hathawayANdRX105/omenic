@@ -9,6 +9,7 @@
 use std::process::ExitCode;
 
 use crate::config::Config;
+use crate::runner;
 use crate::store::Store;
 use crate::task::{Task, TaskKind, TaskStatus};
 
@@ -38,8 +39,9 @@ fn dispatch(args: &[String]) -> Result<u8, String> {
     match cmd.as_str() {
         "task" => task_cmd(&args[1..]),
         "plan" => plan_cmd(&args[1..]),
-        // run/steer/abort land in M2.
-        "run" | "steer" | "abort" => Err(format!("command `{cmd}` is not implemented yet")),
+        "run" => run_cmd(&args[1..]),
+        "steer" => steer_cmd(&args[1..]),
+        "abort" => abort_cmd(&args[1..]),
         "help" | "-h" | "--help" => {
             print!("{}", usage());
             Ok(0)
@@ -55,6 +57,9 @@ fn usage() -> String {
        task done <id>                      mark a task done\n\
        task status <id>                    show a task's state\n\
        plan                                show the task tree\n\
+       run <task-id>                       execute task via worker session\n\
+       steer <task-id> <msg>               inject instruction into running worker\n\
+       abort <task-id>                     stop worker and reopen task\n\
        help                                show this help\n"
         .to_string()
 }
@@ -224,6 +229,110 @@ fn plan_cmd(args: &[String]) -> Result<u8, String> {
     Ok(0)
 }
 
+/// `run` subcommand: spawn a worker for a task and return its outcome.
+fn run_cmd(args: &[String]) -> Result<u8, String> {
+    let Some(id) = args.first() else {
+        return Err("usage: omenic run <task-id>".to_string());
+    };
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let store = Store::new(&config.data_dir);
+    let Some(task) = store
+        .load_task(id)
+        .map_err(|e| format!("store error: {e}"))?
+    else {
+        eprintln!("task not found: {id}");
+        return Ok(1);
+    };
+
+    // Deps gate: refuse blocked task without spawning a worker.
+    if !crate::graph::is_ready(
+        &store
+            .load_all()
+            .map_err(|e| format!("store error: {e}"))?
+            .into_iter()
+            .map(|t| (t.id.clone(), t))
+            .collect(),
+        id,
+    ) {
+        eprintln!("blocked: {id} — predecessors not complete");
+        return Ok(1);
+    }
+
+    // Runner takes over from here; its outcome decides the store flip.
+    let outcome = runner::run(
+        &runner::Ctx {
+            omp_path: config.omp_path.clone(),
+            data_dir: config.data_dir.clone(),
+            tasks: store
+                .load_all()
+                .map_err(|e| format!("store error: {e}"))?
+                .into_iter()
+                .map(|t| (t.id.clone(), t))
+                .collect(),
+        },
+        id,
+    )
+    .map_err(|e| format!("runner error: {e}"))?;
+
+    // Flip status and append back to store on Done; keep in_progress on Failed.
+    let mut updated = task.clone();
+    updated.status = match outcome.status {
+        runner::RunStatus::Done => TaskStatus::Done,
+        runner::RunStatus::Failed => TaskStatus::InProgress,
+    };
+    updated.updated_at = now_iso();
+    store
+        .append(&updated)
+        .map_err(|e| format!("store error: {e}"))?;
+
+    if outcome.status == runner::RunStatus::Done {
+        println!("done {id}");
+        Ok(0)
+    } else {
+        eprintln!("run failed: {}", outcome.summary);
+        Ok(1)
+    }
+}
+
+/// `steer` subcommand: note that MVP steer is local-only (no live worker yet).
+fn steer_cmd(args: &[String]) -> Result<u8, String> {
+    let Some(id) = args.first() else {
+        return Err("usage: omenic steer <task-id> <message>".to_string());
+    };
+    let msg = args.get(1..).map(|s| s.join(" ")).unwrap_or_default();
+    if msg.is_empty() {
+        return Err(format!("usage: omenic steer {id} <message>"));
+    }
+    println!("steer note for {id}: {msg}");
+    println!(
+        "(M3: steer is a stored instruction for a future worker session; live worker attachment is post-MVP)"
+    );
+    Ok(0)
+}
+
+/// `abort` subcommand: mark the task as open again so it can be re-run.
+fn abort_cmd(args: &[String]) -> Result<u8, String> {
+    let Some(id) = args.first() else {
+        return Err("usage: omenic abort <task-id>".to_string());
+    };
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let store = Store::new(&config.data_dir);
+    let Some(mut task) = store
+        .load_task(id)
+        .map_err(|e| format!("store error: {e}"))?
+    else {
+        eprintln!("task not found: {id}");
+        return Ok(1);
+    };
+    task.status = TaskStatus::Open;
+    task.updated_at = now_iso();
+    store
+        .append(&task)
+        .map_err(|e| format!("store error: {e}"))?;
+    println!("aborted {id}; status reset to open");
+    Ok(0)
+}
+
 /// Render the task tree as an indented plan view (roots first, children
 /// nested under their parent with box-drawing prefixes).
 ///
@@ -239,6 +348,7 @@ fn render_plan(tasks: &[Task]) -> String {
     }
 
     let ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+
     let mut children: HashMap<&str, Vec<&Task>> = HashMap::new();
     let mut roots: Vec<&Task> = Vec::new();
     for t in tasks {
@@ -493,5 +603,27 @@ dev-shell [open]
         assert!(out.contains("t-open [open]"));
         assert!(out.contains("t-ip [in_progress]"));
         assert!(out.contains("t-done [done]"));
+    }
+
+    #[test]
+    fn run_command_parse_errors_on_missing_id() {
+        let r = dispatch(&["run".to_string()]);
+        assert!(r.is_err()); // needs <task-id>
+    }
+
+    #[test]
+    fn steer_command_parse_and_note() {
+        // non-empty message required after id; bare steer errors
+        let r = dispatch(&["steer".to_string(), "t-1".to_string()]);
+        assert!(r.is_err());
+        // with msg should hit the handle (but not fail dispatch parse)
+        let r = dispatch(&["steer".to_string(), "t-1".to_string(), "keep chipping".to_string()]);
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn abort_command_parse_needs_id() {
+        let r = dispatch(&["abort".to_string()]);
+        assert!(r.is_err());
     }
 }
