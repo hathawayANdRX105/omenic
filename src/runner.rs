@@ -52,6 +52,7 @@ pub struct RunOutcome {
 pub enum RunnerError {
     NotFound(String),
     Blocked(String),
+    InvalidStatus(String),
 }
 
 impl std::fmt::Display for RunnerError {
@@ -62,6 +63,7 @@ impl std::fmt::Display for RunnerError {
                 f,
                 "deps not ready for {id}; blocked until predecessors complete"
             ),
+            RunnerError::InvalidStatus(msg) => write!(f, "{msg}"),
         }
     }
 }
@@ -89,9 +91,11 @@ pub fn run(ctx: &Ctx, task_id: &str) -> Result<RunOutcome, RunnerError> {
         .tasks
         .get(task_id)
         .ok_or_else(|| RunnerError::NotFound(task_id.to_string()))?;
-    if task.status != TaskStatus::Done {
-        // We don't check status here — the caller flips it after we're done.
-        // Ready gate is pure deps.
+    if task.status != TaskStatus::Open {
+        return Err(RunnerError::InvalidStatus(format!(
+            "task {task_id} is not open (status: {:?})",
+            task.status
+        )));
     }
     if !graph::is_ready(&ctx.tasks, task_id) {
         return Err(RunnerError::Blocked(task_id.to_string()));
@@ -291,6 +295,20 @@ mod tests {
         let (ctx, _tmp) = ctx_with_tmp(vec![task.clone()]);
         let brief = assemble_brief(&task, &ctx);
         assert!(!brief.contains("## Dependencies"));
+    }
+
+    #[test]
+    fn run_delegates_status_guard() {
+        // Task with status InProgress or Done should be rejected.
+        let tasks = vec![
+            mk_task("in-progress", vec![], TaskStatus::InProgress),
+            mk_task("done-already", vec![], TaskStatus::Done),
+        ];
+        let ctx = ctx(tasks, "/bin/true");
+        let r = run(&ctx, "in-progress");
+        assert!(matches!(r, Err(RunnerError::InvalidStatus(_))));
+        let r = run(&ctx, "done-already");
+        assert!(matches!(r, Err(RunnerError::InvalidStatus(_))));
     }
 
     #[test]

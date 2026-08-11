@@ -47,16 +47,18 @@ fn omp_binary() -> String {
 fn task_id_for(data_dir: &Path, title: &str) -> String {
     let store_path = data_dir.join("tasks.jsonl");
     let content = fs::read_to_string(&store_path).expect("read tasks.jsonl");
-    let needle = format!(r#""title":"{}""#, title);
     for line in content.lines() {
-        if !line.contains(&needle) {
+        if line.trim().is_empty() {
             continue;
         }
-        if let Some(start) = line.find(r#""id":""#) {
-            let rest = &line[start + 6..];
-            if let Some(end) = rest.find('"') {
-                return rest[..end].to_string();
-            }
+        let v: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if v.get("title").and_then(|s| s.as_str()) == Some(title)
+            && let Some(id) = v.get("id").and_then(|s| s.as_str())
+        {
+            return id.to_string();
         }
     }
     panic!("task with title {title:?} not found in store");
