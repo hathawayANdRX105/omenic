@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# .githooks/pre-push — 推送前检查（P-31 分支名规范、P-32 禁止直接推 main）。
+# stdin 是 "<local ref> <local sha> <remote ref> <remote sha>" 行；这里只取当前分支。
+# 用 git push --no-verify 可绕过（可接受边界）。
+
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+# shellcheck source=../lib/regex.sh
+source "$ROOT/lib/regex.sh" 2>/dev/null || { echo "pre-push: lib/regex.sh not found; skipping"; exit 0; }
+
+BRANCH="$(git branch --show-current 2>/dev/null)"
+REMOTE_REF="main"
+FAILED=0
+
+# 从 stdin 读推送行，检查每个要推的 ref
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [[ -z "$local_ref" ]] && continue
+  case "$local_ref" in
+    refs/heads/*)
+      b="${local_ref#refs/heads/}"
+      # P-32: 禁止推 main（除非显式授权标记文件存在）
+      if [[ "$b" == "main" || "$b" == "master" ]]; then
+        if [[ -f "$ROOT/.git/ALLOW_MAIN_PUSH" ]]; then
+          echo "pre-push OK (main push explicitly allowed via .git/ALLOW_MAIN_PUSH)"
+        else
+          echo "pre-push FAIL P-32: pushing to $b is forbidden (merge via main-protection workflow)"
+          echo "   to allow: create $ROOT/.git/ALLOW_MAIN_PUSH"
+          FAILED=1
+        fi
+        continue
+      fi
+      # P-31: 分支名规范
+      if echo "$b" | is_valid_branch; then
+        echo "pre-push OK: branch $b name valid"
+      else
+        echo "pre-push WARN P-31: branch '$b' off-standard (expect feat|fix|chore/issue-N-...)"
+      fi
+      ;;
+  esac
+done
+
+exit $FAILED
