@@ -79,7 +79,6 @@ fi
 # ============ 2.3 issue 关联 ============
 echo "--- issue link ---"
 fixes_count=$(printf '%s' "$pr_body" | grep -oE 'Fixes #[0-9]+' | sort -u | wc -l)
-related_count=$(printf '%s' "$pr_body" | grep -oE 'Related #[0-9]+' | sort -u | wc -l || true)
 if [[ "$pr_state" == "OPEN" ]] && [[ $fixes_count -gt 0 ]]; then
   report WARN P-11 "open PR already uses Fixes # (may close issue prematurely)"
 else
@@ -140,7 +139,6 @@ echo "--- review artifacts ---"
 summary_found=$(gh_pr_issue_comments "$REPO" "$PR" '[.[].body] | join("\n")' | grep -cE '\[Agent 🤖\].*(CRG|Review|评审|验证)' || true)
 if [[ $summary_found -ge 1 ]]; then report PASS P-20 "PR conversation has agent summary comment"; else report WARN P-20 "no [Agent 🤖] summary comment in conversation"; fi
 
-inline_bad=0
 inline_json=$(gh_pr_review_comments "$REPO" "$PR" '[.[] | {id, body, path, line, in_reply_to_id, user: .user.login}]')
 n_inline=$(echo "$inline_json" | jq 'length')
 if [[ $n_inline -eq 0 ]]; then

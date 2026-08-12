@@ -9,12 +9,10 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 # shellcheck source=../lib/regex.sh
 source "$ROOT/lib/regex.sh" 2>/dev/null || { echo "pre-push: lib/regex.sh not found; skipping"; exit 0; }
 
-BRANCH="$(git branch --show-current 2>/dev/null)"
-REMOTE_REF="main"
 FAILED=0
 
 # 从 stdin 读推送行，检查每个要推的 ref
-while read -r local_ref local_sha remote_ref remote_sha; do
+while read -r local_ref _ _ _; do
   [[ -z "$local_ref" ]] && continue
   case "$local_ref" in
     refs/heads/*)

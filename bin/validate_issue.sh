@@ -122,8 +122,9 @@ fi
 
 # ---- I-09 路径真实性（WARN） ----
 echo "--- path realism ---"
-if [[ -d . ]]; then
+if git rev-parse --is-inside-work-tree &>/dev/null; then
   missing=0
+  # shellcheck disable=SC2016 # 字面反引号（markdown code span 边界），禁用展开提示
   while IFS= read -r p; do
     p="${p//\`/}"
     [[ -z "$p" ]] && continue
@@ -184,7 +185,6 @@ if [[ "$issue_state" == "CLOSED" ]]; then
   # 收集 timeline 证据：closed 事件（用户/系统）与 cross-referenced（PR 引用）
   timeline=$(gh_api_get "repos/$REPO/issues/$NUM/timeline" '[.[] | {event, actor: .actor.login, commit_id, pr: .source.issue.number, ref: .source.issue.pull_request.merged_at}]' 2>/dev/null || echo "[]")
   closed_events=$(echo "$timeline" | jq '[.[] | select(.event == "closed")] | length')
-  cross_refs=$(echo "$timeline" | jq '[.[] | select(.event == "cross-referenced" and .ref != null)] | length')
   # 简化判定：有 closed 事件即视为有关闭动作；无则告警。语义归因无 ground truth → WARN 不强执 FAIL。
   if [[ $closed_events -gt 0 ]]; then
     report PASS I-22 "issue closed with explicit closed event ($closed_events)"

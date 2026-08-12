@@ -10,7 +10,6 @@ has_cjk() { # stdin 含 CJK → exit 0
 }
 
 # --- 全角括号检测：任何全角中文括号出现即 FAIL ---
-FULLWIDTH_PARENS='[（）：；，、。！？「」『』【】《》〈〉（）]'
 has_fullwidth_brackets() { # stdin 含全角括号 → exit 0
   grep -P -q '[\x{ff08}\x{ff09}\x{300c}\x{300d}\x{300e}\x{300f}\x{3010}\x{3011}\x{300a}\x{300b}\x{3008}\x{3009}\x{3014}\x{3015}\x{ff5b}\x{ff5d}]'
 }
@@ -22,7 +21,6 @@ has_fullwidth_any() { # stdin 含任意全角字符 → exit 0
 
 # --- checkbox ---
 # 仅 ASCII [ ] / [x]，不认全角括号。
-CHECKBOX_RE='^- *\[[ xX]\] '
 has_unchecked_checkbox() { # stdin 含 - [ ] → exit 0
   grep -qE '^ *- *\[ \] ' || grep -qE '^ *- *\[ \]$'
 }
