@@ -119,6 +119,19 @@ else
   fi
 fi
 
+# I-02b: Scope 应描述改动范围（模块/文件/子系统），不应替代 GitHub Development 字段关联 PR
+echo "--- scope writing ---"
+if [[ "$MODE" != "parent" ]]; then
+  scope_section=$(printf '%s' "$issue_body" | awk '/^## Scope/{f=1;next}/^## /{f=0}f')
+  if [[ -z "$scope_section" ]]; then
+    : # heading 缺失已被 I-01/I-02 覆盖
+  elif echo "$scope_section" | grep -qE '(单个 PR|一个 PR|single PR|multiple PRs|一个或多个 PR|此 issue 由.*PR 关闭|一个 PR 关闭)'; then
+    report WARN I-02b "Scope describes PR linkage rather than change extent; use GitHub Development field for PR-issue link, describe affected modules/files here"
+  else
+    report PASS I-02b "Scope describes change extent"
+  fi
+fi
+
 # ---- I-05~I-08 语言边界 ----
 echo "--- language ---"
 if echo "$issue_title" | has_cjk; then report PASS I-05 "title is Chinese";
@@ -174,34 +187,82 @@ if [[ "$MODE" == "sub" ]]; then
 
 elif [[ "$MODE" == "parent" ]]; then
   echo "--- parent format ---"
-  if printf '%s' "$issue_body" | grep -q 'Done when'; then report FAIL I-16 "parent must NOT have Done when section";
+  # I-16: parent 必须无 Done when（parent 不直接产出验收，由 sub 承担）
+  if printf '%s' "$issue_body" | grep -q '## Done when'; then report FAIL I-16 "parent must NOT have Done when section";
   else report PASS I-16 "parent has no Done when"; fi
-  if printf '%s' "$issue_body" | grep -q '## Implementation Order'; then report PASS I-17 "parent has Implementation Order";
-  else report FAIL I-17 "parent lacks Implementation Order section"; fi
-  io_numbers=$(printf '%s' "$issue_body" | awk '/^## Implementation Order/{f=1;next}/^## /{f=0}f' | grep -oE '\(#[0-9]+\)' | tr -d '#()' | sort -un)
-  actual=$(gh_sub_issue_numbers "$REPO" "$NUM" | sort -u)
+
+  # I-18: parent 必须建立 native sub-issues（GitHub 进度条/页面渲染依赖此关系；
+  # 文字版 Implementation Order 不再替代它）
+  actual=$(gh_sub_issue_numbers "$REPO" "$NUM" 2>/dev/null | sort -u || echo "")
   if [[ -n "$actual" ]]; then
-    if [[ "$io_numbers" == "$actual" ]]; then report PASS I-18/I-19 "Implementation Order matches native sub-issues ($(echo "$io_numbers" | tr '\n' ',' | sed 's/,$//'))";
-    else report FAIL I-18/I-19 "Implementation Order ($(echo "$io_numbers" | tr '\n' ',' | sed 's/,$//')) vs native sub-issues ($(echo "$actual" | tr '\n' ',' | sed 's/,$//'))"; fi
+    report PASS I-18 "parent has native sub-issues ($(echo "$actual" | tr '\n' ',' | sed 's/,$//'))"
   else
-    report WARN I-19 "no native sub-issues found for parent (relationship not established)"
+    report FAIL I-18 "parent has no native sub-issues (use GitHub sub-issue feature or: gh api -X POST repos/OWNER/REPO/issues/PARENT/sub_issues -F sub_issue_id=DB_ID)"
   fi
-  # 检查 column：Implementation Order 应含 child 号+标题
-  if [[ -n "$io_numbers" ]]; then report PASS I-18 "Implementation Order lists sub-issue numbers";
-  else report WARN I-18 "Implementation Order has no sub-issue numbers"; fi
+
+  # I-17/I-19: Implementation Order 为可选（仅在有依赖顺序或特殊说明时才写）
+  # 若存在则必须与 native sub-issues 一致（避免内容/UI 漂移）
+  if printf '%s' "$issue_body" | grep -q '## Implementation Order'; then
+    report PASS I-17 "Implementation Order present (optional; use only for dep order or special notes)"
+    io_numbers=$(printf '%s' "$issue_body" | awk '/^## Implementation Order/{f=1;next}/^## /{f=0}f' | grep -oE '\(#[0-9]+\)' | tr -d '#()' | sort -un)
+    if [[ -n "$io_numbers" ]] && [[ -n "$actual" ]]; then
+      if [[ "$io_numbers" == "$actual" ]]; then
+        report PASS I-19 "Implementation Order matches native sub-issues"
+      else
+        report FAIL I-19 "Implementation Order ($(echo "$io_numbers" | tr '\n' ',' | sed 's/,$//')) != native sub-issues ($(echo "$actual" | tr '\n' ',' | sed 's/,$//'))"
+      fi
+    fi
+  else
+    report PASS I-17 "no Implementation Order section (optional; native sub-issues list is authoritative)"
+  fi
 fi
 
-# ---- I-20/I-21 label ----
+# ---- I-20/I-21 label（从 .github/label-policy.yml 读取） ----
 echo "--- labels ---"
+# shellcheck source=../lib/label_policy.sh
+source "$SCRIPT_DIR/../lib/label_policy.sh"
 valid_labels=$(gh_label_list "$REPO")
+type_labels_cfg=$(lp_type_labels)
+
 missing=0
 for l in $(echo "$issue_labels" | tr ',' '\n'); do
   [[ -z "$l" ]] && continue
-  if ! grep -qxF "$l" <<<"$valid_labels"; then printf '  missing label: %s\n' "$l" >&2; missing=1; fi
+  if ! grep -qxF "$l" <<<"$valid_labels"; then printf '  unknown label not in repo: %s\n' "$l" >&2; missing=1; fi
 done
-if [[ $missing -eq 0 ]]; then report PASS I-20 "labels all exist"; else report FAIL I-20 "some labels do not exist in repo"; fi
-if echo "$issue_labels" | grep -qE '(bug|enhancement|chore)'; then report PASS I-21 "type label present (bug/enhancement/chore)";
-else report FAIL I-21 "no type label"; fi
+if [[ $missing -eq 0 ]]; then report PASS I-20 "labels all exist in repo"; else report FAIL I-20 "some labels do not exist in repo"; fi
+
+# I-21: 至少一个 type label（从配置读取，配置缺失时 fallback）
+type_hit=0
+for l in $(echo "$issue_labels" | tr ',' '\n'); do
+  [[ -z "$l" ]] && continue
+  if grep -qxF "$l" <<<"$type_labels_cfg"; then type_hit=1; break; fi
+done
+if [[ $type_hit -eq 1 ]]; then
+  report PASS I-21 "type label present"
+else
+  report FAIL I-21 "no type label (expected one of: $(echo "$type_labels_cfg" | paste -sd', ' -))"
+fi
+
+# I-21b: 关键字建议（WARN 级辅助）— 标题/body 命中关键字但缺对应 label 时提示
+current_labels=$(echo "$issue_labels" | tr ',' '\n')
+suggested=$(lp_suggest_for "$issue_title
+$issue_body")
+if [[ -n "$suggested" ]]; then
+  missing_suggestions=""
+  while IFS= read -r sug; do
+    [[ -z "$sug" ]] && continue
+    if ! grep -qxF "$sug" <<<"$current_labels"; then
+      missing_suggestions="$missing_suggestions $sug"
+    fi
+  done <<<"$suggested"
+  if [[ -n "$missing_suggestions" ]]; then
+    report WARN I-21b "based on content keywords, consider also labeling:$missing_suggestions"
+  else
+    report PASS I-21b "content keywords align with assigned labels"
+  fi
+else
+  report PASS I-21b "no keyword suggestions (or policy not configured)"
+fi
 
 # ---- I-22 关闭时机 ----
 echo "--- closure ---"

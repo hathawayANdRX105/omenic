@@ -125,19 +125,47 @@ else
   report FAIL P-13 "one PR should close one primary issue"
 fi
 
-# ============ 2.4 label ============
+# ============ 2.4 label（从 .github/label-policy.yml 读取） ============
 echo "--- labels ---"
+# shellcheck source=../lib/label_policy.sh
+source "$SCRIPT_DIR/../lib/label_policy.sh"
 valid_labels=$(gh_label_list "$REPO")
+type_labels_cfg=$(lp_type_labels)
 type_hit=0; missing=0
 for l in $(echo "$pr_labels" | tr ',' '\n'); do
   [[ -z "$l" ]] && continue
-  case "$l" in bug|enhancement|chore) type_hit=1;; esac
+  if grep -qxF "$l" <<<"$type_labels_cfg"; then type_hit=1; fi
   if ! grep -qxF "$l" <<<"$valid_labels"; then
-    printf '  missing label: %s\n' "$l" >&2; missing=1
+    printf '  unknown label not in repo: %s\n' "$l" >&2; missing=1
   fi
 done
-if [[ $type_hit -eq 1 ]]; then report PASS P-14 "type label present"; else report FAIL P-14 "no type label (bug/enhancement/chore)"; fi
-if [[ $missing -eq 0 ]]; then report PASS P-15 "labels all exist"; else report FAIL P-15 "some labels do not exist in repo"; fi
+if [[ $type_hit -eq 1 ]]; then
+  report PASS P-14 "type label present"
+else
+  report FAIL P-14 "no type label (expected one of: $(echo "$type_labels_cfg" | paste -sd', ' -))"
+fi
+if [[ $missing -eq 0 ]]; then report PASS P-15 "labels all exist in repo"; else report FAIL P-15 "some labels do not exist in repo"; fi
+
+# P-14b: 关键字建议（WARN 级辅助）— PR 标题/body 命中关键字但缺对应 label 时提示
+current_pr_labels=$(echo "$pr_labels" | tr ',' '\n')
+suggested_pr=$(lp_suggest_for "$pr_title
+$pr_body")
+if [[ -n "$suggested_pr" ]]; then
+  missing_pr_sug=""
+  while IFS= read -r sug; do
+    [[ -z "$sug" ]] && continue
+    if ! grep -qxF "$sug" <<<"$current_pr_labels"; then
+      missing_pr_sug="$missing_pr_sug $sug"
+    fi
+  done <<<"$suggested_pr"
+  if [[ -n "$missing_pr_sug" ]]; then
+    report WARN P-14b "based on content keywords, consider also labeling:$missing_pr_sug"
+  else
+    report PASS P-14b "content keywords align with assigned labels"
+  fi
+else
+  report PASS P-14b "no keyword suggestions (or policy not configured)"
+fi
 
 # ============ 2.5 diff 卫生（要求本地 git 仓库） ============
 echo "--- diff hygiene ---"
