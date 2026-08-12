@@ -67,7 +67,9 @@ if [[ "$MODE" == "parent" ]]; then
   report PASS I-01/I-02 "parent mode: template structure n/a (Implementation Order instead)"
 else
   template_path=""
-  for t in .github/ISSUE_TEMPLATE/task.yml .github/ISSUE_TEMPLATE/feature.yml .github/ISSUE_TEMPLATE/bug.yml; do
+  # 先从脚本自身位置找（SCRIPT_DIR/bin → sibling ../.github/），再 fallback cwd 相对路径
+  for t in "$SCRIPT_DIR/../.github/ISSUE_TEMPLATE/task.yml" "$SCRIPT_DIR/../.github/ISSUE_TEMPLATE/feature.yml" "$SCRIPT_DIR/../.github/ISSUE_TEMPLATE/bug.yml" \
+           .github/ISSUE_TEMPLATE/task.yml .github/ISSUE_TEMPLATE/feature.yml .github/ISSUE_TEMPLATE/bug.yml; do
     [[ -f "$t" ]] && { template_path="$t"; break; }
   done
   if [[ -n "$template_path" ]]; then
@@ -75,8 +77,7 @@ else
     expected_headings=$(grep -B12 'required: true' "$template_path" | grep -oE 'label: [A-Za-z ]+' | sed 's/label: //' | sort -u || true)
   else
     expected_headings="Goal
-Done when
-Scope"
+Done when"
   fi
   found_all=1
   while IFS= read -r h; do
@@ -119,16 +120,14 @@ else
   fi
 fi
 
-# I-02b: Scope 应描述改动范围（模块/文件/子系统），不应替代 GitHub Development 字段关联 PR
-echo "--- scope writing ---"
+# I-02b: Suspected areas 应含改动范围描述（涉及 + 不涉及）；空段或仅占位文字 → WARN
+echo "--- suspected areas ---"
 if [[ "$MODE" != "parent" ]]; then
-  scope_section=$(printf '%s' "$issue_body" | awk '/^## Scope/{f=1;next}/^## /{f=0}f')
-  if [[ -z "$scope_section" ]]; then
-    : # heading 缺失已被 I-01/I-02 覆盖
-  elif echo "$scope_section" | grep -qE '(单个 PR|一个 PR|single PR|multiple PRs|一个或多个 PR|此 issue 由.*PR 关闭|一个 PR 关闭)'; then
-    report WARN I-02b "Scope describes PR linkage rather than change extent; use GitHub Development field for PR-issue link, describe affected modules/files here"
+  suspected_section=$(printf '%s' "$issue_body" | awk '/^## Suspected areas/{f=1;next}/^## /{f=0}f')
+  if [[ -z "$(echo "$suspected_section" | tr -d '[:space:]')" ]]; then
+    report WARN I-02b "Suspected areas empty; describe affected files/modules and what is not touched"
   else
-    report PASS I-02b "Scope describes change extent"
+    report PASS I-02b "Suspected areas populated"
   fi
 fi
 
