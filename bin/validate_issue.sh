@@ -181,7 +181,7 @@ else report FAIL I-21 "no type label"; fi
 
 # ---- I-22 关闭时机 ----
 echo "--- closure ---"
-if [[ "$issue_state" == "CLOSED" ]]; then
+if [[ "$issue_state" == "closed" || "$issue_state" == "CLOSED" ]]; then
   # 收集 timeline 证据：closed 事件（用户/系统）与 cross-referenced（PR 引用）
   timeline=$(gh_api_get "repos/$REPO/issues/$NUM/timeline" '[.[] | {event, actor: .actor.login, commit_id, pr: .source.issue.number, ref: .source.issue.pull_request.merged_at}]' 2>/dev/null || echo "[]")
   closed_events=$(echo "$timeline" | jq '[.[] | select(.event == "closed")] | length')
