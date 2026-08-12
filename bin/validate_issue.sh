@@ -7,12 +7,36 @@
 #   validate_issue.sh <repo> <issue>          — 默认：通用校验（I-01~I-10, I-20~I-22）
 #
 # 输出 RESULT: ALL PASS 才通过；任一 FAIL → 退出码 1。
+#
+# 豁免机制（避免对历史内容误报）：
+#   --cutoff=N    仅校验 issue 号 >= N（默认 55，即 #55 起强制新模板）
+#   --strict      强制审计模式，忽略 cutoff（用于全量审计历史 issue）
+#   环境变量 OMENIC_ISSUE_CUTOFF 也可设置默认 cutoff。
 
 set -euo pipefail
 
-REPO="${1:?usage: validate_issue.sh <owner/repo> <issue_number> [parent|sub]}"
+# ---- 解析 flag（插在位置参数之前）----
+CUTOFF="${OMENIC_ISSUE_CUTOFF:-55}"
+STRICT=0
+NEW_ARGS=()
+for a in "$@"; do
+  case "$a" in
+    --cutoff=*) CUTOFF="${a#*=}";;
+    --strict) STRICT=1;;
+    *) NEW_ARGS+=("$a");;
+  esac
+done
+set -- "${NEW_ARGS[@]+"${NEW_ARGS[@]}"}"
+
+REPO="${1:?usage: validate_issue.sh <owner/repo> <issue_number> [parent|sub] [--cutoff=N] [--strict]}"
 NUM="${2:?}"
 MODE="${3:-}"
+
+# ---- 应用 cutoff（豁免历史内容）----
+if [[ $STRICT -eq 0 ]] && [[ "$NUM" -lt "$CUTOFF" ]]; then
+  echo "== Issue #$NUM: SKIP (below cutoff $CUTOFF; legacy exempt. Use --strict to force.) =="
+  exit 0
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/gh_api.sh

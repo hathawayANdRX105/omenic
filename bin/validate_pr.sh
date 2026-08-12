@@ -4,11 +4,35 @@
 # 输出每项 PASS/FAIL/WARN，任一 FAIL → 退出码 1。
 #
 # 依赖：gh、jq、python3。lib 位于脚本同级的 ../lib。
+#
+# 豁免机制（避免对历史内容误报）：
+#   --cutoff=N    仅校验 PR 号 >= N（默认 61，即 #61 起强制新模板）
+#   --strict      强制审计模式，忽略 cutoff（用于全量审计历史 PR）
+#   环境变量 OMENIC_PR_CUTOFF 也可设置默认 cutoff。
 
 set -euo pipefail
 
-REPO="${1:?usage: validate_pr.sh <owner/repo> <pr_number>}"
+# ---- 解析 flag（插在位置参数之前）----
+CUTOFF="${OMENIC_PR_CUTOFF:-61}"
+STRICT=0
+NEW_ARGS=()
+for a in "$@"; do
+  case "$a" in
+    --cutoff=*) CUTOFF="${a#*=}";;
+    --strict) STRICT=1;;
+    *) NEW_ARGS+=("$a");;
+  esac
+done
+set -- "${NEW_ARGS[@]+"${NEW_ARGS[@]}"}"
+
+REPO="${1:?usage: validate_pr.sh <owner/repo> <pr_number> [--cutoff=N] [--strict]}"
 PR="${2:?}"
+
+# ---- 应用 cutoff（豁免历史内容）----
+if [[ $STRICT -eq 0 ]] && [[ "$PR" -lt "$CUTOFF" ]]; then
+  echo "== PR #$PR: SKIP (below cutoff $CUTOFF; legacy exempt. Use --strict to force.) =="
+  exit 0
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/gh_api.sh
