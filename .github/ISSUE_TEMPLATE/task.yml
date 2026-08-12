@@ -40,6 +40,14 @@ body:
       required: true
 
   - type: textarea
+    id: background
+    attributes:
+      label: Background
+      description: 填写为什么现在做、之前的决定或理解目标所需的链接。
+    validations:
+      required: true
+
+  - type: textarea
     id: done
     attributes:
       label: Done when
@@ -50,20 +58,20 @@ body:
     validations:
       required: true
 
+  - type: textarea
+    id: suspected
+    attributes:
+      label: Suspected areas
+      description: 填写改动范围 — 涉及的文件、package、符号、workflow 或文档；同时说明明确不涉及的部分。
+    validations:
+      required: true
+
   - type: markdown
     attributes:
       value: |
         ---
         ## 推荐补充
         只填写有助于做出或评审决策的字段；不要粘贴密钥。
-
-  - type: textarea
-    id: background
-    attributes:
-      label: Background
-      description: 填写为什么现在做、之前的决定或理解目标所需的链接。
-    validations:
-      required: false
 
   - type: textarea
     id: out
@@ -78,14 +86,6 @@ body:
     attributes:
       label: How to observe success
       description: 填写命令、页面状态、文件结构、CI job、指标或前后对比结果。
-    validations:
-      required: false
-
-  - type: textarea
-    id: suspected
-    attributes:
-      label: Suspected areas
-      description: 填写改动范围 — 涉及的文件、package、符号、workflow 或文档；同时说明明确不涉及的部分。不确定时留空。
     validations:
       required: false
 
