@@ -86,6 +86,22 @@ if [[ -n "$primary_issue" ]]; then
   else
     info "WARN P-34: issue #$primary_issue not auto-closed (state=$issue_state)"
   fi
+
+  # 若 primary issue 是 parent (有 native sub-issues), 合并后扫描它的 sub-issues,
+  # 把仍 OPEN 的自动关闭。理由: parent PR 整合交付后, 所有 sub-issue 应当随父关闭。
+  # 避免 #55-59 那种 parent 关了 sub 还开着的遗漏场景。
+  sub_numbers=$(gh_sub_issue_numbers "$REPO" "$primary_issue" 2>/dev/null || true)
+  if [[ -n "$sub_numbers" ]]; then
+    info "P-34 parent #$primary_issue has sub-issues: $(echo "$sub_numbers" | tr '\n' ' ')"
+    for sub in $sub_numbers; do
+      sub_state=$(gh_issue_view "$REPO" "$sub" '.state' 2>/dev/null || echo "")
+      if [[ "$sub_state" == "OPEN" ]]; then
+        info "auto-closing sub-issue #$sub (parent #$primary_issue merged)"
+        gh issue close "$sub" --repo "$REPO" --comment "auto-closed: parent PR #$PR merged, parent issue #$primary_issue closed" 2>/dev/null || \
+          info "WARN: failed to auto-close #$sub (manual close required)"
+      fi
+    done
+  fi
 fi
 
 echo "RESULT: MERGE OK"
