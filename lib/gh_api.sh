@@ -5,17 +5,44 @@
 
 set -euo pipefail
 
-# gh_api_get <endpoint> [jq_expr] — 分页 GET + 重试（网络类错误重试 3 次）
+# gh_api_get <endpoint> [jq_expr]
+# 分页 GET + 自动重试。识别所有瞬时网络错误 (EOF / TLS / connection reset /
+# broken pipe / 5xx 等), 失败时按递增 delay 重试最多 8 次, 然后向上抛错。
 gh_api_get() {
   local endpoint="$1" jq_expr="${2:-}" out rc try
-  for try in 1 2 3 4 5 6; do
+  # 这些 pattern 都属于可安全重试的瞬时错误, 不是业务/权限错误
+  local retry_patterns=(
+    'EOF'
+    'unexpected EOF'
+    'connection reset'
+    'Connection reset'
+    'Connection closed'
+    'connection refused'
+    'broken pipe'
+    'TLS handshake timeout'
+    'dial tcp'
+    'i/o timeout'
+    'net/http: timeout'
+    'transport is closing'
+    '500 Internal Server Error'
+    '502 Bad Gateway'
+    '503 Service Unavailable'
+    '504 Gateway Timeout'
+  )
+  for try in 1 2 3 4 5 6 7 8; do
     if [[ -n "$jq_expr" ]]; then
       out=$(gh api --paginate "$endpoint" --jq "$jq_expr" 2>&1) && rc=0 || rc=$?
     else
       out=$(gh api --paginate "$endpoint" 2>&1) && rc=0 || rc=$?
     fi
-    if [[ $rc -ne 0 ]] && [[ "$out" == *"EOF"* || "$out" == *"unexpected EOF"* || "$out" == *"connection reset"* || "$out" == *"Connection closed"* ]]; then
-      sleep $((try * 3)); continue
+    if [[ $rc -ne 0 ]]; then
+      local should_retry=0
+      for pat in "${retry_patterns[@]}"; do
+        if [[ "$out" == *"$pat"* ]]; then should_retry=1; break; fi
+      done
+      if [[ $should_retry -eq 1 ]]; then
+        sleep $((try * 3)); continue
+      fi
     fi
     break
   done
