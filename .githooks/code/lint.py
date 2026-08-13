@@ -42,7 +42,11 @@ def run_lang(lang: str, target: str = ".") -> list[Finding]:
         return [Finding(f"code-{lang}", Severity.WARN, f"{lang}: no command configured")]
 
     cmd = [command] + list(args) + [target]
-    rc, output = run_external(cmd, cwd=ROOT.parent)
+    try:
+        rc, output = run_external(cmd, cwd=ROOT.parent)
+    except FileNotFoundError:
+        findings.append(Finding(f"code-{lang}", Severity.WARN, f"{lang}: {command} not installed, skipped"))
+        return findings
 
     if rc == 0:
         findings.append(Finding(f"code-{lang}", Severity.INFO, f"{lang}: {command} passed"))
