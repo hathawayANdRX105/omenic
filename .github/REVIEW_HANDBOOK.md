@@ -36,7 +36,7 @@ Agent 和维护者审查者共用此清单。Agent 在 PR diff 行上发现问�
 ## 5. 测试与验证
 
 - Bug fix 需要能复现原问题并证明不再触发; 功能/行为改动用现有测试或最小新增测试覆盖可观察契约。
-- 改动至少跑一次相关 validator: `bash bin/validate_pr.sh` / `bash bin/validate_issue.sh` / `bash bin/merge_pr.sh --dry-run`。
+    - 改动至少跑一次相关 validator: `python .githooks/github/pull_requests.py <repo> <pr>` / `python .githooks/github/issues.py <repo> <issue>` / `python .githooks/merge <repo> <pr> --dry-run`。
 - 验证输出要能复现: 命令、cwd、失败/通过结果都写清楚。
 
 ## 6. PR / Issue 卫生
@@ -67,7 +67,7 @@ Agent 和维护者审查者共用此清单。Agent 在 PR diff 行上发现问�
 ## Agent 审查流程
 
 1. 读取 PR file changes / `git diff origin/main...HEAD`, 只审当前 PR 相关文件。
-2. 跑该 PR 对应的最小验证: `bash bin/validate_pr.sh <repo> <pr>` / `bash bin/validate_issue.sh <repo> <issue>` / `bash bin/merge_pr.sh <repo> <pr> --dry-run`。
+    - 跑该 PR 对应的最小验证: `python .githooks/github/pull_requests.py <repo> <pr>` / `python .githooks/github/issues.py <repo> <issue>` / `python .githooks/merge <repo> <pr> --dry-run`。
 3. 按上述清单逐项检查 diff。
 4. 只对发现的问题在对应文件行号留 inline comment; 无问题不留。
 5. 修复每条 finding 后, 在原 thread 回复 `Agent 🤖 - Fix: <理由>` / `Note: <理由>` 等, 写明提交与验证。
