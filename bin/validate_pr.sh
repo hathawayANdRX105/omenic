@@ -125,6 +125,36 @@ else
   report FAIL P-13 "one PR should close one primary issue"
 fi
 
+# P-39: 若 PR 已声明 Fixes, 检查 GitHub 是否建立了 closing reference 关系。
+# GitHub 只在 PR base 为 default branch 时建立 closing reference, parent PR
+# 模式下 sub-PR base 是 epic branch 导致关系缺失。这里用 GraphQL
+# closingIssuesReferences 直接查询, 缺失则提示 (WARN 不阻塞, 因为 parent PR
+# 模式本身合法)。
+if [[ $fixes_count -ge 1 ]]; then
+  closing_target=$(printf '%s' "$pr_body" | grep -oE '(Fixes|Closes|Resolves) #[0-9]+' | grep -oE '[0-9]+' | head -1)
+  if [[ -n "$closing_target" ]]; then
+    # GraphQL 查询 PR 的 closingIssuesReferences
+    owner_repo="${REPO%/*}/${REPO#*/}"
+    closing_refs=$(gh api graphql -f query="
+      query {
+        repository(owner: \"${REPO%/*}\", name: \"${REPO#*/}\") {
+          pullRequest(number: $PR) {
+            closingIssuesReferences(first: 10) { nodes { number } }
+          }
+        }
+      }" --jq '.data.repository.pullRequest.closingIssuesReferences.nodes[].number' 2>/dev/null || echo "")
+    if echo "$closing_refs" | grep -qE "^${closing_target}$"; then
+      report PASS P-39 "GitHub closing reference to #$closing_target established"
+    else
+      report WARN P-39 "no GitHub closing reference to #$closing_target (base may be non-default; sub-issue Development panel will not show this PR)"
+    fi
+  else
+    report PASS P-39 "n/a (no Fixes target parseable)"
+  fi
+else
+  report PASS P-39 "n/a (no Fixes declared)"
+fi
+
 # ============ Labels (driven by .github/label-policy.yml) ============
 echo "--- labels ---"
 # shellcheck source=../lib/label_policy.sh
