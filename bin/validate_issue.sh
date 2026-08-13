@@ -291,6 +291,19 @@ if [[ "$issue_state" == "closed" || "$issue_state" == "CLOSED" ]]; then
   else
     report WARN I-22 "issue closed without visible closed event on timeline"
   fi
+  # I-22b: sub-issue 关闭时 Done when 必须全部勾选 (parent issue 无 Done when, 自动跳过)
+  if [[ "$MODE" == "sub" ]]; then
+    done_section=$(printf '%s' "$issue_body" | awk '/^## Done when/{f=1;next}/^## /{f=0}f')
+    done_total=$(echo "$done_section" | grep -cE '^ *- *\[' || true)
+    done_checked=$(echo "$done_section" | grep -cE '^ *- *\[[xX]\]' || true)
+    if [[ $done_total -eq 0 ]]; then
+      report WARN I-22b "sub-issue closed but has no Done when boxes"
+    elif [[ $done_total -eq $done_checked ]]; then
+      report PASS I-22b "sub-issue Done when all checked on close ($done_checked/$done_total)"
+    else
+      report FAIL I-22b "sub-issue closed with Done when unchecked ($done_checked/$done_total) — must tick all boxes before close"
+    fi
+  fi
 else
   report PASS I-22 "issue open; closure rule n/a"
 fi
