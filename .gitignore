@@ -3,3 +3,7 @@
 .wt/
 todo/
 /target
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
