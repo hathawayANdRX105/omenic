@@ -1,42 +1,33 @@
-#!/usr/bin/env bash
-# .githooks/pre-push — 推送前检查（P-31 分支名规范、P-32 禁止直接推 main）。
-# stdin 是 "<local ref> <local sha> <remote ref> <remote sha>" 行；同时检查 local 与 remote ref（防 refspec 绕过）。
-# 用 git push --no-verify 可绕过（可接受边界）。
+#!/usr/bin/env python3
+"""pre-push hook: runs workspace + code + github checks."""
+import sys
+from pathlib import Path
 
-set -uo pipefail
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / ".."))
 
-ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
-# shellcheck source=../lib/regex.sh
-source "$ROOT/lib/regex.sh" 2>/dev/null || { echo "pre-push: lib/regex.sh not found; skipping"; exit 0; }
+from _shared import Finding, Severity, aggregate_result, print_findings, load_yaml  # noqa: E402
 
-FAILED=0
 
-# 从 stdin 读推送行，同时看 local_ref 与 remote_ref 以防 refspec 推送到受保护分支
-while read -r local_ref _ remote_ref _; do
-  [[ -z "$local_ref" ]] && continue
-  case "$local_ref" in
-    refs/heads/*)
-      b="${local_ref#refs/heads/}"
-      rb="${remote_ref#refs/heads/}"
-      # P-32: 禁止推 main/master（local 或 remote refspec 任一指向即拒绝；除非显式授权标记文件存在）
-      if [[ "$b" == "main" || "$b" == "master" || "$rb" == "main" || "$rb" == "master" ]]; then
-        if [[ -f "$ROOT/.git/ALLOW_MAIN_PUSH" ]]; then
-          echo "pre-push OK (main push explicitly allowed via .git/ALLOW_MAIN_PUSH)"
-        else
-          echo "pre-push FAIL P-32: pushing to $b${rb:+ /$rb} is forbidden (merge via main-protection workflow)"
-          echo "   to allow: create $ROOT/.git/ALLOW_MAIN_PUSH"
-          FAILED=1
-        fi
-        continue
-      fi
-      # P-31: 分支名规范
-      if echo "$b" | is_valid_branch; then
-        echo "pre-push OK: branch $b name valid"
-      else
-        echo "pre-push WARN P-31: branch '$b' off-standard (expect feat|fix|chore/issue-N-...)"
-      fi
-      ;;
-  esac
-done
+def main() -> int:
+    cfg = load_yaml(ROOT / "spec" / "dispatch.yaml")
+    findings: list[Finding] = []
 
-exit $FAILED
+    for topic in cfg.get("pre-push", []):
+        print(f"--- {topic} ---")
+        if topic == "workspace":
+            from workspace.tree_hygiene import run as tree_run
+            from workspace.file_placement import run as placement_run
+            findings.extend(tree_run())
+            findings.extend(placement_run())
+        elif topic == "code":
+            from code.lint import run as code_run
+            findings.extend(code_run())
+
+    print_findings(findings)
+    return aggregate_result(findings)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

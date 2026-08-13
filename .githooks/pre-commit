@@ -1,34 +1,33 @@
-#!/usr/bin/env bash
-# .githooks/pre-commit — 提交前的秒级合规检查（P-16/P-17/P-18）。
-# 只检查 staged 内容；用 git --no-verify 可绕过（可接受边界）。
-# 源 lib 位于 git 根目录的 lib/。
+#!/usr/bin/env python3
+"""pre-commit hook: runs workspace + code checks on staged + working tree."""
+import sys
+from pathlib import Path
 
-set -uo pipefail
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / ".."))
 
-ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
-# shellcheck source=../lib/regex.sh
-source "$ROOT/lib/regex.sh" 2>/dev/null || { echo "pre-commit: lib/regex.sh not found; skipping"; exit 0; }
-# shellcheck source=../lib/diff.sh
-source "$ROOT/lib/diff.sh" 2>/dev/null || true
+from _shared import Finding, Severity, aggregate_result, print_findings, load_yaml  # noqa: E402
 
-FAILED=0
 
-echo "== pre-commit: compliance checks =="
+def main() -> int:
+    cfg = load_yaml(ROOT / "spec" / "dispatch.yaml")
+    findings: list[Finding] = []
 
-if git rev-parse --is-inside-work-tree &>/dev/null; then
-  # P-16: 无行尾空白/冲突标记
-  if ! diff_check_no_ws_errors --cached; then
-    echo "pre-commit FAIL P-16: git diff --cached --check found errors"; FAILED=1
-  fi
-  # P-17: staged secrets
-  if ! diff_has_secrets --cached; then
-    echo "pre-commit FAIL P-17: secrets/tokens in staged diff"; FAILED=1
-  fi
-  # P-18: staged 生成文件
-  if ! diff_has_gen_artifacts --cached; then
-    echo "pre-commit FAIL P-18: generated/blacklisted files staged"; FAILED=1
-  fi
-fi
+    for topic in cfg.get("pre-commit", []):
+        print(f"--- {topic} ---")
+        if topic == "workspace":
+            from workspace.tree_hygiene import run as tree_run
+            from workspace.file_placement import run as placement_run
+            findings.extend(tree_run())
+            findings.extend(placement_run())
+        elif topic == "code":
+            from code.lint import run as code_run
+            findings.extend(code_run())
 
-if [[ $FAILED -eq 0 ]]; then echo "pre-commit OK"; fi
-exit $FAILED
+    print_findings(findings)
+    return aggregate_result(findings)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
