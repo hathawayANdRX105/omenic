@@ -63,7 +63,7 @@ pr_labels=$(gh_pr_view "$REPO" "$PR" '[.labels[]?.name] | join(",")')
 
 echo "== PR #$PR: $pr_title =="
 
-# ============ 2.1 title ============
+# ============ Title ============
 echo "--- title ---"
 if echo "$pr_title" | has_cjk; then
   report FAIL P-01 "PR title contains CJK (title should be English): $pr_title"
@@ -76,7 +76,7 @@ else
   report WARN P-02 "title not conventional commit (repo template allows natural English): $pr_title"
 fi
 
-# ============ 2.2 body 结构 ============
+# ============ PR body structure ============
 echo "--- body structure ---"
 for h in "What" "Why" "Issue" "Construction plan" "Delivery record" "How to test" "Checklist"; do
   if printf '%s' "$pr_body" | grep -qF "## $h"; then
@@ -100,7 +100,7 @@ else
   report WARN P-10 "What section has no Chinese prose (template requires Chinese)"
 fi
 
-# ============ 2.3 issue 关联 ============
+# ============ Issue linkage (Fixes / Related) ============
 echo "--- issue link ---"
 fixes_count=$( { printf '%s' "$pr_body" | grep -oE 'Fixes #[0-9]+' || true; } | sort -u | wc -l )
 if [[ "$pr_state" == "OPEN" ]] && [[ $fixes_count -gt 0 ]]; then
@@ -125,7 +125,7 @@ else
   report FAIL P-13 "one PR should close one primary issue"
 fi
 
-# ============ 2.4 label（从 .github/label-policy.yml 读取） ============
+# ============ Labels (driven by .github/label-policy.yml) ============
 echo "--- labels ---"
 # shellcheck source=../lib/label_policy.sh
 source "$SCRIPT_DIR/../lib/label_policy.sh"
@@ -168,7 +168,7 @@ else
   report PASS P-14b "no keyword suggestions (or policy not configured)"
 fi
 
-# ============ 2.5 diff 卫生（要求本地 git 仓库） ============
+# ============ Diff hygiene (requires local git repo) ============
 echo "--- diff hygiene ---"
 if [[ $IS_GIT_REPO -eq 0 ]]; then
   report PASS P-16 "not a git repo here; diff checks skipped"
@@ -187,7 +187,7 @@ else
   fi
 fi
 
-# ============ 2.6 review 产物 ============
+# ============ Review artifacts ============
 echo "--- review artifacts ---"
 # P-36: 顶层会话评论必须有至少一条 Agent 🤖 - CRG Review: 前缀的 CRG 审查产物
 conv_json=$(gh_pr_issue_comments "$REPO" "$PR" '.[] | .body')
@@ -244,7 +244,7 @@ else
   report WARN P-38 "no maintainer review (COMMENTED/APPROVED/CHANGES_REQUESTED) — human required"
 fi
 
-# ============ 2.7 inline thread 闭环 ============
+# ============ Inline thread closure ============
 echo "--- inline thread closure ---"
 # 计算根 finding 数量与各自 reply（仅统计未撤回的 active 评论）
 root_count=$(echo "$active_inline_json" | jq '[.[] | select(.in_reply_to_id == null)] | length')
@@ -283,7 +283,7 @@ else
   report WARN P-25 "$((replied_root-fix_replied))/$replied_root replies lack commit SHA reference"
 fi
 
-# ============ 2.8 CI（弱化 WARN） ============
+# ============ CI checks (WARN-level, not blocking) ============
 echo "--- CI (weak) ---"
 checks_failed=$(gh_pr_checks "$REPO" "$PR" '[.[] | select(.conclusion == "failure") | .name] | join(",")' 2>/dev/null || echo "")
 if [[ -z "$checks_failed" ]]; then
@@ -298,7 +298,7 @@ else
   fi
 fi
 
-# ============ 2.9 checkbox 证据同步 ============
+# ============ Checkbox evidence sync ============
 echo "--- checkbox sync ---"
 cp_section=$(printf '%s' "$pr_body" | awk '/^## Construction plan/{f=1;next}/^## /{f=0}f')
 if echo "$cp_section" | has_unchecked_checkbox; then
@@ -331,13 +331,14 @@ else
   report PASS P-30 "no Fixes issue found; n/a"
 fi
 
-# ============ 2.10 分支（本地） ============
+# ============ Branch name ============
 echo "--- branch ---"
-head_br=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "$pr_head_ref")
+# 使用 PR API 的 head ref (而非本地 HEAD), 避免在不同 worktree 运行时显示错误的分支名
+head_br="$pr_head_ref"
 if echo "$head_br" | is_valid_branch; then
   report PASS P-31 "branch name valid: $head_br"
 else
-  report WARN P-31 "branch name off-standard: $head_br (expect feat|fix|chore/issue-N-...) or main/master"
+  report WARN P-31 "branch name off-standard: $head_br (expect feat|fix|chore/issue-N-...|epic/issue-N-...|main|master|release/...)"
 fi
 
 echo "======"
