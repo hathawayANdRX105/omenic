@@ -7,12 +7,36 @@
 #   validate_issue.sh <repo> <issue>          — 默认：通用校验（I-01~I-10, I-20~I-22）
 #
 # 输出 RESULT: ALL PASS 才通过；任一 FAIL → 退出码 1。
+#
+# 豁免机制（避免对历史内容误报）：
+#   --cutoff=N    仅校验 issue 号 >= N（默认 55，即 #55 起强制新模板）
+#   --strict      强制审计模式，忽略 cutoff（用于全量审计历史 issue）
+#   环境变量 OMENIC_ISSUE_CUTOFF 也可设置默认 cutoff。
 
 set -euo pipefail
 
-REPO="${1:?usage: validate_issue.sh <owner/repo> <issue_number> [parent|sub]}"
+# ---- 解析 flag（插在位置参数之前）----
+CUTOFF="${OMENIC_ISSUE_CUTOFF:-55}"
+STRICT=0
+NEW_ARGS=()
+for a in "$@"; do
+  case "$a" in
+    --cutoff=*) CUTOFF="${a#*=}";;
+    --strict) STRICT=1;;
+    *) NEW_ARGS+=("$a");;
+  esac
+done
+set -- "${NEW_ARGS[@]+"${NEW_ARGS[@]}"}"
+
+REPO="${1:?usage: validate_issue.sh <owner/repo> <issue_number> [parent|sub] [--cutoff=N] [--strict]}"
 NUM="${2:?}"
 MODE="${3:-}"
+
+# ---- 应用 cutoff（豁免历史内容）----
+if [[ $STRICT -eq 0 ]] && [[ "$NUM" -lt "$CUTOFF" ]]; then
+  echo "== Issue #$NUM: SKIP (below cutoff $CUTOFF; legacy exempt. Use --strict to force.) =="
+  exit 0
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/gh_api.sh
@@ -34,6 +58,16 @@ issue_body=$(gh_issue_view "$REPO" "$NUM" '.body // ""')
 issue_state=$(gh_issue_view "$REPO" "$NUM" '.state')
 issue_labels=$(gh_issue_view "$REPO" "$NUM" '[.labels[]?.name] | join(",")')
 
+# MODE 自动检测：未显式传 parent/sub 时，调 gh_sub_issue_numbers 判断
+# 有 native sub-issues → parent；无 → sub。显式参数优先（不会被覆盖）。
+if [[ -z "$MODE" ]]; then
+  if _subs=$(gh_sub_issue_numbers "$REPO" "$NUM" 2>/dev/null) && [[ -n "$_subs" ]]; then
+    MODE="parent"
+  else
+    MODE="sub"
+  fi
+fi
+
 echo "== Issue #$NUM ($MODE): $issue_title =="
 
 # ---- I-01/I-02 模板与结构 ----
@@ -43,7 +77,9 @@ if [[ "$MODE" == "parent" ]]; then
   report PASS I-01/I-02 "parent mode: template structure n/a (Implementation Order instead)"
 else
   template_path=""
-  for t in .github/ISSUE_TEMPLATE/task.yml .github/ISSUE_TEMPLATE/feature.yml .github/ISSUE_TEMPLATE/bug.yml; do
+  # 先从脚本自身位置找（SCRIPT_DIR/bin → sibling ../.github/），再 fallback cwd 相对路径
+  for t in "$SCRIPT_DIR/../.github/ISSUE_TEMPLATE/task.yml" "$SCRIPT_DIR/../.github/ISSUE_TEMPLATE/feature.yml" "$SCRIPT_DIR/../.github/ISSUE_TEMPLATE/bug.yml" \
+           .github/ISSUE_TEMPLATE/task.yml .github/ISSUE_TEMPLATE/feature.yml .github/ISSUE_TEMPLATE/bug.yml; do
     [[ -f "$t" ]] && { template_path="$t"; break; }
   done
   if [[ -n "$template_path" ]]; then
@@ -51,8 +87,7 @@ else
     expected_headings=$(grep -B12 'required: true' "$template_path" | grep -oE 'label: [A-Za-z ]+' | sed 's/label: //' | sort -u || true)
   else
     expected_headings="Goal
-Done when
-Scope"
+Done when"
   fi
   found_all=1
   while IFS= read -r h; do
@@ -95,12 +130,28 @@ else
   fi
 fi
 
+# I-02b: Suspected areas 应含改动范围描述（涉及 + 不涉及）；空段或仅占位文字 → WARN
+echo "--- suspected areas ---"
+if [[ "$MODE" != "parent" ]]; then
+  suspected_section=$(printf '%s' "$issue_body" | awk '/^## Suspected areas/{f=1;next}/^## /{f=0}f')
+  if [[ -z "$(echo "$suspected_section" | tr -d '[:space:]')" ]]; then
+    report WARN I-02b "Suspected areas empty; describe affected files/modules and what is not touched"
+  else
+    report PASS I-02b "Suspected areas populated"
+  fi
+fi
+
 # ---- I-05~I-08 语言边界 ----
 echo "--- language ---"
 if echo "$issue_title" | has_cjk; then report PASS I-05 "title is Chinese";
 else report FAIL I-05 "title lacks Chinese (repo convention)"; fi
 
-bad_heading=$(printf '%s' "$issue_body" | heading_lines | has_cjk && echo hit || echo clean)
+# 改写避免 set -e + pipefail 反转退出码：has_cjk 退出 1（无 CJK）时 && echo hit 会让整体退出码反转
+if printf '%s' "$issue_body" | heading_lines | has_cjk; then
+  bad_heading=hit
+else
+  bad_heading=clean
+fi
 if [[ "$bad_heading" == "clean" ]]; then report PASS I-06 "headings are English only";
 else report FAIL I-06 "headings contain CJK (headings must be English)"; fi
 
@@ -122,8 +173,9 @@ fi
 
 # ---- I-09 路径真实性（WARN） ----
 echo "--- path realism ---"
-if [[ -d . ]]; then
+if git rev-parse --is-inside-work-tree &>/dev/null; then
   missing=0
+  # shellcheck disable=SC2016 # 字面反引号（markdown code span 边界），禁用展开提示
   while IFS= read -r p; do
     p="${p//\`/}"
     [[ -z "$p" ]] && continue
@@ -149,42 +201,90 @@ if [[ "$MODE" == "sub" ]]; then
 
 elif [[ "$MODE" == "parent" ]]; then
   echo "--- parent format ---"
-  if printf '%s' "$issue_body" | grep -q 'Done when'; then report FAIL I-16 "parent must NOT have Done when section";
+  # I-16: parent 必须无 Done when（parent 不直接产出验收，由 sub 承担）
+  if printf '%s' "$issue_body" | grep -q '## Done when'; then report FAIL I-16 "parent must NOT have Done when section";
   else report PASS I-16 "parent has no Done when"; fi
-  if printf '%s' "$issue_body" | grep -q '## Implementation Order'; then report PASS I-17 "parent has Implementation Order";
-  else report FAIL I-17 "parent lacks Implementation Order section"; fi
-  io_numbers=$(printf '%s' "$issue_body" | awk '/^## Implementation Order/{f=1;next}/^## /{f=0}f' | grep -oE '\(#[0-9]+\)' | tr -d '#()' | sort -un)
-  actual=$(gh_sub_issue_numbers "$REPO" "$NUM" | sort -u)
+
+  # I-18: parent 必须建立 native sub-issues（GitHub 进度条/页面渲染依赖此关系；
+  # 文字版 Implementation Order 不再替代它）
+  actual=$(gh_sub_issue_numbers "$REPO" "$NUM" 2>/dev/null | sort -un || echo "")
   if [[ -n "$actual" ]]; then
-    if [[ "$io_numbers" == "$actual" ]]; then report PASS I-18/I-19 "Implementation Order matches native sub-issues ($(echo "$io_numbers" | tr '\n' ',' | sed 's/,$//'))";
-    else report FAIL I-18/I-19 "Implementation Order ($(echo "$io_numbers" | tr '\n' ',' | sed 's/,$//')) vs native sub-issues ($(echo "$actual" | tr '\n' ',' | sed 's/,$//'))"; fi
+    report PASS I-18 "parent has native sub-issues ($(echo "$actual" | tr '\n' ',' | sed 's/,$//'))"
   else
-    report WARN I-19 "no native sub-issues found for parent (relationship not established)"
+    report FAIL I-18 "parent has no native sub-issues (use GitHub sub-issue feature or: gh api -X POST repos/OWNER/REPO/issues/PARENT/sub_issues -F sub_issue_id=DB_ID)"
   fi
-  # 检查 column：Implementation Order 应含 child 号+标题
-  if [[ -n "$io_numbers" ]]; then report PASS I-18 "Implementation Order lists sub-issue numbers";
-  else report WARN I-18 "Implementation Order has no sub-issue numbers"; fi
+
+  # I-17/I-19: Implementation Order 为可选（仅在有依赖顺序或特殊说明时才写）
+  # 若存在则必须与 native sub-issues 一致（避免内容/UI 漂移）
+  if printf '%s' "$issue_body" | grep -q '## Implementation Order'; then
+    report PASS I-17 "Implementation Order present (optional; use only for dep order or special notes)"
+    io_numbers=$( { printf '%s' "$issue_body" | awk '/^## Implementation Order/{f=1;next}/^## /{f=0}f' | grep -oE '\(#[0-9]+\)' || true; } | tr -d '#()' | sort -un)
+    if [[ -n "$io_numbers" ]] && [[ -n "$actual" ]]; then
+      if [[ "$io_numbers" == "$actual" ]]; then
+        report PASS I-19 "Implementation Order matches native sub-issues"
+      else
+        report FAIL I-19 "Implementation Order ($(echo "$io_numbers" | tr '\n' ',' | sed 's/,$//')) != native sub-issues ($(echo "$actual" | tr '\n' ',' | sed 's/,$//'))"
+      fi
+    fi
+  else
+    report PASS I-17 "no Implementation Order section (optional; native sub-issues list is authoritative)"
+  fi
 fi
 
-# ---- I-20/I-21 label ----
+# ---- I-20/I-21 label（从 .github/label-policy.yml 读取） ----
 echo "--- labels ---"
+# shellcheck source=../lib/label_policy.sh
+source "$SCRIPT_DIR/../lib/label_policy.sh"
 valid_labels=$(gh_label_list "$REPO")
+type_labels_cfg=$(lp_type_labels)
+
 missing=0
-for l in $(echo "$issue_labels" | tr ',' '\n'); do
-  [[ -z "$l" ]] && continue
-  if ! grep -qxF "$l" <<<"$valid_labels"; then printf '  missing label: %s\n' "$l" >&2; missing=1; fi
+mapfile -t _i_lbls < <(printf '%s\n' "$issue_labels" | tr ',' '\n')
+for l in "${_i_lbls[@]}"; do
+  l="${l# }"; l="${l% }"; [[ -z "$l" ]] && continue
+  if ! grep -qxF "$l" <<<"$valid_labels"; then printf '  unknown label not in repo: %s\n' "$l" >&2; missing=1; fi
 done
-if [[ $missing -eq 0 ]]; then report PASS I-20 "labels all exist"; else report FAIL I-20 "some labels do not exist in repo"; fi
-if echo "$issue_labels" | grep -qE '(bug|enhancement|chore)'; then report PASS I-21 "type label present (bug/enhancement/chore)";
-else report FAIL I-21 "no type label"; fi
+if [[ $missing -eq 0 ]]; then report PASS I-20 "labels all exist in repo"; else report FAIL I-20 "some labels do not exist in repo"; fi
+
+# I-21: 至少一个 type label（从配置读取，配置缺失时 fallback）
+type_hit=0
+for l in "${_i_lbls[@]}"; do
+  l="${l# }"; l="${l% }"; [[ -z "$l" ]] && continue
+  if grep -qxF "$l" <<<"$type_labels_cfg"; then type_hit=1; break; fi
+done
+if [[ $type_hit -eq 1 ]]; then
+  report PASS I-21 "type label present"
+else
+  report FAIL I-21 "no type label (expected one of: $(echo "$type_labels_cfg" | paste -sd', ' -))"
+fi
+
+# I-21b: 关键字建议（WARN 级辅助）— 标题/body 命中关键字但缺对应 label 时提示
+current_labels=$(echo "$issue_labels" | tr ',' '\n')
+suggested=$(lp_suggest_for "$issue_title
+$issue_body")
+if [[ -n "$suggested" ]]; then
+  missing_suggestions=""
+  while IFS= read -r sug; do
+    [[ -z "$sug" ]] && continue
+    if ! grep -qxF "$sug" <<<"$current_labels"; then
+      missing_suggestions="$missing_suggestions $sug"
+    fi
+  done <<<"$suggested"
+  if [[ -n "$missing_suggestions" ]]; then
+    report WARN I-21b "based on content keywords, consider also labeling:$missing_suggestions"
+  else
+    report PASS I-21b "content keywords align with assigned labels"
+  fi
+else
+  report PASS I-21b "no keyword suggestions (or policy not configured)"
+fi
 
 # ---- I-22 关闭时机 ----
 echo "--- closure ---"
-if [[ "$issue_state" == "CLOSED" ]]; then
+if [[ "$issue_state" == "closed" || "$issue_state" == "CLOSED" ]]; then
   # 收集 timeline 证据：closed 事件（用户/系统）与 cross-referenced（PR 引用）
   timeline=$(gh_api_get "repos/$REPO/issues/$NUM/timeline" '[.[] | {event, actor: .actor.login, commit_id, pr: .source.issue.number, ref: .source.issue.pull_request.merged_at}]' 2>/dev/null || echo "[]")
   closed_events=$(echo "$timeline" | jq '[.[] | select(.event == "closed")] | length')
-  cross_refs=$(echo "$timeline" | jq '[.[] | select(.event == "cross-referenced" and .ref != null)] | length')
   # 简化判定：有 closed 事件即视为有关闭动作；无则告警。语义归因无 ground truth → WARN 不强执 FAIL。
   if [[ $closed_events -gt 0 ]]; then
     report PASS I-22 "issue closed with explicit closed event ($closed_events)"

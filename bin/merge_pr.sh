@@ -25,18 +25,22 @@ info "merge_pr.sh $REPO PR #$PR (dry_run=${DRY_RUN:-no})"
 # ---- 0. 重读 PR 最新状态 ----
 pr_state=$(gh_pr_view "$REPO" "$PR" '.state')
 pr_draft=$(gh_pr_view "$REPO" "$PR" '.draft // false')
-[[ "$pr_state" == "OPEN" ]] || fail "PR #$PR is not OPEN (state=$pr_state)"
+[[ "$pr_state" == "open" || "$pr_state" == "OPEN" ]] || fail "PR #$PR is not OPEN (state=$pr_state)"
 info "PR #$PR state=$pr_state draft=$pr_draft"
 
-# ---- 1. P-33 草稿置 ready ----
+# ---- 1. P-33 草稿置 ready（dry-run 跳过） ----
 if [[ "$pr_draft" == "true" ]]; then
-  info "draft PR; marking ready (gh pr ready)"
-  gh pr ready "$PR" --repo "$REPO" >/dev/null || fail "could not mark PR ready"
+  if [[ "$DRY_RUN" == "--dry-run" ]]; then
+    info "draft PR; would run gh pr ready (skipped in dry-run)"
+  else
+    info "draft PR; marking ready (gh pr ready)"
+    gh pr ready "$PR" --repo "$REPO" >/dev/null || fail "could not mark PR ready"
+  fi
 fi
 
 # ---- 2. 关联 issue 侧校验 ----
 # 从 PR body 的 Fixes 提取主 issue（在每个 issue 校验对象是单个 PR 关闭它的那个）
-primary_issue=$(gh_pr_fixes_issue "$REPO" "$PR" | head -1)
+primary_issue=$( { gh_pr_fixes_issue "$REPO" "$PR" 2>/dev/null || true; } | head -1)
 if [[ -n "$primary_issue" ]]; then
   info "primary issue: #$primary_issue"
   "$SCRIPT_DIR/validate_issue.sh" "$REPO" "$primary_issue" || fail "issue #$primary_issue validation failed"
@@ -70,7 +74,7 @@ gh pr merge "$PR" --repo "$REPO" --squash --delete-branch || fail "merge command
 sleep 3
 post_state=$(gh_pr_view "$REPO" "$PR" '.state' 2>/dev/null || echo "")
 merge_commit=$(gh_pr_view "$REPO" "$PR" '.merge_commit_sha // empty' 2>/dev/null || echo "")
-if [[ "$post_state" != "MERGED" ]]; then
+if [[ "$post_state" != "MERGED" && "$post_state" != "merged" ]]; then
   fail "P-34 post-merge: PR state=$post_state (expected MERGED)"
 fi
 info "P-34 PR merged: state=$post_state commit=$merge_commit"

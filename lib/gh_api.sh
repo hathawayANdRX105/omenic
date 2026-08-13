@@ -8,14 +8,14 @@ set -euo pipefail
 # gh_api_get <endpoint> [jq_expr] — 分页 GET + 重试（网络类错误重试 3 次）
 gh_api_get() {
   local endpoint="$1" jq_expr="${2:-}" out rc try
-  for try in 1 2 3; do
+  for try in 1 2 3 4 5 6; do
     if [[ -n "$jq_expr" ]]; then
       out=$(gh api --paginate "$endpoint" --jq "$jq_expr" 2>&1) && rc=0 || rc=$?
     else
       out=$(gh api --paginate "$endpoint" 2>&1) && rc=0 || rc=$?
     fi
-    if [[ $rc -ne 0 ]] && [[ "$out" == *"EOF"* || "$out" == *"unexpected EOF"* ]]; then
-      sleep $((try * 2)); continue
+    if [[ $rc -ne 0 ]] && [[ "$out" == *"EOF"* || "$out" == *"unexpected EOF"* || "$out" == *"connection reset"* || "$out" == *"Connection closed"* ]]; then
+      sleep $((try * 3)); continue
     fi
     break
   done
