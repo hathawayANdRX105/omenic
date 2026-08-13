@@ -67,8 +67,16 @@ if [[ "$DRY_RUN" == "--dry-run" ]]; then
 fi
 
 # ---- 6. 执行合并 ----
+# squash merge 默认用 PR 标题 + 首条 commit body, 不读 PR body, 导致 PR body 里
+# 的 "Fixes #N" 不触发 GitHub auto-close。这里显式从 PR body 提取 Fixes 行
+# 拼到 squash commit body, 保证合并后关联 issue 自动关闭。
 info "merging PR #$PR (squash, delete branch)"
-gh pr merge "$PR" --repo "$REPO" --squash --delete-branch || fail "merge command failed"
+pr_body_full=$(gh_pr_view "$REPO" "$PR" '.body // ""')
+pr_title=$(gh_pr_view "$REPO" "$PR" '.title')
+squash_body=$(printf '%s\n\n%s\n' "$pr_body_full" "$(printf '%s\n' "$pr_body_full" | grep -iE '^(fixes|closes|resolves) #' | sort -u)")
+gh pr merge "$PR" --repo "$REPO" --squash --delete-branch \
+  --subject "$pr_title (#$PR)" \
+  --body "$squash_body" || fail "merge command failed"
 
 # ---- 7. P-34 合并后复查 ----
 sleep 3
