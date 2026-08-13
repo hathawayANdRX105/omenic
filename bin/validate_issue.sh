@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-# ---- 解析 flag（插在位置参数之前）----
+# ---- Flag parsing (positional args may be preceded by flags) ----
 CUTOFF="${OMENIC_ISSUE_CUTOFF:-55}"
 STRICT=0
 NEW_ARGS=()
@@ -32,7 +32,7 @@ REPO="${1:?usage: validate_issue.sh <owner/repo> <issue_number> [parent|sub] [--
 NUM="${2:?}"
 MODE="${3:-}"
 
-# ---- 应用 cutoff（豁免历史内容）----
+# ---- Apply cutoff (exempt legacy content) ----
 if [[ $STRICT -eq 0 ]] && [[ "$NUM" -lt "$CUTOFF" ]]; then
   echo "== Issue #$NUM: SKIP (below cutoff $CUTOFF; legacy exempt. Use --strict to force.) =="
   exit 0
@@ -70,7 +70,7 @@ fi
 
 echo "== Issue #$NUM ($MODE): $issue_title =="
 
-# ---- I-01/I-02 模板与结构 ----
+# ---- Template structure ----
 # parent 模式跳过（parent 有 Implementation Order 无 Done when）；其余从模板动态读取必填 heading
 echo "--- structure ---"
 if [[ "$MODE" == "parent" ]]; then
@@ -141,7 +141,7 @@ if [[ "$MODE" != "parent" ]]; then
   fi
 fi
 
-# ---- I-05~I-08 语言边界 ----
+# ---- Language boundary ----
 echo "--- language ---"
 if echo "$issue_title" | has_cjk; then report PASS I-05 "title is Chinese";
 else report FAIL I-05 "title lacks Chinese (repo convention)"; fi
@@ -171,7 +171,7 @@ else
   report PASS I-xx "no fullwidth brackets in title"
 fi
 
-# ---- I-09 路径真实性（WARN） ----
+# ---- Path realism (WARN) ----
 echo "--- path realism ---"
 if git rev-parse --is-inside-work-tree &>/dev/null; then
   missing=0
@@ -189,15 +189,20 @@ else
   report PASS I-09 "not in repo, path check skipped"
 fi
 
-# ---- 模式分派：sub / parent ----
+# ---- Mode dispatch: sub / parent ----
 if [[ "$MODE" == "sub" ]]; then
   echo "--- sub-issue self-contained ---"
-  bad=$(printf '%s\n' "$issue_body" | grep -nE '^(Parent|Depends on|\*\*Parent\*\*|\*\*Depends|Blocks |依赖：|Related #)' || true)
+  # 行首的显式依赖声明应当通过 GitHub native sub-issue 关系表达,
+  # 不应在 body 里用文字声明。只 catch 行首的声明形式, 不影响
+  # Additional context 里写到 "父 issue: #N" 这种回顾性引用。
+  bad=$(printf '%s\n' "$issue_body" | grep -nE '^(Depends on\s*[:：]|\*\*Depends.*[:：]|Blocks\s+[:：]|依赖[:：]|Related\s*#|Parent PR\s*[:：])' || true)
   if [[ -n "$bad" ]]; then report FAIL I-11/13/14 "forbidden cross-references in sub-issue:"; printf '%s\n' "$bad" >&2;
   else report PASS I-11/13/14 "no parent/dep/sibling references"; fi
-  pr_ref=$(printf '%s\n' "$issue_body" | grep -nE '(PR #[0-9]+|pull/[0-9]+|待补 PR|TODO.*PR)' || true)
-  if [[ -n "$pr_ref" ]]; then report FAIL I-12 "sub-issue has PR references/placeholders"; printf '%s\n' "$pr_ref" >&2;
-  else report PASS I-12 "no PR references"; fi
+  # 只 catch 草稿阶段的 PR 占位关键词 (说明 sub-issue 还没动手实现)。
+  # 历史引用 (PR-N / PR #N squash 等) 是合理的上下文, 不应阻止。
+  pr_ref=$(printf '%s\n' "$issue_body" | grep -nE '(待补\s*PR|TODO.*PR|需\s*PR|PR 关联[:：])' || true)
+  if [[ -n "$pr_ref" ]]; then report FAIL I-12 "sub-issue has PR placeholders/declarations:"; printf '%s\n' "$pr_ref" >&2;
+  else report PASS I-12 "no PR placeholders"; fi
 
 elif [[ "$MODE" == "parent" ]]; then
   echo "--- parent format ---"
@@ -231,7 +236,7 @@ elif [[ "$MODE" == "parent" ]]; then
   fi
 fi
 
-# ---- I-20/I-21 label（从 .github/label-policy.yml 读取） ----
+# ---- Labels (driven by .github/label-policy.yml) ----
 echo "--- labels ---"
 # shellcheck source=../lib/label_policy.sh
 source "$SCRIPT_DIR/../lib/label_policy.sh"
@@ -279,7 +284,7 @@ else
   report PASS I-21b "no keyword suggestions (or policy not configured)"
 fi
 
-# ---- I-22 关闭时机 ----
+# ---- Closure ----
 echo "--- closure ---"
 if [[ "$issue_state" == "closed" || "$issue_state" == "CLOSED" ]]; then
   # 收集 timeline 证据：closed 事件（用户/系统）与 cross-referenced（PR 引用）
