@@ -325,7 +325,7 @@ if [[ -n "$issue_num" ]]; then
   elif [[ $done_total -eq $done_checked ]]; then
     report PASS P-30 "issue #$issue_num Done when all checked ($done_checked/$done_total)"
   else
-    report WARN P-30 "issue #$issue_num Done when not fully checked ($done_checked/$done_total)"
+    report FAIL P-30 "issue #$issue_num Done when not fully checked ($done_checked/$done_total) — sub-issue must finish all boxes before its PR merges"
   fi
 else
   report PASS P-30 "no Fixes issue found; n/a"
