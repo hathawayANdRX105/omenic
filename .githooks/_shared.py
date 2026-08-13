@@ -232,3 +232,22 @@ def load_yaml(path: str | Path) -> dict[str, Any]:
     with p.open("r", encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
     return data or {}
+
+# ---------------------------------------------------------------------------
+# External command runner (for code/ lint wrappers)
+# ---------------------------------------------------------------------------
+def run_external(cmd: list[str], cwd: Optional[str | Path] = None) -> tuple[int, str]:
+    """Run an external command, returning (exit_code, combined_output).
+
+    Used by code/ lint wrappers to invoke rustfmt/clippy/gofmt/etc.
+    Does NOT retry — lint tools are local and deterministic.
+    """
+    proc = subprocess.run(
+        cmd,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    return proc.returncode, combined.strip()

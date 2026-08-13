@@ -1,0 +1,6 @@
+enabled: true
+command: ruff
+args: ["check"]
+fail_severity: FAIL
+paths_include: ["**/*.py"]
+paths_exclude: [".wt/", "__pycache__/"]
