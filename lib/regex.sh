@@ -68,25 +68,29 @@ is_genpath_hit() { # stdin 每行一个路径，命中黑名单 → exit 0
 #   关键是表明意图并说明理由；不限定词表。
 
 # stdin（一段评论 body）以 Inline Review 前缀开头 → exit 0
+# 接受可选的 markdown heading 前缀
 is_agent_finding_inline() {
-  grep -qE '^Agent 🤖 - Inline Review( P[0-3])?:'
+  grep -qE '^#{0,6}\s*Agent 🤖 - Inline Review( P[0-3])?:'
 }
 
 # stdin 以 CRG Review 前缀开头 → exit 0
+# 接受可选的 markdown heading 前缀 (## 或 ###), 因为 CRG review 用 ## 包装
 is_agent_finding_crg() {
-  grep -qE '^Agent 🤖 - CRG Review:'
+  grep -qE '^#{0,6}\s*Agent 🤖 - CRG Review:'
 }
 
 # stdin 以任意 agent reply 前缀开头（含 Fix/Block/Resolve/Note 等，但排除 Inline/CRG Review）→ exit 0
+# 接受可选的 markdown heading 前缀
 is_agent_reply() {
   # 用两条 grep 实现 "agent 前缀 且 不是 finding" 等价于 lookahead
-  grep -qE '^Agent 🤖 - [A-Z][A-Za-z]*( P[0-3])?:' \
-    && ! grep -qE '^Agent 🤖 - (Inline Review( P[0-3])?|CRG Review):'
+  grep -qE '^#{0,6}\s*Agent 🤖 - [A-Z][A-Za-z]*( P[0-3])?:' \
+    && ! grep -qE '^#{0,6}\s*Agent 🤖 - (Inline Review( P[0-3])?|CRG Review):'
 }
 
 # stdin 以任意 agent 前缀开头（finding 或 reply）→ exit 0
+# 接受可选的 markdown heading 前缀
 is_agent_prefixed() {
-  grep -qE '^Agent 🤖 - [A-Z][A-Za-z]*( P[0-3])?:'
+  grep -qE '^#{0,6}\s*Agent 🤖 - [A-Z][A-Za-z]*( P[0-3])?:'
 }
 
 # stdin 含 commit SHA 引用（独立 7-40 位 hex 或带 sha=/commit 上下文）→ exit 0
