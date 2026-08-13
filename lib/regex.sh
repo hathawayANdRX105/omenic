@@ -40,7 +40,7 @@ is_conventional_title() { # stdin 标题匹配 → exit 0
 }
 
 # --- 分支名规范 ---
-BRANCH_RE='^(feat|fix|chore)/issue-[0-9]+-.+|^(main|master|release/)'
+BRANCH_RE='^(feat|fix|chore)/issue-[0-9]+-.+|^epic/issue-[0-9]+-.+|^(main|master|release/)'
 is_valid_branch() { # stdin 分支名匹配 → exit 0
   grep -qE "$BRANCH_RE"
 }
