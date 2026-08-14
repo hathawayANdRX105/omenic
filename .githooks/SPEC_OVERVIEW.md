@@ -40,134 +40,127 @@
 └── ruff.toml                  # ruff 配置（缓存重定向到 /tmp）
 ```
 
+## 本文档用途
+
+本文档是 `.githooks/` 全部检查规则的**唯一总览**，供人/agent 对照审查：
+
+- 列出每个主题（GitHub / Code / Workspace / Cleanup / 拦截门 / 钩子）的全部规则、实现位置、严重度、触发时机
+- 规则**只**在 `.githooks/spec/*.yaml`（参数）和对应校验器（逻辑）两处，改规则只改 spec，校验器自动读取
+- **新增/修改规则后必须更新本文档**；merge 时校验 spec 与本文档一致性（见文末"更新与校验"）
+- 规则编号采用**主题前缀 + 连续编号**（IS/PR/RV/GT/CD/WS/CL），旧编号不再使用
+
 ## 主题一：GitHub（github/）
 
-### Issue 规则（spec/github_issues.yaml → github/issues.py）
+### Issue 规则（IS-01 ~ IS-16）
 
-- ✅ I-01/I-02 必填段完整性（check_content 实现，run 触发）— FAIL
-- ✅ I-02b Suspected areas 非空（check_content）— WARN
-- ✅ I-03 body 聚焦（check_content）— INFO/WARN
-- ✅ I-04 Done when 必须 checkbox、禁 table（check_content）— FAIL
-- ✅ I-05 标题中文（check_content）— FAIL
-- ✅ I-06 heading 英文（check_content）— FAIL
-- ✅ I-07 正文中文（check_content）— FAIL
-- ✅ I-09 反引号路径存在性（check_content）— WARN
-- ✅ I-11/13/14 sub 禁 cross-reference（check_content）— FAIL
-- ✅ I-12 sub 禁 PR 占位符（check_content）— FAIL
-- ✅ I-16 parent 禁 Done when（check_content）— FAIL
-- ✅ I-17 Implementation Order 可选（check_content）— INFO
-- ✅ I-18 parent 必须有 native sub-issues（run API，调 sub_issues）— FAIL
-- ✅ I-19 Implementation Order 与 native sub-issues 一致（run API）— FAIL
-- ✅ I-20 label 必须存在于仓库（run API，调 /labels）— FAIL
-- ✅ I-21 type label 存在（check_content）— FAIL
-- ✅ I-21b 关键字→label 建议（check_content）— WARN
-- ✅ I-22 关闭事件（check_content）— INFO
-- ✅ I-22b 关闭时 Done when 全勾（check_content）— FAIL
-- ✅ I-xx 全角括号、禁词（check_content）— FAIL
-- ✅ I-xx 标题全角括号（check_content，spec.forbidden_brackets_in_title）— FAIL
-- ✅ I-00 标题禁用前缀（check_content，spec.title_forbidden_prefixes）— FAIL
-- ✅ I-00 正文禁 Labels 段（check_content，spec.labels_section_forbidden）— FAIL
-- ✅ I-30 正文含字面 `\n`/`\r` 或 U+FFFD（check_content，spec.garbled_content_check）— FAIL
-- ✅ sub-issue 自动挂载 parent（gh-gate 创建后执行，spec.sub_issue_must_link_parent）
+- IS-01 必填段完整性（Goal/Background/Done when/Suspected areas/Out of scope/How to observe success）— FAIL
+- IS-02 Suspected areas 非空 — WARN
+- IS-03 body 聚焦（多 H1 提示）— WARN
+- IS-04 Done when 必须 checkbox、禁 table — FAIL
+- IS-05 标题中文 — FAIL
+- IS-06 heading 英文 — FAIL
+- IS-07 正文中文 — FAIL
+- IS-08 反引号路径存在性 — WARN
+- IS-09 sub 禁 cross-reference（Depends on/Blocks/Related #/Parent PR）— FAIL
+- IS-10 sub 禁 PR 占位符 — FAIL
+- IS-11 parent 禁 Done when — FAIL
+- IS-12 parent 必须有 native sub-issues — FAIL
+- IS-13 Implementation Order 可选且与 native sub-issues 一致 — FAIL/INFO
+- IS-14 label 存在性 + type label — FAIL
+- IS-15 关闭时 Done when 全勾（关闭前检查）— FAIL
+- IS-16 标题全角括号、禁词、乱码 — FAIL
 
-### PR 规则（spec/github_pull_requests.yaml → github/pull_requests.py）
+实现位置：`.githooks/github/issues.py` check_content（纯内容）+ run（API 检查 I-12/I-15 等）
 
-- ✅ P-01 标题英文（check_content）— FAIL
-- ✅ P-02 Conventional Commit 格式（check_content）— WARN
-- ✅ P-10 heading 英文、What 段中文（check_content）— FAIL/WARN
-- ✅ P-11 open PR 提前用 Fixes（check_content）— WARN
-- ✅ P-12 Fixes #N 存在性（check_content）— WARN
-- ✅ P-13 一个 PR 一个主 issue（check_content）— FAIL
-- ✅ P-14/P-20 label 存在性（run API，调 /labels）— FAIL
-- ✅ P-14b/P-21b 关键字→label 建议（check_content）— WARN
-- ✅ P-31 分支前缀合法（check_content）— FAIL
-- ✅ P-38 维护者审查（check_content）— WARN
-- ⚠️ P-39 closing reference（run API，简化版只查 Fixes，#126 范围）— INFO
-- ✅ P-xx 必填 body 段完整性（check_content）— FAIL
+### PR 规则（PR-01 ~ PR-12）
 
-### Review 规则（spec/github_reviews.yaml → github/reviews.py）
+- PR-01 标题英文（禁 CJK）— FAIL
+- PR-02 Conventional Commit 格式 — WARN
+- PR-03 必填 body 段完整性 — FAIL
+- PR-04 heading 英文、What 段中文 — FAIL/WARN
+- PR-05 一个 PR 一个主 issue（Fixes 数量）— WARN/FAIL
+- PR-06 label 存在性 + type label — FAIL
+- PR-07 Construction plan/Checklist 至少 2 个 checkbox — FAIL
+- PR-08 分支前缀合法 — FAIL
+- PR-09 维护者审查存在 — WARN
+- PR-10 Fixes 关联存在（closing reference）— INFO
+- PR-11 合并前 PR 内 checkbox 全勾（merge 时检查）— FAIL
+- PR-12 合并留言理由（merge 时必须 --body）— FAIL
 
-- ✅ P-22 禁 checkbox（reviews.py run）— FAIL
-- ✅ P-24 reply 用词合法（reviews.py run）— WARN
-- ✅ P-25 reply 详细程度（reviews.py run）— WARN
-- ✅ P-35 CRG/Inline Review 前缀格式（reviews.py run）— FAIL
-- ✅ P-36 CRG Review 存在（reviews.py run）— FAIL
-- ✅ P-37 inline findings 有回复（reviews.py run）— WARN
+实现位置：`.githooks/github/pull_requests.py` check_content + run
 
-## 主题二：Code（code/lint.py + code_*.yaml）
+### Review 规则（RV-01 ~ RV-06）
 
-分发器读 `spec/code_<lang>.yaml`，逐语言跑外部工具；工具缺失 → WARN 跳过（优雅降级）。
+- RV-01 禁 checkbox — FAIL
+- RV-02 reply 用词合法（Fix/Block/Resolve/Note/Withdraw/Supersede）— WARN
+- RV-03 reply 详细程度 — WARN
+- RV-04 CRG/Inline Review 前缀格式 — FAIL
+- RV-05 CRG Review 存在 — FAIL
+- RV-06 inline findings 有回复 — WARN
 
-| 语言 | 配置位置 | 工具命令 | fail_severity |
-|------|---------|---------|--------------|
-| rust | spec/code_rust.yaml → code/lint.py run_lang | cargo fmt --check | FAIL |
-| go | spec/code_go.yaml → code/lint.py run_lang | gofmt -l | FAIL |
-| javascript | spec/code_javascript.yaml → code/lint.py run_lang | eslint | FAIL |
-| typescript | spec/code_typescript.yaml → code/lint.py run_lang | npx tsc --noEmit | FAIL |
-| python | spec/code_python.yaml → code/lint.py run_lang | ruff check --no-cache | FAIL |
-| bash | spec/code_bash.yaml → code/lint.py run_lang | shellcheck | FAIL |
+实现位置：`.githooks/github/reviews.py`
 
-公共字段（每个 code_*.yaml）：
-- enabled（true/false）— 是否启用该语言
-- command / args — 外部工具调用
-- fail_severity（FAIL/WARN）— 失败等级
-- paths_include / paths_exclude — 扫描范围
+## 主题二：Code（CD-01 ~ CD-06）
 
-## 主题三：Workspace（workspace/ + workspace_*.yaml）
+- CD-01 rust：cargo fmt --check（spec/code_rust.yaml）
+- CD-02 go：gofmt -l（spec/code_go.yaml）
+- CD-03 javascript：eslint（spec/code_javascript.yaml）
+- CD-04 typescript：npx tsc --noEmit（spec/code_typescript.yaml）
+- CD-05 python：ruff check --no-cache（spec/code_python.yaml）
+- CD-06 bash：shellcheck（spec/code_bash.yaml）
 
-### tree_hygiene（spec/workspace_tree_hygiene.yaml）
+工具缺失 → WARN 跳过（优雅降级）。公共字段：enabled/command/args/fail_severity/paths_include/paths_exclude。
 
-- ✅ 空目录（workspace/tree_hygiene.py run）— WARN
-- ✅ 单文件目录（tree_hygiene.py run）— WARN
-- ✅ 深度 > max_depth（tree_hygiene.py run）— WARN
-- ✅ 孤儿/残留目录（tree_hygiene.py run）— WARN
-- ✅ ignore_paths（.wt/、node_modules/、target/、__pycache__/、.git/）
+实现位置：`.githooks/code/lint.py`
 
-### file_placement（spec/workspace_file_placement.yaml）
+## 主题三：Workspace（WS-01 ~ WS-02）
 
-- ✅ forbidden_patterns（workspace/file_placement.py run）— WARN
-- ✅ expected_locations（file_placement.py run）
-- ✅ ignore_paths
+- WS-01 tree_hygiene：空目录、单文件目录、深度 > max_depth、孤儿目录（spec/workspace_tree_hygiene.yaml）— WARN
+- WS-02 file_placement：forbidden_patterns（src/*_test.rs 等）、expected_locations（test_*.py → tests/、*.sh → bin/）（spec/workspace_file_placement.yaml）— WARN
 
-## 主题四：Cleanup（cleanup/ + cleanup_*.yaml）
+实现位置：`.githooks/workspace/tree_hygiene.py` + `file_placement.py`
 
-### branch_cleanup（spec/cleanup_branch_cleanup.yaml）
+## 主题四：Cleanup（CL-01 ~ CL-03）
 
-- ✅ 本地已 merged 到 main 的分支（cleanup/branch_cleanup.py run）— WARN
-- ✅ 远端已 merged 且与 main 一致的分支（branch_cleanup.py run）— WARN
-- ✅ 无远端追踪的孤儿本地分支（branch_cleanup.py run）— WARN
-- ✅ 临时分支（branch_cleanup.py run）— WARN
-- ✅ protected_branches（main/master/dev/release/*）不删
-- ✅ 当前分支不删
-- ✅ 默认 dry-run，--apply 才真删
+- CL-01 branch_cleanup：merged/orphan/temp 分支清理，dry-run 默认（spec/cleanup_branch_cleanup.yaml）— WARN
+- CL-02 tests_check：四语言测试命名/断言/helper（spec/cleanup_tests_*.yaml）— WARN
+- CL-03 docs_hygiene：全角括号/死链/遗留标记/空文件/CRLF（spec/cleanup_docs_hygiene.yaml）— WARN
 
-### tests_check（spec/cleanup_tests_{rust,go,javascript,bash}.yaml）
+实现位置：`.githooks/cleanup/`
 
-- ✅ rust：命名/断言（cleanup/tests_check.py check_file）— WARN
-- ✅ go：命名/断言（tests_check.py check_file）— WARN
-- ✅ javascript：命名/断言/helper（tests_check.py check_file）— WARN
-- ✅ bash：命名/断言（tests_check.py check_file）— WARN
-- 公共字段：enabled、naming_pattern、min_assertions_per_test、assert_patterns、required_helpers、paths_include/exclude
+## 主题五：拦截门（GT-01 ~ GT-07）
 
-### docs_hygiene（spec/cleanup_docs_hygiene.yaml）
+- GT-01 issue create 前校验（调 IS-*，FAIL 拒）— 触发：gh issue create
+- GT-02 pr create 前校验（调 PR-*，FAIL 拒）— 触发：gh pr create
+- GT-03 sub 自动挂载 parent（spec.sub_issue_must_link_parent）— 触发：gh issue create
+- GT-04 issue close 前 Done when 全勾 + 必须 --comment 理由 — 触发：gh issue close
+- GT-05 pr merge 前 checkbox 全勾 + 必须 --body 理由 — 触发：gh pr merge
+- GT-06 epic close 前所有 sub-issues 已关闭 — 触发：gh issue close（epic）
+- GT-07 merge 后自动在 PR 留言（含理由）— 触发：gh pr merge
 
-- ✅ 全角括号（cleanup/docs_hygiene.py check_file）— WARN
-- ✅ 死链（docs_hygiene.py check_file）— WARN
-- ✅ 遗留标记（docs_hygiene.py check_file）— WARN
-- ✅ 空文件/占位文件（docs_hygiene.py check_file）— WARN
-- ✅ CRLF 行尾（docs_hygiene.py check_file）— WARN
-- ✅ 行尾空白 / 缺尾换行（docs_hygiene.py check_file）— INFO
-- 可关：broken_link_check、check_fullwidth、cn_en_space_required
+实现位置：`.githooks/install_gh_gate.py`（安装到 ~/.local/bin/gh）
 
-## 主题五：钩子调度（spec/dispatch.yaml）
+## 主题六：钩子调度（spec/dispatch.yaml）
 
-- ✅ pre-commit `git commit` — workspace + code（轻量，不调 API）
-- ✅ pre-push `git push` — workspace + code + PR 校验 + reviews + cleanup（全量）
-- ✅ merge 手动 `python .githooks/merge` — PR 校验 + reviews + cleanup + squash 计划
+- pre-commit `git commit` — workspace（WS-*）+ code（CD-*），轻量不调 API
+- pre-push `git push` — workspace + code + PR 校验 + git diff path scope（只查 .wt/ 与 main 相关路径）
+- merge 手动 `python .githooks/merge` — 全量（PR + reviews + cleanup + CRG + ocr）
 
-## 架构说明
+## 触发式（lazy）规则映射
 
-- **规则只在两处**：`.githooks/spec/*.yaml`（参数）+ `.githooks/{github,code,workspace,cleanup}/*.py`（逻辑）
-- **gh-gate 不是主题，是执行器**：不含任何规则。创建前调 issues.check_content / pull_requests.check_content（规则从 spec 读），创建后调 issues.py / pull_requests.py（现实校验），FAIL 即拒。主题只有 github / code / workspace / cleanup 四个
-- **check_content 是纯函数**：不调 API，供 gh-gate 创建前用；run() 调 check_content + API 专属检查
-- **改规则**：只改对应 spec yaml，校验器从 spec 读，gh-gate 不用改
+只在使用特定 gh 命令 / git 操作时检查对应规则，不全量扫描：
+
+- gh issue create → IS-01~16、GT-01、GT-03
+- gh issue close → GT-04、GT-06（epic）
+- gh pr create → PR-01~10、GT-02
+- gh pr merge → PR-11、PR-12、GT-05、GT-07、RV-01~06
+- gh pr comment → RV-01~06
+- git commit → WS-01、WS-02、CD-01~06
+- git push → WS-01、WS-02、CD-01~06、PR-01~10（git diff path scope）
+- merge 手动 → 全量
+
+## 更新与校验
+
+- 新增/修改规则：只改 `.githooks/spec/*.yaml` 参数 + 对应校验器逻辑，更新本文档
+- merge 时校验：spec 规则与本文档一致性（通过 `python .githooks/audit.py` 或校验器检测）
+- 触发式按上表 lazy 执行，不全局扫描

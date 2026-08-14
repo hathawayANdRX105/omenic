@@ -142,7 +142,7 @@ bug
 
     assert len(findings) > 0
     # I-12 should PASS (no PR placeholders)
-    i12 = [f for f in findings if f.rule_id == "I-12"]
+    i12 = [f for f in findings if f.rule_id == "IS-10"]
     assert len(i12) == 1
     assert i12[0].severity.name == "INFO"
     print(f"sub test passed: {len(i12)} x I-12 PASS")
@@ -194,7 +194,7 @@ bug, enhancement
 
     assert len(findings) > 0
     # I-18 should PASS: native sub-issues present
-    i18 = [f for f in findings if f.rule_id == "I-18"]
+    i18 = [f for f in findings if f.rule_id == "IS-12"]
     assert len(i18) == 1
     assert i18[0].severity.name == "INFO"
     print(f"parent test passed: 1 x I-18 PASS")
@@ -243,7 +243,7 @@ def test_parity_I01_I02_template():
         findings = run("hathawayANdRX105/omenic", 100, mode="sub")
     finally:
         github.issues.gh_api_get = orig
-    i01 = [f for f in findings if f.rule_id == "I-01/I-02"]
+    i01 = [f for f in findings if f.rule_id == "IS-01"]
     assert len(i01) == 1
     assert i01[0].severity.name == "INFO"  # all headings present
     print("parity I-01/I-02 PASS")
@@ -264,9 +264,9 @@ def test_parity_I05_I06_I07_language():
         findings = run("hathawayANdRX105/omenic", 100, mode="sub")
     finally:
         github.issues.gh_api_get = orig
-    i05 = [f for f in findings if f.rule_id == "I-05"]
-    i06 = [f for f in findings if f.rule_id == "I-06"]
-    i07 = [f for f in findings if f.rule_id == "I-07"]
+    i05 = [f for f in findings if f.rule_id == "IS-05"]
+    i06 = [f for f in findings if f.rule_id == "IS-06"]
+    i07 = [f for f in findings if f.rule_id == "IS-07"]
     assert len(i05) == 1 and i05[0].severity.name == "INFO"  # title Chinese
     # i06: 依据 _headings 提取的 heading, 这里 body 没有 ## Heading, 所以 no CJK headings → PASS INFO
     assert len(i06) == 1
@@ -292,7 +292,7 @@ def test_parity_Ixx_fullwidth():
         findings = run("hathawayANdRX105/omenic", 100, mode="sub")
     finally:
         github.issues.gh_api_get = orig
-    i_xx = [f for f in findings if f.rule_id == "I-xx"]
+    i_xx = [f for f in findings if f.rule_id == "IS-16"]
     assert any(f.severity.name == "FAIL" for f in i_xx)
     print("parity I-xx FAIL on fullwidth PASS")
 

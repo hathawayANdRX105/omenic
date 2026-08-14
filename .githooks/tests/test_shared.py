@@ -160,11 +160,11 @@ def test_gh_api_paginate_handles_empty(fake_shared):
 # Finding + aggregate
 # ---------------------------------------------------------------------------
 def test_finding_format_without_line():
-    assert Finding("P-30", Severity.WARN, "msg").format() == "P-30   WARN\tmsg"
+    assert Finding("PR-05", Severity.WARN, "msg").format() == "PR-05  WARN\tmsg"
 
 
 def test_finding_format_with_line():
-    f = Finding("I-04", Severity.FAIL, "bad bracket", line_hint=12)
+    f = Finding("IS-04", Severity.FAIL, "bad bracket", line_hint=12)
     assert "L12" in f.format()
 
 

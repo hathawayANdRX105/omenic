@@ -60,7 +60,7 @@ def run(apply: bool = False) -> list[Finding]:
     local_action = local_cfg.get("action", "WARN")
     for b in merged_branches:
         findings.append(Finding(
-            "cleanup-local-merged",
+            "CL-01",
             Severity.WARN,
             f"local branch '{b}' is merged into main",
         ))
@@ -81,7 +81,7 @@ def run(apply: bool = False) -> list[Finding]:
             if branch_name in protected or branch_name == current_branch:
                 continue
             findings.append(Finding(
-                "cleanup-remote-merged",
+                "CL-01",
                 Severity.WARN,
                 f"remote branch '{ref}' is merged into origin/main",
             ))
@@ -103,7 +103,7 @@ def run(apply: bool = False) -> list[Finding]:
                 continue
             if "[" not in b and name in all_branches:
                 findings.append(Finding(
-                    "cleanup-orphan",
+                    "CL-01",
                     Severity.WARN,
                     f"local branch '{name}' has no remote tracking",
                 ))
@@ -118,7 +118,7 @@ def run(apply: bool = False) -> list[Finding]:
             continue
         if any(b.startswith(p) for p in temp_prefixes):
             findings.append(Finding(
-                "cleanup-temp",
+                "CL-01",
                 Severity.WARN,
                 f"temp branch '{b}' matches temp prefix",
             ))
@@ -128,7 +128,7 @@ def run(apply: bool = False) -> list[Finding]:
 
     if deleted:
         findings.append(Finding(
-            "cleanup-applied",
+            "CL-01",
             Severity.INFO,
             f"deleted {len(deleted)} branch(es): {deleted}",
         ))

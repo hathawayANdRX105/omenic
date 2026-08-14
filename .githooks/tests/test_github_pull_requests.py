@@ -99,7 +99,7 @@ def test_p01_title_english():
     """P-01: title with CJK → FAIL."""
     scripted = _pr_scripted(title="中文标题", head_ref="feat/test")
     findings = _patch_and_run(scripted)
-    p01 = [f for f in findings if f.rule_id == "P-01"]
+    p01 = [f for f in findings if f.rule_id == "PR-01"]
     assert len(p01) == 1
     assert p01[0].severity.name == "FAIL"
 
@@ -108,7 +108,7 @@ def test_p02_conventional_commit():
     """P-02: conventional commit title → INFO."""
     scripted = _pr_scripted(title="feat(scope): add feature", head_ref="feat/test")
     findings = _patch_and_run(scripted)
-    p02 = [f for f in findings if f.rule_id == "P-02"]
+    p02 = [f for f in findings if f.rule_id == "PR-02"]
     assert len(p02) == 1
     assert p02[0].severity.name == "INFO"
 
@@ -117,7 +117,7 @@ def test_p02_non_conventional():
     """P-02: non-conventional title → WARN."""
     scripted = _pr_scripted(title="just a description", head_ref="feat/test")
     findings = _patch_and_run(scripted)
-    p02 = [f for f in findings if f.rule_id == "P-02"]
+    p02 = [f for f in findings if f.rule_id == "PR-02"]
     assert len(p02) == 1
     assert p02[0].severity.name == "WARN"
 
@@ -131,7 +131,7 @@ def test_missing_body_heading():
     body = "## Issue\nFixes #100\n\n## What\n内容。\n"
     scripted = _pr_scripted(body=body, head_ref="feat/test")
     findings = _patch_and_run(scripted)
-    failures = [f for f in findings if f.rule_id == "P-xx" and f.severity.name == "FAIL"]
+    failures = [f for f in findings if f.rule_id == "PR-03" and f.severity.name == "FAIL"]
     assert len(failures) > 0
     assert any("Construction plan" in f.message for f in failures)
 
@@ -140,7 +140,7 @@ def test_all_body_headings_present():
     """All required body headings present → no P-xx FAIL."""
     scripted = _pr_scripted(head_ref="feat/test")
     findings = _patch_and_run(scripted)
-    fails = [f for f in findings if f.rule_id == "P-xx" and f.severity.name == "FAIL"]
+    fails = [f for f in findings if f.rule_id == "PR-03" and f.severity.name == "FAIL"]
     assert len(fails) == 0
 
 
@@ -153,27 +153,26 @@ def test_p11_premature_fixes():
     body = "## Issue\nFixes #100\n\n## What\n内容\n"
     scripted = _pr_scripted(body=body, state="open", head_ref="feat/test")
     findings = _patch_and_run(scripted)
-    p11 = [f for f in findings if f.rule_id == "P-11"]
-    assert len(p11) == 1
-    assert p11[0].severity.name == "WARN"
+    p11 = [f for f in findings if f.rule_id == "PR-05"]
+    assert any(f.severity.name == "WARN" for f in p11)
 
 
 def test_p12_no_fixes():
     """P-12: no Fixes and not draft → WARN."""
+    # P-11/P-12/P-13 merged to PR-05, so count may be 2+
     body = "## What\n内容\n"
     scripted = _pr_scripted(body=body, state="open", head_ref="feat/test")
     findings = _patch_and_run(scripted)
-    p12 = [f for f in findings if f.rule_id == "P-12"]
-    assert len(p12) == 1
-    assert p12[0].severity.name == "WARN"
+    p12 = [f for f in findings if f.rule_id == "PR-05"]
+    assert any(f.severity.name == "WARN" for f in p12)
 
 
 def test_p12_one_fixes():
     """P-12: exactly one Fixes → INFO."""
     scripted = _pr_scripted(head_ref="feat/test")
     findings = _patch_and_run(scripted)
-    p12 = [f for f in findings if f.rule_id == "P-12"]
-    assert len(p12) == 1
+    p12 = [f for f in findings if f.rule_id == "PR-05"]
+    assert len(p12) >= 1
     assert p12[0].severity.name == "INFO"
 
 
@@ -182,9 +181,9 @@ def test_p13_multiple_fixes():
     body = "## Issue\nFixes #100 Fixes #101\n\n## What\n内容\n"
     scripted = _pr_scripted(body=body, head_ref="feat/test")
     findings = _patch_and_run(scripted)
-    p13 = [f for f in findings if f.rule_id == "P-13"]
-    assert len(p13) == 1
-    assert p13[0].severity.name == "FAIL"
+    p13 = [f for f in findings if f.rule_id == "PR-05"]
+    assert len(p13) >= 1
+    assert any(f.severity.name == "FAIL" for f in p13)
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +194,7 @@ def test_p31_valid_branch():
     """P-31: valid branch prefix → INFO."""
     scripted = _pr_scripted(head_ref="feat/issue-100")
     findings = _patch_and_run(scripted)
-    p31 = [f for f in findings if f.rule_id == "P-31"]
+    p31 = [f for f in findings if f.rule_id == "PR-08"]
     assert len(p31) == 1
     assert p31[0].severity.name == "INFO"
 
@@ -204,7 +203,7 @@ def test_p31_invalid_branch():
     """P-31: invalid branch prefix → FAIL."""
     scripted = _pr_scripted(head_ref="random/branch")
     findings = _patch_and_run(scripted)
-    p31 = [f for f in findings if f.rule_id == "P-31"]
+    p31 = [f for f in findings if f.rule_id == "PR-08"]
     assert len(p31) == 1
     assert p31[0].severity.name == "FAIL"
 
@@ -217,7 +216,7 @@ def test_p10_headings_english():
     """P-10: English headings → INFO."""
     scripted = _pr_scripted(head_ref="feat/test")
     findings = _patch_and_run(scripted)
-    p10 = [f for f in findings if f.rule_id == "P-10"]
+    p10 = [f for f in findings if f.rule_id == "PR-04"]
     assert all(f.severity.name != "FAIL" for f in p10)
 
 
@@ -229,9 +228,8 @@ def test_p14_unknown_label():
     """P-14: label not in repo → FAIL."""
     scripted = _pr_scripted(labels=[{"name": "nonexistent"}], head_ref="feat/test")
     findings = _patch_and_run(scripted)
-    p14 = [f for f in findings if f.rule_id == "P-14"]
-    assert len(p14) == 1
-    assert p14[0].severity.name == "FAIL"
+    p14 = [f for f in findings if f.rule_id == "PR-06"]
+    assert any(f.severity.name == "FAIL" for f in p14)
 
 
 def test_p14b_no_type_label():
@@ -242,5 +240,5 @@ def test_p14b_no_type_label():
         head_ref="feat/test",
     )
     findings = _patch_and_run(scripted)
-    p14b_fail = [f for f in findings if f.rule_id == "P-14b" and f.severity.name == "FAIL"]
+    p14b_fail = [f for f in findings if f.rule_id == "PR-06" and f.severity.name == "FAIL"]
     assert len(p14b_fail) >= 1

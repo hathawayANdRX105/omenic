@@ -81,10 +81,10 @@ def run(comments: list[dict[str, Any]], cfg: dict[str, Any]) -> list[Finding]:
     print("--- P-22 checkbox forbidden ---")
     for body_text in bodies:
         if re.search(r"-\s*\[[ xX]\]", body_text):
-            findings.append(Finding("P-22", Severity.FAIL, "review comment contains checkbox (- [x] / - [ ])"))
+            findings.append(Finding("RV-01", Severity.FAIL, "review comment contains checkbox (- [x] / - [ ])"))
             break
     else:
-        findings.append(Finding("P-22", Severity.INFO, "no checkboxes in review comments"))
+        findings.append(Finding("RV-01", Severity.INFO, "no checkboxes in review comments"))
 
     # ---- P-35 review prefix format ----
     print("--- P-35 review prefix ---")
@@ -93,9 +93,9 @@ def run(comments: list[dict[str, Any]], cfg: dict[str, Any]) -> list[Finding]:
         for crg in crg_reviews:
             title = crg["title"]
             if _has_cjk(title):
-                findings.append(Finding("P-35", Severity.FAIL, f"CRG Review title contains CJK: {title}"))
+                findings.append(Finding("RV-04", Severity.FAIL, f"CRG Review title contains CJK: {title}"))
             else:
-                findings.append(Finding("P-35", Severity.INFO, f"CRG Review title is English: {title}"))
+                findings.append(Finding("RV-04", Severity.INFO, f"CRG Review title is English: {title}"))
 
         inline_reviews = _extract_inline_reviews(body)
         inline_cfg = cfg.get("review_formats", {}).get("inline_review", {})
@@ -103,9 +103,9 @@ def run(comments: list[dict[str, Any]], cfg: dict[str, Any]) -> list[Finding]:
         for ir in inline_reviews:
             level = ir["level"]
             if level not in allowed_levels and level != "unspecified":
-                findings.append(Finding("P-35", Severity.FAIL, f"Inline Review level '{level}' not in allowed {allowed_levels}"))
+                findings.append(Finding("RV-04", Severity.FAIL, f"Inline Review level '{level}' not in allowed {allowed_levels}"))
             else:
-                findings.append(Finding("P-35", Severity.INFO, f"Inline Review prefix OK: level={level}"))
+                findings.append(Finding("RV-04", Severity.INFO, f"Inline Review prefix OK: level={level}"))
 
     # ---- P-24 / P-25 reply threads ----
     print("--- P-24/P-25 reply threads ---")
@@ -114,8 +114,8 @@ def run(comments: list[dict[str, Any]], cfg: dict[str, Any]) -> list[Finding]:
         all_replies.extend(_extract_replies(body))
 
     if not all_replies:
-        findings.append(Finding("P-24", Severity.INFO, "no replies to check"))
-        findings.append(Finding("P-25", Severity.INFO, "no replies to check"))
+        findings.append(Finding("RV-02", Severity.INFO, "no replies to check"))
+        findings.append(Finding("RV-03", Severity.INFO, "no replies to check"))
     else:
         allowed_reply_words = cfg.get("review_formats", {}).get("crg_review", {}).get(
             "allowed_reply_words",
@@ -123,15 +123,15 @@ def run(comments: list[dict[str, Any]], cfg: dict[str, Any]) -> list[Finding]:
         )
         bad_replies = [r for r in all_replies if r["type"] not in allowed_reply_words]
         if bad_replies:
-            findings.append(Finding("P-24", Severity.WARN, f"some replies use disallowed words: {[r['type'] for r in bad_replies]}"))
+            findings.append(Finding("RV-02", Severity.WARN, f"some replies use disallowed words: {[r['type'] for r in bad_replies]}"))
         else:
-            findings.append(Finding("P-24", Severity.INFO, f"all {len(all_replies)} reply(ies) use allowed words"))
+            findings.append(Finding("RV-02", Severity.INFO, f"all {len(all_replies)} reply(ies) use allowed words"))
         # P-25: replies should reference commit SHA (simplified: check content length)
         short = [r for r in all_replies if len(r["reason"]) < 5]
         if short:
-            findings.append(Finding("P-25", Severity.WARN, f"{len(short)}/{len(all_replies)} replies lack sufficient detail"))
+            findings.append(Finding("RV-03", Severity.WARN, f"{len(short)}/{len(all_replies)} replies lack sufficient detail"))
         else:
-            findings.append(Finding("P-25", Severity.INFO, f"all {len(all_replies)} replies have sufficient detail"))
+            findings.append(Finding("RV-03", Severity.INFO, f"all {len(all_replies)} replies have sufficient detail"))
 
     # ---- P-36 CRG Review exists ----
     print("--- P-36 CRG review ---")
@@ -141,19 +141,19 @@ def run(comments: list[dict[str, Any]], cfg: dict[str, Any]) -> list[Finding]:
             has_crg = True
             break
     if has_crg:
-        findings.append(Finding("P-36", Severity.INFO, "CRG Review present in PR conversation"))
+        findings.append(Finding("RV-05", Severity.INFO, "CRG Review present in PR conversation"))
     else:
-        findings.append(Finding("P-36", Severity.FAIL, "no CRG Review comment in PR conversation"))
+        findings.append(Finding("RV-05", Severity.FAIL, "no CRG Review comment in PR conversation"))
 
     # ---- P-37 inline findings have reply ----
     print("--- P-37 findings resolved ---")
     inline_count = sum(len(_extract_inline_reviews(b)) for b in bodies)
     if inline_count == 0:
-        findings.append(Finding("P-37", Severity.INFO, "no inline findings to resolve"))
+        findings.append(Finding("RV-06", Severity.INFO, "no inline findings to resolve"))
     elif len(all_replies) >= inline_count:
-        findings.append(Finding("P-37", Severity.INFO, f"all {inline_count} inline finding(s) have reply ({len(all_replies)} replies)"))
+        findings.append(Finding("RV-06", Severity.INFO, f"all {inline_count} inline finding(s) have reply ({len(all_replies)} replies)"))
     else:
-        findings.append(Finding("P-37", Severity.WARN, f"{len(all_replies)}/{inline_count} inline findings have reply"))
+        findings.append(Finding("RV-06", Severity.WARN, f"{len(all_replies)}/{inline_count} inline findings have reply"))
 
     return findings
 

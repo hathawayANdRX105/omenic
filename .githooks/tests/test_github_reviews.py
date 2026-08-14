@@ -72,7 +72,7 @@ def test_p22_checkbox_in_review():
     """P-22: checkbox in review → FAIL."""
     comments = [{"body": "一些内容\n- [x] done\n更多内容"}]
     findings = run(comments, _cfg())
-    p22 = [f for f in findings if f.rule_id == "P-22"]
+    p22 = [f for f in findings if f.rule_id == "RV-01"]
     assert any(f.severity.name == "FAIL" for f in p22)
 
 
@@ -80,7 +80,7 @@ def test_p22_no_checkbox():
     """P-22: no checkbox → INFO."""
     comments = [{"body": "纯文本评论，没有 checkbox。"}]
     findings = run(comments, _cfg())
-    p22 = [f for f in findings if f.rule_id == "P-22"]
+    p22 = [f for f in findings if f.rule_id == "RV-01"]
     assert len(p22) == 1
     assert p22[0].severity.name == "INFO"
 
@@ -93,7 +93,7 @@ def test_p35_crg_english_title():
     """P-35: CRG review with English title → INFO."""
     comments = [{"body": "## Agent 🤖 - CRG Review: code quality\n\n中文内容。"}]
     findings = run(comments, _cfg())
-    p35 = [f for f in findings if f.rule_id == "P-35"]
+    p35 = [f for f in findings if f.rule_id == "RV-04"]
     assert all(f.severity.name == "INFO" for f in p35)
 
 
@@ -101,7 +101,7 @@ def test_p35_crg_cjk_title():
     """P-35: CRG review with CJK title → FAIL."""
     comments = [{"body": "## Agent 🤖 - CRG Review: 代码质量审查\n\n中文内容。"}]
     findings = run(comments, _cfg())
-    p35_fail = [f for f in findings if f.rule_id == "P-35" and f.severity.name == "FAIL"]
+    p35_fail = [f for f in findings if f.rule_id == "RV-04" and f.severity.name == "FAIL"]
     assert len(p35_fail) >= 1
 
 
@@ -109,7 +109,7 @@ def test_p35_inline_level_ok():
     """P-35: inline review with valid P-level → INFO."""
     comments = [{"body": "Agent 🤖 - Inline Review P1: 这里有个问题"}]
     findings = run(comments, _cfg())
-    p35 = [f for f in findings if f.rule_id == "P-35"]
+    p35 = [f for f in findings if f.rule_id == "RV-04"]
     assert all(f.severity.name == "INFO" for f in p35)
 
 
@@ -121,7 +121,7 @@ def test_p24_valid_reply():
     """P-24: valid reply words → INFO."""
     comments = [{"body": "Agent 🤖 - Fix: 修复了空指针异常"}]
     findings = run(comments, _cfg())
-    p24 = [f for f in findings if f.rule_id == "P-24"]
+    p24 = [f for f in findings if f.rule_id == "RV-02"]
     assert p24[0].severity.name == "INFO"
 
 
@@ -133,7 +133,7 @@ def test_p24_invalid_reply_word():
     # Let's test with a word that matches the regex but isn't in the config list
     findings = run(comments, _cfg())
     # No replies extracted since "Ack" doesn't match regex
-    p24 = [f for f in findings if f.rule_id == "P-24"]
+    p24 = [f for f in findings if f.rule_id == "RV-02"]
     assert len(p24) == 1
     assert p24[0].severity.name == "INFO"  # no replies to check
 
@@ -142,7 +142,7 @@ def test_p25_short_reply():
     """P-25: reply with very short content → WARN."""
     comments = [{"body": "Agent 🤖 - Fix: ok"}]
     findings = run(comments, _cfg())
-    p25 = [f for f in findings if f.rule_id == "P-25"]
+    p25 = [f for f in findings if f.rule_id == "RV-03"]
     assert len(p25) == 1
     assert p25[0].severity.name == "WARN"
 
@@ -155,7 +155,7 @@ def test_p36_crg_present():
     """P-36: CRG review present → INFO."""
     comments = [{"body": "## Agent 🤖 - CRG Review: analysis\n\n中文内容"}]
     findings = run(comments, _cfg())
-    p36 = [f for f in findings if f.rule_id == "P-36"]
+    p36 = [f for f in findings if f.rule_id == "RV-05"]
     assert p36[0].severity.name == "INFO"
 
 
@@ -163,7 +163,7 @@ def test_p36_crg_missing():
     """P-36: no CRG review → FAIL."""
     comments = [{"body": "普通评论，没有 CRG Review。"}]
     findings = run(comments, _cfg())
-    p36 = [f for f in findings if f.rule_id == "P-36"]
+    p36 = [f for f in findings if f.rule_id == "RV-05"]
     assert p36[0].severity.name == "FAIL"
 
 
@@ -178,7 +178,7 @@ def test_p37_all_findings_have_reply():
         {"body": "Agent 🤖 - Fix: 修复了问题一"},
     ]
     findings = run(comments, _cfg())
-    p37 = [f for f in findings if f.rule_id == "P-37"]
+    p37 = [f for f in findings if f.rule_id == "RV-06"]
     assert p37[0].severity.name == "INFO"
 
 
@@ -186,5 +186,5 @@ def test_p37_no_findings():
     """P-37: no inline findings → INFO."""
     comments = [{"body": "## Agent 🤖 - CRG Review: ok\n\n中文内容"}]
     findings = run(comments, _cfg())
-    p37 = [f for f in findings if f.rule_id == "P-37"]
+    p37 = [f for f in findings if f.rule_id == "RV-06"]
     assert p37[0].severity.name == "INFO"

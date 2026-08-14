@@ -52,7 +52,7 @@ def test_merged_local_branch(mock_git):
         (0, "* main [origin/main]\n  fix/old-branch [origin/fix/old-branch]"),  # vv
     ]
     findings = run()
-    merged = [f for f in findings if f.rule_id == "cleanup-local-merged"]
+    merged = [f for f in findings if f.rule_id == "CL-01"]
     assert len(merged) >= 1
     assert merged[0].severity.name == "WARN"
     assert "fix/old-branch" in merged[0].message
@@ -84,7 +84,7 @@ def test_temp_branch_flagged(mock_git):
         (0, "* main [origin/main]\n  tmp/scratch"),
     ]
     findings = run()
-    temp = [f for f in findings if f.rule_id == "cleanup-temp"]
+    temp = [f for f in findings if f.rule_id == "CL-01"]
     assert len(temp) >= 1
     assert "tmp/scratch" in temp[0].message
 
@@ -100,7 +100,7 @@ def test_orphan_branch_flagged(mock_git):
         (0, "* main [origin/main]\n  feat/orphan"),  # no [origin/...] for orphan
     ]
     findings = run()
-    orphan = [f for f in findings if f.rule_id == "cleanup-orphan"]
+    orphan = [f for f in findings if f.rule_id == "CL-01"]
     assert len(orphan) >= 1
     assert "feat/orphan" in orphan[0].message
 
@@ -117,5 +117,5 @@ def test_current_branch_protected(mock_git):
     ]
     findings = run()
     # tmp/working is current → not flagged as temp
-    temp = [f for f in findings if "tmp/working" in f.message and f.rule_id == "cleanup-temp"]
+    temp = [f for f in findings if "tmp/working" in f.message and f.rule_id == "CL-01"]
     assert len(temp) == 0
