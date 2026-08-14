@@ -161,11 +161,14 @@ def _gh_args(args: list[str]) -> list[str]:
 
 def _intercept_issue_create(args: list[str]) -> int:
     title, body, labels, _, parent = _extract(args)
+    # GT-01 逃生门: --disable-check 显式跳过校验（记日志 + 终端警告，防滥用）
+    if "--disable-check" in args:
+        _log("ISSUE_CREATE", title[:40], "BYPASS", "--disable-check")
+        print("⚠ 闸门: --disable-check 跳过校验（已记入 gate.log；仅本次调用生效）")
+        clean = [a for a in args if a != "--disable-check"]
+        return _passthrough(["issue", "create"] + clean)
     repo = _derive_repo()
     githooks = _find_project_githooks()
-    if githooks is None:
-        return _passthrough(["issue", "create"] + args)
-
     sys.path.insert(0, str(githooks))
     sys.path.insert(0, str(githooks / "github"))
     import issues as issues_mod

@@ -16,7 +16,7 @@ _section = _mod._section
 _check_done_when_fully_ticked = _mod._check_done_when_fully_ticked
 _extract = _mod._extract
 _gh_args = _mod._gh_args
-
+_intercept_issue_create = _mod._intercept_issue_create
 
 # ---------------------------------------------------------------------------
 # _section
@@ -141,3 +141,40 @@ def test_gh_args_equals_parent():
     result = _gh_args(args)
     assert "--parent=124" not in result
     assert result == ["--title=x", "--body=y"]
+
+
+# ---------------------------------------------------------------------------
+# GT-01 --disable-check 逃生门
+# ---------------------------------------------------------------------------
+
+
+def test_disable_check_bypasses_validation(monkeypatch):
+    """--disable-check 跳过校验，走 _passthrough 透传。"""
+    called_log = []
+    monkeypatch.setattr(_mod, "_log", lambda *a: called_log.append(a))
+    monkeypatch.setattr(_mod, "_derive_repo", lambda: "owner/repo")
+    monkeypatch.setattr(_mod, "_find_project_githooks", lambda: None)
+    monkeypatch.setattr(_mod, "_run_gh",
+                        lambda *a, **kw: (0, "https://github.com/owner/repo/issues/999", ""))
+    rc = _intercept_issue_create(["--disable-check", "--title", "test", "--body", "body"])
+    assert rc == 0
+    assert any("BYPASS" in str(c) for c in called_log), "日志应记录 BYPASS"
+
+def test_disable_check_not_in_passthrough_args(monkeypatch):
+    """--disable-check 不应出现在传给 gh 的参数中。"""
+    captured = []
+    monkeypatch.setattr(_mod, "_log", lambda *a: None)
+    monkeypatch.setattr(_mod, "_derive_repo", lambda: "owner/repo")
+    monkeypatch.setattr(_mod, "_find_project_githooks", lambda: None)
+    original_passthrough = _mod._passthrough
+    def tracking_passthrough(args):
+        captured.append(args)
+        return original_passthrough(args)
+    monkeypatch.setattr(_mod, "_passthrough", tracking_passthrough)
+    monkeypatch.setattr(_mod, "_run_gh", lambda *a, **kw: (0, "https://github.com/owner/repo/issues/999", ""))
+    _intercept_issue_create(["--disable-check", "--title", "x", "--body", "y"])
+    assert captured, "应调用 _passthrough"
+    passthrough_args = captured[0]
+    assert "--disable-check" not in passthrough_args
+    assert "issue" in passthrough_args
+    assert "create" in passthrough_args
