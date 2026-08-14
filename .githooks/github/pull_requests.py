@@ -131,15 +131,17 @@ def check_content(
         else:
             findings.append(Finding("P-xx", Severity.FAIL, f"missing heading: ## {h}"))
 
-    # Construction plan 必须有 checkbox
+    # Construction plan / Checklist 必须 ≥2 个 checkbox（1 个是错误正文）
     if "Construction plan" in body_headings:
         plan = _section(body, "Construction plan")
-        if not re.search(r"-\s*\[[ xX]\]", plan):
-            findings.append(Finding("P-xx", Severity.FAIL, "Construction plan 必须含 checkbox 项"))
+        boxes = CHECKBOX_RE.findall(plan)
+        if len(boxes) < 2:
+            findings.append(Finding("P-xx", Severity.FAIL, f"Construction plan 必须至少 2 个 checkbox，当前 {len(boxes)} 个"))
     if "Checklist" in body_headings:
         checklist = _section(body, "Checklist")
-        if not re.search(r"-\s*\[[ xX]\]", checklist):
-            findings.append(Finding("P-xx", Severity.FAIL, "Checklist 必须含 checkbox 项"))
+        boxes = CHECKBOX_RE.findall(checklist)
+        if len(boxes) < 2:
+            findings.append(Finding("P-xx", Severity.FAIL, f"Checklist 必须至少 2 个 checkbox，当前 {len(boxes)} 个"))
     # P-10 heading English / What Chinese
     bad_h = [h for h in _headings(body) if _has_cjk(h)]
     if bad_h:
