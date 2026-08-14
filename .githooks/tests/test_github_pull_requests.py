@@ -54,7 +54,7 @@ def _good_pr_body():
         "## Construction plan\n- [x] step1\n- [x] step2\n\n"
         "## Delivery record\n完成。\n\n"
         "## How to test\n运行测试。\n\n"
-        "## Checklist\n- [x] done\n"
+        "## Checklist\n- [x] done\n- [x] reviewed\n"
     )
 
 
