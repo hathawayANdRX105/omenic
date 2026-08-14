@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """pre-commit hook: runs workspace + code checks on staged + working tree."""
+import re
 import sys
 from pathlib import Path
 
@@ -10,9 +11,34 @@ sys.path.insert(0, str(ROOT / ".."))
 from _shared import Finding, Severity, aggregate_result, print_findings, load_yaml  # noqa: E402
 
 
+def _check_commit_title() -> list[Finding]:
+    """校验 commit 标题：必须 conventional commit 格式（与 PR 标题一致）。"""
+    findings: list[Finding] = []
+    try:
+        msg_file = ROOT.parent / ".git" / "COMMIT_EDITMSG"
+        if not msg_file.exists():
+            return []
+        title = msg_file.read_text(encoding="utf-8").splitlines()[0].strip()
+        # 跳过 merge/squash 自动消息
+        if not title or title.startswith(("Merge ", "Revert ", "fixup!", "squash!")):
+            return []
+        # conventional commit: type(scope): desc 或 type: desc
+        if not re.match(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?:\s+\S+", title):
+            findings.append(Finding(
+                "CM-01", Severity.FAIL,
+                f"commit 标题非 conventional commit 格式（应与 PR 标题一致）: '{title}'"))
+        # 标题禁 CJK（PR-01 一致性）
+        elif re.search(r"[\u4e00-\u9fff]", title):
+            findings.append(Finding("CM-02", Severity.FAIL, f"commit 标题含 CJK（应为英文，同 PR-01）: '{title}'"))
+    except Exception:
+        pass
+    return findings
+
+
 def main() -> int:
     cfg = load_yaml(ROOT / "spec" / "dispatch.yaml")
     findings: list[Finding] = []
+    findings.extend(_check_commit_title())
 
     for topic in cfg.get("pre-commit", []):
         print(f"--- {topic} ---")
