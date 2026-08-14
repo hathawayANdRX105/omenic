@@ -44,8 +44,20 @@ def main() -> int:
             from cleanup.branch_cleanup import run as branch_run
             findings.extend(branch_run(apply=False))
 
-    print_findings(findings)
-    rc = aggregate_result(findings)
+    # 本地审查：CRG 结构分析 + ocr AI 审查
+    print("--- review (CRG + ocr) ---")
+    try:
+        from review import _run_crg, _run_ocr, _format_ocr_results
+        crg_out = _run_crg()
+        print(crg_out[:1200] if crg_out else "（无 CRG 输出）")
+        print()
+        print("（ocr 运行中，LLM 需几分钟...）")
+        sys.stdout.flush()
+        ocr_raw = _run_ocr()
+        ocr_text = _format_ocr_results(ocr_raw)
+        print(ocr_text[:1500])
+    except Exception as e:
+        print(f"review 跳过: {e}")
 
     if rc == 0 and not dry_run:
         print("All checks passed. Ready for squash-merge.")
