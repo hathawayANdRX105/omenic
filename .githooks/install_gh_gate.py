@@ -289,13 +289,54 @@ def _passthrough(args: list[str]) -> int:
 # Main
 # ---------------------------------------------------------------------------
 
+def _section(body: str, heading: str) -> str:
+    """Extract body text under a ## heading."""
+    m = re.search(rf"^## {re.escape(heading)}\s*$", body, re.MULTILINE)
+    if not m:
+        return ""
+    rest = body[m.end():]
+    nxt = re.search(r"^## ", rest, re.MULTILINE)
+    return rest[: nxt.start()] if nxt else rest
+
+
+def _check_done_when_fully_ticked(body: str, heading: str = "Done when") -> tuple[bool, list[str]]:
+    """检查 Done when 段是否全部勾选。返回 (是否全部勾选, 未勾选的项列表)。"""
+    sec = _section(body, heading)
+    unticked: list[str] = []
+    for line in sec.splitlines():
+        m = re.match(r"^\s*-\s*\[\s\]\s*(.+)", line)
+        if m:
+            unticked.append(m.group(1).strip())
+    return len(unticked) == 0, unticked
+
+
 def _intercept_issue_close(args: list[str]) -> int:
-    """拦截 issue close：必须带 --comment 说明关闭原因。"""
+    """拦截 issue close：必须带 --comment + Done when 全部勾选。"""
     has_comment = any(a.startswith("--comment") or a == "-c" for a in args)
     if not has_comment:
         print("闸门: gh issue close 必须带 --comment 说明关闭原因，例如：")
         print('  gh issue close <N> --comment "Agent 🤖 - Note: 原因说明"')
         return 1
+
+    # 取 issue 号
+    issue_num = None
+    for a in args:
+        if a.isdigit():
+            issue_num = a
+            break
+    if issue_num:
+        repo = _derive_repo()
+        if repo:
+            rc, out, _ = _run_gh(["api", f"repos/{repo}/issues/{issue_num}", "--jq", ".body"])
+            if rc == 0 and out.strip():
+                all_ticked, unticked = _check_done_when_fully_ticked(out.strip())
+                if not all_ticked:
+                    print(f"闸门: #{issue_num} Done when 未全部勾选，未勾 {len(unticked)} 项：")
+                    for item in unticked[:5]:
+                        print(f"  - [ ] {item}")
+                    print("必须验证全部完成后打钩，再关闭。")
+                    return 1
+
     rc, out, err = _run_gh(["issue", "close"] + args)
     if out: print(out)
     if err: print(err, file=sys.stderr)
@@ -303,12 +344,33 @@ def _intercept_issue_close(args: list[str]) -> int:
 
 
 def _intercept_pr_merge(args: list[str]) -> int:
-    """拦截 pr merge：必须带 --body 说明合并原因。"""
+    """拦截 pr merge：必须带 --body + PR 内 checkbox 全部勾选。"""
     has_body = any(a.startswith("--body") or a == "-b" for a in args)
     if not has_body:
         print("闸门: gh pr merge 必须带 --body 说明合并原因，例如：")
         print('  gh pr merge <N> --squash --body "Agent 🤖 - Merge: 原因说明"')
         return 1
+
+    pr_num = None
+    for a in args:
+        if a.isdigit():
+            pr_num = a
+            break
+    if pr_num:
+        repo = _derive_repo()
+        if repo:
+            rc, out, _ = _run_gh(["api", f"repos/{repo}/pulls/{pr_num}", "--jq", ".body"])
+            if rc == 0 and out.strip():
+                body = out.strip()
+                for section_name in ["Construction plan", "Checklist"]:
+                    all_ticked, unticked = _check_done_when_fully_ticked(body, section_name)
+                    if not all_ticked:
+                        print(f"闸门: PR #{pr_num} {section_name} 未全部勾选，未勾 {len(unticked)} 项：")
+                        for item in unticked[:5]:
+                            print(f"  - [ ] {item}")
+                        print("必须全部完成打钩后，再合并。")
+                        return 1
+
     rc, out, err = _run_gh(["pr", "merge"] + args)
     if out: print(out)
     if err: print(err, file=sys.stderr)
