@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 """pre-commit hook: runs workspace + code checks on staged + working tree."""
+
+
+
+import sys as _sys
+_sys.dont_write_bytecode = True  # 不生成 __pycache__
+import importlib
 import sys
 from pathlib import Path
 
@@ -22,8 +28,9 @@ def main() -> int:
             findings.extend(tree_run())
             findings.extend(placement_run())
         elif topic == "code":
-            from code.lint import run as code_run
-            findings.extend(code_run())
+            sys.path.insert(0, str(ROOT / "code"))
+            _code = importlib.import_module("lint")
+            findings.extend(_code.run())
 
     print_findings(findings)
     return aggregate_result(findings)

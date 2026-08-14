@@ -7,8 +7,13 @@ Usage:
 Default is dry-run (report only). --apply deletes branches.
 Config: .githooks/spec/cleanup_branch_cleanup.yaml
 """
+
 from __future__ import annotations
 
+
+
+import sys as _sys
+_sys.dont_write_bytecode = True  # 不生成 __pycache__
 import re
 import sys
 from pathlib import Path
@@ -149,3 +154,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

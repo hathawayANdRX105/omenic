@@ -8,12 +8,18 @@ budget, severity ranking) without forcing a heavy package layout the project
 explicitly rejected.
 
 Usage:
+
     from _shared import gh_api_get, gh_api_graphql, gh_api_paginate, \\
         Finding, Severity, load_yaml, aggregate_result
 """
 
+
 from __future__ import annotations
 
+
+
+import sys as _sys
+_sys.dont_write_bytecode = True  # 不生成 __pycache__
 import json
 import os
 import re
@@ -239,3 +245,4 @@ def run_external(cmd: list[str], cwd: Optional[str | Path] = None) -> tuple[int,
     proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=120)
     combined = (proc.stdout or "") + (proc.stderr or "")
     return proc.returncode, combined.strip()
+

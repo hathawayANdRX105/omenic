@@ -7,8 +7,13 @@ Usage:
     python3 .githooks/github/issues.py <owner/repo> <issue_number> [parent|sub] [--strict]
 """
 
+
 from __future__ import annotations
 
+
+
+import sys as _sys
+_sys.dont_write_bytecode = True  # 不生成 __pycache__
 import re
 import sys
 from pathlib import Path
@@ -323,3 +328,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

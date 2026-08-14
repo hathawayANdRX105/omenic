@@ -5,7 +5,13 @@ Usage:
     python .githooks/workspace/file_placement.py [path]
 Config: .githooks/spec/workspace_file_placement.yaml
 """
+
 from __future__ import annotations
+
+
+
+import sys as _sys
+_sys.dont_write_bytecode = True  # 不生成 __pycache__
 import re
 import sys
 from pathlib import Path
@@ -79,3 +85,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

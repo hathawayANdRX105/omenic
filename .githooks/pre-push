@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""pre-push hook: runs workspace + code + github checks."""
+"""pre-push hook: full gate before push (workspace + code + PR/reviews/cleanup)."""
+
+
+
+import sys as _sys
+_sys.dont_write_bytecode = True  # 不生成 __pycache__
+import importlib
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -7,12 +15,32 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / ".."))
 
-from _shared import Finding, Severity, aggregate_result, print_findings, load_yaml  # noqa: E402
+from _shared import Finding, Severity, aggregate_result, print_findings, load_yaml, gh_api_get, gh_api_paginate  # noqa: E402
+
+
+def _get_pr() -> tuple[str, int | None]:
+    """Derive (repo, pr_num) from current branch."""
+    repo = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        capture_output=True, text=True,
+    ).stdout.strip().replace("https://github.com/", "").replace(".git", "")
+    branch = subprocess.run(
+        ["git", "branch", "--show-current"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    try:
+        prs = json.loads(gh_api_get(f"repos/{repo}/pulls?head={repo.split('/')[0]}:{branch}&state=open") or "[]")
+        if isinstance(prs, list) and prs:
+            return repo, prs[0]["number"]
+    except Exception:
+        pass
+    return repo, None
 
 
 def main() -> int:
     cfg = load_yaml(ROOT / "spec" / "dispatch.yaml")
     findings: list[Finding] = []
+    repo, pr_num = _get_pr()
 
     for topic in cfg.get("pre-push", []):
         print(f"--- {topic} ---")
@@ -22,8 +50,26 @@ def main() -> int:
             findings.extend(tree_run())
             findings.extend(placement_run())
         elif topic == "code":
-            from code.lint import run as code_run
-            findings.extend(code_run())
+            sys.path.insert(0, str(ROOT / "code"))
+            _code = importlib.import_module("lint")
+            findings.extend(_code.run())
+        elif topic == "github/pull_requests":
+            if pr_num:
+                from github.pull_requests import run as pr_run
+                findings.extend(pr_run(repo, pr_num))
+            else:
+                findings.append(Finding("push", Severity.INFO, "no open PR for current branch, skip PR check"))
+        elif topic == "github/reviews":
+            if pr_num:
+                review_cfg = load_yaml(ROOT / "spec" / "github_reviews.yaml")
+                review_comments = gh_api_paginate(f"repos/{repo}/pulls/{pr_num}/comments")
+                issue_comments = gh_api_get(f"repos/{repo}/issues/{pr_num}/comments") or []
+                all_comments = list(review_comments or []) + list(issue_comments or [])
+                from github.reviews import run as review_run
+                findings.extend(review_run(all_comments, review_cfg))
+        elif topic == "cleanup":
+            from cleanup.branch_cleanup import run as branch_run
+            findings.extend(branch_run(apply=False))
 
     print_findings(findings)
     return aggregate_result(findings)

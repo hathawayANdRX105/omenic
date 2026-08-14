@@ -8,6 +8,11 @@ Default: skips issues below cutoff. --strict validates all.
 Checks that validators execute without crashing (exit 0/1 with RESULT output).
 Content FAILs are legitimate validator results, not crashes.
 """
+
+
+
+import sys as _sys
+_sys.dont_write_bytecode = True  # 不生成 __pycache__
 import sys
 import subprocess
 from pathlib import Path
@@ -72,3 +77,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

@@ -3,8 +3,13 @@
 
 Replaces bin/validate_pr.sh (non-review P-* rules).
 """
+
 from __future__ import annotations
 
+
+
+import sys as _sys
+_sys.dont_write_bytecode = True  # 不生成 __pycache__
 import re
 import sys
 from pathlib import Path
@@ -82,8 +87,6 @@ def _load_config() -> dict[str, Any]:
     cfg.setdefault("done_when_check_mode", "FAIL")
     cfg.setdefault("keyword_label_suggestions", {})
     return cfg
-
-
 
 
 def _extract_fixes(body: str) -> list[str]:

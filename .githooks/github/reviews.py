@@ -4,6 +4,10 @@
 Replaces the review-related P-* rules from bin/validate_pr.sh (P-22/P-24/P-25/P-35/P-36/P-37).
 """
 
+
+
+import sys as _sys
+_sys.dont_write_bytecode = True  # 不生成 __pycache__
 import re
 import sys
 from pathlib import Path
@@ -189,3 +193,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

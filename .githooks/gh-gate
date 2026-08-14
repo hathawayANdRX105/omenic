@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""gh-gate — GitHub Issue/PR 创建拦截门。
+
+用途：
+    创建 issue/PR 前必须先读本文件了解用法，然后通过本 gate 创建，
+    禁止直接 `gh issue create` / `gh pr create`。
+
+用法：
+    python .githooks/gh-gate issue create --title "<标题>" --body "<正文>" --label <epic|sub|...>
+    python .githooks/gh-gate pr create --title "<标题>" --body "<正文>" --head <分支>
+
+规则来源：
+    .githooks/spec/github_issues.yaml + .githooks/spec/github_pull_requests.yaml
+    （与 issues.py / pull_requests.py 同源，不重复硬编码；改规则只改 spec）
+
+正文模板：
+    issue 按 .github/ISSUE_TEMPLATE/ 下 yml，PR 按 .github/PULL_REQUEST_TEMPLATE.md。
+
+repo 推导：
+    从 git remote origin 自动推导 owner/repo，支持跨项目复用。
+
+两道闸：
+    1. 创建前：按 spec 校验标题/正文/label/分支，FAIL 拒绝创建
+    2. 创建后：调 issues.py / pull_requests.py 现实校验，FAIL 提示修正
+"""
+
+
+from __future__ import annotations
+
+
+
+import sys as _sys
+_sys.dont_write_bytecode = True  # 不生成 __pycache__
+import re
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / ".."))
+
+from _shared import Finding, Severity, load_yaml  # noqa: E402
+
+
+def _get_repo() -> str:
+    """Derive owner/repo from git remote, or fall back to gh default."""
+    try:
+        out = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        for prefix in ("https://github.com/", "git@github.com:", "ssh://git@github.com/"):
+            if out.startswith(prefix):
+                return out[len(prefix):].removesuffix(".git")
+    except Exception:
+        pass
+    return ""
+
+
+def _find_gh() -> str:
+    import shutil
+    p = shutil.which("gh")
+    if p and p != __file__:
+        return p
+    return "/usr/bin/gh"
+
+
+def _extract(args: list[str]) -> tuple[str, str, list[str], str]:
+    """Extract title, body, labels, head from CLI args."""
+    title = body = head = ""
+    labels: list[str] = []
+    for i, a in enumerate(args):
+        if a in ("--title", "-t") and i + 1 < len(args):
+            title = args[i + 1]
+        elif a.startswith("--title="):
+            title = a.split("=", 1)[1]
+        elif a in ("--body", "-b") and i + 1 < len(args):
+            body = args[i + 1]
+        elif a.startswith("--body="):
+            body = a.split("=", 1)[1]
+        elif a in ("--label", "-l") and i + 1 < len(args):
+            labels.append(args[i + 1])
+        elif a.startswith("--label="):
+            labels.append(a.split("=", 1)[1])
+        elif a in ("--head", "-H") and i + 1 < len(args):
+            head = args[i + 1]
+    return title, body, labels, head
+
+
+def _headings(body: str) -> set[str]:
+    return set(re.findall(r"^## (.+?)\s*$", body, re.MULTILINE))
+
+
+def _section(body: str, heading: str) -> str:
+    m = re.search(rf"^## {re.escape(heading)}\s*$", body, re.MULTILINE)
+    if not m:
+        return ""
+    rest = body[m.end():]
+    nxt = re.search(r"^## ", rest, re.MULTILINE)
+    return rest[: nxt.start()] if nxt else rest
+
+
+def _check_issue_create(args: list[str]) -> list[Finding]:
+    """复用 spec/github_issues.yaml 规则做创建前校验（不调 API）。"""
+    findings: list[Finding] = []
+    cfg = load_yaml(ROOT / "spec" / "github_issues.yaml")
+    title, body, labels, _ = _extract(args)
+    is_epic = "epic" in labels
+    body_h = _headings(body)
+
+    # 标题：禁全角括号（spec.forbidden_brackets_in_title）
+    fb = [c for c in title if c in cfg.get("forbidden_brackets_in_title", [])]
+    if fb:
+        findings.append(Finding("I-04", Severity.FAIL, f"标题含全角括号: {set(fb)}"))
+    if "父" in title.lower() or "issue:" in title.lower() or "sub:" in title.lower():
+        findings.append(Finding("I-00", Severity.FAIL, "标题不要用'父/issue:/sub:'前缀，关系用 label 表达"))
+
+    # 正文禁 Labels 段
+    if "## Labels" in body:
+        findings.append(Finding("I-00", Severity.FAIL, "正文禁止 Labels 段，用 gh label 操作"))
+
+    # epic：禁 Done when（I-16）
+    if is_epic:
+        if "## Done when" in body:
+            findings.append(Finding("I-16", Severity.FAIL, "epic (parent) 禁止 Done when 段"))
+        if not body.strip():
+            findings.append(Finding("I-00", Severity.FAIL, "epic 正文不能为空"))
+    else:
+        # sub：必填段（spec.required_headings）+ 内容非空 + checkbox
+        required = cfg.get("required_headings", [])
+        for h in required:
+            if h not in body_h:
+                findings.append(Finding("I-01/I-02", Severity.FAIL, f"缺少必填段: {h}"))
+        suspected = _section(body, cfg.get("heading_names", {}).get("suspected_areas", "Suspected areas"))
+        if not suspected.strip():
+            findings.append(Finding("I-02b", Severity.FAIL, "Suspected areas 不能为空"))
+        done = _section(body, cfg.get("heading_names", {}).get("done_when", "Done when"))
+        if not re.search(r"-\s*\[[ xX]\]", done):
+            findings.append(Finding("I-04", Severity.FAIL, "Done when 必须含 checkbox 项"))
+        cross = re.findall(r"^(Depends on|Blocks|Related\s*#|Parent PR)", body, re.MULTILINE)
+        if cross:
+            findings.append(Finding("I-11/13/14", Severity.FAIL, f"sub-issue 禁止 cross-reference: {cross}"))
+        if re.findall(r"(待补\s*PR|TODO.*PR|需\s*PR|PR 关联)", body):
+            findings.append(Finding("I-12", Severity.FAIL, "sub-issue 禁止 PR 占位符"))
+
+    if not findings:
+        findings.append(Finding("gate", Severity.INFO, "issue 创建前检查通过"))
+    return findings
+
+
+def _check_pr_create(args: list[str]) -> list[Finding]:
+    """复用 spec/github_pull_requests.yaml 规则做创建前校验。"""
+    findings: list[Finding] = []
+    cfg = load_yaml(ROOT / "spec" / "github_pull_requests.yaml")
+    title, body, _, head = _extract(args)
+    body_h = _headings(body)
+
+    # 标题：禁 CJK（P-01），conventional commit（P-02）
+    if re.search(r"[\u4e00-\u9fff]", title):
+        findings.append(Finding("P-01", Severity.FAIL, "PR 标题含 CJK"))
+    if not re.match(r"^(feat|fix|chore|docs|style|refactor|test|ci|build|perf|revert)(\(.+\))?:\s+", title):
+        findings.append(Finding("P-02", Severity.WARN, "PR 标题非 conventional commit 格式"))
+
+    # 必填段（spec.required_body_headings）
+    for h in cfg.get("required_body_headings", []):
+        if h not in body_h:
+            findings.append(Finding("P-xx", Severity.FAIL, f"缺少必填段: {h}"))
+
+    # Fixes（spec.fixes_keywords，P-12/P-39）
+    if not any(kw in body for kw in cfg.get("fixes_keywords", ["Fixes"])):
+        findings.append(Finding("P-12", Severity.FAIL, "PR 必须含 Fixes #N 建立 development 关联"))
+
+    # 分支前缀（spec.allowed_branch_prefixes，P-31）
+    if head:
+        allowed = cfg.get("allowed_branch_prefixes", [])
+        if not any(head.startswith(p) for p in allowed):
+            findings.append(Finding("P-31", Severity.FAIL, f"分支名 '{head}' 不在允许前缀内: {allowed}"))
+
+    if not findings:
+        findings.append(Finding("gate", Severity.INFO, "PR 创建前检查通过"))
+    return findings
+
+
+def _run_gh(args: list[str]) -> tuple[int, str, str]:
+    proc = subprocess.run([_find_gh()] + args, capture_output=True, text=True, timeout=60)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def _post_check(result_url: str, repo: str) -> list[Finding]:
+    findings: list[Finding] = []
+    if not repo:
+        return findings
+    if "/issues/" in result_url:
+        num = result_url.split("/issues/")[1].split("/")[0]
+        rc = subprocess.run(
+            [sys.executable, str(ROOT / "github" / "issues.py"), repo, num],
+            capture_output=True, text=True, timeout=30,
+        )
+        if "FAIL" in rc.stdout:
+            findings.append(Finding("gate", Severity.FAIL, f"#{num} 创建后校验 FAIL，修正后重跑"))
+        else:
+            findings.append(Finding("gate", Severity.INFO, f"#{num} 创建后校验 ALL PASS"))
+    elif "/pull/" in result_url:
+        num = result_url.split("/pull/")[1].split("/")[0]
+        rc = subprocess.run(
+            [sys.executable, str(ROOT / "github" / "pull_requests.py"), repo, num],
+            capture_output=True, text=True, timeout=30,
+        )
+        if "FAIL" in rc.stdout:
+            findings.append(Finding("gate", Severity.FAIL, f"PR #{num} 创建后校验 FAIL，修正后重跑"))
+        else:
+            findings.append(Finding("gate", Severity.INFO, f"PR #{num} 创建后校验 ALL PASS"))
+
+    return findings
+
+def main() -> int:
+    if len(sys.argv) < 3:
+        print("Usage: python .githooks/gh-gate issue create <args...>")
+        print("       python .githooks/gh-gate pr create <args...>")
+        return 2
+
+    cmd = sys.argv[1:3]
+    args = sys.argv[3:]
+    repo = _get_repo()
+
+    if cmd == ["issue", "create"]:
+        findings = _check_issue_create(args)
+    elif cmd == ["pr", "create"]:
+        findings = _check_pr_create(args)
+    else:
+        rc, out, err = _run_gh(sys.argv[1:])
+        if out: print(out)
+        if err: print(err, file=sys.stderr)
+        return rc
+
+    for f in findings:
+        print(f"{f.severity.name}\t{f.message}")
+
+    if any(f.severity == Severity.FAIL for f in findings):
+        print("闸门: 校验 FAIL，拒绝创建。修正后重试。")
+        return 1
+
+    print("闸门: 检查通过，执行 gh ...")
+    rc, out, err = _run_gh(sys.argv[1:])
+    if out: print(out)
+    if err: print(err, file=sys.stderr)
+    if rc != 0: return rc
+
+    url = out.strip()
+    if url.startswith("https://github.com/"):
+        post = _post_check(url, repo)
+        for f in post:
+            print(f"{f.severity.name}\t{f.message}")
+        if any(f.severity == Severity.FAIL for f in post):
+            print("闸门: 创建后校验 FAIL，请修正后重跑。")
+            return 1
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

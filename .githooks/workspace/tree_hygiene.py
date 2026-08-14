@@ -5,7 +5,13 @@ Usage:
     python .githooks/workspace/tree_hygiene.py [path]
 Config: .githooks/spec/workspace_tree_hygiene.yaml
 """
+
 from __future__ import annotations
+
+
+
+import sys as _sys
+_sys.dont_write_bytecode = True  # 不生成 __pycache__
 import sys
 from pathlib import Path
 from typing import Any
@@ -84,3 +90,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

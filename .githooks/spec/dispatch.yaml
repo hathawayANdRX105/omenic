@@ -1,7 +1,8 @@
 # dispatch.yaml — hook dispatcher config
 #
-# Each hook runs the listed topics in order. Add/remove topics here
-# without touching the hook scripts.
+# pre-commit: 轻量，本地快速检查（不调 API）
+# pre-push:   全量，推送前跑所有检查 + PR 校验（调 API，确保 merge 前门）
+# merge:      手动运行，含 PR + reviews + cleanup 检查
 
 pre-commit:
   - workspace
@@ -10,6 +11,9 @@ pre-commit:
 pre-push:
   - workspace
   - code
+  - github/pull_requests
+  - github/reviews
+  - cleanup
 
 merge:
   - github/pull_requests

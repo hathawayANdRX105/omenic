@@ -6,8 +6,13 @@ Usage:
 
 If --lang is omitted, runs all enabled languages.
 """
+
 from __future__ import annotations
 
+
+
+import sys as _sys
+_sys.dont_write_bytecode = True  # 不生成 __pycache__
 import re
 import sys
 from pathlib import Path
@@ -87,3 +92,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

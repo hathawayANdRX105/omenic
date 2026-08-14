@@ -6,6 +6,11 @@ Usage:
 
 --dry-run: plan only, no squash.
 """
+
+
+
+import sys as _sys
+_sys.dont_write_bytecode = True  # 不生成 __pycache__
 import sys
 from pathlib import Path
 ROOT = Path(__file__).resolve().parent
