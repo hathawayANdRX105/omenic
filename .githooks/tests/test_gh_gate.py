@@ -17,6 +17,7 @@ _check_done_when_fully_ticked = _mod._check_done_when_fully_ticked
 _extract = _mod._extract
 _gh_args = _mod._gh_args
 _intercept_issue_create = _mod._intercept_issue_create
+_intercept_pr_merge = _mod._intercept_pr_merge
 
 # ---------------------------------------------------------------------------
 # _section
@@ -178,3 +179,52 @@ def test_disable_check_not_in_passthrough_args(monkeypatch):
     assert "--disable-check" not in passthrough_args
     assert "issue" in passthrough_args
     assert "create" in passthrough_args
+
+
+# ---------------------------------------------------------------------------
+# #154 merge squash 标题 CS 校验
+# ---------------------------------------------------------------------------
+
+
+def _ok_body() -> str:
+    return ("## Construction plan\n- [x] step\n"
+            "## Checklist\n- [x] 已使用 Fixes #N\n")
+
+
+def test_pr_merge_rejects_non_cc_title(monkeypatch):
+    """PR 标题非 conventional commit → merge 拦截。"""
+    log = []
+    monkeypatch.setattr(_mod, "_log", lambda *a: log.append(a))
+    monkeypatch.setattr(_mod, "_derive_repo", lambda: "owner/repo")
+    def fake_gh(args):
+        if "--jq" in args:
+            jq = args[args.index("--jq") + 1]
+            if jq == ".body":
+                return 0, _ok_body(), ""
+            if jq == ".title":
+                return 0, "add widget without prefix", ""
+        return 0, "", ""
+    monkeypatch.setattr(_mod, "_run_gh", fake_gh)
+    rc = _intercept_pr_merge(["158", "--squash", "--body", "reason"])
+    assert rc == 1
+    assert any("title not CC" in str(c) for c in log)
+
+
+def test_pr_merge_accepts_cc_title(monkeypatch):
+    """PR 标题 conventional commit → merge 放行。"""
+    monkeypatch.setattr(_mod, "_derive_repo", lambda: "owner/repo")
+    def fake_gh(args):
+        if "--jq" in args:
+            jq = args[args.index("--jq") + 1]
+            if jq == ".body":
+                return 0, _ok_body(), ""
+            if jq == ".title":
+                return 0, "feat: add widget", ""
+        if args[:2] == ["pr", "merge"]:
+            return 0, "", ""
+        if args[:2] == ["pr", "comment"]:
+            return 0, "", ""
+        return 0, "", ""
+    monkeypatch.setattr(_mod, "_run_gh", fake_gh)
+    rc = _intercept_pr_merge(["158", "--squash", "--body", "reason"])
+    assert rc == 0

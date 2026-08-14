@@ -424,6 +424,31 @@ def _intercept_pr_merge(args: list[str]) -> int:
                         _log("PR_MERGE", f"PR #{pr_num}", "REJECT", f"issue #{fn} Done when {len(unticked)} unticked")
                         return 1
 
+    # GT 增强: squash 标题（--title 或 PR 标题）必须符合 conventional commit（CM-01/CM-02 同款）
+    import re as _re
+    merge_title = ""
+    for i, a in enumerate(args):
+        if a == "--title" and i + 1 < len(args):
+            merge_title = args[i + 1]
+            break
+        if a.startswith("--title="):
+            merge_title = a.split("=", 1)[1]
+            break
+    if not merge_title and pr_num and repo:
+        rc3, pr_title, _ = _run_gh(["api", f"repos/{repo}/pulls/{pr_num}", "--jq", ".title"])
+        if rc3 == 0:
+            merge_title = pr_title.strip()
+    if merge_title:
+        if not _re.match(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?:\s+\S+", merge_title):
+            print(f"闸门: merge 标题非 conventional commit 格式: '{merge_title}'")
+            print("  示例: feat: add widget / fix(scope): correct bug")
+            _log("PR_MERGE", f"PR #{pr_num}", "REJECT", f"title not CC: {merge_title[:60]}")
+            return 1
+        if _re.search(r"[\u4e00-\u9fff]", merge_title):
+            print(f"闸门: merge 标题含 CJK（应为英文）: '{merge_title}'")
+            _log("PR_MERGE", f"PR #{pr_num}", "REJECT", f"title CJK: {merge_title[:60]}")
+            return 1
+
     # 提取合并理由
     merge_reason = ""
     for i, a in enumerate(args):
