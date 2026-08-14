@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import re
@@ -22,7 +23,19 @@ from typing import Any
 
 INSTALL_DIR = Path.home() / ".local" / "bin"
 GATE_NAME = "gh"
+LOG_DIR = Path.home() / ".local" / "share" / "gh-gate"
+LOG_FILE = LOG_DIR / "gate.log"
 
+
+def _log(action: str, target: str, result: str, detail: str = "") -> None:
+    """记录 gh-gate 操作日志，便于回溯 issue/PR 操作。"""
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        ts = datetime.datetime.now().isoformat(timespec="seconds")
+        with open(LOG_FILE, "a", encoding="utf-8") as fh:
+            fh.write(f"{ts} | {action} | {target} | {result} | {detail}\n")
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------------------
 # 安装 / 卸载
@@ -311,44 +324,69 @@ def _check_done_when_fully_ticked(body: str, heading: str = "Done when") -> tupl
 
 
 def _intercept_issue_close(args: list[str]) -> int:
-    """拦截 issue close：必须带 --comment + Done when 全部勾选。"""
+    """拦截 issue close：--comment 理由 + Done when 全勾 + epic 检查 sub 全关。"""
     has_comment = any(a.startswith("--comment") or a == "-c" for a in args)
     if not has_comment:
         print("闸门: gh issue close 必须带 --comment 说明关闭原因，例如：")
         print('  gh issue close <N> --comment "Agent 🤖 - Note: 原因说明"')
+        _log("ISSUE_CLOSE", "?", "REJECT", "missing --comment")
         return 1
 
-    # 取 issue 号
-    issue_num = None
+    issue_num = issue_repo = None
     for a in args:
         if a.isdigit():
             issue_num = a
             break
-    if issue_num:
-        repo = _derive_repo()
-        if repo:
-            rc, out, _ = _run_gh(["api", f"repos/{repo}/issues/{issue_num}", "--jq", ".body"])
-            if rc == 0 and out.strip():
-                all_ticked, unticked = _check_done_when_fully_ticked(out.strip())
-                if not all_ticked:
-                    print(f"闸门: #{issue_num} Done when 未全部勾选，未勾 {len(unticked)} 项：")
-                    for item in unticked[:5]:
-                        print(f"  - [ ] {item}")
-                    print("必须验证全部完成后打钩，再关闭。")
-                    return 1
+    repo = _derive_repo()
+    if issue_num and repo:
+        # 获取 issue 详情（含 labels 和 body）
+        rc, data, _ = _run_gh(["api", f"repos/{repo}/issues/{issue_num}", "--jq", "{body, labels: [.labels[].name], state}"])
+        if rc == 0 and data:
+            import json as j
+            d = j.loads(data)
+            body = d.get("body", "")
+            labels = d.get("labels", [])
+
+            # GT-06: epic 关闭前检查所有 sub-issues 已关闭
+            if "epic" in labels:
+                rc2, subs_json, _ = _run_gh(["api", f"repos/{repo}/issues/{issue_num}/sub_issues", "--jq", ".[].number"])
+                if rc2 == 0 and subs_json.strip():
+                    open_subs = []
+                    for sn in subs_json.strip().split():
+                        if sn.isdigit():
+                            rc3, st, _ = _run_gh(["api", f"repos/{repo}/issues/{sn}", "--jq", ".state"])
+                            if rc3 == 0 and st.strip() == "open":
+                                open_subs.append(sn)
+                    if open_subs:
+                        print(f"闸门: #{issue_num} 是 epic，但有 sub-issue 未关闭: #{', #'.join(open_subs)}")
+                        print("必须全部 sub-issue 关闭后才能关闭 epic。")
+                        _log("ISSUE_CLOSE", f"#{issue_num}", "REJECT", f"epic with open subs: {open_subs}")
+                        return 1
+
+            # GT-04: Done when 全勾检查
+            all_ticked, unticked = _check_done_when_fully_ticked(body)
+            if not all_ticked:
+                print(f"闸门: #{issue_num} Done when 未全部勾选，未勾 {len(unticked)} 项：")
+                for item in unticked[:5]:
+                    print(f"  - [ ] {item}")
+                print("必须验证全部完成后打钩，再关闭。")
+                _log("ISSUE_CLOSE", f"#{issue_num}", "REJECT", f"Done when {len(unticked)} unticked")
+                return 1
 
     rc, out, err = _run_gh(["issue", "close"] + args)
     if out: print(out)
     if err: print(err, file=sys.stderr)
+    if rc == 0:
+        _log("ISSUE_CLOSE", f"#{issue_num}", "CLOSED", "")
     return rc
 
-
 def _intercept_pr_merge(args: list[str]) -> int:
-    """拦截 pr merge：必须带 --body + PR 内 checkbox 全部勾选。"""
+    """拦截 pr merge：--body 理由 + checkbox 全勾 + Fixes issue 的 Done when 全勾。"""
     has_body = any(a.startswith("--body") or a == "-b" for a in args)
     if not has_body:
         print("闸门: gh pr merge 必须带 --body 说明合并原因，例如：")
         print('  gh pr merge <N> --squash --body "Agent 🤖 - Merge: 原因说明"')
+        _log("PR_MERGE", "?", "REJECT", "missing --body")
         return 1
 
     pr_num = None
@@ -356,24 +394,61 @@ def _intercept_pr_merge(args: list[str]) -> int:
         if a.isdigit():
             pr_num = a
             break
-    if pr_num:
-        repo = _derive_repo()
-        if repo:
-            rc, out, _ = _run_gh(["api", f"repos/{repo}/pulls/{pr_num}", "--jq", ".body"])
-            if rc == 0 and out.strip():
-                body = out.strip()
-                for section_name in ["Construction plan", "Checklist"]:
-                    all_ticked, unticked = _check_done_when_fully_ticked(body, section_name)
+    repo = _derive_repo()
+    if pr_num and repo:
+        rc, body, _ = _run_gh(["api", f"repos/{repo}/pulls/{pr_num}", "--jq", ".body"])
+        if rc == 0 and body.strip():
+            # 检查 PR 内 checkbox 全勾
+            for section_name in ["Construction plan", "Checklist"]:
+                all_ticked, unticked = _check_done_when_fully_ticked(body.strip(), section_name)
+                if not all_ticked:
+                    print(f"闸门: PR #{pr_num} {section_name} 未全部勾选，未勾 {len(unticked)} 项：")
+                    for item in unticked[:5]:
+                        print(f"  - [ ] {item}")
+                    print("必须全部完成打钩后，再合并。")
+                    _log("PR_MERGE", f"PR #{pr_num}", "REJECT", f"{section_name} {len(unticked)} unticked")
+                    return 1
+
+            # 检查 Fixes 关联 issue 的 Done when（merge 会连带关闭 issue）
+            import re as _re
+            fixes = _re.findall(r"(?:Fixes|Closes|Resolves)\s+#(\d+)", body.strip())
+            for fn in fixes:
+                rc2, issue_body, _ = _run_gh(["api", f"repos/{repo}/issues/{fn}", "--jq", ".body"])
+                if rc2 == 0 and issue_body.strip():
+                    all_ticked, unticked = _check_done_when_fully_ticked(issue_body.strip())
                     if not all_ticked:
-                        print(f"闸门: PR #{pr_num} {section_name} 未全部勾选，未勾 {len(unticked)} 项：")
+                        print(f"闸门: PR #{pr_num} 关联 issue #{fn} 的 Done when 未全部勾选，未勾 {len(unticked)} 项：")
                         for item in unticked[:5]:
                             print(f"  - [ ] {item}")
-                        print("必须全部完成打钩后，再合并。")
+                        print("合并 PR 会连带关闭 issue，必须先完成 issue 的 Done when 再合并。")
+                        _log("PR_MERGE", f"PR #{pr_num}", "REJECT", f"issue #{fn} Done when {len(unticked)} unticked")
                         return 1
+
+    # 提取合并理由
+    merge_reason = ""
+    for i, a in enumerate(args):
+        if a in ("--body", "-b") and i + 1 < len(args):
+            merge_reason = args[i + 1]
+            break
+        if a.startswith("--body="):
+            merge_reason = a.split("=", 1)[1]
+            break
 
     rc, out, err = _run_gh(["pr", "merge"] + args)
     if out: print(out)
     if err: print(err, file=sys.stderr)
+    if rc != 0:
+        _log("PR_MERGE", f"PR #{pr_num}", "FAIL", err.strip() or "")
+        return rc
+
+    # 合并后 PR conversation 留言 + 日志
+    if pr_num and merge_reason:
+        rc2, out2, err2 = _run_gh(["pr", "comment", pr_num, "--body", merge_reason])
+        if rc2 == 0:
+            print(f"INFO\tPR #{pr_num} 合并留言已发布")
+        else:
+            print(f"WARN\tPR #{pr_num} 合并留言失败: {err2.strip() or out2.strip()}")
+    _log("PR_MERGE", f"PR #{pr_num}", "MERGED", merge_reason[:80])
     return rc
 
 

@@ -40,7 +40,7 @@ def test_fullwidth_brackets(tmp_path):
     f = tmp_path / "bad.md"
     f.write_text("# Title\n\n内容（括号）test\nMore line.\n")
     findings = check_file(f, CFG)
-    assert any(fnd.rule_id == "docs-fullwidth" for fnd in findings)
+    assert any(fnd.rule_id == "CL-03" for fnd in findings)
 
 
 def test_broken_link(tmp_path):
@@ -48,7 +48,7 @@ def test_broken_link(tmp_path):
     f = tmp_path / "link.md"
     f.write_text("# Title\n\nSee [other](./nonexist.md).\nMore.\n")
     findings = check_file(f, CFG)
-    assert any(fnd.rule_id == "docs-broken-link" for fnd in findings)
+    assert any(fnd.rule_id == "CL-03" for fnd in findings)
 
 
 def test_stale_marker(tmp_path):
@@ -56,7 +56,7 @@ def test_stale_marker(tmp_path):
     f = tmp_path / "stale.md"
     f.write_text("# Title\n\nTODO: fix this later.\nMore content.\n")
     findings = check_file(f, CFG)
-    assert any(fnd.rule_id == "docs-stale" for fnd in findings)
+    assert any(fnd.rule_id == "CL-03" for fnd in findings)
 
 
 def test_empty_file(tmp_path):
@@ -64,7 +64,7 @@ def test_empty_file(tmp_path):
     f = tmp_path / "empty.md"
     f.write_text("# Only\n")
     findings = check_file(f, CFG)
-    assert any(fnd.rule_id == "docs-empty" for fnd in findings)
+    assert any(fnd.rule_id == "CL-03" for fnd in findings)
 
 
 def test_crlf(tmp_path):
@@ -72,7 +72,7 @@ def test_crlf(tmp_path):
     f = tmp_path / "crlf.md"
     f.write_text("# Title\r\n\r\nContent here.\r\nMore.\r\n")
     findings = check_file(f, CFG)
-    assert any(fnd.rule_id == "docs-crlf" for fnd in findings)
+    assert any(fnd.rule_id == "CL-03" for fnd in findings)
 
 
 def test_missing_newline(tmp_path):
@@ -80,7 +80,7 @@ def test_missing_newline(tmp_path):
     f = tmp_path / "nonewline.md"
     f.write_text("# Title\n\nContent.\nMore stuff.")
     findings = check_file(f, CFG)
-    assert any(fnd.rule_id == "docs-no-newline" for fnd in findings)
+    assert any(fnd.rule_id == "CL-03" for fnd in findings)
 
 
 def test_load_yaml_config():
