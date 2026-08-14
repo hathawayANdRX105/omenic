@@ -196,6 +196,17 @@ def check_content(
     else:
         findings.append(Finding("PR-05", Severity.FAIL, "one PR should close one primary issue"))
 
+    # 纯文本关联提示: Part of / Related 不产生 GitHub development 关联
+    # (GitHub 只认 Fixes/Closes/Resolves closing keywords; epic 关联走 sub-issue 层级)
+    text_links = re.findall(r"(?:Part of|Related)\s+#(\d+)", body)
+    if text_links:
+        findings.append(Finding(
+            "PR-10", Severity.INFO,
+            f"Part of/Related #({', '.join(text_links)}) 是纯文本，不产生 GitHub 关联；"
+            "epic 关联通过 Fixes 的 sub-issue 层级或 UI development 面板"))
+    else:
+        findings.append(Finding("PR-10", Severity.INFO, "no plain-text Part of/Related links"))
+
     # P-21 type label (PR variant)
     if any(l in type_labels_cfg for l in labels):
         findings.append(Finding("PR-06", Severity.INFO, "type label present"))
