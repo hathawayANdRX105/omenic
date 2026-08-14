@@ -41,7 +41,7 @@ def run(base: str = ".") -> list[Finding]:
                     msg = f"{reason}: {rel}"
                     if suggestion:
                         msg += f" → {suggestion}"
-                    findings.append(Finding("placement-forbidden",
+                    findings.append(Finding("WS-02",
                         Severity.FAIL if rule.get("severity") == "FAIL" else Severity.WARN,
                         msg))
 
@@ -59,7 +59,7 @@ def run(base: str = ".") -> list[Finding]:
                 if regex.search(rel):
                     parent = str(f.parent.relative_to(base_path))
                     if expected_dir not in parent and expected_dir != ".":
-                        findings.append(Finding("placement-wrong-dir",
+                        findings.append(Finding("WS-02",
                             Severity.WARN,
                             f"{rel} should be in {expected_dir}, found in {parent}"))
 

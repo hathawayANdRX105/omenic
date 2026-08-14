@@ -34,7 +34,7 @@ def check_file(path: Path, cfg: dict[str, Any]) -> list[Finding]:
         for i, line in enumerate(lines, 1):
             fb = [c for c in line if c in cfg.get("forbidden_brackets", list(FULLWIDTH_BRACKETS))]
             if fb:
-                findings.append(Finding("docs-fullwidth", Severity.WARN,
+                findings.append(Finding("CL-03", Severity.WARN,
                     f"{rel}:{i}: fullwidth brackets: {set(fb)}"))
                 break
 
@@ -44,35 +44,35 @@ def check_file(path: Path, cfg: dict[str, Any]) -> list[Finding]:
             link = m.group(1)
             target = (path.parent / link).resolve()
             if not target.exists():
-                findings.append(Finding("docs-broken-link", Severity.WARN,
+                findings.append(Finding("CL-03", Severity.WARN,
                     f"{rel}: broken link → {link}"))
 
     # Stale markers
     for kw in cfg.get("stale_marker_keywords", ["TODO", "FIXME", "XXX"]):
         if kw in content:
-            findings.append(Finding("docs-stale", Severity.WARN,
+            findings.append(Finding("CL-03", Severity.WARN,
                 f"{rel}: contains stale marker '{kw}'"))
 
     # Empty / placeholder files
     min_lines = cfg.get("min_content_lines", 3)
     non_empty = [l for l in lines if l.strip()]
     if len(non_empty) < min_lines:
-        findings.append(Finding("docs-empty", Severity.WARN,
+        findings.append(Finding("CL-03", Severity.WARN,
             f"{rel}: only {len(non_empty)} non-empty line(s), min {min_lines}"))
 
     # Trailing whitespace / CRLF
     for i, line in enumerate(lines, 1):
         if line.endswith(" ") or line.endswith("\t"):
-            findings.append(Finding("docs-trailing-ws", Severity.INFO,
+            findings.append(Finding("CL-03", Severity.INFO,
                 f"{rel}:{i}: trailing whitespace"))
             break
     if b"\r\n" in raw or b"\r" in raw:
-        findings.append(Finding("docs-crlf", Severity.WARN,
+        findings.append(Finding("CL-03", Severity.WARN,
             f"{rel}: contains CRLF line endings"))
 
     # Missing trailing newline
     if content and not content.endswith("\n"):
-        findings.append(Finding("docs-no-newline", Severity.INFO,
+        findings.append(Finding("CL-03", Severity.INFO,
             f"{rel}: missing trailing newline"))
 
     if not findings:

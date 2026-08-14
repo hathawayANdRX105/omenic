@@ -33,13 +33,13 @@ def run(base: str = ".") -> list[Finding]:
 
         # Empty directory
         if not dirnames and not filenames:
-            findings.append(Finding("tree-empty", Severity.WARN, f"empty directory: {d}"))
+            findings.append(Finding("WS-01", Severity.WARN, f"empty directory: {d}"))
             continue
 
         # Single file (could merge)
         if len(filenames) == 1 and not dirnames:
             if filenames[0] != ".gitkeep":
-                findings.append(Finding("tree-single", Severity.WARN,
+                findings.append(Finding("WS-01", Severity.WARN,
                     f"single-file dir (consider merging): {d}/{filenames[0]}"))
 
         # Deep nesting
@@ -48,14 +48,14 @@ def run(base: str = ".") -> list[Finding]:
         except ValueError:
             depth = 0
         if depth > max_depth:
-            findings.append(Finding("tree-depth", Severity.WARN,
+            findings.append(Finding("WS-01", Severity.WARN,
                 f"deep nesting ({depth} > {max_depth}): {d}"))
 
     # Orphan dirs (.wt without worktree, tmp/, __pycache__)
     for orphan_pat in cfg.get("orphan_patterns", [".wt/*/", "tmp/", "__pycache__/"]):
         for m in base_path.glob(orphan_pat.rstrip("/")):
             if m.is_dir():
-                findings.append(Finding("tree-orphan", Severity.WARN,
+                findings.append(Finding("WS-01", Severity.WARN,
                     f"potential orphan/residue: {m}"))
 
     if not findings:

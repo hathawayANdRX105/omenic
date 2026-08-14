@@ -115,51 +115,51 @@ def check_content(
 
     # P-01 title English / P-02 conventional commit
     if _has_cjk(title):
-        findings.append(Finding("P-01", Severity.FAIL, "title contains CJK (title should be English)"))
+        findings.append(Finding("PR-01", Severity.FAIL, "title contains CJK (title should be English)"))
     else:
-        findings.append(Finding("P-01", Severity.INFO, "title is English"))
+        findings.append(Finding("PR-01", Severity.INFO, "title is English"))
     if re.match(r"^(feat|fix|chore|docs|style|refactor|test|ci|build|perf|revert)(\(.+\))?:\s+", title):
-        findings.append(Finding("P-02", Severity.INFO, "conventional commit title"))
+        findings.append(Finding("PR-02", Severity.INFO, "conventional commit title"))
     else:
-        findings.append(Finding("P-02", Severity.WARN, f"title not conventional commit (repo template allows natural English): {title}"))
+        findings.append(Finding("PR-02", Severity.WARN, f"title not conventional commit (repo template allows natural English): {title}"))
 
     # Body structure headings
     body_headings = set(_headings(body))
     for h in cfg.get("required_body_headings", ["What", "Why", "Issue", "Construction plan", "Delivery record", "How to test", "Checklist"]):
         if h in body_headings:
-            findings.append(Finding("P-xx", Severity.INFO, f"heading present: {h}"))
+            findings.append(Finding("PR-03", Severity.INFO, f"heading present: {h}"))
         else:
-            findings.append(Finding("P-xx", Severity.FAIL, f"missing heading: ## {h}"))
+            findings.append(Finding("PR-03", Severity.FAIL, f"missing heading: ## {h}"))
 
     # Construction plan / Checklist 必须 ≥2 个 checkbox（1 个是错误正文）
     if "Construction plan" in body_headings:
         plan = _section(body, "Construction plan")
         boxes = CHECKBOX_RE.findall(plan)
         if len(boxes) < 2:
-            findings.append(Finding("P-xx", Severity.FAIL, f"Construction plan 必须至少 2 个 checkbox，当前 {len(boxes)} 个"))
+            findings.append(Finding("PR-03", Severity.FAIL, f"Construction plan 必须至少 2 个 checkbox，当前 {len(boxes)} 个"))
     if "Checklist" in body_headings:
         checklist = _section(body, "Checklist")
         boxes = CHECKBOX_RE.findall(checklist)
         if len(boxes) < 2:
-            findings.append(Finding("P-xx", Severity.FAIL, f"Checklist 必须至少 2 个 checkbox，当前 {len(boxes)} 个"))
+            findings.append(Finding("PR-03", Severity.FAIL, f"Checklist 必须至少 2 个 checkbox，当前 {len(boxes)} 个"))
     # P-10 heading English / What Chinese
     bad_h = [h for h in _headings(body) if _has_cjk(h)]
     if bad_h:
-        findings.append(Finding("P-10", Severity.FAIL, f"headings contain CJK (headings must be English): {bad_h}"))
+        findings.append(Finding("PR-04", Severity.FAIL, f"headings contain CJK (headings must be English): {bad_h}"))
     else:
-        findings.append(Finding("P-10", Severity.INFO, "headings are English only"))
+        findings.append(Finding("PR-04", Severity.INFO, "headings are English only"))
     what = _section(body, "What")
     if _has_cjk(what):
-        findings.append(Finding("P-10", Severity.INFO, "What section has Chinese prose"))
+        findings.append(Finding("PR-04", Severity.INFO, "What section has Chinese prose"))
     else:
-        findings.append(Finding("P-10", Severity.WARN, "What section has no Chinese prose (template requires Chinese)"))
+        findings.append(Finding("PR-04", Severity.WARN, "What section has no Chinese prose (template requires Chinese)"))
 
     # P-14b type label + keyword suggestions
     type_labels_cfg = cfg.get("type_labels_cfg", ["bug", "enhancement", "feature", "documentation", "chore", "refactor", "tests", "epic"])
     if any(l in type_labels_cfg for l in labels):
-        findings.append(Finding("P-14b", Severity.INFO, "type label present"))
+        findings.append(Finding("PR-06", Severity.INFO, "type label present"))
     else:
-        findings.append(Finding("P-14b", Severity.FAIL, "no type label (expected one of the type set)"))
+        findings.append(Finding("PR-06", Severity.FAIL, "no type label (expected one of the type set)"))
     kw_map = cfg.get("keyword_label_suggestions", {})
     if kw_map:
         haystack = f"{title}\n{body}".lower()
@@ -168,39 +168,39 @@ def check_content(
             if keyword.lower() in haystack and suggested_label not in labels:
                 missing_suggestions.append(suggested_label)
         if missing_suggestions:
-            findings.append(Finding("P-14b", Severity.WARN, f"based on content keywords, consider also labeling: {' '.join(sorted(set(missing_suggestions)))}"))
+            findings.append(Finding("PR-06", Severity.WARN, f"based on content keywords, consider also labeling: {' '.join(sorted(set(missing_suggestions)))}"))
         else:
-            findings.append(Finding("P-14b", Severity.INFO, "content keywords align with assigned labels"))
+            findings.append(Finding("PR-06", Severity.INFO, "content keywords align with assigned labels"))
     else:
-        findings.append(Finding("P-14b", Severity.INFO, "no keyword suggestions (or policy not configured)"))
+        findings.append(Finding("PR-06", Severity.INFO, "no keyword suggestions (or policy not configured)"))
 
     # P-11/P-12/P-13 issue linkage
     fixes = _extract_fixes(body)
     fixes_unique = sorted(set(fixes), key=int)
     fixes_count = len(fixes_unique)
     if state == "open" and fixes_count > 0:
-        findings.append(Finding("P-11", Severity.WARN, "open PR already uses Fixes # (may close issue prematurely)"))
+        findings.append(Finding("PR-05", Severity.WARN, "open PR already uses Fixes # (may close issue prematurely)"))
     else:
-        findings.append(Finding("P-11", Severity.INFO, "no premature Fixes while open (or PR not open)"))
+        findings.append(Finding("PR-05", Severity.INFO, "no premature Fixes while open (or PR not open)"))
     if fixes_count == 1:
-        findings.append(Finding("P-12", Severity.INFO, "exactly one Fixes #"))
+        findings.append(Finding("PR-05", Severity.INFO, "exactly one Fixes #"))
     elif fixes_count == 0:
         if draft:
-            findings.append(Finding("P-12", Severity.INFO, "draft PR, Fixes may appear at merge authorization"))
+            findings.append(Finding("PR-05", Severity.INFO, "draft PR, Fixes may appear at merge authorization"))
         else:
-            findings.append(Finding("P-12", Severity.WARN, "no Fixes # yet (needs one primary issue before merge)"))
+            findings.append(Finding("PR-05", Severity.WARN, "no Fixes # yet (needs one primary issue before merge)"))
     else:
-        findings.append(Finding("P-12", Severity.WARN, f"multiple Fixes # ({fixes_count}): one PR should close one issue"))
+        findings.append(Finding("PR-05", Severity.WARN, f"multiple Fixes # ({fixes_count}): one PR should close one issue"))
     if fixes_count <= 1:
-        findings.append(Finding("P-13", Severity.INFO, "one primary issue"))
+        findings.append(Finding("PR-05", Severity.INFO, "one primary issue"))
     else:
-        findings.append(Finding("P-13", Severity.FAIL, "one PR should close one primary issue"))
+        findings.append(Finding("PR-05", Severity.FAIL, "one PR should close one primary issue"))
 
     # P-21 type label (PR variant)
     if any(l in type_labels_cfg for l in labels):
-        findings.append(Finding("P-21", Severity.INFO, "type label present"))
+        findings.append(Finding("PR-06", Severity.INFO, "type label present"))
     else:
-        findings.append(Finding("P-21", Severity.FAIL, "no type label (expected one of the type set)"))
+        findings.append(Finding("PR-06", Severity.FAIL, "no type label (expected one of the type set)"))
     if kw_map:
         missing_suggestions = []
         haystack = f"{title}\n{body}".lower()
@@ -208,21 +208,21 @@ def check_content(
             if keyword.lower() in haystack and suggested_label not in labels:
                 missing_suggestions.append(suggested_label)
         if missing_suggestions:
-            findings.append(Finding("P-21b", Severity.WARN, f"based on content keywords, consider also labeling: {' '.join(sorted(set(missing_suggestions)))}"))
+            findings.append(Finding("PR-06", Severity.WARN, f"based on content keywords, consider also labeling: {' '.join(sorted(set(missing_suggestions)))}"))
         else:
-            findings.append(Finding("P-21b", Severity.INFO, "content keywords align with assigned labels"))
+            findings.append(Finding("PR-06", Severity.INFO, "content keywords align with assigned labels"))
     else:
-        findings.append(Finding("P-21b", Severity.INFO, "no keyword suggestions (or policy not configured)"))
+        findings.append(Finding("PR-06", Severity.INFO, "no keyword suggestions (or policy not configured)"))
 
     # P-31 branch name
     allowed = cfg.get("allowed_branch_prefixes", ["feat/", "fix/", "chore/", "epic/", "main", "master", "release/"])
     if not head_ref or not any(head_ref.startswith(p) for p in allowed):
-        findings.append(Finding("P-31", Severity.FAIL, f"branch name not allowed: {head_ref} (allowed prefixes: {allowed})"))
+        findings.append(Finding("PR-08", Severity.FAIL, f"branch name not allowed: {head_ref} (allowed prefixes: {allowed})"))
     else:
-        findings.append(Finding("P-31", Severity.INFO, f"branch name OK: {head_ref} (prefixes: {allowed})"))
+        findings.append(Finding("PR-08", Severity.INFO, f"branch name OK: {head_ref} (prefixes: {allowed})"))
 
     # P-38 maintainer review
-    findings.append(Finding("P-38", Severity.WARN, "no maintainer review (COMMENTED/APPROVED/CHANGES_REQUESTED) — human required"))
+    findings.append(Finding("PR-09", Severity.WARN, "no maintainer review (COMMENTED/APPROVED/CHANGES_REQUESTED) — human required"))
 
     return findings
 
@@ -237,7 +237,7 @@ def run(repo: str, num: int, mode: str = "", strict: bool = False) -> list[Findi
 
     pr = gh_api_get(f"repos/{repo}/pulls/{num}")
     if not pr:
-        findings.append(Finding("P-00", Severity.FAIL, "PR fetch returned nothing"))
+        findings.append(Finding("PR-00", Severity.FAIL, "PR fetch returned nothing"))
         return findings
 
     title: str = pr.get("title", "")
@@ -257,17 +257,17 @@ def run(repo: str, num: int, mode: str = "", strict: bool = False) -> list[Findi
     valid_names = {l.get("name", "") for l in all_labels or []}
     unknown = [l for l in labels if l and l not in valid_names]
     if unknown:
-        findings.append(Finding("P-14", Severity.FAIL, f"labels not in repo: {unknown}"))
-        findings.append(Finding("P-20", Severity.FAIL, f"labels not in repo: {unknown}"))
+        findings.append(Finding("PR-06", Severity.FAIL, f"labels not in repo: {unknown}"))
+        findings.append(Finding("PR-06", Severity.FAIL, f"labels not in repo: {unknown}"))
     else:
-        findings.append(Finding("P-14", Severity.INFO, "labels all exist in repo"))
-        findings.append(Finding("P-20", Severity.INFO, "labels all exist in repo"))
+        findings.append(Finding("PR-06", Severity.INFO, "labels all exist in repo"))
+        findings.append(Finding("PR-06", Severity.INFO, "labels all exist in repo"))
 
     # API 专属：P-39 closing reference
     print("--- closing reference ---")
     fixes = _extract_fixes(body)
     if fixes:
-        findings.append(Finding("P-39", Severity.INFO, f"Fixes # present: #{fixes[0]}; closing reference check requires base branch = default)"))
+        findings.append(Finding("PR-10", Severity.INFO, f"Fixes # present: #{fixes[0]}; closing reference check requires base branch = default)"))
 
     return findings
 

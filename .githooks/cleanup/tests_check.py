@@ -27,7 +27,7 @@ def check_file(path: Path, lang: str, cfg: dict[str, Any]) -> list[Finding]:
     """Check a single test file against its language config."""
     findings: list[Finding] = []
     content = path.read_text(encoding="utf-8", errors="replace")
-    rid = f"tests-{lang}"
+    rid = "CL-02"
 
     naming = cfg.get("naming_pattern", "")
     if naming:
@@ -59,11 +59,11 @@ def run_lang(lang: str, base: str = ".") -> list[Finding]:
     """Check all test files for a language."""
     cfg_path = ROOT / "spec" / f"cleanup_tests_{lang}.yaml"
     if not cfg_path.exists():
-        return [Finding(f"tests-{lang}", Severity.WARN, f"config not found: {cfg_path.name}")]
+        return [Finding("CL-02", Severity.WARN, f"config not found: {cfg_path.name}")]
 
     cfg = load_yaml(cfg_path)
     if not cfg.get("enabled", True):
-        return [Finding(f"tests-{lang}", Severity.INFO, f"{lang}: disabled in config")]
+        return [Finding("CL-02", Severity.INFO, f"{lang}: disabled in config")]
 
     findings: list[Finding] = []
     includes = cfg.get("paths_include", [])
@@ -78,7 +78,7 @@ def run_lang(lang: str, base: str = ".") -> list[Finding]:
                 findings.extend(check_file(f, lang, cfg))
 
     if not findings:
-        findings.append(Finding(f"tests-{lang}", Severity.INFO,
+        findings.append(Finding("CL-02", Severity.INFO,
             f"{lang}: no test files found matching {includes}"))
 
     return findings
