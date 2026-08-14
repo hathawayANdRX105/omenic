@@ -16,7 +16,8 @@ _section = _mod._section
 _check_done_when_fully_ticked = _mod._check_done_when_fully_ticked
 _extract = _mod._extract
 _gh_args = _mod._gh_args
-
+_intercept_issue_create = _mod._intercept_issue_create
+_intercept_pr_merge = _mod._intercept_pr_merge
 
 # ---------------------------------------------------------------------------
 # _section
@@ -141,3 +142,116 @@ def test_gh_args_equals_parent():
     result = _gh_args(args)
     assert "--parent=124" not in result
     assert result == ["--title=x", "--body=y"]
+
+
+# ---------------------------------------------------------------------------
+# GT-01 --disable-check 逃生门
+# ---------------------------------------------------------------------------
+
+
+def test_disable_check_bypasses_validation(monkeypatch):
+    """--disable-check 跳过校验，走 _passthrough 透传。"""
+    called_log = []
+    monkeypatch.setattr(_mod, "_log", lambda *a: called_log.append(a))
+    monkeypatch.setattr(_mod, "_derive_repo", lambda: "owner/repo")
+    monkeypatch.setattr(_mod, "_find_project_githooks", lambda: None)
+    monkeypatch.setattr(_mod, "_run_gh",
+                        lambda *a, **kw: (0, "https://github.com/owner/repo/issues/999", ""))
+    rc = _intercept_issue_create(["--disable-check", "--title", "test", "--body", "body"])
+    assert rc == 0
+    assert any("BYPASS" in str(c) for c in called_log), "日志应记录 BYPASS"
+
+def test_disable_check_not_in_passthrough_args(monkeypatch):
+    """--disable-check 不应出现在传给 gh 的参数中。"""
+    captured = []
+    monkeypatch.setattr(_mod, "_log", lambda *a: None)
+    monkeypatch.setattr(_mod, "_derive_repo", lambda: "owner/repo")
+    monkeypatch.setattr(_mod, "_find_project_githooks", lambda: None)
+    original_passthrough = _mod._passthrough
+    def tracking_passthrough(args):
+        captured.append(args)
+        return original_passthrough(args)
+    monkeypatch.setattr(_mod, "_passthrough", tracking_passthrough)
+    monkeypatch.setattr(_mod, "_run_gh", lambda *a, **kw: (0, "https://github.com/owner/repo/issues/999", ""))
+    _intercept_issue_create(["--disable-check", "--title", "x", "--body", "y"])
+    assert captured, "应调用 _passthrough"
+    passthrough_args = captured[0]
+    assert "--disable-check" not in passthrough_args
+    assert "issue" in passthrough_args
+    assert "create" in passthrough_args
+
+
+# ---------------------------------------------------------------------------
+# #154 merge squash 标题 CS 校验
+# ---------------------------------------------------------------------------
+
+
+def _ok_body() -> str:
+    return ("## Construction plan\n- [x] step\n"
+            "## Checklist\n- [x] 已使用 Fixes #N\n")
+
+
+def test_pr_merge_rejects_non_cc_title(monkeypatch):
+    """PR 标题非 conventional commit → merge 拦截。"""
+    log = []
+    monkeypatch.setattr(_mod, "_log", lambda *a: log.append(a))
+    monkeypatch.setattr(_mod, "_derive_repo", lambda: "owner/repo")
+    def fake_gh(args):
+        if "--jq" in args:
+            jq = args[args.index("--jq") + 1]
+            if jq == ".body":
+                return 0, _ok_body(), ""
+            if jq == ".title":
+                return 0, "add widget without prefix", ""
+        return 0, "", ""
+    monkeypatch.setattr(_mod, "_run_gh", fake_gh)
+    rc = _intercept_pr_merge(["158", "--squash", "--body", "reason"])
+    assert rc == 1
+    assert any("title not CC" in str(c) for c in log)
+
+
+def test_pr_merge_accepts_cc_title(monkeypatch):
+    """PR 标题 conventional commit → merge 放行。"""
+    monkeypatch.setattr(_mod, "_derive_repo", lambda: "owner/repo")
+    def fake_gh(args):
+        if "--jq" in args:
+            jq = args[args.index("--jq") + 1]
+            if jq == ".body":
+                return 0, _ok_body(), ""
+            if jq == ".title":
+                return 0, "feat: add widget", ""
+        if args[:2] == ["pr", "merge"]:
+            return 0, "", ""
+        if args[:2] == ["pr", "comment"]:
+            return 0, "", ""
+        return 0, "", ""
+    monkeypatch.setattr(_mod, "_run_gh", fake_gh)
+    rc = _intercept_pr_merge(["158", "--squash", "--body", "reason"])
+    assert rc == 0
+
+def test_pr_merge_cleans_local_branch(monkeypatch):
+    """merge 成功后自动删除本地 head 分支。"""
+    monkeypatch.setattr(_mod, "_derive_repo", lambda: "owner/repo")
+    fake_subprocess = MagicMock()
+    monkeypatch.setattr(_mod, "subprocess", fake_subprocess)
+    def fake_gh(args):
+        if "--jq" in args:
+            jq = args[args.index("--jq") + 1]
+            if jq == ".body":
+                return 0, ("## Construction plan\n- [x] step\n"
+                           "## Checklist\n- [x] 已使用 Fixes #N\n"), ""
+            if jq == ".title":
+                return 0, "feat: add widget", ""
+            if jq == ".head.ref":
+                return 0, "feat/foo", ""
+        if args[:2] == ["pr", "merge"]:
+            return 0, "", ""
+        if args[:2] == ["pr", "comment"]:
+            return 0, "", ""
+        return 0, "", ""
+    monkeypatch.setattr(_mod, "_run_gh", fake_gh)
+    monkeypatch.setattr(_mod, "_log", lambda *a, **kw: None)
+    rc = _intercept_pr_merge(["158", "--squash", "--body", "reason"])
+    assert rc == 0
+    calls = [str(c) for c in fake_subprocess.run.call_args_list]
+    assert any("-d" in c and "feat/foo" in c for c in calls), "应调用 git branch -d feat/foo"
