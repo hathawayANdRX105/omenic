@@ -228,3 +228,30 @@ def test_pr_merge_accepts_cc_title(monkeypatch):
     monkeypatch.setattr(_mod, "_run_gh", fake_gh)
     rc = _intercept_pr_merge(["158", "--squash", "--body", "reason"])
     assert rc == 0
+
+def test_pr_merge_cleans_local_branch(monkeypatch):
+    """merge 成功后自动删除本地 head 分支。"""
+    monkeypatch.setattr(_mod, "_derive_repo", lambda: "owner/repo")
+    fake_subprocess = MagicMock()
+    monkeypatch.setattr(_mod, "subprocess", fake_subprocess)
+    def fake_gh(args):
+        if "--jq" in args:
+            jq = args[args.index("--jq") + 1]
+            if jq == ".body":
+                return 0, ("## Construction plan\n- [x] step\n"
+                           "## Checklist\n- [x] 已使用 Fixes #N\n"), ""
+            if jq == ".title":
+                return 0, "feat: add widget", ""
+            if jq == ".head.ref":
+                return 0, "feat/foo", ""
+        if args[:2] == ["pr", "merge"]:
+            return 0, "", ""
+        if args[:2] == ["pr", "comment"]:
+            return 0, "", ""
+        return 0, "", ""
+    monkeypatch.setattr(_mod, "_run_gh", fake_gh)
+    monkeypatch.setattr(_mod, "_log", lambda *a, **kw: None)
+    rc = _intercept_pr_merge(["158", "--squash", "--body", "reason"])
+    assert rc == 0
+    calls = [str(c) for c in fake_subprocess.run.call_args_list]
+    assert any("-d" in c and "feat/foo" in c for c in calls), "应调用 git branch -d feat/foo"

@@ -466,6 +466,17 @@ def _intercept_pr_merge(args: list[str]) -> int:
         _log("PR_MERGE", f"PR #{pr_num}", "FAIL", err.strip() or "")
         return rc
 
+    # 清理本地分支（merge 成功后；远程删除仅提示需用户确认）
+    if pr_num and repo:
+        rc4, head_ref, _ = _run_gh(["api", f"repos/{repo}/pulls/{pr_num}", "--jq", ".head.ref"])
+        if rc4 == 0:
+            head = head_ref.strip()
+            if head and head not in ("main", "master", "develop"):
+                subprocess.run(["git", "branch", "-d", head],
+                               capture_output=True, timeout=10)
+                print(f"提示: 本地分支 '{head}' 已删除。远程删除执行:")
+                print(f"  git push origin --delete {head}")
+
     # 合并后 PR conversation 留言 + 日志
     if pr_num and merge_reason:
         rc2, out2, err2 = _run_gh(["pr", "comment", pr_num, "--body", merge_reason])
