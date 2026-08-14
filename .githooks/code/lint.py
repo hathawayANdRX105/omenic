@@ -41,7 +41,7 @@ def run_lang(lang: str, target: str = ".") -> list[Finding]:
     if not command:
         return [Finding(f"code-{lang}", Severity.WARN, f"{lang}: no command configured")]
 
-    cmd = [command] + list(args) + [target]
+    cmd = [command] + list(args) + ([] if command == "cargo" else [target])
     try:
         rc, output = run_external(cmd, cwd=ROOT.parent)
     except FileNotFoundError:

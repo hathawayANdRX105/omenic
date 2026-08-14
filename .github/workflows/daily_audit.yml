@@ -1,0 +1,59 @@
+name: daily audit
+on:
+  schedule:
+    - cron: "30 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 全量合规检查
+        id: audit
+        run: |
+          set +e
+          OUT=$(python .githooks/audit.py ${{ github.repository }} --recent=1 2>&1)
+          RC=$?
+          echo "$OUT"
+          if [ $RC -ne 0 ]; then
+            echo "has_fail=true" >> "$GITHUB_OUTPUT"
+            # 输出摘要（截断，避免 $GITHUB_OUTPUT 溢出）
+            SUMMARY=$(echo "$OUT" | head -50)
+            echo "OUT<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$SUMMARY" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          fi
+      - name: 创建违规记录
+        if: steps.audit.outputs.has_fail == 'true'
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          gh issue create \
+            --title "合规检查发现违规 $DATE" \
+            --body "## Goal
+
+自动审计发现最近一天创建的 issue 或 PR 存在违规，需修复。
+
+## Background
+
+每天自动全量合规检查（audit.py --recent=1），发现问题自动记录。
+
+## Done when
+
+- [ ] 修复下列违规
+
+## Suspected areas
+
+${{ steps.audit.outputs.OUT }}
+
+## Out of scope
+
+- 无
+
+## How to observe success
+
+重新触发 workflow 或本地跑 \`audit.py ${{ github.repository }} --recent=1\` 无 FAIL。" \
+            --label chore

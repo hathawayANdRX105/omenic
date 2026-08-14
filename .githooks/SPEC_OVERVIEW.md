@@ -3,41 +3,43 @@
 ```
 .githooks/
 ├── gh-gate                    # 创建拦截门（创建前调 check_content + 创建后调 issues.py/pull_requests.py）
-├── pre-commit                 # git commit 钩子（轻量：workspace + code）
-├── pre-push                   # git push 钩子（全量：workspace + code + PR + reviews + cleanup）
+├── pre-commit                 # git commit 钩子（轻量：workspace + code + CM-01/02/03 commit 标题）
+├── pre-push                   # git push 钩子（全量：workspace + code）
 ├── merge                      # 合并入口（手动跑：pull_requests + reviews + cleanup）
 ├── _shared.py                 # 共享模块（gh_api / Finding / load_yaml / run_external）
 ├── spec/                      # 规则配置（改规则只改这里，不改 .py）
 │   ├── dispatch.yaml          # 钩子→主题映射（哪个钩子跑哪些检查）
-│   ├── github_issues.yaml     # Issue 规则（I-* 检查项）
-│   ├── github_pull_requests.yaml  # PR 规则（P-* 检查项）
-│   ├── github_reviews.yaml    # Review 评论格式（P-22/P-24/P-25/P-35/P-36/P-37）
+│   ├── github_issues.yaml     # Issue 规则（IS-* 检查项）
+│   ├── github_pull_requests.yaml  # PR 规则（PR-* 检查项）
+│   ├── github_reviews.yaml    # Review 评论格式（RV-* 检查项）
 │   ├── code_{rust,go,javascript,typescript,python,bash}.yaml  # 六语言 lint
 │   ├── workspace_{tree_hygiene,file_placement}.yaml           # 工作区检查
 │   ├── cleanup_branch_cleanup.yaml  # 分支清理
 │   ├── cleanup_tests_{rust,go,javascript,bash}.yaml           # 测试代码检查
 │   └── cleanup_docs_hygiene.yaml    # 文档清洁
 ├── github/                    # GitHub 校验器（规则实现，含 check_content 供 gh-gate 复用）
-│   ├── issues.py            # Issue 校验（I-01 ~ I-30）
-│   ├── pull_requests.py     # PR 校验（P-01 ~ P-39，非 review 部分）
-│   └── reviews.py           # Review 校验（P-22/P-24/P-25/P-35/P-36/P-37）
+│   ├── issues.py            # Issue 校验（IS-01 ~ IS-16）
+│   ├── pull_requests.py     # PR 校验（PR-01 ~ PR-12，非 review 部分）
+│   └── reviews.py           # Review 校验（RV-01 ~ RV-06）
 ├── code/lint.py               # 六语言 lint 分发器（读 code_*.yaml）
 ├── workspace/                 # 工作区检查
 │   ├── tree_hygiene.py      # 目录整洁（空目录/深度/单文件/孤儿）
-│   └── file_placement.py    # 文件位置合理性
+│   └── file_placement.py    # 文件位置合理性（ignore_paths 含 .githooks/）
 ├── cleanup/                   # 清理检查
 │   ├── branch_cleanup.py    # 分支清理（merged/orphan/temp）
 │   ├── tests_check.py       # 测试代码检查（命名/断言/helper）
 │   └── docs_hygiene.py      # 文档清洁（全角括号/死链/空文件/CRLF）
-├── tests/                     # 单元测试（102 个）
-├── SKILL_GITHUB_ISSUE_PR.md   # Issue/PR 创建指南
-├── SKILL_PR_DEV_WORKFLOW.md   # PR 开发工作流指南
+├── tests/                     # 单元测试（127 个）
+├── GITHUB_ISSUE_PR.md         # Issue/PR 创建指南
+├── PR_DEV_WORKFLOW.md         # PR 开发工作流指南
+├── audit.py                   # 批量检查/打钩/最近 N 天扫描（--recent=N 供 CI）
 └── OVERVIEW.md                # 本文件（规范总览）
 
 项目根：
 ├── AGENTS.md                  # Agent 行为规范（创建前读 gh-gate）
 ├── pytest.ini                 # pytest 配置（禁用缓存）
-└── ruff.toml                  # ruff 配置（缓存重定向到 /tmp）
+├── ruff.toml                  # ruff 配置（缓存重定向到 /tmp）
+└── .github/workflows/daily_audit.yml  # 每日合规检查（最近 1 天，有 FAIL 自动建 issue）
 ```
 
 ## 本文档用途
@@ -47,7 +49,8 @@
 - 列出每个主题（GitHub / Code / Workspace / Cleanup / 拦截门 / 钩子）的全部规则、实现位置、严重度、触发时机
 - 规则**只**在 `.githooks/spec/*.yaml`（参数）和对应校验器（逻辑）两处，改规则只改 spec，校验器自动读取
 - **新增/修改规则后必须更新本文档**；merge 时校验 spec 与本文档一致性（见文末"更新与校验"）
-- 规则编号采用**主题前缀 + 连续编号**（IS/PR/RV/GT/CD/WS/CL），旧编号不再使用
+- 规则编号采用**主题前缀 + 连续编号**（IS/PR/RV/GT/CD/WS/CL/CM），旧编号不再使用
+- commit 标题规则 CM-01/02/03 实现在 pre-commit（非 spec），语义与 PR-01/PR-02 对齐
 
 ## 主题一：GitHub（github/）
 
@@ -130,37 +133,56 @@
 
 ## 主题五：拦截门（GT-01 ~ GT-07）
 
-- GT-01 issue create 前校验（调 IS-*，FAIL 拒）— 触发：gh issue create
+- GT-01 issue create 前校验（调 IS-*，FAIL 拒）；支持 `--disable-check` 逃生门（跳过校验但记 BYPASS 日志 + 终端警告，防滥用）— 触发：gh issue create
 - GT-02 pr create 前校验（调 PR-*，FAIL 拒）— 触发：gh pr create
 - GT-03 sub 自动挂载 parent（spec.sub_issue_must_link_parent）— 触发：gh issue create
 - GT-04 issue close 前 Done when 全勾 + 必须 --comment 理由 — 触发：gh issue close
-- GT-05 pr merge 前 checkbox 全勾 + 必须 --body 理由 — 触发：gh pr merge
+- GT-05 pr merge 前 checkbox 全勾 + 必须 --body 理由 + **squash 标题（--title 或 PR 标题）必须符合 CM-01/CM-02** — 触发：gh pr merge
 - GT-06 epic close 前所有 sub-issues 已关闭 — 触发：gh issue close（epic）
-- GT-07 merge 后自动在 PR 留言（含理由）— 触发：gh pr merge
+- GT-07 merge 后自动在 PR 留言（含理由）+ **自动删除本地 head 分支（git branch -d 安全模式），远程删除仅提示需用户确认** — 触发：gh pr merge
 
-实现位置：`.githooks/install_gh_gate.py`（安装到 ~/.local/bin/gh）
+实现位置：`.githooks/install_gh_gate.py`（安装到 ~/.local/bin/gh；改动后需重跑 --install）
 
 ## 主题六：钩子调度（spec/dispatch.yaml）
 
-- pre-commit `git commit` — workspace（WS-*）+ code（CD-*），轻量不调 API
-- pre-push `git push` — workspace + code + PR 校验 + git diff path scope（只查 .wt/ 与 main 相关路径）
+- pre-commit `git commit` — CM-01/CM-02/CM-03（commit 标题格式/CJK/与关联 PR type 一致）+ workspace（WS-*）+ code（CD-*）
+- pre-push `git push` — workspace + code（cargo 不传 target、ruff 排除 .githooks、file_placement 忽略 .githooks/）
 - merge 手动 `python .githooks/merge` — 全量（PR + reviews + cleanup + CRG + ocr）
+
+### Commit 标题规则（CM-01 ~ CM-03）
+
+- CM-01 commit 标题必须 conventional commit 格式（feat/fix/docs/style/refactor/perf/test/build/ci/chore/revert）— FAIL
+- CM-02 commit 标题禁 CJK（应为英文，同 PR-01）— FAIL
+- CM-03 分支有关联 open PR 时，commit 标题 type 必须与 PR 标题 type 一致（gh api 获取 PR 标题，失败/无 PR 跳过不阻塞）— FAIL
+
+实现位置：`.githooks/pre-commit`（非 spec；CM-03 调 gh api REST + 短超时）
+
+## 主题七：每日合规检查（GitHub Actions）
+
+- `.github/workflows/daily_audit.yml`：每天 UTC 0:30 自动跑 `audit.py --recent=1`（检查最近 1 天创建的 issue/PR，逐个跑 issues.py/pull_requests.py 完整规则）
+- 有 FAIL → 自动创建 issue 记录（标题带日期、body 列违规清单、label chore）；全部 PASS → 无动作
+- 支持 workflow_dispatch 手动触发
+
+实现位置：`.githooks/audit.py` scan_recent + `.github/workflows/daily_audit.yml`
+
 
 ## 触发式（lazy）规则映射
 
 只在使用特定 gh 命令 / git 操作时检查对应规则，不全量扫描：
 
-- gh issue create → IS-01~16、GT-01、GT-03
+- gh issue create → IS-01~16、GT-01（含 --disable-check 逃生门）、GT-03
 - gh issue close → GT-04、GT-06（epic）
 - gh pr create → PR-01~10、GT-02
-- gh pr merge → PR-11、PR-12、GT-05、GT-07、RV-01~06
+- gh pr merge → PR-11、PR-12、GT-05（含 squash 标题 CM-01/CM-02）、GT-07（含分支清理）、RV-01~06
 - gh pr comment → RV-01~06
-- git commit → WS-01、WS-02、CD-01~06
-- git push → WS-01、WS-02、CD-01~06、PR-01~10（git diff path scope）
+- git commit → CM-01、CM-02、CM-03、WS-01、WS-02、CD-01~06
+- git push → WS-01、WS-02、CD-01~06
 - merge 手动 → 全量
+- CI 每日（daily_audit.yml）→ 最近 1 天创建的 issue/PR 全规则
 
 ## 更新与校验
 
 - 新增/修改规则：只改 `.githooks/spec/*.yaml` 参数 + 对应校验器逻辑，更新本文档
 - merge 时校验：spec 规则与本文档一致性（通过 `python .githooks/audit.py` 或校验器检测）
 - 触发式按上表 lazy 执行，不全局扫描
+- 拦截门（install_gh_gate.py）改动后必须 `python .githooks/install_gh_gate.py --install` 重新部署

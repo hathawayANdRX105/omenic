@@ -43,5 +43,5 @@ python .githooks/review.py --post-inline       # 审查结果→PR inline review
 ## 参考
 
 - 规则总览：`.githooks/SPEC_OVERVIEW.md`
-- 工作流指南：`.githooks/SKILL_PR_DEV_WORKFLOW.md`
+- 工作流指南：`.githooks/PR_DEV_WORKFLOW.md`
 - 钩子配置：`.githooks/spec/dispatch.yaml`

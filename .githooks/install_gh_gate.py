@@ -161,11 +161,14 @@ def _gh_args(args: list[str]) -> list[str]:
 
 def _intercept_issue_create(args: list[str]) -> int:
     title, body, labels, _, parent = _extract(args)
+    # GT-01 逃生门: --disable-check 显式跳过校验（记日志 + 终端警告，防滥用）
+    if "--disable-check" in args:
+        _log("ISSUE_CREATE", title[:40], "BYPASS", "--disable-check")
+        print("⚠ 闸门: --disable-check 跳过校验（已记入 gate.log；仅本次调用生效）")
+        clean = [a for a in args if a != "--disable-check"]
+        return _passthrough(["issue", "create"] + clean)
     repo = _derive_repo()
     githooks = _find_project_githooks()
-    if githooks is None:
-        return _passthrough(["issue", "create"] + args)
-
     sys.path.insert(0, str(githooks))
     sys.path.insert(0, str(githooks / "github"))
     import issues as issues_mod
@@ -421,6 +424,31 @@ def _intercept_pr_merge(args: list[str]) -> int:
                         _log("PR_MERGE", f"PR #{pr_num}", "REJECT", f"issue #{fn} Done when {len(unticked)} unticked")
                         return 1
 
+    # GT 增强: squash 标题（--title 或 PR 标题）必须符合 conventional commit（CM-01/CM-02 同款）
+    import re as _re
+    merge_title = ""
+    for i, a in enumerate(args):
+        if a == "--title" and i + 1 < len(args):
+            merge_title = args[i + 1]
+            break
+        if a.startswith("--title="):
+            merge_title = a.split("=", 1)[1]
+            break
+    if not merge_title and pr_num and repo:
+        rc3, pr_title, _ = _run_gh(["api", f"repos/{repo}/pulls/{pr_num}", "--jq", ".title"])
+        if rc3 == 0:
+            merge_title = pr_title.strip()
+    if merge_title:
+        if not _re.match(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?:\s+\S+", merge_title):
+            print(f"闸门: merge 标题非 conventional commit 格式: '{merge_title}'")
+            print("  示例: feat: add widget / fix(scope): correct bug")
+            _log("PR_MERGE", f"PR #{pr_num}", "REJECT", f"title not CC: {merge_title[:60]}")
+            return 1
+        if _re.search(r"[\u4e00-\u9fff]", merge_title):
+            print(f"闸门: merge 标题含 CJK（应为英文）: '{merge_title}'")
+            _log("PR_MERGE", f"PR #{pr_num}", "REJECT", f"title CJK: {merge_title[:60]}")
+            return 1
+
     # 提取合并理由
     merge_reason = ""
     for i, a in enumerate(args):
@@ -437,6 +465,17 @@ def _intercept_pr_merge(args: list[str]) -> int:
     if rc != 0:
         _log("PR_MERGE", f"PR #{pr_num}", "FAIL", err.strip() or "")
         return rc
+
+    # 清理本地分支（merge 成功后；远程删除仅提示需用户确认）
+    if pr_num and repo:
+        rc4, head_ref, _ = _run_gh(["api", f"repos/{repo}/pulls/{pr_num}", "--jq", ".head.ref"])
+        if rc4 == 0:
+            head = head_ref.strip()
+            if head and head not in ("main", "master", "develop"):
+                subprocess.run(["git", "branch", "-d", head],
+                               capture_output=True, timeout=10)
+                print(f"提示: 本地分支 '{head}' 已删除。远程删除执行:")
+                print(f"  git push origin --delete {head}")
 
     # 合并后 PR conversation 留言 + 日志
     if pr_num and merge_reason:
