@@ -160,14 +160,10 @@ def _gh_args(args: list[str]) -> list[str]:
 
 
 def _intercept_issue_create(args: list[str]) -> int:
-    """拦截 issue create：调项目 issues.py.check_content → FAIL 拒，否则创建 + 后校验 + 挂载。"""
     title, body, labels, _, parent = _extract(args)
     repo = _derive_repo()
-
-    # 找项目 .githooks
     githooks = _find_project_githooks()
     if githooks is None:
-        # 无项目规范，透传
         return _passthrough(["issue", "create"] + args)
 
     sys.path.insert(0, str(githooks))
@@ -181,6 +177,7 @@ def _intercept_issue_create(args: list[str]) -> int:
         print(f"{f.severity.name}\t{f.message}")
     if fails:
         print("闸门: 校验 FAIL，拒绝创建。修正后重试。")
+        _log("ISSUE_CREATE", title[:40], "REJECT", f"FAIL={len(fails)}")
         return 1
 
     print("闸门: 检查通过，执行 gh ...")
@@ -190,7 +187,6 @@ def _intercept_issue_create(args: list[str]) -> int:
     if err: print(err, file=sys.stderr)
     if rc != 0: return rc
 
-    # 创建后校验
     url = out.strip()
     if url.startswith("https://github.com/"):
         num = url.split("/issues/")[1].split("/")[0] if "/issues/" in url else ""
@@ -201,21 +197,19 @@ def _intercept_issue_create(args: list[str]) -> int:
             )
             if "FAIL" in proc.stdout:
                 print(f"FAIL\t#{num} 创建后校验 FAIL，修正后重跑")
+                _log("ISSUE_CREATE", f"#{num}", "POST_FAIL", "")
             else:
                 print(f"INFO\t#{num} 创建后校验 ALL PASS")
+                _log("ISSUE_CREATE", f"#{num}", "CREATED", title[:40])
 
-        # sub-issue 自动挂载
         if "epic" not in [x.lower() for x in labels] and "/issues/" in url:
             _auto_link_sub(url, repo, githooks, parent)
-
     return 0
 
 
 def _intercept_pr_create(args: list[str]) -> int:
-    """拦截 PR create：调项目 pull_requests.py.check_content → FAIL 拒。"""
     title, body, labels, head, _ = _extract(args)
     repo = _derive_repo()
-
     githooks = _find_project_githooks()
     if githooks is None:
         return _passthrough(["pr", "create"] + args)
@@ -230,6 +224,7 @@ def _intercept_pr_create(args: list[str]) -> int:
         print(f"{f.severity.name}\t{f.message}")
     if fails:
         print("闸门: 校验 FAIL，拒绝创建。修正后重试。")
+        _log("PR_CREATE", title[:40], "REJECT", f"FAIL={len(fails)}")
         return 1
 
     print("闸门: 检查通过，执行 gh ...")
@@ -248,8 +243,10 @@ def _intercept_pr_create(args: list[str]) -> int:
             )
             if "FAIL" in proc.stdout:
                 print(f"FAIL\tPR #{num} 创建后校验 FAIL，修正后重跑")
+                _log("PR_CREATE", f"PR #{num}", "POST_FAIL", "")
             else:
                 print(f"INFO\tPR #{num} 创建后校验 ALL PASS")
+                _log("PR_CREATE", f"PR #{num}", "CREATED", title[:40])
     return 0
 
 
