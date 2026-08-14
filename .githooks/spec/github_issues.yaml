@@ -60,14 +60,25 @@ keyword_label_suggestions:
   "清理": "chore"
   "cleanup": "chore"
 
-# 父 issue 判定: 标题含这些前缀视为父 (只做进度跟踪, 不强制)
-parent_issue_title_hints:
+# 标题禁用前缀 (默认: 父/issue:/sub: 等，关系用 label 表达)
+title_forbidden_prefixes:
   - "父"
-  - "parent"
-  - "epic"
+  - "issue:"
+  - "sub:"
+  - "parent:"
 
-# 默认父 issue 编号 (sub-issue 应链接到这里; 用 0 表示未指定)
-default_parent_issue: 111
+# 正文禁 Labels 段 (label 用 gh label 操作，不写正文)
+labels_section_forbidden: true
+
+# 父 issue 判定: 标题含这些前缀视为父 (只做进度跟踪, 不强制)
+# 默认父 issue 编号 (sub-issue 创建后自动挂载到这里; 用 0 表示不自动挂载)
+default_parent_issue: 124
+
+# 乱码检查: 正文含字面 \n (反斜杠+n) 或 U+FFFD 替换符 (�) → FAIL (创建时拦截)
+garbled_content_check: true
+
+# sub-issue 挂载: sub 创建后必须挂到 default_parent_issue (或 --parent 指定) 下
+sub_issue_must_link_parent: true
 
 # sub-issue 关联: CLOSED 时 Done when 必须全勾 (I-22b)
 sub_issue_closed_requires_done_when_checked: true

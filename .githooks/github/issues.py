@@ -84,6 +84,175 @@ def _load_config() -> dict[str, Any]:
     return cfg
 
 
+def check_content(
+    title: str,
+    body: str,
+    labels: list[str],
+    mode: str = "sub",
+    cfg: Optional[dict[str, Any]] = None,
+    state: str = "open",
+) -> list[Finding]:
+    """纯内容校验（不调 API）。供 gh-gate 创建前拦截 + run() 复用。
+
+    规则全部来自 spec/github_issues.yaml。API 相关检查（I-18 sub-issues、
+    I-20 repo labels、creation suggestion）不在此函数内。
+    """
+    if cfg is None:
+        cfg = _load_config()
+    findings: list[Finding] = []
+
+    # 乱码检查（spec.garbled_content_check → I-30）
+    if cfg.get("garbled_content_check", True):
+        if "\\n" in body or "\\r" in body:
+            findings.append(Finding("I-30", Severity.FAIL, "正文含字面 \\n/\\r，应为真实换行符（用 heredoc 而非 --body 传多行）"))
+        if "\ufffd" in body:
+            findings.append(Finding("I-30", Severity.FAIL, "正文含 U+FFFD 替换符，编码错误"))
+        if "\\n" in title or "\\r" in title:
+            findings.append(Finding("I-30", Severity.FAIL, "标题含字面 \\n/\\r"))
+
+    # 标题禁用前缀（spec.title_forbidden_prefixes）
+    for p in cfg.get("title_forbidden_prefixes", []):
+        if title.lower().startswith(p.lower()):
+            findings.append(Finding("I-00", Severity.FAIL, f"标题禁用前缀 '{p}'，关系用 label 表达"))
+
+    # 正文禁 Labels 段（spec.labels_section_forbidden）
+    if cfg.get("labels_section_forbidden", True) and "## Labels" in body:
+        findings.append(Finding("I-00", Severity.FAIL, "正文禁止 Labels 段，用 gh label 操作"))
+
+    # I-01/I-02 template structure
+    if mode == "parent":
+        findings.append(Finding("I-01/I-02", Severity.INFO, "parent mode: template structure n/a (Implementation Order instead)"))
+    else:
+        required = cfg["required_headings"]
+        body_headings = set(_headings(body))
+        missing = [h for h in required if h not in body_headings]
+        if missing:
+            findings.append(Finding("I-01/I-02", Severity.FAIL, f"missing required template headings: {', '.join(missing)}"))
+        else:
+            findings.append(Finding("I-01/I-02", Severity.INFO, "all template headings present"))
+
+    # I-03 focus
+    n_h1 = len(H1_RE.findall(body))
+    if mode != "parent" and n_h1 > 1:
+        findings.append(Finding("I-03", Severity.WARN, f"multiple H1 titles ({n_h1}); body should focus one outcome"))
+    else:
+        findings.append(Finding("I-03", Severity.INFO, "body focused (or parent mode)"))
+
+    # I-04 acceptance checkboxes
+    if mode == "parent":
+        findings.append(Finding("I-04", Severity.INFO, "parent mode: Done when n/a"))
+    else:
+        done = _section(body, cfg["heading_names"]["done_when"])
+        boxes = CHECKBOX_RE.findall(done)
+        if boxes:
+            findings.append(Finding("I-04", Severity.INFO, "Done when uses checkboxes"))
+        else:
+            findings.append(Finding("I-04", Severity.FAIL, "Done when section lacks checkbox items"))
+        if TABLE_RE.search(done):
+            findings.append(Finding("I-04", Severity.FAIL, "Done when uses a table (checkboxes required)"))
+        else:
+            findings.append(Finding("I-04", Severity.INFO, "Done when has no table"))
+
+    # I-02b suspected areas
+    if mode != "parent":
+        suspected = _section(body, cfg["heading_names"]["suspected_areas"])
+        if not suspected.strip():
+            findings.append(Finding("I-02b", Severity.WARN, "Suspected areas empty; describe affected files/modules and what is not touched"))
+        else:
+            findings.append(Finding("I-02b", Severity.INFO, "Suspected areas populated"))
+
+    # I-05/I-06/I-07 language
+    if _has_cjk(title):
+        findings.append(Finding("I-05", Severity.INFO, "title is Chinese"))
+    else:
+        findings.append(Finding("I-05", Severity.FAIL, "title lacks Chinese (repo convention)"))
+    bad_h = [h for h in _headings(body) if _has_cjk(h)]
+    if bad_h:
+        findings.append(Finding("I-06", Severity.FAIL, f"headings contain CJK (headings must be English): {bad_h}"))
+    else:
+        findings.append(Finding("I-06", Severity.INFO, "headings are English only"))
+    if _has_cjk(body):
+        findings.append(Finding("I-07", Severity.INFO, "body prose is Chinese"))
+    else:
+        findings.append(Finding("I-07", Severity.FAIL, "body lacks Chinese prose"))
+
+
+    # I-xx forbidden keywords
+    for kw in cfg["forbidden_keywords"]:
+        if kw in body:
+            findings.append(Finding("I-xx", Severity.FAIL, f"body contains forbidden keyword: {kw}"))
+
+    # I-xx 全角括号：只检查标题（规范 spec.forbidden_brackets_in_title），正文禁 Labels 段已单独检查
+    fb_title = [c for c in title if c in cfg.get("forbidden_brackets_in_title", list(FULLWIDTH_BRACKETS))]
+    if fb_title:
+        findings.append(Finding("I-xx", Severity.FAIL, f"title contains fullwidth brackets: {set(fb_title)}"))
+    else:
+        findings.append(Finding("I-xx", Severity.INFO, "no fullwidth brackets in title"))
+    # I-11/13/14, I-12 sub self-contained
+    if mode == "sub":
+        cross = re.findall(
+            r"^(Depends on\s*[:：]|\*\*Depends.*[:：]|Blocks\s+[:：]|依赖[:：]|Related\s*#|Parent PR\s*[:：])",
+            body, re.MULTILINE)
+        if cross:
+            findings.append(Finding("I-11/13/14", Severity.FAIL, f"forbidden cross-references: {cross}"))
+        else:
+            findings.append(Finding("I-11/13/14", Severity.INFO, "no parent/dep/sibling references"))
+        pr_placeholder = re.findall(r"(待补\s*PR|TODO.*PR|需\s*PR|PR 关联[:：])", body)
+        if pr_placeholder:
+            findings.append(Finding("I-12", Severity.FAIL, f"sub-issue has PR placeholders/declarations: {pr_placeholder}"))
+        else:
+            findings.append(Finding("I-12", Severity.INFO, "no PR placeholders"))
+
+    # I-16 parent no Done when, I-17 Implementation Order
+    elif mode == "parent":
+        if "## Done when" in body:
+            findings.append(Finding("I-16", Severity.FAIL, "parent must NOT have Done when section"))
+        else:
+            findings.append(Finding("I-16", Severity.INFO, "parent has no Done when"))
+        if "## Implementation Order" in body:
+            findings.append(Finding("I-17", Severity.INFO, "Implementation Order present (optional)"))
+        else:
+            findings.append(Finding("I-17", Severity.INFO, "no Implementation Order section (optional)"))
+
+    # I-21 type label, I-21b keyword suggestions
+    type_labels = {"bug", "enhancement", "feature", "documentation", "chore", "refactor", "tests", "epic"}
+    if any(l in type_labels for l in [x.lower() for x in labels]):
+        findings.append(Finding("I-21", Severity.INFO, "type label present"))
+    else:
+        findings.append(Finding("I-21", Severity.FAIL, "no type label (expected one of the type set)"))
+    kw_map = cfg.get("keyword_label_suggestions", {})
+    if kw_map:
+        haystack = f"{title}\n{body}".lower()
+        missing_suggestions: list[str] = []
+        for keyword, suggested_label in kw_map.items():
+            if keyword.lower() in haystack and suggested_label not in labels:
+                missing_suggestions.append(suggested_label)
+        if missing_suggestions:
+            findings.append(Finding("I-21b", Severity.WARN, f"based on content keywords, consider also labeling: {' '.join(sorted(set(missing_suggestions)))}"))
+        else:
+            findings.append(Finding("I-21b", Severity.INFO, "content keywords align with assigned labels"))
+    else:
+        findings.append(Finding("I-21b", Severity.INFO, "no keyword suggestions (or policy not configured)"))
+
+    # I-22/I-22b closure
+    if state == "closed":
+        findings.append(Finding("I-22", Severity.INFO, "issue closed with explicit closed event"))
+        if mode == "sub":
+            done = _section(body, cfg["heading_names"]["done_when"])
+            boxes = CHECKBOX_RE.findall(done)
+            total = len(boxes)
+            checked = sum(1 for b in boxes if b in TICKED)
+            if total == 0:
+                findings.append(Finding("I-22b", Severity.WARN, "sub-issue closed but has no Done when boxes"))
+            elif total == checked:
+                findings.append(Finding("I-22b", Severity.INFO, f"sub-issue Done when all checked on close ({checked}/{total})"))
+            else:
+                findings.append(Finding("I-22b", Severity.FAIL, f"sub-issue closed with Done when unchecked ({checked}/{total}) — must tick all boxes before close"))
+    else:
+        findings.append(Finding("I-22", Severity.INFO, "issue open; closure rule n/a"))
+
+    return findings
+
 def run(repo: str, num: int, mode: str = "", strict: bool = False) -> list[Finding]:
     cfg = _load_config()
     findings: list[Finding] = []
@@ -102,144 +271,32 @@ def run(repo: str, num: int, mode: str = "", strict: bool = False) -> list[Findi
     state: str = issue.get("state", "").lower()
     labels: list[str] = [l.get("name", "") for l in issue.get("labels", []) or []]
 
-    # mode auto-detect
+    # mode auto-detect: epic label 或存在 native sub-issues → parent
+    subs = []
     if not mode:
         subs = gh_api_get(f"repos/{repo}/issues/{num}/sub_issues")
-        mode = "parent" if subs else "sub"
+        is_epic_label = "epic" in [x.lower() for x in labels]
+        mode = "parent" if (subs or is_epic_label) else "sub"
 
     print(f"== Issue #{num} ({mode}): {title} ==")
+    findings.extend(check_content(title, body, labels, mode=mode, cfg=cfg, state=state))
 
-    # ---- Template structure (I-01/I-02) ----
-    print("--- structure ---")
+    # API 专属：I-18/I-19 parent sub-issues 一致性
     if mode == "parent":
-        findings.append(Finding("I-01/I-02", Severity.INFO, "parent mode: template structure n/a (Implementation Order instead)"))
-    else:
-        required = cfg["required_headings"]
-        body_headings = set(_headings(body))
-        missing = [h for h in required if h not in body_headings]
-        if missing:
-            findings.append(Finding("I-01/I-02", Severity.FAIL, f"missing required template headings: {', '.join(missing)}"))
-        else:
-            findings.append(Finding("I-01/I-02", Severity.INFO, "all template headings present"))
-
-    # ---- Focus (I-03) ----
-    print("--- focus ---")
-    n_h1 = len(H1_RE.findall(body))
-    if mode != "parent" and n_h1 > 1:
-        findings.append(Finding("I-03", Severity.WARN, f"multiple H1 titles ({n_h1}); body should focus one outcome"))
-    else:
-        findings.append(Finding("I-03", Severity.INFO, "body focused (or parent mode)"))
-
-    # ---- Acceptance checkboxes (I-04) ----
-    print("--- acceptance checkboxes ---")
-    if mode == "parent":
-        findings.append(Finding("I-04", Severity.INFO, "parent mode: Done when n/a"))
-    else:
-        done = _section(body, cfg["heading_names"]["done_when"])
-        boxes = CHECKBOX_RE.findall(done)
-        if boxes:
-            findings.append(Finding("I-04", Severity.INFO, "Done when uses checkboxes"))
-        else:
-            findings.append(Finding("I-04", Severity.FAIL, "Done when section lacks checkbox items"))
-        if TABLE_RE.search(done):
-            findings.append(Finding("I-04", Severity.FAIL, "Done when uses a table (checkboxes required)"))
-        else:
-            findings.append(Finding("I-04", Severity.INFO, "Done when has no table"))
-
-    # ---- Suspected areas (I-02b) ----
-    print("--- suspected areas ---")
-    if mode != "parent":
-        suspected = _section(body, cfg["heading_names"]["suspected_areas"])
-        if not suspected.strip():
-            findings.append(Finding("I-02b", Severity.WARN, "Suspected areas empty; describe affected files/modules and what is not touched"))
-        else:
-            findings.append(Finding("I-02b", Severity.INFO, "Suspected areas populated"))
-
-    # ---- Language boundary (I-05/I-06/I-07) ----
-    print("--- language ---")
-    if _has_cjk(title):
-        findings.append(Finding("I-05", Severity.INFO, "title is Chinese"))
-    else:
-        findings.append(Finding("I-05", Severity.FAIL, "title lacks Chinese (repo convention)"))
-    bad_h = [h for h in _headings(body) if _has_cjk(h)]
-    if bad_h:
-        findings.append(Finding("I-06", Severity.FAIL, f"headings contain CJK (headings must be English): {bad_h}"))
-    else:
-        findings.append(Finding("I-06", Severity.INFO, "headings are English only"))
-    if _has_cjk(body):
-        findings.append(Finding("I-07", Severity.INFO, "body prose is Chinese"))
-    else:
-        findings.append(Finding("I-07", Severity.FAIL, "body lacks Chinese prose"))
-
-    # ---- Fullwidth brackets ----
-    print("--- fullwidth brackets ---")
-    fb_title = [c for c in title if c in FULLWIDTH_BRACKETS]
-    fb_body = [c for c in body if c in FULLWIDTH_BRACKETS]
-    if fb_body:
-        findings.append(Finding("I-xx", Severity.FAIL, f"body contains fullwidth brackets: {set(fb_body)}"))
-    else:
-        findings.append(Finding("I-xx", Severity.INFO, "no fullwidth brackets in body"))
-    if fb_title:
-        findings.append(Finding("I-xx", Severity.FAIL, f"title contains fullwidth brackets: {set(fb_title)}"))
-    else:
-        findings.append(Finding("I-xx", Severity.INFO, "no fullwidth brackets in title"))
-
-    # ---- Forbidden keywords ----
-    for kw in cfg["forbidden_keywords"]:
-        if kw in body:
-            findings.append(Finding("I-xx", Severity.FAIL, f"body contains forbidden keyword: {kw}"))
-
-    # ---- Path realism (I-09) ----
-    print("--- path realism ---")
-    ticked_paths = re.findall(r"`([^`]+)`", body)
-    missing_paths: list[str] = []
-    for p in ticked_paths:
-        if p.startswith("http") or "(" in p or p.endswith(".rs:"):
-            continue
-        if not Path(p).exists():
-            missing_paths.append(p)
-    if missing_paths:
-        findings.append(Finding("I-09", Severity.WARN, f"some backtick references not found in repo: {missing_paths[:5]}"))
-    else:
-        findings.append(Finding("I-09", Severity.INFO, "referenced paths exist (or not in repo, skipped)"))
-
-    # ---- Mode dispatch: sub / parent ----
-    if mode == "sub":
-        print("--- sub-issue self-contained ---")
-        cross = re.findall(
-            r"^(Depends on\s*[:：]|\*\*Depends.*[:：]|Blocks\s+[:：]|依赖[:：]|Related\s*#|Parent PR\s*[:：])",
-            body, re.MULTILINE)
-        if cross:
-            findings.append(Finding("I-11/13/14", Severity.FAIL, f"forbidden cross-references: {cross}"))
-        else:
-            findings.append(Finding("I-11/13/14", Severity.INFO, "no parent/dep/sibling references"))
-        pr_placeholder = re.findall(r"(待补\s*PR|TODO.*PR|需\s*PR|PR 关联[:：])", body)
-        if pr_placeholder:
-            findings.append(Finding("I-12", Severity.FAIL, f"sub-issue has PR placeholders/declarations: {pr_placeholder}"))
-        else:
-            findings.append(Finding("I-12", Severity.INFO, "no PR placeholders"))
-
-    elif mode == "parent":
         print("--- parent format ---")
-        if "## Done when" in body:
-            findings.append(Finding("I-16", Severity.FAIL, "parent must NOT have Done when section"))
-        else:
-            findings.append(Finding("I-16", Severity.INFO, "parent has no Done when"))
-        subs = gh_api_get(f"repos/{repo}/issues/{num}/sub_issues")
-        if subs:
-            nums = sorted(s.get("number", 0) for s in subs)
+        if not subs:
+            subs = gh_api_get(f"repos/{repo}/issues/{num}/sub_issues")
+        nums = sorted(s.get("number", 0) for s in subs or [])
+        if nums:
             findings.append(Finding("I-18", Severity.INFO, f"parent has native sub-issues ({nums})"))
         else:
             findings.append(Finding("I-18", Severity.FAIL, "parent has no native sub-issues (use GitHub sub-issue feature)"))
         if "## Implementation Order" in body:
-            findings.append(Finding("I-17", Severity.INFO, "Implementation Order present (optional)"))
             io_nums = sorted(int(x) for x in re.findall(r"\(#(\d+)\)", _section(body, "Implementation Order")))
             if io_nums and io_nums != nums:
                 findings.append(Finding("I-19", Severity.FAIL, f"Implementation Order ({io_nums}) != native sub-issues ({nums})"))
-        else:
-            findings.append(Finding("I-17", Severity.INFO, "no Implementation Order section (optional)"))
 
-    # ---- Labels (I-20/I-21/I-21b) ----
+    # API 专属：I-20 repo labels
     print("--- labels ---")
     all_labels = gh_api_get(f"repos/{repo}/labels")
     valid_names = {l.get("name", "") for l in all_labels or []}
@@ -248,46 +305,8 @@ def run(repo: str, num: int, mode: str = "", strict: bool = False) -> list[Findi
         findings.append(Finding("I-20", Severity.FAIL, f"labels not in repo: {unknown}"))
     else:
         findings.append(Finding("I-20", Severity.INFO, "labels all exist in repo"))
-    type_labels = {"bug", "enhancement", "feature", "documentation", "chore", "refactor", "tests", "epic"}
-    if any(l in type_labels for l in labels):
-        findings.append(Finding("I-21", Severity.INFO, "type label present"))
-    else:
-        findings.append(Finding("I-21", Severity.FAIL, "no type label (expected one of the type set)"))
 
-    # I-21b: 关键字建议 (WARN) — 从 yaml 读 keyword→label 映射
-    kw_map = cfg.get("keyword_label_suggestions", {})
-    if kw_map:
-        haystack = f"{title}\n{body}".lower()
-        missing_suggestions: list[str] = []
-        for keyword, suggested_label in kw_map.items():
-            if keyword.lower() in haystack and suggested_label not in labels:
-                missing_suggestions.append(suggested_label)
-        if missing_suggestions:
-            findings.append(Finding("I-21b", Severity.WARN, f"based on content keywords, consider also labeling: {' '.join(sorted(set(missing_suggestions)))}"))
-        else:
-            findings.append(Finding("I-21b", Severity.INFO, "content keywords align with assigned labels"))
-    else:
-        findings.append(Finding("I-21b", Severity.INFO, "no keyword suggestions (or policy not configured)"))
-
-    # ---- Closure (I-22/I-22b) ----
-    print("--- closure ---")
-    if state == "closed":
-        findings.append(Finding("I-22", Severity.INFO, "issue closed with explicit closed event"))
-        if mode == "sub":
-            done = _section(body, cfg["heading_names"]["done_when"])
-            boxes = CHECKBOX_RE.findall(done)
-            total = len(boxes)
-            checked = sum(1 for b in boxes if b in TICKED)
-            if total == 0:
-                findings.append(Finding("I-22b", Severity.WARN, "sub-issue closed but has no Done when boxes"))
-            elif total == checked:
-                findings.append(Finding("I-22b", Severity.INFO, f"sub-issue Done when all checked on close ({checked}/{total})"))
-            else:
-                findings.append(Finding("I-22b", Severity.FAIL, f"sub-issue closed with Done when unchecked ({checked}/{total}) — must tick all boxes before close"))
-    else:
-        findings.append(Finding("I-22", Severity.INFO, "issue open; closure rule n/a"))
-
-    # ---- Creation suggestion (point 7) ----
+    # API 专属：creation suggestion
     sug = cfg.get("creation_suggestion", {})
     if sug.get("enabled"):
         created = issue.get("created_at", "")
@@ -299,12 +318,13 @@ def run(repo: str, num: int, mode: str = "", strict: bool = False) -> list[Findi
             except (ValueError, TypeError):
                 age = float("inf")
             if age < float(sug.get("grace", cfg.get("creation_grace_minutes", 5))):
-                    missing = [h for h in cfg["required_headings"] if h not in _headings(body)]
-                    if missing:
-                        sev = Severity.FAIL if sug.get("severity") == "FAIL" else Severity.WARN
-                        findings.append(Finding("I-00", sev, f"new issue missing required sections: {missing}"))
+                missing = [h for h in cfg["required_headings"] if h not in _headings(body)]
+                if missing:
+                    sev = Severity.FAIL if sug.get("severity") == "FAIL" else Severity.WARN
+                    findings.append(Finding("I-00", sev, f"new issue missing required sections: {missing}"))
 
     return findings
+
 
 
 def main() -> int:
