@@ -117,9 +117,9 @@ def _extract(args: list[str]) -> tuple[str, str, list[str], str, str]:
         elif a.startswith("--body="):
             body = a.split("=", 1)[1]
         elif a in ("--label", "-l") and i + 1 < len(args):
-            labels.append(args[i + 1])
+            labels.extend(args[i + 1].split(","))
         elif a.startswith("--label="):
-            labels.append(a.split("=", 1)[1])
+            labels.extend(a.split("=", 1)[1].split(","))
         elif a in ("--head", "-H") and i + 1 < len(args):
             head = args[i + 1]
         elif a.startswith("--head="):
@@ -161,7 +161,7 @@ def _intercept_issue_create(args: list[str]) -> int:
     sys.path.insert(0, str(githooks / "github"))
     import issues as issues_mod
 
-    mode = "parent" if "epic" in labels else "sub"
+    mode = "parent" if "epic" in [x.lower() for x in labels] else "sub"
     findings = issues_mod.check_content(title, body, labels, mode=mode)
     fails = [f for f in findings if f.severity.name == "FAIL"]
     for f in findings:
@@ -192,7 +192,7 @@ def _intercept_issue_create(args: list[str]) -> int:
                 print(f"INFO\t#{num} 创建后校验 ALL PASS")
 
         # sub-issue 自动挂载
-        if "epic" not in labels and "/issues/" in url:
+        if "epic" not in [x.lower() for x in labels] and "/issues/" in url:
             _auto_link_sub(url, repo, githooks, parent)
 
     return 0
@@ -200,7 +200,7 @@ def _intercept_issue_create(args: list[str]) -> int:
 
 def _intercept_pr_create(args: list[str]) -> int:
     """拦截 PR create：调项目 pull_requests.py.check_content → FAIL 拒。"""
-    title, body, _, head, _ = _extract(args)
+    title, body, labels, head, _ = _extract(args)
     repo = _derive_repo()
 
     githooks = _find_project_githooks()
@@ -211,7 +211,7 @@ def _intercept_pr_create(args: list[str]) -> int:
     sys.path.insert(0, str(githooks / "github"))
     import pull_requests as pr_mod
 
-    findings = pr_mod.check_content(title, body, [], head_ref=head, state="open", draft=False)
+    findings = pr_mod.check_content(title, body, labels, head_ref=head, state="open", draft=False)
     fails = [f for f in findings if f.severity.name == "FAIL"]
     for f in findings:
         print(f"{f.severity.name}\t{f.message}")
@@ -289,6 +289,32 @@ def _passthrough(args: list[str]) -> int:
 # Main
 # ---------------------------------------------------------------------------
 
+def _intercept_issue_close(args: list[str]) -> int:
+    """拦截 issue close：必须带 --comment 说明关闭原因。"""
+    has_comment = any(a.startswith("--comment") or a == "-c" for a in args)
+    if not has_comment:
+        print("闸门: gh issue close 必须带 --comment 说明关闭原因，例如：")
+        print('  gh issue close <N> --comment "Agent 🤖 - Note: 原因说明"')
+        return 1
+    rc, out, err = _run_gh(["issue", "close"] + args)
+    if out: print(out)
+    if err: print(err, file=sys.stderr)
+    return rc
+
+
+def _intercept_pr_merge(args: list[str]) -> int:
+    """拦截 pr merge：必须带 --body 说明合并原因。"""
+    has_body = any(a.startswith("--body") or a == "-b" for a in args)
+    if not has_body:
+        print("闸门: gh pr merge 必须带 --body 说明合并原因，例如：")
+        print('  gh pr merge <N> --squash --body "Agent 🤖 - Merge: 原因说明"')
+        return 1
+    rc, out, err = _run_gh(["pr", "merge"] + args)
+    if out: print(out)
+    if err: print(err, file=sys.stderr)
+    return rc
+
+
 def main() -> int:
     if len(sys.argv) >= 2 and sys.argv[1] == "--install":
         return _install()
@@ -300,11 +326,14 @@ def main() -> int:
         rest = sys.argv[3:]
         if cmd == ["issue", "create"]:
             return _intercept_issue_create(rest)
+        if cmd == ["issue", "close"]:
+            return _intercept_issue_close(rest)
         if cmd == ["pr", "create"]:
             return _intercept_pr_create(rest)
+        if cmd == ["pr", "merge"]:
+            return _intercept_pr_merge(rest)
 
     return _passthrough(sys.argv[1:])
-
 
 if __name__ == "__main__":
     sys.exit(main())
