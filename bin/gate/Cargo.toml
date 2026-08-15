@@ -1,0 +1,8 @@
+[package]
+name = "gate"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gate-core = { path = "../../crates/gate-core" }
+clap = { version = "4", features = ["derive"] }
