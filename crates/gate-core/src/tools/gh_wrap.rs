@@ -945,12 +945,14 @@ Parent: #205
     }
 
     #[test]
-    fn gt06_pr_merge_allows_when_query_open_subs_fails() {
-        // query_open_subs returns [] on any API failure → treated as "allow"
-        // per caller convention. Verify the pure decision agrees.
+    fn gt06_pr_merge_allows_when_sub_query_returns_empty() {
+        // Genuine empty sub_issues list (no subs at all) → epic-close allowed.
+        // API FAILURE is handled separately (query_open_subs returns Err → caller blocks).
         let labels: Vec<String> = vec!["epic".to_string()];
         assert!(gt06_open_sub_block(&labels, &[]).is_none(),
-            "API failure → empty open subs → must not block");
+            "epic with zero sub-issues must not block");
+        // API failure path: query_open_subs Err → caller rejects (covered by integration),
+        // pure gt06_open_sub_block only decides on the open-sub list itself.
     }
 
     #[test]
