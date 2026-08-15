@@ -274,11 +274,23 @@ def run(repo: str, num: int, mode: str = "", strict: bool = False) -> list[Findi
         findings.append(Finding("PR-06", Severity.INFO, "labels all exist in repo"))
         findings.append(Finding("PR-06", Severity.INFO, "labels all exist in repo"))
 
-    # API 专属：P-39 closing reference
+    # API 专属：closing reference + Fixes 目标是 epic 检查
     print("--- closing reference ---")
     fixes = _extract_fixes(body)
     if fixes:
-        findings.append(Finding("PR-10", Severity.INFO, f"Fixes # present: #{fixes[0]}; closing reference check requires base branch = default)"))
+        for fn in fixes:
+            issue = gh_api_get(f"repos/{repo}/issues/{fn}")
+            if issue:
+                subs = gh_api_get(f"repos/{repo}/issues/{fn}/sub_issues")
+                if subs:
+                    findings.append(Finding(
+                        "PR-10", Severity.WARN,
+                        f"Fixes #{fn} 是 parent issue（{len(subs)} 个 sub-issues）：epic 侧 Development "
+                        "面板不显示 closing 关联；合并会尝试关闭 epic。应 Fixes 其 sub-issue 建立层级链"))
+                else:
+                    findings.append(Finding("PR-10", Severity.INFO, f"Fixes #{fn} 是普通 issue，双向关联正常"))
+        findings.append(Finding("PR-10", Severity.INFO,
+                                f"Fixes # present: #{fixes[0]}; closing reference check requires base branch = default"))
 
     return findings
 

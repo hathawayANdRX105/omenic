@@ -86,7 +86,7 @@
 - PR-07 Construction plan/Checklist 至少 2 个 checkbox — FAIL
 - PR-08 分支前缀合法 — FAIL
 - PR-09 维护者审查存在 — WARN
-- PR-10 Fixes 关联存在（closing reference）— INFO
+- PR-10 关联机制：Part of/Related 是纯文本不产生关联（INFO）；Fixes #N 目标是 parent issue（epic）时提示用 sub-issue 层级链（WARN）— check_content + run
 - PR-11 合并前 PR 内 checkbox 全勾（merge 时检查）— FAIL
 - PR-12 合并留言理由（merge 时必须 --body）— FAIL
 
