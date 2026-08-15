@@ -325,6 +325,16 @@ def _check_done_when_fully_ticked(body: str, heading: str = "Done when") -> tupl
     return len(unticked) == 0, unticked
 
 
+def _check_all_checkboxes(body: str) -> tuple[bool, list[str]]:
+    """检查整个 body 的所有 checkbox 是否全勾（不限段）。返回 (是否全勾, 未勾项列表)。"""
+    unticked: list[str] = []
+    for line in body.splitlines():
+        m = re.match(r"^\s*-\s*\[\s\]\s*(.+)", line)
+        if m:
+            unticked.append(m.group(1).strip())
+    return len(unticked) == 0, unticked
+
+
 def _intercept_issue_close(args: list[str]) -> int:
     """拦截 issue close：--comment 理由 + Done when 全勾 + epic 检查 sub 全关。"""
     has_comment = any(a.startswith("--comment") or a == "-c" for a in args)
@@ -365,14 +375,14 @@ def _intercept_issue_close(args: list[str]) -> int:
                         _log("ISSUE_CLOSE", f"#{issue_num}", "REJECT", f"epic with open subs: {open_subs}")
                         return 1
 
-            # GT-04: Done when 全勾检查
-            all_ticked, unticked = _check_done_when_fully_ticked(body)
+            # GT-04: 所有 checkbox 全勾检查（不限段）
+            all_ticked, unticked = _check_all_checkboxes(body)
             if not all_ticked:
-                print(f"闸门: #{issue_num} Done when 未全部勾选，未勾 {len(unticked)} 项：")
+                print(f"闸门: #{issue_num} 有 checkbox 未全部勾选，未勾 {len(unticked)} 项：")
                 for item in unticked[:5]:
                     print(f"  - [ ] {item}")
                 print("必须验证全部完成后打钩，再关闭。")
-                _log("ISSUE_CLOSE", f"#{issue_num}", "REJECT", f"Done when {len(unticked)} unticked")
+                _log("ISSUE_CLOSE", f"#{issue_num}", "REJECT", f"checkbox {len(unticked)} unticked")
                 return 1
 
     rc, out, err = _run_gh(["issue", "close"] + args)
@@ -400,20 +410,30 @@ def _intercept_pr_merge(args: list[str]) -> int:
     if pr_num and repo:
         rc, body, _ = _run_gh(["api", f"repos/{repo}/pulls/{pr_num}", "--jq", ".body"])
         if rc == 0 and body.strip():
-            # 检查 PR 内 checkbox 全勾
-            for section_name in ["Construction plan", "Checklist"]:
-                all_ticked, unticked = _check_done_when_fully_ticked(body.strip(), section_name)
-                if not all_ticked:
-                    print(f"闸门: PR #{pr_num} {section_name} 未全部勾选，未勾 {len(unticked)} 项：")
-                    for item in unticked[:5]:
-                        print(f"  - [ ] {item}")
-                    print("必须全部完成打钩后，再合并。")
-                    _log("PR_MERGE", f"PR #{pr_num}", "REJECT", f"{section_name} {len(unticked)} unticked")
-                    return 1
+            # 检查 PR 内所有 checkbox 全勾（不限段）
+            all_ticked, unticked = _check_all_checkboxes(body.strip())
+            if not all_ticked:
+                print(f"闸门: PR #{pr_num} 有 checkbox 未全部勾选，未勾 {len(unticked)} 项：")
+                for item in unticked[:5]:
+                    print(f"  - [ ] {item}")
+                print("必须全部完成打钩后，再合并。")
+                _log("PR_MERGE", f"PR #{pr_num}", "REJECT", f"checkbox {len(unticked)} unticked")
+                return 1
 
-            # 检查 Fixes 关联 issue 的 Done when（merge 会连带关闭 issue）
+            # 检查 Fixes 关联 issue 的 checkbox 全勾（merge 会连带关闭 issue）
             import re as _re
             fixes = _re.findall(r"(?:Fixes|Closes|Resolves)\s+#(\d+)", body.strip())
+            for fn in fixes:
+                rc2, issue_body, _ = _run_gh(["api", f"repos/{repo}/issues/{fn}", "--jq", ".body"])
+                if rc2 == 0 and issue_body.strip():
+                    all_ticked, unticked = _check_all_checkboxes(issue_body.strip())
+                    if not all_ticked:
+                        print(f"闸门: PR #{pr_num} 关联 issue #{fn} 有 checkbox 未全部勾选，未勾 {len(unticked)} 项：")
+                        for item in unticked[:5]:
+                            print(f"  - [ ] {item}")
+                        print("合并 PR 会连带关闭 issue，必须先完成 issue 的 checkbox 再合并。")
+                        _log("PR_MERGE", f"PR #{pr_num}", "REJECT", f"issue #{fn} checkbox {len(unticked)} unticked")
+                        return 1
             for fn in fixes:
                 rc2, issue_body, _ = _run_gh(["api", f"repos/{repo}/issues/{fn}", "--jq", ".body"])
                 if rc2 == 0 and issue_body.strip():
