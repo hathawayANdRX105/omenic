@@ -1,3 +1,5 @@
+use std::process::ExitCode;
+
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -10,166 +12,111 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Initialize gate configuration
-    Init {
-        /// Uninstall gate instead of installing
-        #[arg(long)]
-        uninstall: bool,
-    },
+    Init,
     /// Run pre-commit hooks
     PreCommit,
     /// Run pre-push hooks
     PrePush,
-    /// Run merge checks: gate merge <owner/repo> <pr_number> [--dry-run]
-    Merge {
-        /// Arguments: <owner/repo> <pr_number> [--dry-run]
-        args: Vec<String>,
-    },
-    /// Run review checks: gate review [owner/repo] [--post]
-    Review {
-        /// Arguments: [owner/repo] [--post]
-        args: Vec<String>,
-    },
-    /// Run audit: gate audit <owner/repo> [--issues=N,M] [--recent=N] [--limit=N]
-    Audit {
-        /// Arguments: <owner/repo> [--issues=N,M] [--recent=N] [--limit=N]
-        #[arg(allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-    /// Validate an issue: gate issue <owner/repo> <number>
-    Issue {
-        /// Arguments: <owner/repo> <number>
-        args: Vec<String>,
-    },
-    /// Validate a pull request: gate pr <owner/repo> <number>
-    Pr {
-        /// Arguments: <owner/repo> <number>
-        args: Vec<String>,
-    },
+    /// Run merge checks
+    Merge,
+    /// Run CRG + ocr code review
+    Review(ReviewArgs),
+    /// Audit issues/PRs for checkbox & linkage compliance
+    Audit(AuditArgs),
+    /// Validate issues
+    Issue,
+    /// Validate issues
+    Pr,
 }
 
-fn main() {
+#[derive(clap::Args)]
+struct ReviewArgs {
+    /// Post results as a PR conversation comment
+    #[arg(long)]
+    post: bool,
+    /// Post inline review comments on the PR diff
+    #[arg(long = "post-inline")]
+    post_inline: bool,
+    /// PR number to post to (auto-detected if omitted)
+    #[arg(long)]
+    pr: Option<u64>,
+}
+
+#[derive(clap::Args)]
+struct AuditArgs {
+    /// Scan issues/PRs created in the last N days
+    #[arg(long)]
+    recent: Option<u32>,
+    /// Limit number of items to scan (0 = unlimited)
+    #[arg(long, default_value = "0")]
+    limit: u32,
+    /// Number of concurrent workers
+    #[arg(long, default_value = "5")]
+    workers: u32,
+    /// Specific issue/PR numbers to check
+    #[arg(long)]
+    issues: Option<String>,
+}
+
+fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Init { uninstall } => {
-            if uninstall {
-                std::process::exit(match gate_core::tools::init::uninstall() {
-                    Ok(()) => 0,
-                    Err(e) => {
-                        eprintln!("gate init --uninstall failed: {:#}", e);
-                        1
-                    }
-                });
-            } else {
-                std::process::exit(match gate_core::tools::init::install() {
-                    Ok(()) => 0,
-                    Err(e) => {
-                        eprintln!("gate init failed: {:#}", e);
-                        1
-                    }
-                });
-            }
+        Commands::Init
+        | Commands::PreCommit
+        | Commands::PrePush
+        | Commands::Merge
+        | Commands::Issue
+        | Commands::Pr => {
+            println!("not implemented yet");
+            ExitCode::SUCCESS
         }
-        Commands::PreCommit => {
-            std::process::exit(gate_core::tools::pre_commit::run());
+        Commands::Review(args) => {
+            let args_vec: Vec<String> = build_review_args(&args);
+            let rc = gate_core::tools::review::run(&args_vec);
+            ExitCode::from(rc as u8)
         }
-        Commands::PrePush => {
-            std::process::exit(gate_core::tools::pre_push::run());
-        }
-        Commands::Merge { args } => {
-            std::process::exit(gate_core::tools::merge::run(&args));
-        }
-        Commands::Review { args } => {
-            std::process::exit(gate_core::tools::review::run(&args));
-        }
-        Commands::Audit { args } => {
-            std::process::exit(gate_core::tools::audit::run(&args));
-        }
-        Commands::Issue { args } => {
-            if args.len() < 2 {
-                eprintln!("Usage: gate issue <owner/repo> <number>");
-                std::process::exit(2);
-            }
-            let repo = &args[0];
-            let num: u32 = args[1].parse().unwrap_or_else(|_| {
-                eprintln!("invalid issue number: {}", args[1]);
-                std::process::exit(2);
-            });
-            std::process::exit(run_issue_validation(repo, num));
-        }
-        Commands::Pr { args } => {
-            if args.len() < 2 {
-                eprintln!("Usage: gate pr <owner/repo> <number>");
-                std::process::exit(2);
-            }
-            let repo = &args[0];
-            let num: u32 = args[1].parse().unwrap_or_else(|_| {
-                eprintln!("invalid PR number: {}", args[1]);
-                std::process::exit(2);
-            });
-            std::process::exit(run_pr_validation(repo, num));
+        Commands::Audit(args) => {
+            let args_vec: Vec<String> = build_audit_args(&args);
+            let rc = gate_core::tools::audit::run(&args_vec);
+            ExitCode::from(rc as u8)
         }
     }
 }
 
-/// Validate a single issue against IS-* rules.
-fn run_issue_validation(repo: &str, num: u32) -> i32 {
-    use gate_core::shared::{gh_api, print_findings, exit_code};
-    match gh_api(&format!("repos/{}/issues/{}", repo, num), None) {
-        Ok(data) => {
-            let title = data.get("title").and_then(|t| t.as_str()).unwrap_or("");
-            let body = data.get("body").and_then(|b| b.as_str()).unwrap_or("");
-            let state = data.get("state").and_then(|s| s.as_str()).unwrap_or("open");
-            let labels: Vec<&str> = data
-                .get("labels")
-                .and_then(|l| l.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|l| l.get("name").and_then(|n| n.as_str()))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let findings = gate_core::rules::issues::check_content(title, body, &labels, "sub", state);
-            print_findings(&findings);
-            exit_code(&findings)
-        }
-        Err(e) => {
-            eprintln!("could not fetch issue #{}: {}", num, e);
-            1
-        }
+fn build_review_args(args: &ReviewArgs) -> Vec<String> {
+    let mut vec = Vec::new();
+    if args.post {
+        vec.push("--post".to_string());
     }
+    if args.post_inline {
+        vec.push("--post-inline".to_string());
+    }
+    if let Some(pr) = args.pr {
+        vec.push("--pr".to_string());
+        vec.push(pr.to_string());
+    }
+    vec
 }
 
-/// Validate a single PR against PR-* rules.
-fn run_pr_validation(repo: &str, num: u32) -> i32 {
-    use gate_core::shared::{gh_api, print_findings, exit_code};
-    match gh_api(&format!("repos/{}/pulls/{}", repo, num), None) {
-        Ok(pr) => {
-            let title = pr.get("title").and_then(|t| t.as_str()).unwrap_or("");
-            let body = pr.get("body").and_then(|b| b.as_str()).unwrap_or("");
-            let state = pr.get("state").and_then(|s| s.as_str()).unwrap_or("open");
-            let head = pr
-                .get("head")
-                .and_then(|h| h.get("ref"))
-                .and_then(|r| r.as_str())
-                .unwrap_or("");
-            let draft = pr.get("draft").and_then(|d| d.as_bool()).unwrap_or(false);
-            let labels: Vec<&str> = pr
-                .get("labels")
-                .and_then(|l| l.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|l| l.get("name").and_then(|n| n.as_str()))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let findings =
-                gate_core::rules::pull_requests::check_content(title, body, &labels, head, state, draft, None);
-            print_findings(&findings);
-            exit_code(&findings)
-        }
-        Err(e) => {
-            eprintln!("could not fetch PR #{}: {}", num, e);
-            1
-        }
+fn build_audit_args(args: &AuditArgs) -> Vec<String> {
+    let mut vec = Vec::new();
+    let repo = gate_core::tools::audit::derive_repo();
+    if repo.is_empty() {
+        eprintln!("无法确定 repo (git remote get-url origin 失败)");
+        return vec![];
     }
+    vec.push(repo);
+    if let Some(days) = args.recent {
+        vec.push(format!("--recent={days}"));
+    }
+    if args.limit > 0 {
+        vec.push(format!("--limit={}", args.limit));
+    }
+    if args.workers != 5 {
+        vec.push(format!("--workers={}", args.workers));
+    }
+    if let Some(issues) = &args.issues {
+        vec.push(format!("--issues={issues}"));
+    }
+    vec
 }
