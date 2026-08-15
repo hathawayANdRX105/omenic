@@ -47,7 +47,7 @@ def main() -> int:
     # 本地审查：CRG 结构分析 + ocr AI 审查
     print("--- review (CRG + ocr) ---")
     try:
-        from dev.crg_review import _run_crg, _run_ocr, _format_ocr_results
+        from dev.ocr_review import _run_crg, _run_ocr, _format_ocr_results
         crg_out = _run_crg()
         print(crg_out[:1200] if crg_out else "（无 CRG 输出）")
         print()
