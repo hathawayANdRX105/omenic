@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Whether a task is a milestone, feature, bug, plain task, chore, spike, or decision.
+/// Unknown variants from old data deserialize as `Task` (backward compat).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskKind {
@@ -15,6 +16,9 @@ pub enum TaskKind {
     Chore,
     Spike,
     Decision,
+    /// Fallback for unknown/old variants (dep, template, etc).
+    #[serde(other)]
+    Unknown,
 }
 
 /// Default priority for tasks created before the priority field existed (P2).
@@ -139,7 +143,8 @@ mod tests {
         assert!(r.is_err());
 
         let r: Result<TaskKind, _> = serde_json::from_str(r#""bogus_kind""#);
-        assert!(r.is_err());
+        assert!(r.is_ok()); // unknown kinds map to Unknown variant (backward compat)
+        assert_eq!(r.unwrap(), TaskKind::Unknown);
 
         let r: Result<TaskStatus, _> = serde_json::from_str(r#""unknown""#);
         assert!(r.is_err());

@@ -217,10 +217,8 @@ fn print_json<T: ?Sized + serde::Serialize>(value: &T) {
 
 /// Print `{"status":"ok","message":"..."}` when --json is set.
 fn json_ok(message: &str) {
-    println!(
-        "{{\"status\":\"ok\",\"message\":{}}}",
-        serde_json::Value::String(message.to_string())
-    );
+    let obj = serde_json::json!({"status": "ok", "message": message});
+    print_json(&obj);
 }
 
 fn now_iso() -> String {
@@ -368,7 +366,7 @@ fn task_done(store: &Store, id: &str, json: bool) -> Result<u8, String> {
         if !ready.is_empty() {
             obj["ready"] = serde_json::Value::String(ready.join(", "));
         }
-        println!("{}", serde_json::to_string_pretty(&obj).unwrap());
+        print_json(&obj);
     } else {
         println!("done {id}");
         if !ready.is_empty() {
@@ -721,6 +719,7 @@ fn print_task_detail(task: &Task, all: &[Task]) {
         TaskKind::Chore => "chore",
         TaskKind::Spike => "spike",
         TaskKind::Decision => "decision",
+        TaskKind::Unknown => "unknown",
     };
     let status_str = match task.status {
         TaskStatus::Open => "open",
@@ -1209,25 +1208,30 @@ fn render_dot(tasks: &[Task]) -> String {
     // Nodes
     for t in tasks {
         let color = status_color(&t.status);
+        let esc_id = t.id.replace('\\', "\\\\").replace('"', "\\\"");
+        let esc_title = t.title.replace('\\', "\\\\").replace('"', "\\\"");
         out.push_str(&format!(
-            "  \"{}\" [label=\"{}\\nP{} | {}\", fillcolor=\"{}\"];\n",
-            t.id, t.id, t.priority, t.title, color
+            "  \"{esc_id}\" [label=\"{esc_id}\\nP{} | {esc_title}\", fillcolor=\"{color}\"];\n",
+            t.priority
         ));
     }
 
     // Dependency edges (solid): dep -> task
     for t in tasks {
+        let esc_id = t.id.replace('\\', "\\\\").replace('"', "\\\"");
         for dep in &t.deps {
-            out.push_str(&format!("  \"{}\" -> \"{}\";\n", dep, t.id));
+            let esc_dep = dep.replace('\\', "\\\\").replace('"', "\\\"");
+            out.push_str(&format!("  \"{esc_dep}\" -> \"{esc_id}\";\n"));
         }
     }
 
     // Parent → child edges (dotted, no arrowhead)
     for t in tasks {
+        let esc_id = t.id.replace('\\', "\\\\").replace('"', "\\\"");
         if let Some(parent) = &t.parent {
+            let esc_parent = parent.replace('\\', "\\\\").replace('"', "\\\"");
             out.push_str(&format!(
-                "  \"{}\" -> \"{}\" [style=dotted, arrowhead=none];\n",
-                parent, t.id
+                "  \"{esc_parent}\" -> \"{esc_id}\" [style=dotted, arrowhead=none];\n"
             ));
         }
     }
@@ -1465,6 +1469,7 @@ dev-shell [open] P2
     }
 
     // --- #50: unknown flags rejected, not swallowed as title ---
+    #[test]
     fn add_unknown_flag_rejected() {
         let r = Cli::try_parse_from(["oi", "task", "add", "-t", "foo"]);
         assert!(r.is_err(), "unknown flag -t must be rejected");
@@ -2013,11 +2018,21 @@ dev-shell [open] P2
     }
 
     #[test]
-    fn update_no_args_errors() {
+    fn update_missing_task_returns_1() {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let store = tmp_store("upd_noargs");
-        let r = task_update(&store, "t1", None, None, None, None, None, None, false);
-        assert!(r.is_ok());
+        let r = task_update(
+            &store,
+            "nonexistent",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        );
+        assert_eq!(r.unwrap(), 1);
     }
 
     #[test]

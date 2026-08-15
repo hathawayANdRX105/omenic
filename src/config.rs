@@ -109,7 +109,7 @@ impl Config {
     /// - `model`: must be non-empty.
     /// - `omp_path`: if it contains a path separator, must exist and be executable;
     ///   bare command names are allowed (resolved via PATH at runtime).
-    /// - `data_dir`: if it exists, must be writable; if not, parent must be writable.
+    /// - `data_dir`: if it exists, must be a directory; if not, parent must exist.
     fn validate(&self) -> Result<(), ConfigError> {
         // model: non-empty (don't echo the value back — could be sensitive).
         if self.model.trim().is_empty() {

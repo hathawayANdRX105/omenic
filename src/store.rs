@@ -100,7 +100,9 @@ impl Store {
             .open(&self.path)?;
         file.lock_exclusive()?;
 
-        let line = format!(r#"{{"id":"{id}","tombstone":true}}"#);
+        let tombstone = serde_json::json!({"id": id, "tombstone": true});
+        let line = serde_json::to_string(&tombstone)
+            .unwrap_or_else(|_| format!(r#"{{"id":"{id}","tombstone":true}}"#));
         file.write_all(line.as_bytes())?;
         file.write_all(b"\n")?;
         file.flush()?;
