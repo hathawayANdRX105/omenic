@@ -891,7 +891,8 @@ tests pass.
     fn is09_sub_related_hash_fails() {
         let bad = format!("{GOOD_SUB_BODY}Related #7\n");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail));
+        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail
+            && x.msg.contains("forbidden cross-references")));
     }
 
     #[test]
@@ -906,35 +907,40 @@ tests pass.
     fn is09_sub_parent_hash_fails() {
         let bad = format!("{GOOD_SUB_BODY}Parent #205\n");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail));
+        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail
+            && x.msg.contains("forbidden cross-references")));
     }
 
     #[test]
     fn is09_sub_related_colon_fails() {
         let bad = format!("{GOOD_SUB_BODY}Related: #205\n");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail));
+        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail
+            && x.msg.contains("forbidden cross-references")));
     }
 
     #[test]
     fn is09_sub_parent_pr_colon_fails() {
         let bad = format!("{GOOD_SUB_BODY}Parent PR: #10\n");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail));
+        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail
+            && x.msg.contains("forbidden cross-references")));
     }
 
     #[test]
     fn is09_sub_blocks_fails() {
         let bad = format!("{GOOD_SUB_BODY}Blocks: #99\n");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail));
+        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail
+            && x.msg.contains("forbidden cross-references")));
     }
 
     #[test]
     fn is09_sub_dependency_cn_fails() {
         let bad = format!("{GOOD_SUB_BODY}依赖: #88\n");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail));
+        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail
+            && x.msg.contains("forbidden cross-references")));
     }
 
     // -----------------------------------------------------------------------

@@ -33,7 +33,13 @@ pub fn install() -> anyhow::Result<()> {
     fs::create_dir_all(&install_dir)?;
 
     let current_exe = std::env::current_exe()?;
-    if current_exe != target {
+    // current_exe() canonicalizes symlinks; compare against canonical target
+    // so a symlinked HOME/.local/bin doesn't mismatch and self-truncate.
+    let already_installed = match fs::canonicalize(&target) {
+        Ok(t) => t == current_exe,
+        Err(_) => false,
+    };
+    if !already_installed {
         fs::copy(&current_exe, &target)?;
         chmod_755(&target);
     }

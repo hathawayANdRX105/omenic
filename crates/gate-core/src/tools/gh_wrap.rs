@@ -291,7 +291,7 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
     let (title, body, labels, _, parent) = extract(args);
 
     if args.iter().any(|a| a == "--disable-check") {
-        log("ISSUE_CREATE", &title[..title.len().min(40)], "BYPASS", "--disable-check");
+        log("ISSUE_CREATE", crate::shared::truncate_utf8(&title, 40), "BYPASS", "--disable-check");
         println!("⚠ 闸门: --disable-check 跳过校验（已记入 gate.log；仅本次调用生效）");
         let clean: Vec<String> = args.iter().filter(|a| *a != "--disable-check").cloned().collect();
         let mut full = vec!["issue".to_string(), "create".to_string()];
@@ -309,7 +309,7 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
     }
     if !fails.is_empty() {
         println!("闸门: 校验 FAIL，拒绝创建。修正后重试。");
-        log("ISSUE_CREATE", &title[..title.len().min(40)], "REJECT", &format!("FAIL={}", fails.len()));
+        log("ISSUE_CREATE", crate::shared::truncate_utf8(&title, 40), "REJECT", &format!("FAIL={}", fails.len()));
         return 1;
     }
 
@@ -336,13 +336,13 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
             // addSubIssue mutation actually mounted the sub-issue.
             if !auto_link_sub(&url, &repo, &parent) {
                 println!("闸门: 挂载失败，拒绝。请运行 gh api addSubIssue 或用 --parent 重建。");
-                log("ISSUE_CREATE", &title[..title.len().min(40)], "FAIL", "auto_link failed");
+                log("ISSUE_CREATE", crate::shared::truncate_utf8(&title, 40), "FAIL", "auto_link failed");
                 return 1;
             }
             let sub_num = extract_num(&url, "/issues/").unwrap_or_default();
             if !verify_mount(&repo, &sub_num, &parent) {
                 println!("FAIL\t闸门: sub-issue #{sub_num} 未挂载到 parent #{parent}（mount verification 失败）");
-                log("ISSUE_CREATE", &title[..title.len().min(40)], "FAIL", "not mounted");
+                log("ISSUE_CREATE", crate::shared::truncate_utf8(&title, 40), "FAIL", "not mounted");
                 return 1;
             }
         }
@@ -472,7 +472,7 @@ pub fn intercept_pr_create(args: &[String]) -> i32 {
     }
     if !fails.is_empty() {
         println!("闸门: 校验 FAIL，拒绝创建。修正后重试。");
-        log("PR_CREATE", &title[..title.len().min(40)], "REJECT", &format!("FAIL={}", fails.len()));
+        log("PR_CREATE", crate::shared::truncate_utf8(&title, 40), "REJECT", &format!("FAIL={}", fails.len()));
         return 1;
     }
 
@@ -492,7 +492,7 @@ pub fn intercept_pr_create(args: &[String]) -> i32 {
     let url = out.trim().to_string();
     if url.starts_with("https://github.com/") && url.contains("/pull/") {
         if let Some(num) = extract_num(&url, "/pull/") {
-            log("PR_CREATE", &format!("PR #{num}"), "CREATED", &title[..title.len().min(40)]);
+            log("PR_CREATE", &format!("PR #{num}"), "CREATED", crate::shared::truncate_utf8(&title, 40));
         }
     }
     0
