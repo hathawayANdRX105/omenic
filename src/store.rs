@@ -91,6 +91,25 @@ impl Store {
         Ok(())
     }
 
+    /// Append a tombstone line to mark a task as deleted.
+    /// Tombstone format: {"id":"<id>","tombstone":true}
+    pub fn append_tombstone(&self, id: &str) -> Result<(), StoreError> {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        file.lock_exclusive()?;
+
+        let line = format!(r#"{{"id":"{id}","tombstone":true}}"#);
+        file.write_all(line.as_bytes())?;
+        file.write_all(b"\n")?;
+        file.flush()?;
+        file.sync_all()?;
+
+        // Lock released on drop
+        Ok(())
+    }
+
     /// Load all tasks; latest-wins on duplicate id.
     /// Result sorted by id for determinism.
     pub fn load_all(&self) -> Result<Vec<Task>, StoreError> {
@@ -115,6 +134,17 @@ impl Store {
         let mut map: HashMap<String, Task> = HashMap::with_capacity(lines.len());
 
         for (i, line) in lines.iter().enumerate() {
+            // Tombstone lines: {"id":"<id>","tombstone":true} — remove the task.
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line)
+                && v.get("tombstone")
+                    .and_then(|t| t.as_bool())
+                    .unwrap_or(false)
+            {
+                if let Some(id) = v.get("id").and_then(|i| i.as_str()) {
+                    map.remove(id);
+                }
+                continue;
+            }
             match serde_json::from_str::<Task>(line) {
                 Ok(task) => {
                     map.insert(task.id.clone(), task);
@@ -206,6 +236,7 @@ mod tests {
             id: id.to_string(),
             title: title.to_string(),
             kind: TaskKind::Task,
+            priority: 2,
             status: TaskStatus::Open,
             parent: None,
             deps: vec![],
@@ -407,6 +438,35 @@ mod tests {
         let all = store.load_all().unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].title, "v3");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn tombstone_hides_task() {
+        let dir = temp_dir();
+        let store = Store::new(&dir);
+        store.append(&make_task("t1", "first")).unwrap();
+        store.append(&make_task("t2", "second")).unwrap();
+        store.append_tombstone("t1").unwrap();
+
+        let all = store.load_all().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, "t2");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn tombstone_after_compact() {
+        let dir = temp_dir();
+        let store = Store::new(&dir);
+        store.append(&make_task("t1", "first")).unwrap();
+        store.append_tombstone("t1").unwrap();
+        store.compact().unwrap();
+
+        let all = store.load_all().unwrap();
+        assert!(all.is_empty());
 
         fs::remove_dir_all(&dir).ok();
     }
