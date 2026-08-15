@@ -16,8 +16,9 @@ import importlib.util
 _loader = importlib.machinery.SourceFileLoader("install_gh_gate", str(Path(__file__).resolve().parents[1] / "install_gh_gate.py"))
 _spec = importlib.util.spec_from_loader("install_gh_gate", _loader)
 _mod = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_mod)
+_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
 _section = _mod._section
+_check_all_checkboxes = _mod._check_all_checkboxes
 _check_done_when_fully_ticked = _mod._check_done_when_fully_ticked
 _extract = _mod._extract
 _gh_args = _mod._gh_args
@@ -260,3 +261,25 @@ def test_pr_merge_cleans_local_branch(monkeypatch):
     assert rc == 0
     calls = [str(c) for c in fake_subprocess.run.call_args_list]
     assert any("-d" in c and "feat/foo" in c for c in calls), "应调用 git branch -d feat/foo"
+
+
+def test_check_all_checkboxes_all_ticked():
+    body = ("## Construction plan\n- [x] a\n- [x] b\n\n"
+            "## Checklist\n- [x] c\n")
+    ok, unticked = _check_all_checkboxes(body)
+    assert ok is True
+    assert unticked == []
+
+
+def test_check_all_checkboxes_any_unticked():
+    body = ("## Construction plan\n- [x] a\n- [ ] b\n\n"
+            "## Checklist\n- [x] c\n- [ ] d\n")
+    ok, unticked = _check_all_checkboxes(body)
+    assert ok is False
+    assert unticked == ["b", "d"]
+
+
+def test_check_all_checkboxes_no_checkbox():
+    ok, unticked = _check_all_checkboxes("## Goal\n内容\n")
+    assert ok is True
+    assert unticked == []
