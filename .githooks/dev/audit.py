@@ -79,8 +79,24 @@ def fix_issue_boxes(num: int, items: list[str]) -> None:
     subprocess.run(["gh", "issue", "edit", str(num), "--body-file", "/tmp/audit_body.txt"],
                    capture_output=True, text=True, timeout=30)
     print(f"  ✓ #{num} Done when 已全部打钩")
-def scan_recent(days: int) -> int:
-    """检查最近 N 天创建的 issue/PR，跑完整规则（github/*.py），输出 FAIL 清单。"""
+def _check_one(num: str, is_pr: str) -> list[str]:
+    """检查单个 issue/PR，返回 FAIL 行。"""
+    runner = "pull_requests.py" if is_pr == "True" else "issues.py"
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "github" / runner), REPO, num],
+        capture_output=True, text=True, timeout=60)
+    fail_lines = [l for l in proc.stdout.splitlines()
+                  if "FAIL" in l or l.startswith("RESULT: FAIL")]
+    if fail_lines:
+        return [f"#{num} ({'PR' if is_pr == 'True' else 'issue'}):"] + [f"  {l}" for l in fail_lines]
+    return []
+
+
+def scan_recent(days: int, limit: int = 0, workers: int = 5) -> int:
+    """检查最近 N 天创建的 issue/PR，跑完整规则（github/*.py），输出 FAIL 清单。
+
+    limit: 最多检查条数（0 = 不限）；workers: 并发数（防 API 限流）。
+    """
     since = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
     q = f"search/issues?q=repo:{REPO}+created:>={since}&per_page=100"
     rc, out = _gh([q, "--jq", r'.items[] | "\(.number)\t\(.pull_request != null)"'])
@@ -88,18 +104,16 @@ def scan_recent(days: int) -> int:
         print(f"search failed: {out or rc}")
         return 2
     items = [line.split("\t") for line in out.splitlines() if "\t" in line]
-    print(f"最近 {days} 天创建的条目: {len(items)} 个\n")
+    if limit > 0:
+        items = items[:limit]
+    print(f"最近 {days} 天创建的条目: {len(items)} 个（并发 {workers}）\n")
+
     fails: list[str] = []
-    for num, is_pr in items:
-        runner = "pull_requests.py" if is_pr == "True" else "issues.py"
-        proc = subprocess.run(
-            [sys.executable, str(ROOT / "github" / runner), REPO, num],
-            capture_output=True, text=True, timeout=60)
-        fail_lines = [l for l in proc.stdout.splitlines()
-                      if "FAIL" in l or l.startswith("RESULT: FAIL")]
-        if fail_lines:
-            fails.append(f"#{num} ({'PR' if is_pr == 'True' else 'issue'}):")
-            fails.extend(f"  {l}" for l in fail_lines)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_check_one, num, is_pr): num for num, is_pr in items}
+        for f in as_completed(futures):
+            fails.extend(f.result())
     if fails:
         print("FAIL 清单:")
         for l in fails:
@@ -112,19 +126,25 @@ def main() -> int:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     specific = None
     recent = None
+    limit = 0
+    workers = 5
     for a in sys.argv[1:]:
         if a.startswith("--issues="):
             specific = [int(x) for x in a.split("=", 1)[1].split(",")]
         elif a.startswith("--recent="):
             recent = int(a.split("=", 1)[1])
+        elif a.startswith("--limit="):
+            limit = int(a.split("=", 1)[1])
+        elif a.startswith("--workers="):
+            workers = int(a.split("=", 1)[1])
 
     if not args:
-        print("Usage: python .githooks/audit.py <owner/repo> [--fix] [--issues=139,140] [--recent=N]")
+        print("Usage: python .githooks/dev/audit.py <owner/repo> [--fix] [--issues=N,M] [--recent=N] [--limit=N] [--workers=N]")
         return 1
     REPO = args[0]
 
     if recent is not None:
-        return scan_recent(recent)
+        return scan_recent(recent, limit=limit, workers=workers)
 
     if specific:
         nums = specific

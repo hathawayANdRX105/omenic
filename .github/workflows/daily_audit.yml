@@ -16,7 +16,7 @@ jobs:
         id: audit
         run: |
           set +e
-          OUT=$(python .githooks/dev/audit.py ${{ github.repository }} --recent=1 2>&1)
+          OUT=$(python .githooks/dev/audit.py ${{ github.repository }} --recent=1 --limit=50 --workers=5 2>&1)
           RC=$?
           echo "$OUT"
           if [ $RC -ne 0 ]; then
