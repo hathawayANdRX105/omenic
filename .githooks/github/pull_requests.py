@@ -225,12 +225,13 @@ def check_content(
     else:
         findings.append(Finding("PR-06", Severity.INFO, "no keyword suggestions (or policy not configured)"))
 
-    # P-31 branch name
+    # P-31 branch name — strip fork "user:" prefix before prefix check
     allowed = cfg.get("allowed_branch_prefixes", ["feat/", "fix/", "chore/", "epic/", "main", "master", "release/"])
-    if not head_ref or not any(head_ref.startswith(p) for p in allowed):
-        findings.append(Finding("PR-08", Severity.FAIL, f"branch name not allowed: {head_ref} (allowed prefixes: {allowed})"))
+    branch = head_ref.rsplit(":", 1)[-1] if ":" in head_ref else head_ref
+    if not branch or not any(branch.startswith(p) for p in allowed):
+        findings.append(Finding("PR-08", Severity.FAIL, f"branch name not allowed: {branch} (allowed prefixes: {allowed})"))
     else:
-        findings.append(Finding("PR-08", Severity.INFO, f"branch name OK: {head_ref} (prefixes: {allowed})"))
+        findings.append(Finding("PR-08", Severity.INFO, f"branch name OK: {branch} (prefixes: {allowed})"))
 
     # P-38 maintainer review
     findings.append(Finding("PR-09", Severity.WARN, "no maintainer review (COMMENTED/APPROVED/CHANGES_REQUESTED) — human required"))
