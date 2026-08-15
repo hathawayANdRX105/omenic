@@ -125,7 +125,7 @@ pub fn run(args: &[String]) -> i32 {
 fn review_report_body(crg_out: &str, ocr_text: &str) -> String {
     format!(
         "## 审查报告\n\n### CRG 变更影响\n\n```\n{}\n```\n\n### ocr 审查发现\n\n{}",
-        if crg_out.len() > 1200 { crate::shared::truncate_utf8(crg_out, 1200) } else { crg_out },
+        crate::shared::truncate_utf8(crg_out, 1200),
         ocr_text
     )
 }
