@@ -326,6 +326,19 @@ pub fn run_external(cmd: &[&str], cwd: Option<&str>) -> Result<(i32, String), St
     ))
 }
 
+/// Truncate a string to at most `max` bytes without panicking on a multi-byte
+/// UTF-8 boundary (CJK chars are multi-byte). Returns `s` unchanged if short.
+pub fn truncate_utf8(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 // ===========================================================================
 // Tests
 // ===========================================================================
