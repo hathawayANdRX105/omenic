@@ -243,8 +243,12 @@ pub fn run(comment_bodies: &[String], cfg: &YamlValue) -> Vec<Finding> {
     } else {
         findings.push(Finding::new(
             "RV-06",
-            Severity::Warn,
-            &format!("{}/{} inline findings have reply", all_replies.len(), inline_count),
+            Severity::Fail,
+            &format!(
+                "{}/{} inline findings have reply — every inline finding MUST have an Agent 🤖 - Fix:/Block:/Note: reply",
+                all_replies.len(),
+                inline_count
+            ),
         ));
     }
 
@@ -471,7 +475,7 @@ review_formats:
     }
 
     #[test]
-    fn rv06_inline_no_reply_warn() {
+    fn rv06_inline_no_reply_fail() {
         let cfg = test_cfg();
         let bodies = vec![
             "Agent 🤖 - Inline Review P2: fix the typo".to_string(),
@@ -479,7 +483,23 @@ review_formats:
         let f = run(&bodies, &cfg);
         let r = rule_findings(&f, "RV-06");
         assert_eq!(r.len(), 1);
-        assert_eq!(r[0].severity, Severity::Warn);
+        assert_eq!(r[0].severity, Severity::Fail);
+        assert!(r[0].msg.contains("MUST"));
+    }
+
+    #[test]
+    fn rv06_inline_partial_reply_fail() {
+        let cfg = test_cfg();
+        // 2 inline findings, only 1 reply → FAIL
+        let bodies = vec![
+            "Agent 🤖 - Inline Review P2: fix typo".to_string(),
+            "Agent 🤖 - Inline Review P1: memory leak".to_string(),
+            "Agent 🤖 - Fix: applied the fix to the typo".to_string(),
+        ];
+        let f = run(&bodies, &cfg);
+        let r = rule_findings(&f, "RV-06");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].severity, Severity::Fail);
     }
 
     // ----- smoke: realistic scenario -----

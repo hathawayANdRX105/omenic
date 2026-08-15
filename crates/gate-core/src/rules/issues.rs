@@ -105,11 +105,13 @@ fn table_re() -> &'static Regex {
     &RE
 }
 
-/// IS-09 sub-mode forbidden cross-references. Mirrors the Python pattern
-/// verbatim, including the fullwidth colon `：`.
+/// IS-09 sub-mode forbidden cross-references.  Catches all text-placeholder
+/// linkage variants: `Parent:`, `Parent PR:`, `Parent #`, `Related:`,
+/// `Related #`, `Depends on:`, `Blocks:`, `依赖:`.  The GitHub addSubIssue
+/// mutation is the ONLY acceptable linkage — body text is a fake link.
 fn cross_ref_re() -> &'static Regex {
     static RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?m)^(Depends on\s*[：:]|\*\*Depends.*[：:]|Blocks\s+[：:]|依赖[：:]|Related\s*#|Parent PR\s*[：:])")
+        Regex::new(r"(?m)^(Depends on\s*[:：]|\*\*Depends.*[:：]|Blocks\s*[:：]|依赖[:：]|Related\s*[#：:]|Parent(\s+PR)?\s*[#：:])")
             .unwrap()
     });
     &RE
@@ -888,6 +890,49 @@ tests pass.
     #[test]
     fn is09_sub_related_hash_fails() {
         let bad = format!("{GOOD_SUB_BODY}Related #7\n");
+        let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
+        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail));
+    }
+
+    #[test]
+    fn is09_sub_parent_colon_fails() {
+        let bad = format!("{GOOD_SUB_BODY}Parent: #205\n");
+        let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
+        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail
+            && x.msg.contains("forbidden cross-references")));
+    }
+
+    #[test]
+    fn is09_sub_parent_hash_fails() {
+        let bad = format!("{GOOD_SUB_BODY}Parent #205\n");
+        let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
+        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail));
+    }
+
+    #[test]
+    fn is09_sub_related_colon_fails() {
+        let bad = format!("{GOOD_SUB_BODY}Related: #205\n");
+        let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
+        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail));
+    }
+
+    #[test]
+    fn is09_sub_parent_pr_colon_fails() {
+        let bad = format!("{GOOD_SUB_BODY}Parent PR: #10\n");
+        let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
+        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail));
+    }
+
+    #[test]
+    fn is09_sub_blocks_fails() {
+        let bad = format!("{GOOD_SUB_BODY}Blocks: #99\n");
+        let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
+        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail));
+    }
+
+    #[test]
+    fn is09_sub_dependency_cn_fails() {
+        let bad = format!("{GOOD_SUB_BODY}依赖: #88\n");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
         assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail));
     }
