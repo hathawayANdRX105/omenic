@@ -276,7 +276,10 @@ fn query_open_subs(repo: &str, num: &str) -> Result<Vec<String>, String> {
     for sn in subs_json.split_whitespace() {
         match sn.parse::<u32>() {
             Ok(sn_i) => open.push(sn_i.to_string()),
-            Err(_) => return Err(format!("#{sn} 非法编号")),
+            Err(_) => {
+                let shown = crate::shared::truncate_utf8(sn, 20);
+                return Err(format!("#{shown} 非法编号"));
+            }
         }
     }
     Ok(open)
@@ -537,7 +540,15 @@ pub fn intercept_pr_merge(args: &[String]) -> i32 {
                     "--jq".to_string(),
                     "{body, labels: [.labels[].name]}".to_string(),
                 ], None);
-                if rc2 == 0 && !issue_data.trim().is_empty() {
+                if rc2 != 0 || issue_data.trim().is_empty() {
+                    // Fail-closed: a failed issue fetch must NOT silently skip
+                    // the checkbox / GT-06 epic checks below.
+                    println!("闸门: 关联 issue #{fn_} 数据查询失败，为安全起见拒绝合并 (rc={rc2})");
+                    log("PR_MERGE", &format!("PR #{num}"), "REJECT",
+                        &format!("issue #{fn_} fetch failed (rc={rc2})"));
+                    return 1;
+                }
+                {
                     let parsed: serde_json::Value = match serde_json::from_str(&issue_data) {
                         Ok(v) => v,
                         Err(e) => {
