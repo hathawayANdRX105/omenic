@@ -212,8 +212,8 @@ fn check_pr_review(repo: &str, pr_num: u32) -> Vec<Finding> {
     };
     let file_count = pr_files.as_array().map(|a| a.len()).unwrap_or(0);
     if file_count == 0 {
-        println!("PR #{} 无文件改动（{} 个文件），无需审查。", pr_num, file_count);
-        return vec![];
+        println!("PR #{} 无文件改动，无需审查。", pr_num);
+        return vec![rv07_decide(0, "", "")];
     }
 
     println!(
@@ -229,24 +229,73 @@ fn check_pr_review(repo: &str, pr_num: u32) -> Vec<Finding> {
         }
     }
 
-    // Run CRG + ocr
-    let crg_out = run_external(&["code-review-graph", "detect-changes"], None)
-        .map(|(_, o)| o)
-        .unwrap_or_else(|e| format!("[CRG] error: {}", e));
+    // Run CRG + ocr — both must succeed for RV-07 to pass.
+    // Uses review.rs runners which surface timeouts/errors as "[CRG] …" /
+    // "[ocr] …" markers; rv07_decide classifies those into FAIL.
+    println!("（CRG + ocr 运行中，LLM 需几分钟...）");
+    let crg_out = crate::tools::review::run_crg();
     println!("{}", &crg_out[..crg_out.len().min(1200)]);
-    println!();
-    println!("（ocr 运行中，LLM 需几分钟...）");
 
-    let ocr_out = run_external(&["ocr", "--json"], None)
-        .map(|(_, o)| o)
-        .unwrap_or_else(|e| format!("[ocr] error: {}", e));
+    let ocr_out = crate::tools::review::run_ocr();
     println!("{}", &ocr_out[..ocr_out.len().min(1500)]);
 
-    vec![Finding::new(
-        "RV-07",
-        Severity::Info,
-        &format!("审查完成: CRG risk + ocr {} 字发现", ocr_out.len()),
-    )]
+    vec![rv07_decide(file_count, &crg_out, &ocr_out)]
+}
+
+/// Classify RV-07 from file count + CRG/ocr outputs.
+///
+/// - No files (0) → INFO skip ("无需审查").
+/// - Both CRG + ocr succeed → INFO pass.
+/// - Either CRG or ocr fails / times out → FAIL (block).
+///
+/// Failure markers:
+///   CRG: `run_crg()` prefixes every failure with "[CRG]" (non-zero exit or
+///        spawn error); success returns the raw stdout.
+///   ocr: `run_ocr()` prefixes every failure with "[ocr]" (spawn error, stderr,
+///        or 超时 timeout); success returns the raw stdout.
+fn rv07_decide(file_count: usize, crg_out: &str, ocr_out: &str) -> Finding {
+    if file_count == 0 {
+        return Finding::new("RV-07", Severity::Info, "无需审查（无文件改动）");
+    }
+    let crg_failed = crg_out.starts_with("[CRG]");
+    // ponytail: contains("超时") belt-and-suspenders — false-positive FAIL on a
+    // review comment that happens to mention 超时 is the safer error mode for a
+    // merge gate (blocks, never silently merges through a real timeout).
+    let ocr_failed = ocr_out.starts_with("[ocr]") || ocr_out.contains("超时");
+    let cap = |s: &str| {
+        let s = s.trim();
+        if s.len() > 200 {
+            format!("{}…", &s[..200])
+        } else {
+            s.to_string()
+        }
+    };
+    match (crg_failed, ocr_failed) {
+        (true, true) => Finding::new(
+            "RV-07",
+            Severity::Fail,
+            &format!(
+                "CRG 和 ocr 均失败\ncrg: {}\nocr: {}",
+                cap(crg_out),
+                cap(ocr_out)
+            ),
+        ),
+        (true, false) => Finding::new(
+            "RV-07",
+            Severity::Fail,
+            &format!("CRG 失败: {}", cap(crg_out)),
+        ),
+        (false, true) => Finding::new(
+            "RV-07",
+            Severity::Fail,
+            &format!("ocr 失败/超时: {}", cap(ocr_out)),
+        ),
+        (false, false) => Finding::new(
+            "RV-07",
+            Severity::Info,
+            "审查完成: CRG + ocr 双重审查通过",
+        ),
+    }
 }
 
 fn extract_fixes(body: &str) -> Vec<String> {
@@ -265,4 +314,47 @@ fn labels_from(pr: &serde_json::Value) -> Vec<&str> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+// ===========================================================================
+// Tests
+// ===========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared::Severity;
+
+    #[test]
+    fn ocr_timeout_is_fail() {
+        let f = rv07_decide(3, "changes detected", "[ocr] 超时（LLM 响应慢）");
+        assert_eq!(f.severity, Severity::Fail);
+        assert_eq!(f.rule_id, "RV-07");
+    }
+
+    #[test]
+    fn ocr_success_is_info() {
+        let f = rv07_decide(3, "risk: low", r#"{"comments": []}"#);
+        assert_eq!(f.severity, Severity::Info);
+        assert!(f.msg.contains("双重审查通过"));
+    }
+
+    #[test]
+    fn crg_failure_is_fail() {
+        let f = rv07_decide(3, "[CRG] error: not found", r#"{"comments": []}"#);
+        assert_eq!(f.severity, Severity::Fail);
+    }
+
+    #[test]
+    fn both_fail_is_fail() {
+        let f = rv07_decide(3, "[CRG] error: x", "[ocr] error: y");
+        assert_eq!(f.severity, Severity::Fail);
+    }
+
+    #[test]
+    fn no_file_changes_skips_review() {
+        let f = rv07_decide(0, "", "");
+        assert_eq!(f.severity, Severity::Info);
+        assert!(f.msg.contains("无需审查"));
+    }
 }
