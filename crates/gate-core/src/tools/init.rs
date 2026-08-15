@@ -8,19 +8,19 @@ use super::git;
 const HOOK_PRE_COMMIT: &str = "\
 #!/usr/bin/env bash
 # gate-managed hook — delegates to the gate binary
-exec gate pre-commit \"$@\"
+exec gate pre-commit
 ";
 
 const HOOK_PRE_PUSH: &str = "\
 #!/usr/bin/env bash
 # gate-managed hook — delegates to the gate binary
-exec gate pre-push \"$@\"
+exec gate pre-push
 ";
 
 const HOOK_MERGE: &str = "\
 #!/usr/bin/env bash
 # gate-managed hook — delegates to the gate binary
-exec gate merge \"$@\"
+exec gate merge
 ";
 
 /// `gate init` — copy current binary to `~/.local/bin/gate`, configure
@@ -33,8 +33,10 @@ pub fn install() -> anyhow::Result<()> {
     fs::create_dir_all(&install_dir)?;
 
     let current_exe = std::env::current_exe()?;
-    fs::copy(&current_exe, &target)?;
-    chmod_755(&target);
+    if current_exe != target {
+        fs::copy(&current_exe, &target)?;
+        chmod_755(&target);
+    }
 
     // git config core.hooksPath .githooks/hooks
     let rc = std::process::Command::new("git")
