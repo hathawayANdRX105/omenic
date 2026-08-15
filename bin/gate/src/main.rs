@@ -59,6 +59,19 @@ struct AuditArgs {
 }
 
 fn main() -> ExitCode {
+    // gh-mode: installed as ~/.local/bin/gh → intercept issue/pr commands
+    if let Some(arg0) = std::env::args().next() {
+        let base = std::path::Path::new(&arg0)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if base == "gh" || base == "gh.exe" {
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            let rc = gate_core::tools::gh_wrap::dispatch(&args);
+            return ExitCode::from(rc as u8);
+        }
+    }
+
     let cli = Cli::parse();
     match cli.command {
         Commands::Init
