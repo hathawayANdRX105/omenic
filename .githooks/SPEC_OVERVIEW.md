@@ -217,7 +217,7 @@
    - 有改动：必须 CRG 结构分析 + ocr AI 审查（RV-07，失败 FAIL 阻塞 merge）
    - 无改动：跳过审查，输出"无需审查"
 2. 审查顺序：CRG 摘要 → ocr 详细发现 → 汇总报告
-3. 手动：`python .githooks/dev/ocr_review.py [--post|--post-inline] [--pr N]`
+3. 手动：`gate review [--post|--post-inline] [--pr N]`
 4. 输出：终端（默认）/ PR conversation（--post）/ Files changed inline（--post-inline）
 
 实现位置：`.githooks/dev/ocr_review.py`（依赖外部工具 `code-review-graph` + `ocr`）
@@ -240,6 +240,6 @@
 ## 更新与校验
 
 - 新增/修改规则：只改 `.githooks/spec/*.yaml` 参数 + 对应校验器逻辑，更新本文档
-- merge 时校验：spec 规则与本文档一致性（通过 `python .githooks/dev/audit.py` 或校验器检测）
+- merge 时校验：spec 规则与本文档一致性（通过 `gate audit` 或校验器检测）
 - 触发式按上表 lazy 执行，不全局扫描
-- 拦截门（install_gh_gate.py）改动后必须 `python .githooks/install_gh_gate.py --install` 重新部署
+- 拦截门（install_gh_gate.py）改动后必须 `gate init` 重新部署

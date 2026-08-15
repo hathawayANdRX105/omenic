@@ -16,7 +16,7 @@
 
 ```bash
 # 安装拦截门（如有更新）
-python .githooks/install_gh_gate.py --install
+gate init
 
 # 创建 issue（自动走校验，FAIL 拒绝）
 gh issue create --title "<中文标题>" --body "<模板正文>" --label <epic|sub|bug|enhancement|chore>
@@ -53,16 +53,16 @@ Fixes #152        # sub-issue
 ## 创建后校验
 
 ```bash
-python .githooks/github/issues.py <owner/repo> <#N>
-python .githooks/github/pull_requests.py <owner/repo> <#N>
+gate issue <owner/repo> <#N>
+gate pr <owner/repo> <#N>
 python .githooks/hooks/merge <owner/repo> <#N> --dry-run
 ```
 
 ## 本地审查
 
 ```bash
-python .githooks/dev/ocr_review.py                     # CRG 结构分析 + ocr AI 审查
-python .githooks/dev/ocr_review.py --post-inline       # 审查结果→PR inline review
+gate review                     # CRG 结构分析 + ocr AI 审查
+gate review --post-inline       # 审查结果→PR inline review
 ```
 
 ## 参考
