@@ -380,7 +380,14 @@ pub fn intercept_issue_close(args: &[String]) -> i32 {
             "{body, labels: [.labels[].name], state}".to_string(),
         ], None);
         if rc == 0 && !data.trim().is_empty() {
-            let parsed: serde_json::Value = serde_json::from_str(&data).unwrap_or(serde_json::Value::Null);
+            let parsed: serde_json::Value = match serde_json::from_str(&data) {
+                Ok(v) => v,
+                Err(e) => {
+                    println!("闸门: #{num} issue 数据解析失败，为安全起见拒绝关闭: {e}");
+                    log("ISSUE_CLOSE", &format!("#{num}"), "REJECT", "issue JSON parse failed");
+                    return 1;
+                }
+            };
             let body = parsed.get("body").and_then(|b| b.as_str()).unwrap_or("");
             let labels: Vec<String> = parsed
                 .get("labels").and_then(|l| l.as_array())
@@ -541,8 +548,14 @@ pub fn intercept_pr_merge(args: &[String]) -> i32 {
                     "{body, labels: [.labels[].name]}".to_string(),
                 ], None);
                 if rc2 == 0 && !issue_data.trim().is_empty() {
-                    let parsed: serde_json::Value =
-                        serde_json::from_str(&issue_data).unwrap_or(serde_json::Value::Null);
+                    let parsed: serde_json::Value = match serde_json::from_str(&issue_data) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            println!("闸门: 关联 issue #{fn_} 数据解析失败，为安全起见拒绝合并: {e}");
+                            log("PR_MERGE", &format!("PR #{num}"), "REJECT", &format!("issue #{fn_} JSON parse failed"));
+                            return 1;
+                        }
+                    };
                     let issue_body = parsed.get("body").and_then(|b| b.as_str()).unwrap_or("");
                     let labels: Vec<String> = parsed
                         .get("labels").and_then(|l| l.as_array())
