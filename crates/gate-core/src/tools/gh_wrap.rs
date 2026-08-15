@@ -238,6 +238,50 @@ fn is_epic(labels: &[String]) -> bool {
     labels.iter().any(|l| l.eq_ignore_ascii_case("epic"))
 }
 
+/// GT-06 pure decision: given an issue's labels and the list of currently-open
+/// sub-issue numbers under it, return the blocker list (open sub-issues) when the
+/// close/merge must be denied, or `None` when allowed (not an epic, or epic with
+/// all subs closed). Pure — testable without real gh.
+fn gt06_open_sub_block(labels: &[String], open_subs: &[String]) -> Option<Vec<String>> {
+    if !is_epic(labels) {
+        return None;
+    }
+    if open_subs.is_empty() {
+        return None;
+    }
+    Some(open_subs.to_vec())
+}
+
+/// Query the GitHub sub_issues endpoint and return the numbers whose state is
+/// `open`. Returns an empty vec on any API failure or empty result — the
+/// caller treats "no open subs" as "allow".
+fn query_open_subs(repo: &str, num: &str) -> Vec<String> {
+    let (rc, subs_json, _) = run_gh(&[
+        "api".to_string(),
+        format!("repos/{repo}/issues/{num}/sub_issues"),
+        "--jq".to_string(),
+        ".[].number".to_string(),
+    ], None);
+    if rc != 0 || subs_json.trim().is_empty() {
+        return vec![];
+    }
+    subs_json
+        .split_whitespace()
+        .filter(|sn| {
+            sn.parse::<u32>().ok().map_or(false, |sn_i| {
+                let (rc3, st, _) = run_gh(&[
+                    "api".to_string(),
+                    format!("repos/{repo}/issues/{sn_i}"),
+                    "--jq".to_string(),
+                    ".state".to_string(),
+                ], None);
+                rc3 == 0 && st.trim() == "open"
+            })
+        })
+        .map(String::from)
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Interceptions
 // ---------------------------------------------------------------------------
@@ -479,17 +523,36 @@ pub fn intercept_pr_merge(args: &[String]) -> i32 {
 
             let fixes = extract_fixes(body.trim());
             for fn_ in fixes {
-                let (rc2, issue_body, _) = run_gh(&[
+                // One call: fetch issue body + labels in a single jq object.
+                let (rc2, issue_data, _) = run_gh(&[
                     "api".to_string(),
                     format!("repos/{repo}/issues/{fn_}"),
                     "--jq".to_string(),
-                    ".body".to_string(),
+                    "{body, labels: [.labels[].name]}".to_string(),
                 ], None);
-                if rc2 == 0 && !issue_body.trim().is_empty() {
+                if rc2 == 0 && !issue_data.trim().is_empty() {
+                    let parsed: serde_json::Value =
+                        serde_json::from_str(&issue_data).unwrap_or(serde_json::Value::Null);
+                    let issue_body = parsed.get("body").and_then(|b| b.as_str()).unwrap_or("");
+                    let labels: Vec<String> = parsed
+                        .get("labels").and_then(|l| l.as_array())
+                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                        .unwrap_or_default();
+
                     let (all_ticked, unticked) = check_all_checkboxes(issue_body.trim());
                     if !all_ticked {
                         println!("闸门: PR #{num} 关联 issue #{fn_} 有 checkbox 未全部勾选，未勾 {} 项：", unticked.len());
                         log("PR_MERGE", &format!("PR #{num}"), "REJECT", &format!("issue #{fn_} checkbox {} unticked", unticked.len()));
+                        return 1;
+                    }
+
+                    // GT-06 (#199): if the Fixes target is an epic, block the merge
+                    // when any sub-issue is still open — preventing the PR-merge
+                    // auto-close path from collapsing an epic with live subs.
+                    if let Some(block) = gt06_open_sub_block(&labels, &query_open_subs(&repo, &fn_)) {
+                        println!("闸门: 合并会关闭 epic #{fn_}，但存在 open sub-issue #{}", block.join(", #"));
+                        log("PR_MERGE", &format!("PR #{num}"), "REJECT",
+                            &format!("epic #{fn_} with open subs: {}", block.join(",")));
                         return 1;
                     }
                 }
@@ -809,5 +872,88 @@ Parent: #205
         assert!(findings.iter().any(|f| f.rule_id == "IS-09" && f.severity == crate::shared::Severity::Fail
             && f.msg.contains("forbidden cross-references")),
             "IS-09 must catch 'Parent: #205' body text");
+    }
+
+    // --- GT-06 (#199): block epic close via PR merge when subs open ---
+
+    #[test]
+    fn gt06_pr_merge_blocks_epic_with_open_sub() {
+        // Fixes #N target is an epic with an open sub-issue → merge must be rejected.
+        let labels: Vec<String> = vec!["epic".to_string()];
+        let open_subs: Vec<String> = vec!["301".to_string()];
+        let block = gt06_open_sub_block(&labels, &open_subs);
+        assert!(block.is_some(), "epic with an open sub-issue must block merge");
+        assert_eq!(block.unwrap(), open_subs);
+    }
+
+    #[test]
+    fn gt06_pr_merge_blocks_epic_with_multiple_open_subs() {
+        let labels: Vec<String> = vec!["enhancement".to_string(), "epic".to_string()];
+        let open_subs: Vec<String> = vec!["301".to_string(), "302".to_string()];
+        let block = gt06_open_sub_block(&labels, &open_subs).expect("must block");
+        assert_eq!(block.len(), 2);
+        assert!(block.contains(&"301".to_string()));
+        assert!(block.contains(&"302".to_string()));
+    }
+
+    #[test]
+    fn gt06_pr_merge_allows_epic_when_all_subs_closed() {
+        let labels: Vec<String> = vec!["epic".to_string()];
+        // query_open_subs returned nothing → no open subs → merge allowed.
+        assert!(gt06_open_sub_block(&labels, &[]).is_none(),
+            "epic with all subs closed must allow merge");
+    }
+
+    #[test]
+    fn gt06_pr_merge_skips_non_epic_fixes_target() {
+        let labels: Vec<String> = vec!["enhancement".to_string()];
+        let open_subs: Vec<String> = vec!["301".to_string()]; // would block if epic
+        assert!(gt06_open_sub_block(&labels, &open_subs).is_none(),
+            "non-epic Fixes target must skip GT-06 sub check");
+    }
+
+    #[test]
+    fn gt06_pr_merge_allows_when_query_open_subs_fails() {
+        // query_open_subs returns [] on any API failure → treated as "allow"
+        // per caller convention. Verify the pure decision agrees.
+        let labels: Vec<String> = vec!["epic".to_string()];
+        assert!(gt06_open_sub_block(&labels, &[]).is_none(),
+            "API failure → empty open subs → must not block");
+    }
+
+    #[test]
+    fn gt06_is_epic_case_insensitive() {
+        // "Epic", "EPIC" must all count as epic.
+        assert!(is_epic(&vec!["EPIC".to_string()]));
+        assert!(is_epic(&vec!["Epic".to_string()]));
+        assert!(!is_epic(&vec!["epic-story".to_string()]));
+    }
+
+    #[test]
+    fn gt06_issue_close_blocks_epic_with_open_sub() {
+        // Verifies the existing intercept_issue_close GT-06 guard via the same
+        // pure decision: epic issue close with an open sub → REJECT.
+        let labels: Vec<String> = vec!["epic".to_string()];
+        let open_subs: Vec<String> = vec!["300".to_string(), "302".to_string()];
+        let block = gt06_open_sub_block(&labels, &open_subs).expect("must block");
+        assert_eq!(block.len(), 2);
+        assert!(block.contains(&"300".to_string()));
+        assert!(block.contains(&"302".to_string()));
+    }
+
+    // --- extract_fixes: Fixes/Closes/Resolves extraction used by GT-06 merge path ---
+
+    #[test]
+    fn extract_fixes_handles_fixes_closes_resolves() {
+        let body = "Fixes #185\nCloses #200\nResolves #205\n";
+        let mut got = extract_fixes(body);
+        got.sort();
+        assert_eq!(got, vec!["185".to_string(), "200".to_string(), "205".to_string()]);
+    }
+
+    #[test]
+    fn extract_fixes_no_match() {
+        // No Fixes/Closes keyword → no epic-close path triggered.
+        assert!(extract_fixes("just a body").is_empty());
     }
 }
