@@ -4,13 +4,26 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Whether a task is a plain task, a dependency-only template, or a reusable template.
+/// Whether a task is a milestone, feature, bug, plain task, chore, spike, or decision.
+/// Unknown variants from old data deserialize as `Task` (backward compat).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskKind {
+    Milestone,
+    Feature,
+    Bug,
     Task,
-    Dep,
-    Template,
+    Chore,
+    Spike,
+    Decision,
+    /// Fallback for unknown/old variants (dep, template, etc).
+    #[serde(other)]
+    Unknown,
+}
+
+/// Default priority for tasks created before the priority field existed (P2).
+fn default_priority() -> u8 {
+    2
 }
 
 /// Progress state of a task.
@@ -29,6 +42,8 @@ pub struct Task {
     pub title: String,
     pub kind: TaskKind,
     pub status: TaskStatus,
+    #[serde(default = "default_priority")]
+    pub priority: u8,
     pub parent: Option<String>,
     pub deps: Vec<String>,
     pub description: String,
@@ -48,6 +63,7 @@ mod tests {
             title: "My Task".into(),
             kind: TaskKind::Task,
             status: TaskStatus::InProgress,
+            priority: 1,
             parent: None,
             deps: vec![],
             description: "Do the thing".into(),
@@ -58,6 +74,7 @@ mod tests {
         let json = serde_json::to_string(&t).expect("serialize");
         assert!(json.contains(r#""kind":"task""#));
         assert!(json.contains(r#""status":"in_progress""#));
+        assert!(json.contains(r#""priority":1"#));
     }
 
     #[test]
@@ -65,8 +82,9 @@ mod tests {
         let t = Task {
             id: "roundtrip".into(),
             title: "Round Trip".into(),
-            kind: TaskKind::Dep,
+            kind: TaskKind::Feature,
             status: TaskStatus::Done,
+            priority: 0,
             parent: Some("parent-task".into()),
             deps: vec!["dep-a".into(), "dep-b".into()],
             description: "Roundtrip test".into(),
@@ -86,14 +104,20 @@ mod tests {
             kind: TaskKind,
         }
 
-        let v: Shadow = serde_json::from_str(r#"{"kind":"task"}"#).expect("task");
-        assert_eq!(v.kind, TaskKind::Task);
-
-        let v: Shadow = serde_json::from_str(r#"{"kind":"dep"}"#).expect("dep");
-        assert_eq!(v.kind, TaskKind::Dep);
-
-        let v: Shadow = serde_json::from_str(r#"{"kind":"template"}"#).expect("template");
-        assert_eq!(v.kind, TaskKind::Template);
+        let pairs = [
+            ("milestone", TaskKind::Milestone),
+            ("feature", TaskKind::Feature),
+            ("bug", TaskKind::Bug),
+            ("task", TaskKind::Task),
+            ("chore", TaskKind::Chore),
+            ("spike", TaskKind::Spike),
+            ("decision", TaskKind::Decision),
+        ];
+        for (s, expected) in pairs {
+            let v: Shadow = serde_json::from_str(&format!(r#"{{"kind":"{s}"}}"#))
+                .unwrap_or_else(|_| panic!("deserialize {s}"));
+            assert_eq!(v.kind, expected);
+        }
     }
 
     #[test]
@@ -119,9 +143,39 @@ mod tests {
         assert!(r.is_err());
 
         let r: Result<TaskKind, _> = serde_json::from_str(r#""bogus_kind""#);
-        assert!(r.is_err());
+        assert!(r.is_ok()); // unknown kinds map to Unknown variant (backward compat)
+        assert_eq!(r.unwrap(), TaskKind::Unknown);
 
         let r: Result<TaskStatus, _> = serde_json::from_str(r#""unknown""#);
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn priority_defaults_to_p2_when_absent() {
+        // Old JSONL without a priority field deserializes as P2.
+        let json = r#"{"id":"old","title":"Old","kind":"task","status":"open","parent":null,"deps":[],"description":"","acceptance":"","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let t: Task = serde_json::from_str(json).expect("deserialize old format");
+        assert_eq!(t.priority, 2);
+    }
+
+    #[test]
+    fn priority_roundtrip() {
+        let t = Task {
+            id: "p0".into(),
+            title: "Urgent".into(),
+            kind: TaskKind::Bug,
+            status: TaskStatus::Open,
+            priority: 0,
+            parent: None,
+            deps: vec![],
+            description: String::new(),
+            acceptance: String::new(),
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+        };
+        let json = serde_json::to_string(&t).expect("serialize");
+        assert!(json.contains(r#""priority":0"#));
+        let back: Task = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(t, back);
     }
 }

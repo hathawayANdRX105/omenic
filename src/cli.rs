@@ -1,25 +1,141 @@
 //! CLI command layer.
 //!
-//! Subcommands: task add/done/status, plan, run, steer, abort.
-//! Implemented in M1.8 (task) / M1.9 (plan) / M2 (run/steer/abort).
-//!
-//! Parsing is intentionally hand-rolled over `std::env::args`: the surface is
-//! small and stable, and skipping a parser dependency keeps the binary slim.
+//! Subcommands: task add/done/status/update/delete/list/show, plan, run,
+//! steer, abort, ready, blocked, compact, init, dep.
+//! Parsing uses clap (derive API); `--json` selects machine-readable output.
 
 use std::process::ExitCode;
+
+use clap::{Parser, Subcommand};
 
 use crate::config::Config;
 use crate::runner;
 use crate::store::Store;
 use crate::task::{Task, TaskKind, TaskStatus};
 
-/// Entry point: parse argv and dispatch to a subcommand.
-///
-/// Returns the process exit code so tests can exercise routing without
-/// calling `std::process::exit`.
+// ---------------------------------------------------------------------------
+// clap CLI definition
+// ---------------------------------------------------------------------------
+
+#[derive(Parser)]
+#[command(name = "oi", about = "Task-driven agent orchestrator")]
+struct Cli {
+    /// Output JSON instead of human-readable text
+    #[arg(long, global = true)]
+    json: bool,
+
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Task management commands
+    Task {
+        #[command(subcommand)]
+        sub: TaskCmd,
+    },
+    /// Show task details (alias for `task show`)
+    Show { id: String },
+    /// Render the task tree / Graphviz DOT
+    Plan {
+        /// Output Graphviz DOT format
+        #[arg(long)]
+        dot: bool,
+    },
+    /// Execute a task via a worker session
+    Run { id: String },
+    /// Send a steering message to a running task
+    Steer { id: String, message: Vec<String> },
+    /// Abort a running task and reopen it
+    Abort { id: String },
+    /// List tasks ready to work on
+    Ready,
+    /// List tasks blocked by unmet dependencies
+    Blocked,
+    /// Compact the store (latest-per-id, drop tombstones)
+    Compact,
+    /// Initialize an omenic workspace
+    Init,
+    /// Manage task dependencies
+    Dep {
+        #[command(subcommand)]
+        sub: DepCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum TaskCmd {
+    /// Create a task
+    Add {
+        /// Task title(s); multiple positional args create multiple tasks
+        title: Vec<String>,
+        /// Parent task id
+        #[arg(short = 'p', long)]
+        parent: Option<String>,
+        /// Comma-separated dependency ids
+        #[arg(long)]
+        deps: Option<String>,
+        /// Acceptance criteria text
+        #[arg(long)]
+        acceptance: Option<String>,
+        /// Priority 0-4 (0 highest)
+        #[arg(long)]
+        priority: Option<u8>,
+        /// Task kind (milestone|feature|bug|task|chore|spike|decision)
+        #[arg(long)]
+        kind: Option<String>,
+    },
+    /// Mark a task done
+    Done { id: String },
+    /// Show a task's state
+    Status { id: String },
+    /// Update task fields
+    Update {
+        id: String,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        deps: Option<String>,
+        #[arg(long)]
+        acceptance: Option<String>,
+        #[arg(long)]
+        priority: Option<u8>,
+        #[arg(long)]
+        kind: Option<String>,
+    },
+    /// Delete an isolated task
+    Delete { id: String },
+    /// List tasks (optionally filtered)
+    List {
+        /// Filter by status (open|in_progress|done, comma-separated)
+        #[arg(long)]
+        status: Option<String>,
+        /// Filter by kind (comma-separated)
+        #[arg(long)]
+        kind: Option<String>,
+        /// Filter by parent id (`none` for root tasks)
+        #[arg(long)]
+        parent: Option<String>,
+    },
+    /// Show task details + computed relationships
+    Show { id: String },
+}
+
+#[derive(Subcommand)]
+enum DepCmd {
+    /// Add a dependency edge
+    Add { id: String, dep_id: String },
+    /// Remove a dependency edge
+    Remove { id: String, dep_id: String },
+}
+
+/// Entry point: parse argv via clap and dispatch to a subcommand.
 pub fn run() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    match dispatch(&args) {
+    let cli = Cli::parse();
+    match dispatch(cli) {
         Ok(code) => ExitCode::from(code),
         Err(msg) => {
             eprintln!("omenic: {msg}");
@@ -28,91 +144,81 @@ pub fn run() -> ExitCode {
     }
 }
 
-/// Dispatch `args` (everything after argv[0]) to the matching subcommand.
-///
-/// Returns `Ok(exit_code)` on handled commands and `Err(msg)` for usage
-/// errors (printed on stderr, exit 2).
-fn dispatch(args: &[String]) -> Result<u8, String> {
-    let Some(cmd) = args.first() else {
-        return Err(usage());
-    };
-    match cmd.as_str() {
-        "task" => task_cmd(&args[1..]),
-        "plan" => plan_cmd(&args[1..]),
-        "run" => run_cmd(&args[1..]),
-        "steer" => steer_cmd(&args[1..]),
-        "abort" => abort_cmd(&args[1..]),
-        "help" | "-h" | "--help" => {
-            print!("{}", usage());
-            Ok(0)
-        }
-        other => Err(format!("unknown command `{other}`\n\n{}", usage())),
-    }
-}
-
-fn usage() -> String {
-    "usage: omenic <command> [args]\n\n\
-     commands:\n\
-       task add <title> [-p <parent-id>]   create a task (repeat title for multiple)\n\
-       task done <id>                      mark a task done\n\
-       task status <id>                    show a task's state\n\
-       plan                                show the task tree\n\
-       run <task-id>                       execute task via worker session\n\
-       steer <task-id> <msg>               inject instruction into running worker\n\
-       abort <task-id>                     stop worker and reopen task\n\
-       help                                show this help\n"
-        .to_string()
-}
-
-/// `task` subcommand group.
-fn task_cmd(args: &[String]) -> Result<u8, String> {
-    let Some(sub) = args.first() else {
-        return Err("usage: omenic task <add|done|status> ...".to_string());
-    };
-    // Validate before touching config/store so unknown commands fail fast
-    // and stay testable without environment setup.
-    match sub.as_str() {
-        "add" | "done" | "status" => {}
-        other => {
-            return Err(format!(
-                "unknown task command `{other}`\n\nusage: omenic task <add|done|status> ..."
-            ));
-        }
-    }
-    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let store = Store::new(&config.data_dir);
-    match sub.as_str() {
-        "add" => task_add(&store, &args[1..]),
-        "done" => task_done(&store, &args[1..]),
-        "status" => task_status(&store, &args[1..]),
-        _ => unreachable!("validated above"),
-    }
-}
-
-/// Parse `-p <id>` out of the tail of `args`; returns (titles, parent).
-fn parse_add_args(args: &[String]) -> Result<(Vec<String>, Option<String>), String> {
-    let mut titles = Vec::new();
-    let mut parent = None;
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-p" | "--parent" => {
-                let Some(id) = args.get(i + 1) else {
-                    return Err("`-p` requires a parent id".to_string());
-                };
-                parent = Some(id.clone());
-                i += 2;
+/// Dispatch a parsed `Cli` to the matching implementation function.
+fn dispatch(cli: Cli) -> Result<u8, String> {
+    let json = cli.json;
+    match cli.command {
+        Command::Task { sub } => {
+            let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+            let store = Store::new(&config.data_dir);
+            match sub {
+                TaskCmd::Add {
+                    title,
+                    parent,
+                    deps,
+                    acceptance,
+                    priority,
+                    kind,
+                } => task_add(
+                    &store, &title, parent, deps, acceptance, priority, kind, json,
+                ),
+                TaskCmd::Done { id } => task_done(&store, &id, json),
+                TaskCmd::Status { id } => task_status(&store, &id, json),
+                TaskCmd::Update {
+                    id,
+                    title,
+                    status,
+                    deps,
+                    acceptance,
+                    priority,
+                    kind,
+                } => task_update(
+                    &store, &id, title, status, deps, acceptance, priority, kind, json,
+                ),
+                TaskCmd::Delete { id } => task_delete(&store, &id, json),
+                TaskCmd::List {
+                    status,
+                    kind,
+                    parent,
+                } => task_list(&store, status, kind, parent, json),
+                TaskCmd::Show { id } => task_show(&store, &id, json),
             }
-            t => {
-                titles.push(t.to_string());
-                i += 1;
+        }
+        Command::Show { id } => show_cmd(&id, json),
+        Command::Plan { dot } => plan_cmd(dot, json),
+        Command::Run { id } => run_cmd(&id),
+        Command::Steer { id, message } => steer_cmd(&id, &message, json),
+        Command::Abort { id } => abort_cmd(&id, json),
+        Command::Ready => ready_cmd(json),
+        Command::Blocked => blocked_cmd(json),
+        Command::Compact => compact_cmd(json),
+        Command::Init => init_cmd(json),
+        Command::Dep { sub } => {
+            let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+            let store = Store::new(&config.data_dir);
+            match sub {
+                DepCmd::Add { id, dep_id } => dep_add(&store, &id, &dep_id, json),
+                DepCmd::Remove { id, dep_id } => dep_remove(&store, &id, &dep_id, json),
             }
         }
     }
-    if titles.is_empty() {
-        return Err("usage: omenic task add <title> [-p <parent-id>]".to_string());
-    }
-    Ok((titles, parent))
+}
+
+// --- JSON helpers ----------------------------------------------------------
+
+/// Print a JSON value to stdout.
+fn print_json<T: ?Sized + serde::Serialize>(value: &T) {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(value)
+            .unwrap_or_else(|e| { format!("{{\"error\":\"json serialization failed: {e}\"}}") })
+    );
+}
+
+/// Print `{"status":"ok","message":"..."}` when --json is set.
+fn json_ok(message: &str) {
+    let obj = serde_json::json!({"status": "ok", "message": message});
+    print_json(&obj);
 }
 
 fn now_iso() -> String {
@@ -121,7 +227,7 @@ fn now_iso() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    // Days since epoch → civil date via a small conversion.
+    // Days since epoch -> civil date via a small conversion.
     let days = secs / 86_400;
     let rem = secs % 86_400;
     let (hh, mm, ss) = (rem / 3600, (rem % 3600) / 60, rem % 60);
@@ -139,34 +245,98 @@ fn now_iso() -> String {
     format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z")
 }
 
-fn task_add(store: &Store, args: &[String]) -> Result<u8, String> {
-    let (titles, parent) = parse_add_args(args)?;
-    for title in &titles {
+#[allow(clippy::too_many_arguments)]
+fn task_add(
+    store: &Store,
+    titles: &[String],
+    parent: Option<String>,
+    deps: Option<String>,
+    acceptance: Option<String>,
+    priority: Option<u8>,
+    kind: Option<String>,
+    json: bool,
+) -> Result<u8, String> {
+    if titles.is_empty() {
+        return Err("task add requires at least one title".to_string());
+    }
+    let deps: Vec<String> = deps
+        .map(|d| {
+            d.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let acceptance = acceptance.unwrap_or_default();
+    let kind = match &kind {
+        Some(k) => Some(parse_kind(k)?),
+        None => None,
+    };
+
+    // Validate deps: existence, no self-dep, no cycle.
+    if !deps.is_empty() {
+        let all: Vec<Task> = store.load_all().map_err(|e| format!("store error: {e}"))?;
+        let id_map: std::collections::HashMap<String, Vec<String>> =
+            all.iter().map(|t| (t.id.clone(), t.deps.clone())).collect();
+        let existing_ids: std::collections::HashSet<&str> =
+            all.iter().map(|t| t.id.as_str()).collect();
+
+        for title in titles {
+            for dep in &deps {
+                if dep == title {
+                    return Err(format!("task `{title}` cannot depend on itself"));
+                }
+                if !existing_ids.contains(dep.as_str()) {
+                    return Err(format!("dependency `{dep}` does not exist"));
+                }
+                // Simulate adding edge title -> dep and check for cycles.
+                let mut sim = id_map.clone();
+                sim.entry(title.clone()).or_default().push(dep.clone());
+                if crate::graph::would_dep_cycle(&sim, title, dep) {
+                    return Err(format!(
+                        "adding dependency `{title}` -> `{dep}` would create a cycle"
+                    ));
+                }
+            }
+        }
+    }
+
+    let mut created_ids = Vec::new();
+    for title in titles {
         let now = now_iso();
         let task = Task {
             id: title.clone(),
             title: title.clone(),
-            kind: TaskKind::Task,
+            kind: kind.clone().unwrap_or(TaskKind::Task),
             status: TaskStatus::Open,
+            priority: priority.unwrap_or(2),
             parent: parent.clone(),
-            deps: vec![],
+            deps: deps.clone(),
             description: String::new(),
-            acceptance: String::new(),
+            acceptance: acceptance.clone(),
             created_at: now.clone(),
             updated_at: now,
         };
         store
             .append(&task)
             .map_err(|e| format!("store error: {e}"))?;
-        println!("created {id}", id = task.id);
+        created_ids.push(task.id);
+    }
+    if json {
+        let msgs: Vec<String> = created_ids
+            .iter()
+            .map(|id| format!("created {id}"))
+            .collect();
+        json_ok(&msgs.join("\n"));
+    } else {
+        for id in &created_ids {
+            println!("created {id}");
+        }
     }
     Ok(0)
 }
 
-fn task_done(store: &Store, args: &[String]) -> Result<u8, String> {
-    let Some(id) = args.first() else {
-        return Err("usage: omenic task done <id>".to_string());
-    };
+fn task_done(store: &Store, id: &str, json: bool) -> Result<u8, String> {
     let Some(mut task) = store
         .load_task(id)
         .map_err(|e| format!("store error: {e}"))?
@@ -183,14 +353,30 @@ fn task_done(store: &Store, args: &[String]) -> Result<u8, String> {
     store
         .append(&task)
         .map_err(|e| format!("store error: {e}"))?;
-    println!("done {id}");
+
+    // Suggest newly-unblocked tasks (deps all Done, this task among them, still Open).
+    let all = store.load_all().map_err(|e| format!("store error: {e}"))?;
+    let ready = suggest_next(&all, id);
+
+    if json {
+        let mut obj = serde_json::json!({
+            "status": "ok",
+            "message": format!("done {id}"),
+        });
+        if !ready.is_empty() {
+            obj["ready"] = serde_json::Value::String(ready.join(", "));
+        }
+        print_json(&obj);
+    } else {
+        println!("done {id}");
+        if !ready.is_empty() {
+            println!("ready: {}", ready.join(", "));
+        }
+    }
     Ok(0)
 }
 
-fn task_status(store: &Store, args: &[String]) -> Result<u8, String> {
-    let Some(id) = args.first() else {
-        return Err("usage: omenic task status <id>".to_string());
-    };
+fn task_status(store: &Store, id: &str, json: bool) -> Result<u8, String> {
     let Some(task) = store
         .load_task(id)
         .map_err(|e| format!("store error: {e}"))?
@@ -198,42 +384,430 @@ fn task_status(store: &Store, args: &[String]) -> Result<u8, String> {
         eprintln!("task not found: {id}");
         return Ok(1);
     };
-    println!("id:         {}", task.id);
-    println!("title:      {}", task.title);
-    println!("status:     {:?}", task.status);
-    match &task.parent {
-        Some(p) => println!("parent:     {p}"),
-        None => println!("parent:     -"),
-    }
-    if task.deps.is_empty() {
-        println!("deps:       -");
+    if json {
+        print_json(&serde_json::json!({
+            "id": task.id,
+            "title": task.title,
+            "status": format!("{:?}", task.status),
+            "priority": task.priority,
+            "parent": task.parent,
+            "deps": task.deps,
+            "created_at": task.created_at,
+            "updated_at": task.updated_at,
+        }));
     } else {
-        println!("deps:       {}", task.deps.join(", "));
+        println!("id:         {}", task.id);
+        println!("title:      {}", task.title);
+        println!("status:     {:?}", task.status);
+        println!("priority:   P{}", task.priority);
+        match &task.parent {
+            Some(p) => println!("parent:     {p}"),
+            None => println!("parent:     -"),
+        }
+        if task.deps.is_empty() {
+            println!("deps:       -");
+        } else {
+            println!("deps:       {}", task.deps.join(", "));
+        }
+        println!("created_at: {}", task.created_at);
+        println!("updated_at: {}", task.updated_at);
     }
-    println!("created_at: {}", task.created_at);
-    println!("updated_at: {}", task.updated_at);
     Ok(0)
 }
 
-/// `plan` subcommand: render the task tree.
-fn plan_cmd(args: &[String]) -> Result<u8, String> {
-    if !args.is_empty() {
-        return Err("usage: omenic plan".to_string());
+/// `dep add <task-id> <dep-id>`: add a dependency edge task-id -> dep-id.
+fn dep_add(store: &Store, task_id: &str, dep_id: &str, json: bool) -> Result<u8, String> {
+    let all = store.load_all().map_err(|e| format!("store error: {e}"))?;
+
+    // Both task-id and dep-id must exist.
+    let task = all.iter().find(|t| t.id == task_id).cloned();
+    let Some(mut task) = task else {
+        eprintln!("task not found: {task_id}");
+        return Ok(1);
+    };
+    if !all.iter().any(|t| t.id == dep_id) {
+        eprintln!("task not found: {dep_id}");
+        return Ok(1);
     }
+
+    // Self-dependency.
+    if task_id == dep_id {
+        return Err(format!("task `{task_id}` cannot depend on itself"));
+    }
+
+    // Duplicate.
+    if task.deps.iter().any(|d| d == dep_id) {
+        return Err(format!("dependency already exists: {task_id} -> {dep_id}"));
+    }
+
+    // Cycle check: simulate adding the edge.
+    let mut sim: std::collections::HashMap<String, Vec<String>> =
+        all.iter().map(|t| (t.id.clone(), t.deps.clone())).collect();
+    sim.entry(task_id.to_string())
+        .or_default()
+        .push(dep_id.to_string());
+    if crate::graph::would_dep_cycle(&sim, task_id, dep_id) {
+        return Err(format!(
+            "adding dependency `{task_id}` -> `{dep_id}` would create a cycle"
+        ));
+    }
+
+    task.deps.push(dep_id.to_string());
+    task.deps.sort();
+    task.updated_at = now_iso();
+    store
+        .append(&task)
+        .map_err(|e| format!("store error: {e}"))?;
+    let msg = format!("added dependency: {task_id} depends on {dep_id}");
+    if json {
+        json_ok(&msg);
+    } else {
+        println!("{msg}");
+    }
+    Ok(0)
+}
+
+/// `dep remove <task-id> <dep-id>`: remove a dependency edge task-id -> dep-id.
+fn dep_remove(store: &Store, task_id: &str, dep_id: &str, json: bool) -> Result<u8, String> {
+    let Some(mut task) = store
+        .load_task(task_id)
+        .map_err(|e| format!("store error: {e}"))?
+    else {
+        eprintln!("task not found: {task_id}");
+        return Ok(1);
+    };
+
+    if !task.deps.iter().any(|d| d == dep_id) {
+        return Err(format!("dependency not found: {task_id} -> {dep_id}"));
+    }
+
+    task.deps.retain(|d| d != dep_id);
+    task.updated_at = now_iso();
+    store
+        .append(&task)
+        .map_err(|e| format!("store error: {e}"))?;
+    let msg = format!("removed dependency: {task_id} depends on {dep_id}");
+    if json {
+        json_ok(&msg);
+    } else {
+        println!("{msg}");
+    }
+    Ok(0)
+}
+
+/// `task update <id> [flags]`
+#[allow(clippy::too_many_arguments)]
+fn task_update(
+    store: &Store,
+    id: &str,
+    title: Option<String>,
+    status: Option<String>,
+    deps: Option<String>,
+    acceptance: Option<String>,
+    priority: Option<u8>,
+    kind: Option<String>,
+    json: bool,
+) -> Result<u8, String> {
+    let Some(mut task) = store
+        .load_task(id)
+        .map_err(|e| format!("store error: {e}"))?
+    else {
+        eprintln!("task not found: {id}");
+        return Ok(1);
+    };
+
+    if let Some(v) = title {
+        task.title = v;
+    }
+    if let Some(v) = status {
+        task.status = parse_status(&v)?;
+    }
+    if let Some(v) = deps {
+        task.deps = v
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
+    if let Some(v) = acceptance {
+        task.acceptance = v;
+    }
+    if let Some(p) = priority {
+        if p > 4 {
+            return Err(format!("invalid priority `{p}` (expected 0-4)"));
+        }
+        task.priority = p;
+    }
+    if let Some(v) = kind {
+        task.kind = parse_kind(&v)?;
+    }
+
+    // Validate deps exist + no cycle when deps changed.
+    if !task.deps.is_empty() {
+        let all = store.load_all().map_err(|e| format!("store error: {e}"))?;
+        let existing_ids: std::collections::HashSet<&str> =
+            all.iter().map(|t| t.id.as_str()).collect();
+        for dep in &task.deps {
+            if dep == id {
+                return Err(format!("task `{id}` cannot depend on itself"));
+            }
+            if !existing_ids.contains(dep.as_str()) {
+                return Err(format!("dependency `{dep}` does not exist"));
+            }
+        }
+        let mut sim: std::collections::HashMap<String, Vec<String>> =
+            all.iter().map(|t| (t.id.clone(), t.deps.clone())).collect();
+        // Replace this task's deps with the new set for the cycle check.
+        sim.insert(id.to_string(), task.deps.clone());
+        for dep in &task.deps {
+            if crate::graph::would_dep_cycle(&sim, id, dep) {
+                return Err(format!(
+                    "adding dependency `{id}` -> `{dep}` would create a cycle"
+                ));
+            }
+        }
+    }
+
+    task.updated_at = now_iso();
+    store
+        .append(&task)
+        .map_err(|e| format!("store error: {e}"))?;
+    let msg = format!("updated {id}");
+    if json {
+        json_ok(&msg);
+    } else {
+        println!("{msg}");
+    }
+    Ok(0)
+}
+
+/// `task delete <id>` — delete an isolated task via tombstone.
+fn task_delete(store: &Store, id: &str, json: bool) -> Result<u8, String> {
+    let all = store.load_all().map_err(|e| format!("store error: {e}"))?;
+    if !all.iter().any(|t| t.id == id) {
+        eprintln!("task not found: {id}");
+        return Ok(1);
+    }
+    let children = crate::graph::children_of(&all, id);
+    let dependents = crate::graph::dependents(&all, id);
+    if !children.is_empty() || !dependents.is_empty() {
+        let mut reasons = Vec::new();
+        if !children.is_empty() {
+            reasons.push(format!("children: {}", children.join(", ")));
+        }
+        if !dependents.is_empty() {
+            reasons.push(format!("dependents: {}", dependents.join(", ")));
+        }
+        return Err(format!(
+            "cannot delete: has {reasons}",
+            reasons = reasons.join("; ")
+        ));
+    }
+    store
+        .append_tombstone(id)
+        .map_err(|e| format!("store error: {e}"))?;
+    let msg = format!("deleted {id}");
+    if json {
+        json_ok(&msg);
+    } else {
+        println!("{msg}");
+    }
+    Ok(0)
+}
+
+/// `task list [--status S] [--kind K] [--parent P]`
+fn task_list(
+    store: &Store,
+    status: Option<String>,
+    kind: Option<String>,
+    parent: Option<String>,
+    json: bool,
+) -> Result<u8, String> {
+    let tasks = store.load_all().map_err(|e| format!("store error: {e}"))?;
+
+    let status_filter: Option<Vec<TaskStatus>> = match status {
+        Some(v) => Some(
+            v.split(',')
+                .filter(|s| !s.trim().is_empty())
+                .map(|s| parse_status(s.trim()))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        None => None,
+    };
+    let kind_filter: Option<Vec<TaskKind>> = match kind {
+        Some(v) => Some(
+            v.split(',')
+                .filter(|s| !s.trim().is_empty())
+                .map(|s| parse_kind(s.trim()))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        None => None,
+    };
+    let parent_filter = parent;
+
+    let filtered: Vec<Task> = tasks
+        .into_iter()
+        .filter(|t| {
+            if let Some(sf) = &status_filter
+                && !sf.contains(&t.status)
+            {
+                return false;
+            }
+            if let Some(kf) = &kind_filter
+                && !kf.contains(&t.kind)
+            {
+                return false;
+            }
+            if let Some(pf) = &parent_filter {
+                if pf == "none" {
+                    if t.parent.is_some() {
+                        return false;
+                    }
+                } else if t.parent.as_deref() != Some(pf.as_str()) {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+
+    if json {
+        print_json(&filtered);
+    } else {
+        use std::io::Write;
+        print!("{}", render_plan(&filtered));
+        std::io::stdout().flush().ok();
+    }
+    Ok(0)
+}
+
+/// `task show <id>` — show task details + computed relationships.
+fn task_show(store: &Store, id: &str, json: bool) -> Result<u8, String> {
+    let all = store.load_all().map_err(|e| format!("store error: {e}"))?;
+    let Some(task) = all.iter().find(|t| t.id == id) else {
+        eprintln!("task not found: {id}");
+        return Ok(1);
+    };
+    if json {
+        let children = crate::graph::children_of(&all, &task.id);
+        let dependents = crate::graph::dependents(&all, &task.id);
+        print_json(&serde_json::json!({
+            "task": task,
+            "children": children,
+            "depended_by": dependents,
+        }));
+    } else {
+        print_task_detail(task, &all);
+    }
+    Ok(0)
+}
+
+/// `show <id>` — top-level alias for `task show <id>`.
+fn show_cmd(id: &str, json: bool) -> Result<u8, String> {
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let store = Store::new(&config.data_dir);
+    task_show(&store, id, json)
+}
+
+/// Print full task detail with computed relationships.
+fn print_task_detail(task: &Task, all: &[Task]) {
+    let kind_str = match task.kind {
+        TaskKind::Milestone => "milestone",
+        TaskKind::Feature => "feature",
+        TaskKind::Bug => "bug",
+        TaskKind::Task => "task",
+        TaskKind::Chore => "chore",
+        TaskKind::Spike => "spike",
+        TaskKind::Decision => "decision",
+        TaskKind::Unknown => "unknown",
+    };
+    let status_str = match task.status {
+        TaskStatus::Open => "open",
+        TaskStatus::InProgress => "in_progress",
+        TaskStatus::Done => "done",
+    };
+    println!("id:          {}", task.id);
+    println!("title:       {}", task.title);
+    println!("kind:        {kind_str}");
+    println!("status:      {status_str}");
+    match &task.parent {
+        Some(p) => println!("parent:      {p}"),
+        None => println!("parent:      -"),
+    }
+    if task.deps.is_empty() {
+        println!("deps:        -");
+    } else {
+        println!("deps:        {}", task.deps.join(", "));
+    }
+    println!("description: {}", task.description);
+    println!("acceptance:  {}", task.acceptance);
+    println!("created_at:  {}", task.created_at);
+    println!("updated_at:  {}", task.updated_at);
+
+    let children = crate::graph::children_of(all, &task.id);
+    let dependents = crate::graph::dependents(all, &task.id);
+
+    if children.is_empty() {
+        println!("children:    -");
+    } else {
+        println!("children:    {}", children.join(", "));
+    }
+    if dependents.is_empty() {
+        println!("depended_by: -");
+    } else {
+        println!("depended_by: {}", dependents.join(", "));
+    }
+}
+
+/// Parse a status string ("open"|"in_progress"|"done") → TaskStatus.
+fn parse_status(s: &str) -> Result<TaskStatus, String> {
+    match s {
+        "open" => Ok(TaskStatus::Open),
+        "in_progress" => Ok(TaskStatus::InProgress),
+        "done" => Ok(TaskStatus::Done),
+        other => Err(format!(
+            "invalid status `{other}` (expected: open|in_progress|done)"
+        )),
+    }
+}
+
+/// Parse a kind string → TaskKind.
+fn parse_kind(s: &str) -> Result<TaskKind, String> {
+    match s {
+        "milestone" => Ok(TaskKind::Milestone),
+        "feature" => Ok(TaskKind::Feature),
+        "bug" => Ok(TaskKind::Bug),
+        "task" => Ok(TaskKind::Task),
+        "chore" => Ok(TaskKind::Chore),
+        "spike" => Ok(TaskKind::Spike),
+        "decision" => Ok(TaskKind::Decision),
+        other => Err(format!(
+            "invalid kind `{other}` (expected: milestone|feature|bug|task|chore|spike|decision)"
+        )),
+    }
+}
+
+/// `plan` subcommand: render the task tree (+ optional Graphviz DOT).
+fn plan_cmd(dot: bool, json: bool) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
     let store = Store::new(&config.data_dir);
     let tasks = store.load_all().map_err(|e| format!("store error: {e}"))?;
-    use std::io::Write;
-    print!("{}", render_plan(&tasks));
-    std::io::stdout().flush().ok();
+    if json {
+        print_json(&tasks);
+    } else {
+        use std::io::Write;
+        if dot {
+            print!("{}", render_dot(&tasks));
+        } else {
+            print!("{}", render_plan(&tasks));
+        }
+        std::io::stdout().flush().ok();
+    }
     Ok(0)
 }
 
 /// `run` subcommand: spawn a worker for a task and return its outcome.
-fn run_cmd(args: &[String]) -> Result<u8, String> {
-    let Some(id) = args.first() else {
-        return Err("usage: omenic run <task-id>".to_string());
-    };
+fn run_cmd(id: &str) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
     let store = Store::new(&config.data_dir);
     let Some(task) = store
@@ -254,7 +828,7 @@ fn run_cmd(args: &[String]) -> Result<u8, String> {
             .collect(),
         id,
     ) {
-        eprintln!("blocked: {id} — predecessors not complete");
+        eprintln!("blocked: {id} -- predecessors not complete");
         return Ok(1);
     }
 
@@ -286,8 +860,6 @@ fn run_cmd(args: &[String]) -> Result<u8, String> {
         .map_err(|e| format!("store error: {e}"))?;
 
     // Evidence drop per MVP §3.2: result.json in <data_dir>/tasks/<id>/.
-    // Errror here doesn't fail the run — the task state is already flipped —
-    // so we report but don't abort the CLI.
     let task_dir = config.data_dir.join("tasks").join(id);
     if let Err(e) = std::fs::create_dir_all(&task_dir) {
         eprintln!("warning: could not create task context dir: {e}");
@@ -320,29 +892,25 @@ fn run_cmd(args: &[String]) -> Result<u8, String> {
 }
 
 /// `steer` subcommand: note that MVP steer is local-only (no live worker yet).
-fn steer_cmd(args: &[String]) -> Result<u8, String> {
-    let Some(id) = args.first() else {
-        return Err("usage: omenic steer <task-id> <message>".to_string());
-    };
-    if args.len() < 2 {
+fn steer_cmd(id: &str, message: &[String], json: bool) -> Result<u8, String> {
+    if message.is_empty() {
         return Err(format!("usage: omenic steer {id} <message>"));
     }
-    let msg = args[1..].join(" ");
-    if msg.is_empty() {
-        return Err(format!("usage: omenic steer {id} <message>"));
+    let msg = message.join(" ");
+    let note = format!("steer note for {id}: {msg}");
+    if json {
+        json_ok(&note);
+    } else {
+        println!("{note}");
+        println!(
+            "(M3: steer is a stored instruction for a future worker session; live worker attachment is post-MVP)"
+        );
     }
-    println!("steer note for {id}: {msg}");
-    println!(
-        "(M3: steer is a stored instruction for a future worker session; live worker attachment is post-MVP)"
-    );
     Ok(0)
 }
 
 /// `abort` subcommand: mark the task as open again so it can be re-run.
-fn abort_cmd(args: &[String]) -> Result<u8, String> {
-    let Some(id) = args.first() else {
-        return Err("usage: omenic abort <task-id>".to_string());
-    };
+fn abort_cmd(id: &str, json: bool) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
     let store = Store::new(&config.data_dir);
     let Some(mut task) = store
@@ -357,7 +925,152 @@ fn abort_cmd(args: &[String]) -> Result<u8, String> {
     store
         .append(&task)
         .map_err(|e| format!("store error: {e}"))?;
-    println!("aborted {id}; status reset to open");
+    let msg = format!("aborted {id}; status reset to open");
+    if json {
+        json_ok(&msg);
+    } else {
+        println!("{msg}");
+    }
+    Ok(0)
+}
+
+/// `compact` subcommand: compact the store (latest-per-id, drop tombstones).
+fn compact_cmd(json: bool) -> Result<u8, String> {
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let store = Store::new(&config.data_dir);
+    let before = store
+        .load_all()
+        .map_err(|e| format!("store error: {e}"))?
+        .len();
+    store.compact().map_err(|e| format!("store error: {e}"))?;
+    let after = store
+        .load_all()
+        .map_err(|e| format!("store error: {e}"))?
+        .len();
+    let msg = format!("compacted: {before} -> {after} tasks");
+    if json {
+        json_ok(&msg);
+    } else {
+        println!("{msg}");
+    }
+    Ok(0)
+}
+
+/// `init` subcommand: create `omenic-data/` and a default `omenic.toml`.
+/// Idempotent: existing artifacts are never overwritten.
+fn init_cmd(json: bool) -> Result<u8, String> {
+    let dir = std::env::current_dir().map_err(|e| format!("cwd error: {e}"))?;
+    init_cmd_at(&dir, json)
+}
+
+/// init internals, testable with an explicit directory.
+fn init_cmd_at(dir: &std::path::Path, json: bool) -> Result<u8, String> {
+    let data_dir = dir.join("omenic-data");
+    let config_path = dir.join("omenic.toml");
+    let data_existed = data_dir.exists();
+    let config_existed = config_path.exists();
+
+    if !data_existed {
+        std::fs::create_dir_all(&data_dir)
+            .map_err(|e| format!("could not create omenic-data/: {e}"))?;
+    }
+    if !config_existed {
+        let default = "omp_path = \"omp\"\n\
+                       data_dir = \"./omenic-data\"\n\
+                       model = \"default\"\n";
+        std::fs::write(&config_path, default)
+            .map_err(|e| format!("could not create omenic.toml: {e}"))?;
+    }
+
+    let msg = match (data_existed, config_existed) {
+        (true, true) => "workspace already initialized",
+        (false, false) => "initialized: omenic-data/, omenic.toml",
+        (false, true) => "created: omenic-data/",
+        (true, false) => "created: omenic.toml",
+    };
+    if json {
+        json_ok(msg);
+    } else {
+        println!("{msg}");
+    }
+    Ok(0)
+}
+
+/// `ready` -- list open tasks whose deps are all done, sorted by priority then id.
+fn ready_cmd(json: bool) -> Result<u8, String> {
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let store = Store::new(&config.data_dir);
+    let all = store.load_all().map_err(|e| format!("store error: {e}"))?;
+    let map: std::collections::HashMap<String, Task> =
+        all.iter().map(|t| (t.id.clone(), t.clone())).collect();
+
+    let mut ready: Vec<&Task> = all
+        .iter()
+        .filter(|t| t.status == TaskStatus::Open && crate::graph::is_ready(&map, &t.id))
+        .collect();
+    ready.sort_by(|a, b| a.priority.cmp(&b.priority).then(a.id.cmp(&b.id)));
+
+    if json {
+        let ids: Vec<&str> = ready.iter().map(|t| t.id.as_str()).collect();
+        print_json(&ids);
+    } else if ready.is_empty() {
+        println!("(no ready tasks)");
+    } else {
+        for t in &ready {
+            println!("\u{25cb} {} P{} {}", t.id, t.priority, t.title);
+        }
+    }
+    Ok(0)
+}
+
+/// `blocked` -- list tasks with unmet deps, sorted by priority then id.
+fn blocked_cmd(json: bool) -> Result<u8, String> {
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let store = Store::new(&config.data_dir);
+    let all = store.load_all().map_err(|e| format!("store error: {e}"))?;
+    let map: std::collections::HashMap<String, Task> =
+        all.iter().map(|t| (t.id.clone(), t.clone())).collect();
+
+    let mut blocked: Vec<(&Task, Vec<String>)> = all
+        .iter()
+        .filter_map(|t| {
+            if t.status == TaskStatus::Done {
+                return None;
+            }
+            let unmet: Vec<String> = t
+                .deps
+                .iter()
+                .filter(|dep| map.get(*dep).is_none_or(|d| d.status != TaskStatus::Done))
+                .cloned()
+                .collect();
+            if unmet.is_empty() {
+                None
+            } else {
+                Some((t, unmet))
+            }
+        })
+        .collect();
+    blocked.sort_by(|(a, _), (b, _)| a.priority.cmp(&b.priority).then(a.id.cmp(&b.id)));
+
+    if json {
+        let entries: Vec<serde_json::Value> = blocked
+            .iter()
+            .map(|(t, unmet)| serde_json::json!({"id": t.id, "blocked_by": unmet}))
+            .collect();
+        print_json(&entries);
+    } else if blocked.is_empty() {
+        println!("(no blocked tasks)");
+    } else {
+        for (t, unmet) in &blocked {
+            println!(
+                "\u{25cf} {} P{} {} -- blocked by: {}",
+                t.id,
+                t.priority,
+                t.title,
+                unmet.join(", ")
+            );
+        }
+    }
     Ok(0)
 }
 
@@ -395,7 +1108,7 @@ fn render_plan(tasks: &[Task]) -> String {
     }
 
     fn fmt_node(t: &Task) -> String {
-        format!("{} [{}]", t.id, status_str(&t.status))
+        format!("{} [{}] P{}", t.id, status_str(&t.status), t.priority)
     }
 
     fn print_children(
@@ -454,6 +1167,79 @@ fn render_plan(tasks: &[Task]) -> String {
     out
 }
 
+/// Return ids of tasks newly unblocked by completing `done_id`: status Open,
+/// all deps Done (via `is_ready`), and `done_id` listed among their deps.
+fn suggest_next(tasks: &[Task], done_id: &str) -> Vec<String> {
+    use std::collections::HashMap;
+    let map: HashMap<String, Task> = tasks.iter().map(|t| (t.id.clone(), t.clone())).collect();
+    tasks
+        .iter()
+        .filter(|t| {
+            t.status == TaskStatus::Open
+                && t.deps.iter().any(|d| d == done_id)
+                && crate::graph::is_ready(&map, &t.id)
+        })
+        .map(|t| t.id.clone())
+        .collect()
+}
+
+/// Render the task graph as Graphviz DOT.
+///
+/// Dependency edges are solid (`dep -> task`); parent→child edges are dotted
+/// with `arrowhead=none`. Nodes are colored by status.
+fn render_dot(tasks: &[Task]) -> String {
+    if tasks.is_empty() {
+        return "digraph omenic {\n}\n".to_string();
+    }
+
+    fn status_color(s: &TaskStatus) -> &'static str {
+        match s {
+            TaskStatus::Open => "#e8f4fd",
+            TaskStatus::InProgress => "#fff3cd",
+            TaskStatus::Done => "#d4edda",
+        }
+    }
+
+    let mut out = String::new();
+    out.push_str("digraph omenic {\n");
+    out.push_str("  rankdir=LR;\n");
+    out.push_str("  node [shape=box, style=\"rounded,filled\"];\n");
+
+    // Nodes
+    for t in tasks {
+        let color = status_color(&t.status);
+        let esc_id = t.id.replace('\\', "\\\\").replace('"', "\\\"");
+        let esc_title = t.title.replace('\\', "\\\\").replace('"', "\\\"");
+        out.push_str(&format!(
+            "  \"{esc_id}\" [label=\"{esc_id}\\nP{} | {esc_title}\", fillcolor=\"{color}\"];\n",
+            t.priority
+        ));
+    }
+
+    // Dependency edges (solid): dep -> task
+    for t in tasks {
+        let esc_id = t.id.replace('\\', "\\\\").replace('"', "\\\"");
+        for dep in &t.deps {
+            let esc_dep = dep.replace('\\', "\\\\").replace('"', "\\\"");
+            out.push_str(&format!("  \"{esc_dep}\" -> \"{esc_id}\";\n"));
+        }
+    }
+
+    // Parent → child edges (dotted, no arrowhead)
+    for t in tasks {
+        let esc_id = t.id.replace('\\', "\\\\").replace('"', "\\\"");
+        if let Some(parent) = &t.parent {
+            let esc_parent = parent.replace('\\', "\\\\").replace('"', "\\\"");
+            out.push_str(&format!(
+                "  \"{esc_parent}\" -> \"{esc_id}\" [style=dotted, arrowhead=none];\n"
+            ));
+        }
+    }
+
+    out.push_str("}\n");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -474,7 +1260,17 @@ mod tests {
     fn add_creates_task() {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let store = tmp_store("add1");
-        task_add(&store, &["write design doc".to_string()]).unwrap();
+        task_add(
+            &store,
+            &["write design doc".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
         let t = store.load_task("write design doc").unwrap().unwrap();
         assert_eq!(t.status, TaskStatus::Open);
         assert_eq!(t.kind, TaskKind::Task);
@@ -487,7 +1283,7 @@ mod tests {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let store = tmp_store("addmulti");
         let args = vec!["a".to_string(), "b".to_string(), "c".to_string()];
-        task_add(&store, &args).unwrap();
+        task_add(&store, &args, None, None, None, None, None, false).unwrap();
         assert_eq!(store.load_all().unwrap().len(), 3);
     }
 
@@ -495,12 +1291,17 @@ mod tests {
     fn add_with_parent() {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let store = tmp_store("addparent");
-        let args = vec![
-            "child".to_string(),
-            "-p".to_string(),
-            "schemav1".to_string(),
-        ];
-        task_add(&store, &args).unwrap();
+        task_add(
+            &store,
+            &["child".to_string()],
+            Some("schemav1".to_string()),
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
         let t = store.load_task("child").unwrap().unwrap();
         assert_eq!(t.parent.as_deref(), Some("schemav1"));
     }
@@ -509,9 +1310,19 @@ mod tests {
     fn done_updates_status_and_timestamp() {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let store = tmp_store("done");
-        task_add(&store, &["t1".to_string()]).unwrap();
+        task_add(
+            &store,
+            &["t1".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
         let before = store.load_task("t1").unwrap().unwrap().updated_at;
-        task_done(&store, &["t1".to_string()]).unwrap();
+        task_done(&store, "t1", false).unwrap();
         let after = store.load_task("t1").unwrap().unwrap();
         assert_eq!(after.status, TaskStatus::Done);
         // updated_at must not regress; same-second writes may be equal.
@@ -522,7 +1333,7 @@ mod tests {
     fn done_missing_task_exits_1() {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let store = tmp_store("donemissing");
-        let code = task_done(&store, &["nope".to_string()]).unwrap();
+        let code = task_done(&store, "nope", false).unwrap();
         assert_eq!(code, 1);
     }
 
@@ -530,7 +1341,7 @@ mod tests {
     fn status_missing_task_exits_1() {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let store = tmp_store("statusmissing");
-        let code = task_status(&store, &["nope".to_string()]).unwrap();
+        let code = task_status(&store, "nope", false).unwrap();
         assert_eq!(code, 1);
     }
 
@@ -538,14 +1349,14 @@ mod tests {
     fn add_without_title_errors() {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let store = tmp_store("addnoargs");
-        let r = task_add(&store, &[]);
+        let r = task_add(&store, &[], None, None, None, None, None, false);
         assert!(r.is_err());
     }
 
     #[test]
     fn unknown_subcommand_errors() {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let r = task_cmd(&["bogus".to_string()]);
+        let r = Cli::try_parse_from(["oi", "task", "bogus"]);
         assert!(r.is_err());
     }
 
@@ -563,6 +1374,7 @@ mod tests {
             title: id.to_string(),
             kind: TaskKind::Task,
             status,
+            priority: 2,
             parent: parent.map(|p| p.to_string()),
             deps: vec![],
             description: String::new(),
@@ -582,11 +1394,11 @@ mod tests {
             mk_task("scheme-workflow-02", Some("dev-shell"), TaskStatus::Done),
         ];
         let expected = "\
-dev-shell [open]
-├── scheme-workflow-01 [open]
-│   ├── imp-cli [open]
-│   └── imp-rpc [open]
-└── scheme-workflow-02 [done]
+dev-shell [open] P2
+├── scheme-workflow-01 [open] P2
+│   ├── imp-cli [open] P2
+│   └── imp-rpc [open] P2
+└── scheme-workflow-02 [done] P2
 ";
         assert_eq!(render_plan(&tasks), expected);
     }
@@ -604,8 +1416,8 @@ dev-shell [open]
             mk_task("b", None, TaskStatus::Open),
         ];
         let out = render_plan(&tasks);
-        assert!(out.starts_with("a [open]\n"));
-        assert!(out.contains("b [open]"));
+        assert!(out.starts_with("a [open] P2\n"));
+        assert!(out.contains("b [open] P2"));
     }
 
     #[test]
@@ -616,8 +1428,8 @@ dev-shell [open]
         ];
         let out = render_plan(&tasks);
         // Both appear exactly once; renderer terminates.
-        assert_eq!(out.matches("a [open]").count(), 1);
-        assert_eq!(out.matches("b [open]").count(), 1);
+        assert_eq!(out.matches("a [open] P2").count(), 1);
+        assert_eq!(out.matches("b [open] P2").count(), 1);
     }
 
     #[test]
@@ -628,34 +1440,1447 @@ dev-shell [open]
             mk_task("t-done", None, TaskStatus::Done),
         ];
         let out = render_plan(&tasks);
-        assert!(out.contains("t-open [open]"));
-        assert!(out.contains("t-ip [in_progress]"));
-        assert!(out.contains("t-done [done]"));
+        assert!(out.contains("t-open [open] P2"));
+        assert!(out.contains("t-ip [in_progress] P2"));
+        assert!(out.contains("t-done [done] P2"));
     }
 
     #[test]
     fn run_command_parse_errors_on_missing_id() {
-        let r = dispatch(&["run".to_string()]);
-        assert!(r.is_err()); // needs <task-id>
+        let r = Cli::try_parse_from(["oi", "run"]).is_err();
+        assert!(r); // needs <task-id>
     }
 
     #[test]
     fn steer_command_parse_and_note() {
         // non-empty message required after id; bare steer errors
-        let r = dispatch(&["steer".to_string(), "t-1".to_string()]);
-        assert!(r.is_err());
+        // steer with no message: clap allows it (empty vec), but steer_cmd should error
+        let r = Cli::try_parse_from(["oi", "steer", "t-1"]);
+        assert!(r.is_ok()); // parsing succeeds; steer_cmd handles empty message
         // with msg should hit the handle (but not fail dispatch parse)
-        let r = dispatch(&[
-            "steer".to_string(),
-            "t-1".to_string(),
-            "keep chipping".to_string(),
-        ]);
+        let r = Cli::try_parse_from(["oi", "steer", "t-1", "keep chipping"]);
         assert!(r.is_ok());
     }
 
     #[test]
     fn abort_command_parse_needs_id() {
-        let r = dispatch(&["abort".to_string()]);
+        let r = Cli::try_parse_from(["oi", "abort"]).is_err();
+        assert!(r);
+    }
+
+    // --- #50: unknown flags rejected, not swallowed as title ---
+    #[test]
+    fn add_unknown_flag_rejected() {
+        let r = Cli::try_parse_from(["oi", "task", "add", "-t", "foo"]);
+        assert!(r.is_err(), "unknown flag -t must be rejected");
+    }
+
+    #[test]
+    fn add_unknown_long_flag_rejected() {
+        let r = Cli::try_parse_from(["oi", "task", "add", "--bogus", "x"]);
         assert!(r.is_err());
+    }
+
+    // --- #42: --deps and --acceptance ---
+
+    #[test]
+    fn add_with_deps() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("deps42");
+        // Create prerequisite tasks first
+        task_add(
+            &store,
+            &["prereq-a".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_add(
+            &store,
+            &["prereq-b".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        // Create dependent task
+        task_add(
+            &store,
+            &["dependent".to_string()],
+            None,
+            Some("prereq-a,prereq-b".to_string()),
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let t = store.load_task("dependent").unwrap().unwrap();
+        assert_eq!(t.deps, vec!["prereq-a", "prereq-b"]);
+    }
+
+    #[test]
+    fn add_with_acceptance() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("acc42");
+        task_add(
+            &store,
+            &["task-x".to_string()],
+            None,
+            None,
+            Some("all tests pass".to_string()),
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let t = store.load_task("task-x").unwrap().unwrap();
+        assert_eq!(t.acceptance, "all tests pass");
+    }
+
+    #[test]
+    fn add_deps_nonexistent_rejected() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("deps404");
+        let r = task_add(
+            &store,
+            &["t1".to_string()],
+            None,
+            Some("ghost".to_string()),
+            None,
+            None,
+            None,
+            false,
+        );
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("does not exist"));
+    }
+
+    #[test]
+    fn add_self_dep_rejected() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("selfdep");
+        let r = task_add(
+            &store,
+            &["s1".to_string()],
+            None,
+            Some("s1".to_string()),
+            None,
+            None,
+            None,
+            false,
+        );
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("cannot depend on itself"));
+    }
+
+    #[test]
+    fn add_deps_cycle_rejected() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("cycle42");
+        // a exists, b depends on a
+        task_add(
+            &store,
+            &["a".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_add(
+            &store,
+            &["b".to_string()],
+            None,
+            Some("a".to_string()),
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        // re-create a with deps=[b] → a→b→a cycle
+        let r = task_add(
+            &store,
+            &["a".to_string()],
+            None,
+            Some("b".to_string()),
+            None,
+            None,
+            None,
+            false,
+        );
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("cycle"));
+    }
+
+    #[test]
+    fn add_deps_and_acceptance_combined() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("combo42");
+        task_add(
+            &store,
+            &["p1".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_add(
+            &store,
+            &["child".to_string()],
+            Some("parent-epic".to_string()),
+            Some("p1".to_string()),
+            Some("done when p1 is verified".to_string()),
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let t = store.load_task("child").unwrap().unwrap();
+        assert_eq!(t.deps, vec!["p1"]);
+        assert_eq!(t.acceptance, "done when p1 is verified");
+        assert_eq!(t.parent.as_deref(), Some("parent-epic"));
+    }
+
+    // --- #179: dep add / dep remove ---
+
+    fn dep_store(tag: &str) -> (Store, [String; 3]) {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store(tag);
+        task_add(
+            &store,
+            &["t1".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_add(
+            &store,
+            &["t2".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_add(
+            &store,
+            &["t3".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let ids = ["t1".to_string(), "t2".to_string(), "t3".to_string()];
+        (store, ids)
+    }
+
+    #[test]
+    fn dep_add_creates_edge() {
+        let (store, ids) = dep_store("depadd1");
+        let r = dep_add(&store, "t1", "t2", false);
+        assert!(r.is_ok());
+        let t = store.load_task(&ids[0]).unwrap().unwrap();
+        assert_eq!(t.deps, vec!["t2"]);
+    }
+
+    #[test]
+    fn dep_add_includes_dep_in_status() {
+        let (store, _ids) = dep_store("depadd_status");
+        dep_add(&store, "t1", "t2", false).unwrap();
+        let t = store.load_task("t1").unwrap().unwrap();
+        assert!(t.deps.contains(&"t2".to_string()));
+    }
+
+    #[test]
+    fn dep_add_self_dep_rejected() {
+        let (store, _ids) = dep_store("depself");
+        let r = dep_add(&store, "t1", "t1", false);
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("cannot depend on itself"));
+    }
+
+    #[test]
+    fn dep_add_duplicate_rejected() {
+        let (store, _ids) = dep_store("depdup");
+        dep_add(&store, "t1", "t2", false).unwrap();
+        let r = dep_add(&store, "t1", "t2", false);
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("already exists"));
+    }
+
+    #[test]
+    fn dep_add_nonexistent_dep_rejected() {
+        let (store, _ids) = dep_store("dep404");
+        let r = dep_add(&store, "t1", "ghost", false);
+        // dep_id doesn't exist → eprintln + Ok(1)
+        assert!(r.is_ok());
+        assert_eq!(r.unwrap(), 1);
+    }
+
+    #[test]
+    fn dep_add_nonexistent_task_rejected() {
+        let (store, _ids) = dep_store("dep404task");
+        let r = dep_add(&store, "ghost", "t2", false);
+        assert!(r.is_ok());
+        assert_eq!(r.unwrap(), 1);
+    }
+
+    #[test]
+    fn dep_add_cycle_rejected() {
+        let (store, _ids) = dep_store("depcycle");
+        // t1 → t2
+        dep_add(&store, "t1", "t2", false).unwrap();
+        // t2 → t3
+        dep_add(&store, "t2", "t3", false).unwrap();
+        // t3 → t1 would create cycle: t1→t2→t3→t1
+        let r = dep_add(&store, "t3", "t1", false);
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("cycle"));
+    }
+
+    #[test]
+    fn dep_add_keeps_deps_sorted() {
+        let (store, _ids) = dep_store("depsort");
+        dep_add(&store, "t1", "t3", false).unwrap();
+        dep_add(&store, "t1", "t2", false).unwrap();
+        let t = store.load_task("t1").unwrap().unwrap();
+        assert_eq!(t.deps, vec!["t2", "t3"]);
+    }
+
+    #[test]
+    fn dep_add_updates_timestamp() {
+        let (store, _ids) = dep_store("dep_ts");
+        let before = store.load_task("t1").unwrap().unwrap().updated_at;
+        dep_add(&store, "t1", "t2", false).unwrap();
+        let after = store.load_task("t1").unwrap().unwrap();
+        assert!(after.updated_at >= before);
+    }
+
+    #[test]
+    fn dep_remove_deletes_edge() {
+        let (store, _ids) = dep_store("depremove1");
+        dep_add(&store, "t1", "t2", false).unwrap();
+        let r = dep_remove(&store, "t1", "t2", false);
+        assert!(r.is_ok());
+        let t = store.load_task("t1").unwrap().unwrap();
+        assert!(!t.deps.contains(&"t2".to_string()));
+        assert!(t.deps.is_empty());
+    }
+
+    #[test]
+    fn dep_remove_not_a_dep_rejected() {
+        let (store, _ids) = dep_store("depremove_missing");
+        dep_add(&store, "t1", "t2", false).unwrap();
+        // t3 was never a dep of t1
+        let r = dep_remove(&store, "t1", "t3", false);
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn dep_remove_missing_task_rejected() {
+        let (store, _ids) = dep_store("depremove_404");
+        let r = dep_remove(&store, "ghost", "t2", false);
+        assert!(r.is_ok());
+        assert_eq!(r.unwrap(), 1);
+    }
+
+    #[test]
+    fn dep_remove_preserves_other_deps() {
+        let (store, _ids) = dep_store("depremove_keep");
+        dep_add(&store, "t1", "t2", false).unwrap();
+        dep_add(&store, "t1", "t3", false).unwrap();
+        dep_remove(&store, "t1", "t2", false).unwrap();
+        let t = store.load_task("t1").unwrap().unwrap();
+        assert_eq!(t.deps, vec!["t3"]);
+    }
+
+    #[test]
+    fn dep_cmd_unknown_sub_rejected() {
+        let r = Cli::try_parse_from(["oi", "dep", "bogus"]);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn dep_cmd_no_sub_rejected() {
+        let r = Cli::try_parse_from(["oi", "dep"]);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn dep_add_wrong_arg_count_rejected() {
+        let r = Cli::try_parse_from(["oi", "dep", "add", "t1"]);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn dep_remove_wrong_arg_count_rejected() {
+        let r = Cli::try_parse_from(["oi", "dep", "remove", "t1"]);
+        assert!(r.is_err());
+    }
+
+    // --- #178: task update / delete / list / show ---
+
+    #[test]
+    fn update_status() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("upd_status");
+        task_add(
+            &store,
+            &["t1".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_update(
+            &store,
+            "t1",
+            None,
+            Some("in_progress".to_string()),
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let t = store.load_task("t1").unwrap().unwrap();
+        assert_eq!(t.status, TaskStatus::InProgress);
+    }
+
+    #[test]
+    fn update_title() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("upd_title");
+        task_add(
+            &store,
+            &["t1".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_update(
+            &store,
+            "t1",
+            Some("new title".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let t = store.load_task("t1").unwrap().unwrap();
+        assert_eq!(t.title, "new title");
+    }
+
+    #[test]
+    fn update_acceptance() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("upd_acc");
+        task_add(
+            &store,
+            &["t1".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_update(
+            &store,
+            "t1",
+            None,
+            None,
+            None,
+            Some("all pass".to_string()),
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let t = store.load_task("t1").unwrap().unwrap();
+        assert_eq!(t.acceptance, "all pass");
+    }
+
+    #[test]
+    fn update_deps() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("upd_deps");
+        task_add(
+            &store,
+            &["a".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_add(
+            &store,
+            &["b".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_update(
+            &store,
+            "b",
+            None,
+            None,
+            Some("a".to_string()),
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let t = store.load_task("b").unwrap().unwrap();
+        assert_eq!(t.deps, vec!["a"]);
+    }
+
+    #[test]
+    fn update_missing_task() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("upd_404");
+        let code = task_update(&store, "nope", None, None, None, None, None, None, false).unwrap();
+        assert_eq!(code, 1);
+    }
+
+    #[test]
+    fn update_invalid_status() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("upd_badstatus");
+        task_add(
+            &store,
+            &["t1".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let r = task_update(
+            &store,
+            "t1",
+            None,
+            Some("bogus".to_string()),
+            None,
+            None,
+            None,
+            None,
+            false,
+        );
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("invalid status"));
+    }
+
+    #[test]
+    fn update_missing_task_returns_1() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("upd_noargs");
+        let r = task_update(
+            &store,
+            "nonexistent",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        );
+        assert_eq!(r.unwrap(), 1);
+    }
+
+    #[test]
+    fn update_self_dep_rejected() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("upd_selfdep");
+        task_add(
+            &store,
+            &["t1".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let r = task_update(
+            &store,
+            "t1",
+            None,
+            None,
+            Some("t1".to_string()),
+            None,
+            None,
+            None,
+            false,
+        );
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("cannot depend on itself"));
+    }
+
+    #[test]
+    fn update_deps_nonexistent_rejected() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("upd_dep404");
+        task_add(
+            &store,
+            &["t1".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let r = task_update(
+            &store,
+            "t1",
+            None,
+            None,
+            Some("ghost".to_string()),
+            None,
+            None,
+            None,
+            false,
+        );
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("does not exist"));
+    }
+
+    #[test]
+    fn delete_isolated_task() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("del_isolated");
+        task_add(
+            &store,
+            &["orphan".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_delete(&store, "orphan", false).unwrap();
+        assert!(store.load_task("orphan").unwrap().is_none());
+    }
+
+    #[test]
+    fn delete_with_child_rejected() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("del_child");
+        task_add(
+            &store,
+            &["parent".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_add(
+            &store,
+            &["child".to_string()],
+            Some("parent".to_string()),
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let r = task_delete(&store, "parent", false);
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("cannot delete"));
+    }
+
+    #[test]
+    fn delete_with_dependent_rejected() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("del_dep");
+        task_add(
+            &store,
+            &["a".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_add(
+            &store,
+            &["b".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        dep_add(&store, "b", "a", false).unwrap();
+        let r = task_delete(&store, "a", false);
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("cannot delete"));
+    }
+
+    #[test]
+    fn delete_missing_task() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("del_404");
+        let code = task_delete(&store, "nope", false).unwrap();
+        assert_eq!(code, 1);
+    }
+
+    #[test]
+    fn list_no_filter() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("list_all");
+        task_add(
+            &store,
+            &["a".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_add(
+            &store,
+            &["b".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let r = task_list(&store, None, None, None, false);
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn list_by_status() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("list_status");
+        task_add(
+            &store,
+            &["open1".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_add(
+            &store,
+            &["open2".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_add(
+            &store,
+            &["done1".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_done(&store, "done1", false).unwrap();
+        let r = task_list(&store, Some("done".to_string()), None, None, false);
+        assert!(r.is_ok());
+        // Verify only done tasks in store match
+        let done: Vec<Task> = store
+            .load_all()
+            .unwrap()
+            .into_iter()
+            .filter(|t| t.status == TaskStatus::Done)
+            .collect();
+        assert_eq!(done.len(), 1);
+        assert_eq!(done[0].id, "done1");
+    }
+
+    #[test]
+    fn list_by_parent() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("list_parent");
+        task_add(
+            &store,
+            &["root".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_add(
+            &store,
+            &["child".to_string()],
+            Some("root".to_string()),
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let r = task_list(&store, None, None, Some("none".to_string()), false);
+        assert!(r.is_ok());
+        let roots: Vec<Task> = store
+            .load_all()
+            .unwrap()
+            .into_iter()
+            .filter(|t| t.parent.is_none())
+            .collect();
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0].id, "root");
+    }
+
+    #[test]
+    fn list_empty_store() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("list_empty");
+        let r = task_list(&store, None, None, None, false);
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn show_task_detail() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("show_detail");
+        task_add(
+            &store,
+            &["t1".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let r = task_show(&store, "t1", false);
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn show_task_with_children_and_deps() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("show_rels");
+        task_add(
+            &store,
+            &["a".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_add(
+            &store,
+            &["b".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        dep_add(&store, "b", "a", false).unwrap();
+        task_add(
+            &store,
+            &["child".to_string()],
+            Some("a".to_string()),
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let r = task_show(&store, "a", false);
+        assert!(r.is_ok());
+        let all = store.load_all().unwrap();
+        let children = crate::graph::children_of(&all, "a");
+        let dependents = crate::graph::dependents(&all, "a");
+        assert_eq!(children, vec!["child"]);
+        assert_eq!(dependents, vec!["b"]);
+    }
+
+    #[test]
+    fn show_missing_task() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("show_404");
+        let code = task_show(&store, "nope", false).unwrap();
+        assert_eq!(code, 1);
+    }
+    #[test]
+    fn show_cmd_top_level_no_arg_errors() {
+        // No arg → usage error before Config::load is reached.
+        let r = Cli::try_parse_from(["oi", "show"]);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn show_cmd_top_level_alias() {
+        // show_cmd calls Config::load which needs env; test core logic via task_show instead.
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("show_alias");
+        task_add(
+            &store,
+            &["t1".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let r = task_show(&store, "t1", false);
+        assert!(r.is_ok());
+    }
+    fn store_file(tag: &str) -> String {
+        let path = std::env::temp_dir()
+            .join(format!("omenic-cli-test-{tag}-{}", std::process::id()))
+            .join("tasks.jsonl");
+        std::fs::read_to_string(&path).unwrap_or_default()
+    }
+
+    fn mk_task_titled(id: &str, title: &str) -> Task {
+        let now = now_iso();
+        Task {
+            id: id.to_string(),
+            title: title.to_string(),
+            kind: TaskKind::Task,
+            status: TaskStatus::Open,
+            priority: 2,
+            parent: None,
+            deps: Vec::new(),
+            description: String::new(),
+            acceptance: String::new(),
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn compact_reduces_duplicate_ids() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("compact_dup");
+        assert!(store.append(&mk_task_titled("t1", "v1")).is_ok());
+        assert!(store.append(&mk_task_titled("t1", "v2")).is_ok());
+        assert!(store.append(&mk_task_titled("t1", "v3")).is_ok());
+        assert!(store.append(&mk_task_titled("t1", "v4")).is_ok());
+        // load_all already dedupes (latest-wins).
+        let before = store.load_all().unwrap();
+        assert_eq!(before.len(), 1);
+        assert_eq!(before[0].title, "v4");
+        // File still holds all 4 lines physically.
+        assert_eq!(store_file("compact_dup").lines().count(), 4);
+        assert!(store.compact().is_ok());
+        // After compact: 1 logical task, latest title, 1 physical line.
+        let after = store.load_all().unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].title, "v4");
+        assert_eq!(store_file("compact_dup").lines().count(), 1);
+    }
+
+    #[test]
+    fn compact_drops_tombstones() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("compact_tomb");
+        task_add(
+            &store,
+            &["alpha".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_add(
+            &store,
+            &["beta".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_delete(&store, "beta", false).unwrap();
+        // File: 2 task lines + 1 tombstone line.
+        assert_eq!(store_file("compact_tomb").lines().count(), 3);
+        assert!(store_file("compact_tomb").contains("tombstone"));
+        assert_eq!(store.load_all().unwrap().len(), 1);
+        assert!(store.compact().is_ok());
+        // After compact: only alpha remains; no tombstone line in file.
+        let after = store.load_all().unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].id, "alpha");
+        let file = store_file("compact_tomb");
+        assert!(!file.contains("tombstone"));
+        assert_eq!(file.lines().count(), 1);
+    }
+
+    #[test]
+    fn compact_empty_store() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("compact_empty");
+        assert!(store.load_all().unwrap().is_empty());
+        assert!(store.compact().is_ok());
+        assert!(store.load_all().unwrap().is_empty());
+    }
+
+    #[test]
+    fn compact_preserves_data() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("compact_data");
+        task_add(
+            &store,
+            &["base".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        // second task depends on base, with acceptance text.
+        task_add(
+            &store,
+            &["child".to_string()],
+            None,
+            Some("base".to_string()),
+            Some("all tests green".to_string()),
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let before = store.load_all().unwrap();
+        assert_eq!(before.len(), 2);
+        assert!(store.compact().is_ok());
+        let after = store.load_all().unwrap();
+        assert_eq!(after.len(), 2);
+        let child = after.iter().find(|t| t.id == "child").unwrap();
+        assert_eq!(child.deps, vec!["base".to_string()]);
+        assert_eq!(child.acceptance, "all tests green");
+    }
+
+    // --- #183: oi init ---
+
+    #[test]
+    fn init_creates_data_dir_and_config() {
+        let dir = std::env::temp_dir().join(format!(
+            "omenic-cli-test-init-create-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        init_cmd_at(&dir, false).unwrap();
+        assert!(dir.join("omenic-data").is_dir());
+        assert!(dir.join("omenic.toml").is_file());
+        let content = std::fs::read_to_string(dir.join("omenic.toml")).unwrap();
+        assert!(content.contains("omp_path = \"omp\""));
+        assert!(content.contains("data_dir = \"./omenic-data\""));
+        assert!(content.contains("model = \"default\""));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn init_idempotent() {
+        let dir =
+            std::env::temp_dir().join(format!("omenic-cli-test-init-idem-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        init_cmd_at(&dir, false).unwrap();
+        let toml = std::fs::read_to_string(dir.join("omenic.toml")).unwrap();
+        init_cmd_at(&dir, false).unwrap();
+        // Not overwritten.
+        assert_eq!(
+            toml,
+            std::fs::read_to_string(dir.join("omenic.toml")).unwrap()
+        );
+        assert!(dir.join("omenic-data").is_dir());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn init_partial_existing() {
+        let dir = std::env::temp_dir().join(format!(
+            "omenic-cli-test-init-partial-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("omenic-data")).unwrap();
+        init_cmd_at(&dir, false).unwrap();
+        // toml was created, data dir was already there.
+        assert!(dir.join("omenic.toml").is_file());
+        assert!(dir.join("omenic-data").is_dir());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- #181: oi ready / oi blocked ---
+
+    /// Helper: build a store with tasks from a spec of (id, priority, deps).
+    fn make_ready_store(tag: &str, specs: &[(&str, u8, &[&str])]) -> Store {
+        let store = tmp_store(tag);
+        for &(id, prio, deps) in specs {
+            let deps_opt = if deps.is_empty() {
+                None
+            } else {
+                Some(deps.join(","))
+            };
+            task_add(
+                &store,
+                &[id.to_string()],
+                None,
+                deps_opt,
+                None,
+                Some(prio),
+                None,
+                false,
+            )
+            .unwrap();
+        }
+        store
+    }
+
+    #[test]
+    fn ready_shows_only_unblocked_open() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = make_ready_store(
+            "ready1",
+            &[("A", 2, &[]), ("B", 2, &["A"]), ("C", 2, &["A"])],
+        );
+        let all = store.load_all().unwrap();
+        let map: std::collections::HashMap<String, Task> =
+            all.iter().map(|t| (t.id.clone(), t.clone())).collect();
+        let ready: Vec<&str> = all
+            .iter()
+            .filter(|t| t.status == TaskStatus::Open && crate::graph::is_ready(&map, &t.id))
+            .map(|t| t.id.as_str())
+            .collect();
+        assert_eq!(ready, vec!["A"]);
+    }
+
+    #[test]
+    fn ready_after_done_shows_unblocked() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = make_ready_store(
+            "ready2",
+            &[("A", 2, &[]), ("B", 2, &["A"]), ("C", 2, &["A"])],
+        );
+        task_done(&store, "A", false).unwrap();
+        let all = store.load_all().unwrap();
+        let map: std::collections::HashMap<String, Task> =
+            all.iter().map(|t| (t.id.clone(), t.clone())).collect();
+        let mut ready: Vec<&str> = all
+            .iter()
+            .filter(|t| t.status == TaskStatus::Open && crate::graph::is_ready(&map, &t.id))
+            .map(|t| t.id.as_str())
+            .collect();
+        ready.sort();
+        assert_eq!(ready, vec!["B", "C"]);
+    }
+
+    #[test]
+    fn ready_empty() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("ready_empty");
+        let all = store.load_all().unwrap();
+        let map: std::collections::HashMap<String, Task> =
+            all.iter().map(|t| (t.id.clone(), t.clone())).collect();
+        let ready: Vec<&Task> = all
+            .iter()
+            .filter(|t| t.status == TaskStatus::Open && crate::graph::is_ready(&map, &t.id))
+            .collect();
+        assert!(ready.is_empty());
+        // The command prints "(no ready tasks)" when empty.
+    }
+
+    #[test]
+    fn blocked_shows_blocked_with_reasons() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = make_ready_store("blocked1", &[("A", 2, &[]), ("B", 2, &["A"])]);
+        let all = store.load_all().unwrap();
+        let map: std::collections::HashMap<String, Task> =
+            all.iter().map(|t| (t.id.clone(), t.clone())).collect();
+        // B is blocked by A (A is open, not done).
+        let blocked: Vec<(String, Vec<String>)> = all
+            .iter()
+            .filter_map(|t| {
+                if t.status == TaskStatus::Done {
+                    return None;
+                }
+                let unmet: Vec<String> = t
+                    .deps
+                    .iter()
+                    .filter(|dep| map.get(*dep).map_or(true, |d| d.status != TaskStatus::Done))
+                    .cloned()
+                    .collect();
+                if unmet.is_empty() {
+                    None
+                } else {
+                    Some((t.id.clone(), unmet))
+                }
+            })
+            .collect();
+        // B should be blocked by A. A has no deps → not blocked.
+        let b = blocked.iter().find(|(id, _)| id == "B").unwrap();
+        assert_eq!(b.1, vec!["A".to_string()]);
+        assert!(!blocked.iter().any(|(id, _)| id == "A"));
+    }
+
+    #[test]
+    fn blocked_empty() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // A has no deps → not blocked. All ready → "(no blocked tasks)".
+        let store = make_ready_store("blocked_empty", &[("A", 2, &[])]);
+        let all = store.load_all().unwrap();
+        let map: std::collections::HashMap<String, Task> =
+            all.iter().map(|t| (t.id.clone(), t.clone())).collect();
+        let blocked: Vec<&Task> = all
+            .iter()
+            .filter_map(|t| {
+                if t.status == TaskStatus::Done {
+                    return None;
+                }
+                let unmet = t
+                    .deps
+                    .iter()
+                    .filter(|dep| map.get(*dep).map_or(true, |d| d.status != TaskStatus::Done));
+                if unmet.count() == 0 { None } else { Some(t) }
+            })
+            .collect();
+        assert!(blocked.is_empty());
+    }
+
+    #[test]
+    fn ready_sorted_by_priority() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Three root tasks with different priorities.
+        let store = make_ready_store(
+            "ready_sort",
+            &[("low", 2, &[]), ("high", 0, &[]), ("mid", 1, &[])],
+        );
+        let all = store.load_all().unwrap();
+        let map: std::collections::HashMap<String, Task> =
+            all.iter().map(|t| (t.id.clone(), t.clone())).collect();
+        let mut ready: Vec<&Task> = all
+            .iter()
+            .filter(|t| t.status == TaskStatus::Open && crate::graph::is_ready(&map, &t.id))
+            .collect();
+        ready.sort_by(|a, b| a.priority.cmp(&b.priority).then(a.id.cmp(&b.id)));
+        let ids: Vec<&str> = ready.iter().map(|t| t.id.as_str()).collect();
+        // P0 (high) before P1 (mid) before P2 (low).
+        assert_eq!(ids, vec!["high", "mid", "low"]);
+    }
+
+    // --- #184: plan --dot + done suggest-next ---
+
+    #[test]
+    fn plan_dot_outputs_valid_dot() {
+        let mut a = mk_task("A", None, TaskStatus::Open);
+        a.deps = vec![];
+        let mut b = mk_task("B", None, TaskStatus::Open);
+        b.deps = vec!["A".to_string()];
+        let tasks = vec![a, b];
+        let dot = render_dot(&tasks);
+        assert!(dot.starts_with("digraph omenic {\n"));
+        assert!(dot.contains("\"A\""));
+        assert!(dot.contains("\"B\""));
+        // B depends on A → edge A -> B
+        assert!(dot.contains("\"A\" -> \"B\";"));
+        assert!(dot.ends_with("}\n"));
+    }
+
+    #[test]
+    fn plan_dot_empty() {
+        assert_eq!(render_dot(&[]), "digraph omenic {\n}\n");
+    }
+
+    #[test]
+    fn plan_dot_colors_by_status() {
+        let tasks = vec![
+            mk_task("t-open", None, TaskStatus::Open),
+            mk_task("t-ip", None, TaskStatus::InProgress),
+            mk_task("t-done", None, TaskStatus::Done),
+        ];
+        let dot = render_dot(&tasks);
+        assert!(dot.contains("fillcolor=\"#e8f4fd\""), "open color");
+        assert!(dot.contains("fillcolor=\"#fff3cd\""), "in_progress color");
+        assert!(dot.contains("fillcolor=\"#d4edda\""), "done color");
+    }
+
+    #[test]
+    fn plan_dot_parent_child_dotted_edge() {
+        let tasks = vec![
+            mk_task("parent", None, TaskStatus::Open),
+            mk_task("child", Some("parent"), TaskStatus::Open),
+        ];
+        let dot = render_dot(&tasks);
+        assert!(
+            dot.contains("\"parent\" -> \"child\" [style=dotted, arrowhead=none]"),
+            "parent edge styled dotted"
+        );
+    }
+
+    // suggest_next is tested via the pure helper to avoid stdout capture.
+
+    #[test]
+    fn done_suggest_next_shows_unblocked() {
+        let mut a = mk_task("A", None, TaskStatus::Done);
+        a.deps = vec![];
+        let mut b = mk_task("B", None, TaskStatus::Open);
+        b.deps = vec!["A".to_string()];
+        let mut c = mk_task("C", None, TaskStatus::Open);
+        c.deps = vec!["A".to_string()];
+        let ready = suggest_next(&[a, b, c], "A");
+        assert!(ready.contains(&"B".to_string()));
+        assert!(ready.contains(&"C".to_string()));
+        assert_eq!(ready.len(), 2);
+    }
+
+    #[test]
+    fn done_suggest_next_none() {
+        let a = mk_task("A", None, TaskStatus::Done);
+        let b = mk_task("B", None, TaskStatus::Open); // B does NOT depend on A
+        let ready = suggest_next(&[a, b], "A");
+        assert!(ready.is_empty());
+    }
+
+    #[test]
+    fn done_suggest_next_partial_deps_not_ready() {
+        // B deps=[A, X]; A done but X not → B still blocked.
+        let mut a = mk_task("A", None, TaskStatus::Done);
+        a.deps = vec![];
+        let mut x = mk_task("X", None, TaskStatus::Open);
+        x.deps = vec![];
+        let mut b = mk_task("B", None, TaskStatus::Open);
+        b.deps = vec!["A".to_string(), "X".to_string()];
+        let ready = suggest_next(&[a, x, b], "A");
+        assert!(ready.is_empty());
+    }
+
+    #[test]
+    fn done_suggest_next_skips_done_tasks() {
+        // B already Done and deps=[A] → not suggested (it's not Open).
+        let mut a = mk_task("A", None, TaskStatus::Done);
+        a.deps = vec![];
+        let mut b = mk_task("B", None, TaskStatus::Done);
+        b.deps = vec!["A".to_string()];
+        let ready = suggest_next(&[a, b], "A");
+        assert!(ready.is_empty());
+    }
+
+    #[test]
+    fn done_suggest_next_via_store_integration() {
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("suggest184");
+        task_add(
+            &store,
+            &["A".to_string()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        task_add(
+            &store,
+            &["B".to_string()],
+            None,
+            Some("A".to_string()),
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        // Mark A done → B should be newly ready.
+        task_done(&store, "A", false).unwrap();
+        let all = store.load_all().unwrap();
+        let ready = suggest_next(&all, "A");
+        assert!(ready.contains(&"B".to_string()));
     }
 }
