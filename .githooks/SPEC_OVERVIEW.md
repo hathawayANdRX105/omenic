@@ -2,11 +2,16 @@
 
 ```
 .githooks/
-├── gh-gate                    # 创建拦截门（创建前调 check_content + 创建后调 issues.py/pull_requests.py）
-├── pre-commit                 # git commit 钩子（轻量：workspace + code + CM-01/02/03 commit 标题）
-├── pre-push                   # git push 钩子（全量：workspace + code）
-├── merge                      # 合并入口（手动跑：pull_requests + reviews + cleanup）
-├── _shared.py                 # 共享模块（gh_api / Finding / load_yaml / run_external）
+├── hooks/                     # git hooks 入口（core.hooksPath = .githooks/hooks）
+│   ├── pre-commit            # git commit 钩子（CM-01/02/03 + workspace + code）
+│   ├── pre-push              # git push 钩子（workspace + code）
+│   └── merge                 # 合并入口（手动跑：PR + reviews + cleanup + CRG + ocr）
+├── lib/                       # 共享模块（PEP 420 命名空间包，无 __init__.py）
+│   └── _shared.py            # gh_api / Finding / load_yaml / run_external
+├── dev/                       # 开发工具（PEP 420 命名空间包）
+│   ├── audit.py              # 批量检查/打钩/并发扫描（--recent=N --limit --workers，供 CI）
+│   └── ocr_review.py         # 本地审查：CRG 结构分析 + ocr AI 审查（--post/--post-inline）
+├── install_gh_gate.py         # 拦截门安装脚本（部署到 ~/.local/bin/gh）
 ├── spec/                      # 规则配置（改规则只改这里，不改 .py）
 │   ├── dispatch.yaml          # 钩子→主题映射（哪个钩子跑哪些检查）
 │   ├── github_issues.yaml     # Issue 规则（IS-* 检查项）
@@ -30,10 +35,9 @@
 │   ├── tests_check.py       # 测试代码检查（命名/断言/helper）
 │   └── docs_hygiene.py      # 文档清洁（全角括号/死链/空文件/CRLF）
 ├── tests/                     # 单元测试（127 个）
-├── GITHUB_ISSUE_PR.md         # Issue/PR 创建指南
-├── PR_DEV_WORKFLOW.md         # PR 开发工作流指南
-├── audit.py                   # 批量检查/打钩/最近 N 天扫描（--recent=N 供 CI）
-└── OVERVIEW.md                # 本文件（规范总览）
+├── GITHUB_ISSUE_PR.md         # Issue/PR 创建指南（含关联机制）
+├── PR_DEV_WORKFLOW.md         # PR 开发工作流指南（含 CRG + ocr 审查流程）
+└── SPEC_OVERVIEW.md           # 本文件（规范总览）
 
 项目根：
 ├── AGENTS.md                  # Agent 行为规范（创建前读 gh-gate）
@@ -41,6 +45,12 @@
 ├── ruff.toml                  # ruff 配置（缓存重定向到 /tmp）
 └── .github/workflows/daily_audit.yml  # 每日合规检查（最近 1 天，有 FAIL 自动建 issue）
 ```
+
+### 外部工具依赖（复用其他项目时需安装）
+
+- `code-review-graph`（CRG）：结构分析/变更影响检测（`detect-changes --brief --base main`）
+- `ocr`（OpenCodeReview CLI）：AI 代码审查（`review --format json --audience agent`）
+- `gh`（GitHub CLI）：所有 GitHub API 操作入口
 
 ## 本文档用途
 
@@ -164,6 +174,48 @@
 - 支持 workflow_dispatch 手动触发
 
 实现位置：`.githooks/dev/audit.py` scan_recent + `.github/workflows/daily_audit.yml`
+
+## 主题八：本地审查（CRG + ocr）
+
+`dev/ocr_review.py` 整合 CRG 结构分析 + ocr AI 审查，以 ocr 为主。
+
+### CRG 结构分析（`code-review-graph detect-changes --brief --base main`）
+
+```json
+{
+  "summary": "Analyzed N changed file(s): …",
+  "risk_score": 0.0,
+  "review_priorities": ["path/to/file.py"],  // 高优先级文件（ocr 重点审查）
+  "changed_functions": [{"name": "fn", "file": "path"}],
+  "affected_flows": [{"name": "flow", "risk": "high"}],
+  "test_gaps": []
+}
+```
+
+- `risk_score`：0.0（低）~ 1.0（高）— 整体变更风险
+- `review_priorities`：重点审查文件列表（CRG 建议 ocr 优先关注的）
+
+### ocr AI 审查（`ocr review --format json --audience agent`）
+
+```json
+{
+  "comments": [
+    {"path": "file.py", "start_line": 42, "severity": "warning",
+     "category": "bug", "content": "审查意见"}
+  ]
+}
+```
+
+- `severity`：`critical` / `blocker` / `warning` / `info`
+- `category`：`bug` / `security` / `performance` / `style` / `best_practice`
+
+### 审查流程（merge 自动执行 + 手动触发）
+
+1. hooks/merge 自动执行：CRG 摘要 → ocr 详细发现 → 汇总报告
+2. 手动：`python .githooks/dev/ocr_review.py [--post|--post-inline] [--pr N]`
+3. 输出：终端（默认）/ PR conversation（--post）/ Files changed inline（--post-inline）
+
+实现位置：`.githooks/dev/ocr_review.py`（依赖外部工具 `code-review-graph` + `ocr`）
 
 
 ## 触发式（lazy）规则映射
