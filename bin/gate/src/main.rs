@@ -74,15 +74,20 @@ fn main() -> ExitCode {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Init
-        | Commands::PreCommit
-        | Commands::PrePush
-        | Commands::Merge
-        | Commands::Issue
-        | Commands::Pr => {
-            println!("not implemented yet");
-            ExitCode::SUCCESS
+        Commands::Init => {
+            match gate_core::tools::init::install() {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("gate init 失败: {e}");
+                    ExitCode::FAILURE
+                }
+            }
         }
+        Commands::PreCommit => ExitCode::from(gate_core::tools::pre_commit::run() as u8),
+        Commands::PrePush => ExitCode::from(gate_core::tools::pre_push::run() as u8),
+        Commands::Merge => ExitCode::from(gate_core::tools::merge::run(&[]) as u8),
+        Commands::Issue => ExitCode::from(gate_core::tools::gh_wrap::intercept_issue_create(&[]) as u8),
+        Commands::Pr => ExitCode::from(gate_core::tools::gh_wrap::intercept_pr_create(&[]) as u8),
         Commands::Review(args) => {
             let args_vec: Vec<String> = build_review_args(&args);
             let rc = gate_core::tools::review::run(&args_vec);

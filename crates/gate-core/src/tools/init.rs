@@ -33,8 +33,10 @@ pub fn install() -> anyhow::Result<()> {
     fs::create_dir_all(&install_dir)?;
 
     let current_exe = std::env::current_exe()?;
-    fs::copy(&current_exe, &target)?;
-    chmod_755(&target);
+    if current_exe != target {
+        fs::copy(&current_exe, &target)?;
+        chmod_755(&target);
+    }
 
     // git config core.hooksPath .githooks/hooks
     let rc = std::process::Command::new("git")
