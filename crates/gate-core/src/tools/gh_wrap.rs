@@ -253,9 +253,10 @@ fn gt06_open_sub_block(labels: &[String], open_subs: &[String]) -> Option<Vec<St
 }
 
 /// Query the GitHub sub_issues endpoint and return the numbers whose state is
-/// `open`. Returns an empty vec on any API failure or empty result — the
-/// caller treats "no open subs" as "allow".
-fn query_open_subs(repo: &str, num: &str) -> Vec<String> {
+/// `open`. Returns `Err` on any API failure (so the caller can BLOCK rather
+/// than silently allow — failing open on an unverifiable epic-close check is
+/// the safe direction). `Ok(vec![])` only on a genuine "no open subs".
+fn query_open_subs(repo: &str, num: &str) -> Result<Vec<String>, String> {
     let (rc, subs_json, _) = run_gh(&[
         "api".to_string(),
         format!("repos/{repo}/issues/{num}/sub_issues"),
@@ -263,23 +264,32 @@ fn query_open_subs(repo: &str, num: &str) -> Vec<String> {
         ".[].number".to_string(),
     ], None);
     if rc != 0 || subs_json.trim().is_empty() {
-        return vec![];
+        if rc != 0 {
+            return Err(format!("sub_issues 查询失败 (rc={rc})"));
+        }
+        return Ok(vec![]); // truly no sub-issues
     }
-    subs_json
-        .split_whitespace()
-        .filter(|sn| {
-            sn.parse::<u32>().ok().map_or(false, |sn_i| {
+    let mut open = Vec::new();
+    for sn in subs_json.split_whitespace() {
+        match sn.parse::<u32>() {
+            Ok(sn_i) => {
                 let (rc3, st, _) = run_gh(&[
                     "api".to_string(),
                     format!("repos/{repo}/issues/{sn_i}"),
                     "--jq".to_string(),
                     ".state".to_string(),
                 ], None);
-                rc3 == 0 && st.trim() == "open"
-            })
-        })
-        .map(String::from)
-        .collect()
+                if rc3 != 0 {
+                    return Err(format!("#{sn} 状态查询失败 (rc={rc3})"));
+                }
+                if st.trim() == "open" {
+                    open.push(sn.to_string());
+                }
+            }
+            Err(_) => return Err(format!("#{sn} 非法编号")),
+        }
+    }
+    Ok(open)
 }
 
 // ---------------------------------------------------------------------------
@@ -549,11 +559,20 @@ pub fn intercept_pr_merge(args: &[String]) -> i32 {
                     // GT-06 (#199): if the Fixes target is an epic, block the merge
                     // when any sub-issue is still open — preventing the PR-merge
                     // auto-close path from collapsing an epic with live subs.
-                    if let Some(block) = gt06_open_sub_block(&labels, &query_open_subs(&repo, &fn_)) {
-                        println!("闸门: 合并会关闭 epic #{fn_}，但存在 open sub-issue #{}", block.join(", #"));
-                        log("PR_MERGE", &format!("PR #{num}"), "REJECT",
-                            &format!("epic #{fn_} with open subs: {}", block.join(",")));
-                        return 1;
+                    match query_open_subs(&repo, &fn_) {
+                        Ok(open_subs) => {
+                            if let Some(block) = gt06_open_sub_block(&labels, &open_subs) {
+                                println!("闸门: 合并会关闭 epic #{fn_}，但存在 open sub-issue #{}", block.join(", #"));
+                                log("PR_MERGE", &format!("PR #{num}"), "REJECT",
+                                    &format!("epic #{fn_} with open subs: {}", block.join(",")));
+                                return 1;
+                            }
+                        }
+                        Err(e) => {
+                            println!("闸门: 无法确认 epic #{fn_} 的 sub-issues，为安全起见拒绝合并: {e}");
+                            log("PR_MERGE", &format!("PR #{num}"), "REJECT", &format!("epic #{fn_} sub query failed: {e}"));
+                            return 1;
+                        }
                     }
                 }
             }

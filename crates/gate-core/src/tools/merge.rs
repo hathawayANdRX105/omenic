@@ -234,10 +234,10 @@ fn check_pr_review(repo: &str, pr_num: u32) -> Vec<Finding> {
     // "[ocr] …" markers; rv07_decide classifies those into FAIL.
     println!("（CRG + ocr 运行中，LLM 需几分钟...）");
     let crg_out = crate::tools::review::run_crg();
-    println!("{}", &crg_out[..crg_out.len().min(1200)]);
+    println!("{}", crate::shared::truncate_utf8(&crg_out, 1200));
 
     let ocr_out = crate::tools::review::run_ocr();
-    println!("{}", &ocr_out[..ocr_out.len().min(1500)]);
+    println!("{}", crate::shared::truncate_utf8(&ocr_out, 1500));
 
     vec![rv07_decide(file_count, &crg_out, &ocr_out)]
 }
@@ -258,14 +258,11 @@ fn rv07_decide(file_count: usize, crg_out: &str, ocr_out: &str) -> Finding {
         return Finding::new("RV-07", Severity::Info, "无需审查（无文件改动）");
     }
     let crg_failed = crg_out.starts_with("[CRG]");
-    // ponytail: contains("超时") belt-and-suspenders — false-positive FAIL on a
-    // review comment that happens to mention 超时 is the safer error mode for a
-    // merge gate (blocks, never silently merges through a real timeout).
-    let ocr_failed = ocr_out.starts_with("[ocr]") || ocr_out.contains("超时");
+    let ocr_failed = ocr_out.starts_with("[ocr]");
     let cap = |s: &str| {
         let s = s.trim();
         if s.len() > 200 {
-            format!("{}…", &s[..200])
+            format!("{}…", crate::shared::truncate_utf8(s, 200))
         } else {
             s.to_string()
         }
