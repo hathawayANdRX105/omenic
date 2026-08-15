@@ -263,14 +263,14 @@ fn query_open_subs(repo: &str, num: &str) -> Result<Vec<String>, String> {
     if num.is_empty() || !num.chars().all(|c| c.is_ascii_digit()) {
         return Err(format!("非法 issue 号: {num}"));
     }
-    let (rc, subs_json, _) = run_gh(&[
+    let (rc, subs_json, err) = run_gh(&[
         "api".to_string(),
         format!("repos/{repo}/issues/{num}/sub_issues"),
         "--jq".to_string(),
         r#".[] | select(.state == "open") | .number"#.to_string(),
     ], None);
     if rc != 0 {
-        return Err(format!("sub_issues 查询失败 (rc={rc})"));
+        return Err(format!("sub_issues 查询失败 (rc={rc}): {}", err.trim()));
     }
     if subs_json.trim().is_empty() {
         return Ok(vec![]); // truly no open sub-issues
@@ -348,15 +348,16 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
                 log("ISSUE_CREATE", crate::shared::truncate_utf8(&title, 40), "WARN", "created but auto_link failed");
                 return 0;
             }
-            let sub_num = extract_num(&url, "/issues/").unwrap_or_default();
-            if !verify_mount(&repo, &sub_num, &parent) {
-                // Retry once: GitHub sub_issues list may lag the mutation.
-                std::thread::sleep(std::time::Duration::from_millis(800));
+            if let Some(sub_num) = extract_num(&url, "/issues/") {
                 if !verify_mount(&repo, &sub_num, &parent) {
-                    println!("\n⚠ 闸门: issue 已创建 ({url})，但挂载验证失败（eventual consistency 重试后仍未出现）。");
-                    println!("  issue 未回滚。请运行: gh api repos/{repo}/issues/{parent}/sub_issues -X POST -F sub_issue_id=<id>");
-                    log("ISSUE_CREATE", crate::shared::truncate_utf8(&title, 40), "WARN", "created but mount verify failed");
-                    return 0;
+                    // Retry once: GitHub sub_issues list may lag the mutation.
+                    std::thread::sleep(std::time::Duration::from_millis(800));
+                    if !verify_mount(&repo, &sub_num, &parent) {
+                        println!("\n⚠ 闸门: issue 已创建 ({url})，但挂载验证失败（eventual consistency 重试后仍未出现）。");
+                        println!("  issue 未回滚。请运行: gh api repos/{repo}/issues/{parent}/sub_issues -X POST -F sub_issue_id=<id>");
+                        log("ISSUE_CREATE", crate::shared::truncate_utf8(&title, 40), "WARN", "created but mount verify failed");
+                        return 0;
+                    }
                 }
             }
         }
