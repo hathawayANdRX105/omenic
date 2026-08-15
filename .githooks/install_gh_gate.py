@@ -385,6 +385,18 @@ def _intercept_issue_close(args: list[str]) -> int:
                 _log("ISSUE_CLOSE", f"#{issue_num}", "REJECT", f"checkbox {len(unticked)} unticked")
                 return 1
 
+            # GT-04b: 双向关联强制 — 关闭前必须存在 PR 关联（cross-referenced 事件中 source 为 PR）
+            rc4, tl, _ = _run_gh(["api", f"repos/{repo}/issues/{issue_num}/timeline",
+                                  "--jq", "[.[] | select(.event == \"cross-referenced\" and .source.issue.pull_request != null) | .source.issue.number]"])
+            if rc4 == 0 and tl.strip():
+                linked_prs = j.loads(tl)
+                if not linked_prs:
+                    print(f"闸门: #{issue_num} 无 PR 关联（无 PR Fixes/Closes 它）。")
+                    print("  关闭 = 工作完成，必须通过 PR 实现并关联。")
+                    print("  处理：创建 PR 并 Fixes 本 issue，或 reopen 后用 --comment 说明取消原因。")
+                    _log("ISSUE_CLOSE", f"#{issue_num}", "REJECT", "no linked PR")
+                    return 1
+
     rc, out, err = _run_gh(["issue", "close"] + args)
     if out: print(out)
     if err: print(err, file=sys.stderr)
