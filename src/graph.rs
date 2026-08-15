@@ -84,6 +84,24 @@ pub fn is_ready(tasks: &HashMap<String, Task>, task_id: &str) -> bool {
     true
 }
 
+/// Returns ids of tasks that have `parent_id` as their parent.
+pub fn children_of(tasks: &[Task], parent_id: &str) -> Vec<String> {
+    tasks
+        .iter()
+        .filter(|t| t.parent.as_deref() == Some(parent_id))
+        .map(|t| t.id.clone())
+        .collect()
+}
+
+/// Returns ids of tasks that list `dep_id` in their deps.
+pub fn dependents(tasks: &[Task], dep_id: &str) -> Vec<String> {
+    tasks
+        .iter()
+        .filter(|t| t.deps.iter().any(|d| d == dep_id))
+        .map(|t| t.id.clone())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,6 +121,7 @@ mod tests {
             title: id.to_string(),
             kind: TaskKind::Task,
             status,
+            priority: 2,
             parent: None,
             deps: deps.iter().map(|s| s.to_string()).collect(),
             description: String::new(),
@@ -207,5 +226,39 @@ mod tests {
         // a -> b, x and y don't exist in graph
         let tasks = mk_tasks(&[("a", &["b"])]);
         assert!(!would_dep_cycle(&tasks, "x", "y"));
+    }
+
+    fn mk_task_parent(id: &str, parent: &str, status: TaskStatus) -> Task {
+        let mut t = mk_task(id, &[], status);
+        t.parent = Some(parent.to_string());
+        t
+    }
+
+    #[test]
+    fn children_of_finds_children() {
+        let tasks = vec![
+            mk_task_parent("a", "p1", TaskStatus::Open),
+            mk_task("b", &[], TaskStatus::Open),
+            mk_task_parent("c", "p1", TaskStatus::Open),
+            mk_task_parent("d", "p2", TaskStatus::Open),
+        ];
+        let children = children_of(&tasks, "p1");
+        assert_eq!(children.len(), 2);
+        assert!(children.contains(&"a".to_string()));
+        assert!(children.contains(&"c".to_string()));
+    }
+
+    #[test]
+    fn dependents_finds_dependents() {
+        let tasks = vec![
+            mk_task("a", &[], TaskStatus::Open),
+            mk_task("b", &["a"], TaskStatus::Open),
+            mk_task("c", &["a"], TaskStatus::Open),
+            mk_task("d", &["x"], TaskStatus::Open),
+        ];
+        let deps = dependents(&tasks, "a");
+        assert_eq!(deps.len(), 2);
+        assert!(deps.contains(&"b".to_string()));
+        assert!(deps.contains(&"c".to_string()));
     }
 }

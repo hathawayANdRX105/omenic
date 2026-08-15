@@ -30,6 +30,11 @@ pub enum ConfigError {
     /// Generic parse error with context.
     #[allow(dead_code)] // kept for future manual parsers; not hit by toml path
     Parse(String),
+    /// Field-level validation error: invalid value for a named field.
+    Invalid {
+        field: &'static str,
+        message: String,
+    },
 }
 
 impl fmt::Display for ConfigError {
@@ -38,6 +43,9 @@ impl fmt::Display for ConfigError {
             ConfigError::Io(e) => write!(f, "I/O error: {}", e),
             ConfigError::Toml(e) => write!(f, "TOML parse error: {}", e),
             ConfigError::Parse(s) => write!(f, "Config parse error: {}", s),
+            ConfigError::Invalid { field, message } => {
+                write!(f, "invalid config field `{field}`: {message}")
+            }
         }
     }
 }
@@ -47,7 +55,7 @@ impl Error for ConfigError {
         match self {
             ConfigError::Io(e) => Some(e),
             ConfigError::Toml(e) => Some(e),
-            ConfigError::Parse(_) => None,
+            ConfigError::Parse(_) | ConfigError::Invalid { .. } => None,
         }
     }
 }
@@ -92,8 +100,61 @@ impl Config {
         if let Ok(v) = env::var("OMENIC_MODEL") {
             config.model = v;
         }
-
+        config.validate()?;
         Ok(config)
+    }
+
+    /// Validate config fields after all sources are merged.
+    ///
+    /// - `model`: must be non-empty.
+    /// - `omp_path`: if it contains a path separator, must exist and be executable;
+    ///   bare command names are allowed (resolved via PATH at runtime).
+    /// - `data_dir`: if it exists, must be a directory; if not, parent must exist.
+    fn validate(&self) -> Result<(), ConfigError> {
+        // model: non-empty (don't echo the value back — could be sensitive).
+        if self.model.trim().is_empty() {
+            return Err(ConfigError::Invalid {
+                field: "model",
+                message: "must not be empty".to_string(),
+            });
+        }
+
+        // omp_path: bare name = PATH lookup (allowed); path with separator = must exist.
+        let omp_str = self.omp_path.to_string_lossy();
+        if omp_str.contains('/') && !self.omp_path.exists() {
+            return Err(ConfigError::Invalid {
+                field: "omp_path",
+                message: format!("'{}' does not exist", omp_str),
+            });
+        }
+        // ponytail: not checking executable bit — OS will error at spawn with clear message.
+
+        // data_dir: if exists, must be a dir; if not, parent must be creatable.
+        if self.data_dir.exists() {
+            if !self.data_dir.is_dir() {
+                return Err(ConfigError::Invalid {
+                    field: "data_dir",
+                    message: format!(
+                        "'{}' exists but is not a directory",
+                        self.data_dir.display()
+                    ),
+                });
+            }
+        } else {
+            // Check that we can create it (parent exists and is writable).
+            let parent = self.data_dir.parent();
+            if let Some(p) = parent
+                && !p.exists()
+            {
+                return Err(ConfigError::Invalid {
+                    field: "data_dir",
+                    message: format!("parent directory '{}' does not exist", p.display()),
+                });
+            }
+            // root with overlayfs etc. OS will give a clear error at write time.
+        }
+
+        Ok(())
     }
 }
 
@@ -203,13 +264,13 @@ mod tests {
         let _g = lock();
         let _d = tmp_dir("envall");
         set_env(
-            Some("/custom/omp"),
-            Some("/custom/data"),
+            Some("custom-omp"),
+            Some("./custom-data"),
             Some("custom-model"),
         );
         let config = Config::load().unwrap();
-        assert_eq!(config.omp_path, PathBuf::from("/custom/omp"));
-        assert_eq!(config.data_dir, PathBuf::from("/custom/data"));
+        assert_eq!(config.omp_path, PathBuf::from("custom-omp"));
+        assert_eq!(config.data_dir, PathBuf::from("./custom-data"));
         assert_eq!(config.model, "custom-model");
     }
 
@@ -219,12 +280,12 @@ mod tests {
         let _d = tmp_dir("tomlfull");
         fs::write(
             "./omenic.toml",
-            "omp_path = \"/usr/local/bin/omp\"\ndata_dir = \"/var/lib/omenic\"\nmodel = \"claude-opus-4-6\"\n",
+            "omp_path = \"omp-custom\"\ndata_dir = \"./omenic-data\"\nmodel = \"claude-opus-4-6\"\n",
         )
         .unwrap();
         let config = Config::load().unwrap();
-        assert_eq!(config.omp_path, PathBuf::from("/usr/local/bin/omp"));
-        assert_eq!(config.data_dir, PathBuf::from("/var/lib/omenic"));
+        assert_eq!(config.omp_path, PathBuf::from("omp-custom"));
+        assert_eq!(config.data_dir, PathBuf::from("./omenic-data"));
         assert_eq!(config.model, "claude-opus-4-6");
     }
 
@@ -234,11 +295,11 @@ mod tests {
         let _d = tmp_dir("tomlpart");
         fs::write(
             "./omenic.toml",
-            "omp_path = \"/toml/omp\"\nmodel = \"toml-model\"\n",
+            "omp_path = \"toml-omp\"\nmodel = \"toml-model\"\n",
         )
         .unwrap();
         let config = Config::load().unwrap();
-        assert_eq!(config.omp_path, PathBuf::from("/toml/omp"));
+        assert_eq!(config.omp_path, PathBuf::from("toml-omp"));
         assert_eq!(config.data_dir, PathBuf::from("./omenic-data"));
         assert_eq!(config.model, "toml-model");
     }
@@ -247,15 +308,15 @@ mod tests {
     fn toml_plus_env() {
         let _g = lock();
         let _d = tmp_dir("tomlenv");
-        set_env(Some("/env/omp"), None, Some("env-model"));
+        set_env(Some("env-omp"), None, Some("env-model"));
         fs::write(
             "./omenic.toml",
-            "omp_path = \"/toml/omp\"\ndata_dir = \"/toml/data\"\nmodel = \"toml-model\"\n",
+            "omp_path = \"toml-omp\"\ndata_dir = \"./toml-data\"\nmodel = \"toml-model\"\n",
         )
         .unwrap();
         let config = Config::load().unwrap();
-        assert_eq!(config.omp_path, PathBuf::from("/env/omp"));
-        assert_eq!(config.data_dir, PathBuf::from("/toml/data"));
+        assert_eq!(config.omp_path, PathBuf::from("env-omp"));
+        assert_eq!(config.data_dir, PathBuf::from("./toml-data"));
         assert_eq!(config.model, "env-model");
     }
 
@@ -268,5 +329,80 @@ mod tests {
         assert_eq!(config.omp_path, PathBuf::from("omp"));
         assert_eq!(config.data_dir, PathBuf::from("./omenic-data"));
         assert_eq!(config.model, "default");
+    }
+
+    // --- #52: field-level validation ---
+
+    #[test]
+    fn empty_model_rejected() {
+        let _g = lock();
+        let _d = tmp_dir("empty-model");
+        set_env(None, None, Some(""));
+        let r = Config::load();
+        assert!(r.is_err());
+        let msg = format!("{}", r.unwrap_err());
+        assert!(msg.contains("model"), "error should name the field");
+        assert!(!msg.contains("default"), "must not leak config values");
+    }
+
+    #[test]
+    fn whitespace_model_rejected() {
+        let _g = lock();
+        let _d = tmp_dir("ws-model");
+        set_env(None, None, Some("   "));
+        let r = Config::load();
+        assert!(r.is_err());
+        assert!(format!("{}", r.unwrap_err()).contains("model"));
+    }
+
+    #[test]
+    fn nonexistent_omp_path_rejected() {
+        let _g = lock();
+        let _d = tmp_dir("bad-omp");
+        set_env(Some("/nonexistent/definitely/not/here/omp"), None, None);
+        let r = Config::load();
+        assert!(r.is_err());
+        assert!(format!("{}", r.unwrap_err()).contains("omp_path"));
+    }
+
+    #[test]
+    fn bare_omp_name_allowed() {
+        let _g = lock();
+        let _d = tmp_dir("bare-omp");
+        set_env(Some("my-omp"), None, None);
+        let config = Config::load().unwrap();
+        assert_eq!(config.omp_path, PathBuf::from("my-omp"));
+    }
+
+    #[test]
+    fn data_dir_not_a_directory_rejected() {
+        let _g = lock();
+        let _d = tmp_dir("bad-data");
+        // Create a file where data_dir points
+        fs::write("./not-a-dir", "x").unwrap();
+        set_env(None, Some("./not-a-dir"), None);
+        let r = Config::load();
+        assert!(r.is_err());
+        assert!(format!("{}", r.unwrap_err()).contains("data_dir"));
+        let _ = fs::remove_file("./not-a-dir");
+    }
+
+    #[test]
+    fn data_dir_parent_missing_rejected() {
+        let _g = lock();
+        let _d = tmp_dir("bad-parent");
+        set_env(None, Some("/nonexistent/definitely/data"), None);
+        let r = Config::load();
+        assert!(r.is_err());
+        assert!(format!("{}", r.unwrap_err()).contains("data_dir"));
+    }
+
+    #[test]
+    fn data_dir_creatable_allowed() {
+        let _g = lock();
+        let _d = tmp_dir("creat-dir");
+        set_env(None, Some("./new-data-dir"), None);
+        let config = Config::load().unwrap();
+        assert_eq!(config.data_dir, PathBuf::from("./new-data-dir"));
     }
 }
