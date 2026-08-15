@@ -94,16 +94,29 @@ pub fn run(args: &[String]) -> i32 {
     if (post || post_inline) && pr.is_some() && !repo.is_empty() {
         let pr = pr.unwrap();
         let comments = parse_ocr_comments(&ocr_raw);
-        if post_inline && !comments.is_empty() {
-            post_inline_review(&repo, pr, &comments);
-        } else {
+        let has_findings = ocr_has_findings(&ocr_raw);
+        let inline_comments: Vec<OcrComment> =
+            comments.iter().filter(|c| c.start_line > 0).cloned().collect();
+
+        if !has_findings {
+            println!("无审查发现，不留言到 PR");
+        } else if post_inline && !inline_comments.is_empty() {
+            post_inline_review(&repo, pr, &inline_comments);
+            if post {
+                let body = format!(
+                    "## 审查报告\n\n### CRG 变更影响\n\n```\n{}\n```\n\n### ocr 审查发现\n\n{}",
+                    if crg_out.len() > 1200 { &crg_out[..1200] } else { &crg_out },
+                    ocr_text
+                );
+                post_pr_comment(&repo, pr, &body);
+            }
+        } else if post {
             let body = format!(
                 "## 审查报告\n\n### CRG 变更影响\n\n```\n{}\n```\n\n### ocr 审查发现\n\n{}",
                 if crg_out.len() > 1200 { &crg_out[..1200] } else { &crg_out },
                 ocr_text
             );
             post_pr_comment(&repo, pr, &body);
-            println!("已留言到 PR #{pr}");
         }
     }
 
@@ -311,6 +324,32 @@ pub fn parse_ocr_comments(raw: &str) -> Vec<OcrComment> {
     }
 }
 
+/// True if `raw` ocr output contains at least one finding.
+/// Mirrors `format_ocr_results`: checks `{"comments": [...]}` and bare-array
+/// shapes. Non-JSON raw text (non-empty after trim) counts as findings.
+pub fn ocr_has_findings(raw: &str) -> bool {
+    if raw.trim().is_empty() {
+        return false;
+    }
+    match serde_json::from_str::<JsonValue>(raw) {
+        Ok(data) => {
+            if let Some(comments) = data.get("comments").and_then(|c| c.as_array()) {
+                return !comments.is_empty();
+            }
+            if let Some(arr) = data.as_array() {
+                return !arr.is_empty();
+            }
+            false
+        }
+        Err(_) => !raw.trim().is_empty(),
+    }
+}
+
+/// True if any parsed ocr comment has a positive `start_line` (inline finding).
+pub fn ocr_has_inline_findings(raw: &str) -> bool {
+    parse_ocr_comments(raw).iter().any(|c| c.start_line > 0)
+}
+
 // ---------------------------------------------------------------------------
 // Posting to GitHub
 // ---------------------------------------------------------------------------
@@ -460,6 +499,61 @@ mod tests {
         assert_eq!(comments[0].path, "");
         assert_eq!(comments[0].severity, "info");
         assert_eq!(comments[0].start_line, 0);
+    }
+
+    #[test]
+    fn ocr_has_findings_empty_raw() {
+        assert!(!ocr_has_findings(""));
+        assert!(!ocr_has_findings("   "));
+    }
+
+    #[test]
+    fn ocr_has_findings_empty_comments() {
+        assert!(!ocr_has_findings(r#"{"comments": []}"#));
+        assert!(!ocr_has_findings(r#"{"status": "ok"}"#));
+    }
+
+    #[test]
+    fn ocr_has_findings_empty_bare_array() {
+        assert!(!ocr_has_findings("[]"));
+    }
+
+    #[test]
+    fn ocr_has_findings_with_comments() {
+        let raw = r#"{"comments": [{"path": "a.rs", "start_line": 10, "severity": "warn", "category": "style", "content": "unused var"}]}"#;
+        assert!(ocr_has_findings(raw));
+    }
+
+    #[test]
+    fn ocr_has_findings_bare_array_legacy() {
+        assert!(ocr_has_findings(r#"[{"severity":"HIGH","file":"x.rs","line":1,"message":"bad"}]"#));
+    }
+
+    #[test]
+    fn ocr_has_findings_non_json_text() {
+        // Non-JSON non-empty text → treated as findings (raw fallback)
+        assert!(ocr_has_findings("not json but has content"));
+    }
+
+    #[test]
+    fn ocr_has_inline_findings_no_line_numbers() {
+        let raw = r#"{"comments": [{"path": "a.rs", "start_line": 0, "severity": "info", "category": "", "content": "general note"}]}"#;
+        assert!(!ocr_has_inline_findings(raw));
+    }
+
+    #[test]
+    fn ocr_has_inline_findings_with_line_numbers() {
+        let raw = r#"{"comments": [
+            {"path": "a.rs", "start_line": 10, "severity": "warn", "category": "style", "content": "unused var"},
+            {"path": "b.rs", "start_line": 0, "severity": "info", "category": "", "content": "no line"}
+        ]}"#;
+        assert!(ocr_has_inline_findings(raw));
+    }
+
+    #[test]
+    fn ocr_has_inline_findings_empty() {
+        assert!(!ocr_has_inline_findings(""));
+        assert!(!ocr_has_inline_findings(r#"{"comments": []}"#));
     }
 
     #[test]
