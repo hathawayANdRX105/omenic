@@ -55,8 +55,8 @@ python .githooks/merge <owner/repo> <#N> --dry-run
 ## 本地审查
 
 ```bash
-python .githooks/review.py                     # CRG 结构分析 + ocr AI 审查
-python .githooks/review.py --post-inline       # 审查结果→PR inline review
+python .githooks/crg_review.py                     # CRG 结构分析 + ocr AI 审查
+python .githooks/crg_review.py --post-inline       # 审查结果→PR inline review
 ```
 
 ## 参考
