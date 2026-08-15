@@ -103,16 +103,13 @@ pub fn run(args: &[String]) -> i32 {
             let inline_comments: Vec<&OcrComment> =
                 comments.iter().filter(|c| c.start_line > 0).collect();
             post_inline_review(&repo, pr, &inline_comments);
-            println!("已提交 inline review 到 PR #{pr}");
             if post {
                 let body = review_report_body(&crg_out, &ocr_text);
                 post_pr_comment(&repo, pr, &body);
-                println!("已发布审查报告到 PR #{pr}");
             }
         } else if post {
             let body = review_report_body(&crg_out, &ocr_text);
             post_pr_comment(&repo, pr, &body);
-            println!("已发布审查报告到 PR #{pr}");
         } else {
             // has_findings 但 (post_inline && !has_inline) 或两者都关 → 至少告知用户。
             println!(
@@ -336,10 +333,15 @@ pub fn parse_ocr_comments(raw: &str) -> Vec<OcrComment> {
 
 /// True if `raw` ocr output contains at least one finding.
 /// Mirrors `format_ocr_results`: checks `{"comments": [...]}` and bare-array
-/// shapes. Non-JSON raw text (non-empty after trim) counts as findings.
+/// shapes. Non-JSON raw text (non-empty after trim) counts as findings —
+/// EXCEPT `[ocr]` prefixed error/timeout strings (run_ocr failure markers),
+/// which must not be mistaken for review findings.
 pub fn ocr_has_findings(raw: &str) -> bool {
     if raw.trim().is_empty() {
         return false;
+    }
+    if raw.trim_start().starts_with("[ocr]") {
+        return false; // run_ocr failure marker, not a finding
     }
     match serde_json::from_str::<JsonValue>(raw) {
         Ok(data) => {

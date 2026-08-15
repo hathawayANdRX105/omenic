@@ -570,22 +570,25 @@ pub fn intercept_pr_merge(args: &[String]) -> i32 {
                         return 1;
                     }
 
-                    // GT-06 (#199): if the Fixes target is an epic, block the merge
-                    // when any sub-issue is still open — preventing the PR-merge
-                    // auto-close path from collapsing an epic with live subs.
-                    match query_open_subs(&repo, &fn_) {
-                        Ok(open_subs) => {
-                            if let Some(block) = gt06_open_sub_block(&labels, &open_subs) {
-                                println!("闸门: 合并会关闭 epic #{fn_}，但存在 open sub-issue #{}", block.join(", #"));
-                                log("PR_MERGE", &format!("PR #{num}"), "REJECT",
-                                    &format!("epic #{fn_} with open subs: {}", block.join(",")));
+                    // GT-06 (#199): only when the Fixes target is an epic do we
+                    // need the open-sub check. Non-epic targets skip the
+                    // sub_issues query entirely (no extra API call, and a
+                    // transient sub-query failure can't block a non-epic merge).
+                    if is_epic(&labels) {
+                        match query_open_subs(&repo, &fn_) {
+                            Ok(open_subs) => {
+                                if let Some(block) = gt06_open_sub_block(&labels, &open_subs) {
+                                    println!("闸门: 合并会关闭 epic #{fn_}，但存在 open sub-issue #{}", block.join(", #"));
+                                    log("PR_MERGE", &format!("PR #{num}"), "REJECT",
+                                        &format!("epic #{fn_} with open subs: {}", block.join(",")));
+                                    return 1;
+                                }
+                            }
+                            Err(e) => {
+                                println!("闸门: 无法确认 epic #{fn_} 的 sub-issues，为安全起见拒绝合并: {e}");
+                                log("PR_MERGE", &format!("PR #{num}"), "REJECT", &format!("epic #{fn_} sub query failed: {e}"));
                                 return 1;
                             }
-                        }
-                        Err(e) => {
-                            println!("闸门: 无法确认 epic #{fn_} 的 sub-issues，为安全起见拒绝合并: {e}");
-                            log("PR_MERGE", &format!("PR #{num}"), "REJECT", &format!("epic #{fn_} sub query failed: {e}"));
-                            return 1;
                         }
                     }
                 }
