@@ -95,32 +95,39 @@ pub fn run(args: &[String]) -> i32 {
         let pr = pr.unwrap();
         let comments = parse_ocr_comments(&ocr_raw);
         let has_findings = ocr_has_findings(&ocr_raw);
-        let inline_comments: Vec<OcrComment> =
-            comments.iter().filter(|c| c.start_line > 0).cloned().collect();
+        let has_inline = ocr_has_inline_findings(&ocr_raw);
 
         if !has_findings {
             println!("无审查发现，不留言到 PR");
-        } else if post_inline && !inline_comments.is_empty() {
+        } else if post_inline && has_inline {
+            let inline_comments: Vec<&OcrComment> =
+                comments.iter().filter(|c| c.start_line > 0).collect();
             post_inline_review(&repo, pr, &inline_comments);
             if post {
-                let body = format!(
-                    "## 审查报告\n\n### CRG 变更影响\n\n```\n{}\n```\n\n### ocr 审查发现\n\n{}",
-                    if crg_out.len() > 1200 { crate::shared::truncate_utf8(&crg_out, 1200) } else { &crg_out },
-                    ocr_text
-                );
+                let body = review_report_body(&crg_out, &ocr_text);
                 post_pr_comment(&repo, pr, &body);
             }
         } else if post {
-            let body = format!(
-                "## 审查报告\n\n### CRG 变更影响\n\n```\n{}\n```\n\n### ocr 审查发现\n\n{}",
-                if crg_out.len() > 1200 { crate::shared::truncate_utf8(&crg_out, 1200) } else { &crg_out },
-                ocr_text
-            );
+            let body = review_report_body(&crg_out, &ocr_text);
             post_pr_comment(&repo, pr, &body);
+        } else {
+            // has_findings 但 (post_inline && !has_inline) 或两者都关 → 至少告知用户。
+            println!(
+                "有审查发现但未留言：post_inline={post_inline}（含行号 findings={has_inline}）, post={post}"
+            );
         }
     }
 
     0
+}
+
+/// 组装 PR 评论正文：CRG 变更影响 + ocr 审查发现。
+fn review_report_body(crg_out: &str, ocr_text: &str) -> String {
+    format!(
+        "## 审查报告\n\n### CRG 变更影响\n\n```\n{}\n```\n\n### ocr 审查发现\n\n{}",
+        if crg_out.len() > 1200 { crate::shared::truncate_utf8(crg_out, 1200) } else { crg_out },
+        ocr_text
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -368,7 +375,7 @@ pub fn post_pr_comment(repo: &str, pr_num: u64, body: &str) {
 /// Post inline review comments on the PR diff (Files changed page).
 ///
 /// POST to `repos/{repo}/pulls/{pr}/reviews` with event=COMMENT.
-pub fn post_inline_review(repo: &str, pr_num: u64, comments: &[OcrComment]) {
+pub fn post_inline_review(repo: &str, pr_num: u64, comments: &[&OcrComment]) {
     if comments.is_empty() {
         return;
     }
@@ -575,7 +582,8 @@ mod tests {
 
     #[test]
     fn post_inline_review_empty_is_noop() {
-        post_inline_review("invalid/repo", 1, &[]);
+        let none: [&OcrComment; 0] = [];
+        post_inline_review("invalid/repo", 1, &none);
     }
 
     #[test]
@@ -587,6 +595,7 @@ mod tests {
             category: "nit".to_string(),
             content: "test".to_string(),
         }];
-        post_inline_review("invalid/repo", 999, &comments);
+        let refs: Vec<&OcrComment> = comments.iter().collect();
+        post_inline_review("invalid/repo", 999, &refs);
     }
 }

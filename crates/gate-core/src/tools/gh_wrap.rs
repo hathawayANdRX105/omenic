@@ -254,38 +254,28 @@ fn gt06_open_sub_block(labels: &[String], open_subs: &[String]) -> Option<Vec<St
 
 /// Query the GitHub sub_issues endpoint and return the numbers whose state is
 /// `open`. Returns `Err` on any API failure (so the caller can BLOCK rather
-/// than silently allow — failing open on an unverifiable epic-close check is
-/// the safe direction). `Ok(vec![])` only on a genuine "no open subs".
+/// than silently allow — failing closed on an unverifiable epic-close check
+/// is the safe direction). `Ok(vec![])` only on a genuine "no open subs".
+///
+/// Single API call: the sub_issues response already carries each sub-issue's
+/// `.state`, so the jq filter selects open ones directly (no N+1 per-sub query).
 fn query_open_subs(repo: &str, num: &str) -> Result<Vec<String>, String> {
     let (rc, subs_json, _) = run_gh(&[
         "api".to_string(),
         format!("repos/{repo}/issues/{num}/sub_issues"),
         "--jq".to_string(),
-        ".[].number".to_string(),
+        r#".[] | select(.state == "open") | .number"#.to_string(),
     ], None);
-    if rc != 0 || subs_json.trim().is_empty() {
-        if rc != 0 {
-            return Err(format!("sub_issues 查询失败 (rc={rc})"));
-        }
-        return Ok(vec![]); // truly no sub-issues
+    if rc != 0 {
+        return Err(format!("sub_issues 查询失败 (rc={rc})"));
+    }
+    if subs_json.trim().is_empty() {
+        return Ok(vec![]); // truly no open sub-issues
     }
     let mut open = Vec::new();
     for sn in subs_json.split_whitespace() {
         match sn.parse::<u32>() {
-            Ok(sn_i) => {
-                let (rc3, st, _) = run_gh(&[
-                    "api".to_string(),
-                    format!("repos/{repo}/issues/{sn_i}"),
-                    "--jq".to_string(),
-                    ".state".to_string(),
-                ], None);
-                if rc3 != 0 {
-                    return Err(format!("#{sn} 状态查询失败 (rc={rc3})"));
-                }
-                if st.trim() == "open" {
-                    open.push(sn.to_string());
-                }
-            }
+            Ok(sn_i) => open.push(sn_i.to_string()),
             Err(_) => return Err(format!("#{sn} 非法编号")),
         }
     }
@@ -344,7 +334,7 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
             // IS-09/Linkage gate: body text like "Parent: #N" is already
             // rejected by check_content above.  Here we verify the REAL
             // addSubIssue mutation actually mounted the sub-issue.
-            if !auto_link_sub(&url, &repo, parent.clone()) {
+            if !auto_link_sub(&url, &repo, &parent) {
                 println!("闸门: 挂载失败，拒绝。请运行 gh api addSubIssue 或用 --parent 重建。");
                 log("ISSUE_CREATE", &title[..title.len().min(40)], "FAIL", "auto_link failed");
                 return 1;
@@ -706,7 +696,7 @@ fn extract_merge_body(args: &[String]) -> String {
 
 /// Attempt to mount sub-issue to parent via addSubIssue API.
 /// Returns true on success, false on failure or no-op.
-fn auto_link_sub(url: &str, repo: &str, parent_arg: String) -> bool {
+fn auto_link_sub(url: &str, repo: &str, parent_arg: &str) -> bool {
     let sub_num = match extract_num(url, "/issues/") {
         Some(n) => n,
         None => return false,
@@ -814,61 +804,27 @@ mod tests {
 
     // --- auto_link_sub: failure path ---
 
-    // auto_link_sub returns false when parent_arg is empty or "0".
-    // These are pure-path tests that don't touch run_gh.
+    // auto_link_sub returns false on pure short-circuit paths, without
+    // touching run_gh: empty/"0" parent, or URL with no /issues/ number.
 
     #[test]
     fn auto_link_sub_empty_parent_returns_false() {
-        // URL is valid but parent is empty → no mount attempted → false
-        let result = false; // simulates the short-circuit path
-        assert!(!result);
+        let url = "https://github.com/a/b/issues/5";
+        assert!(!auto_link_sub(url, "a/b", ""));
+        assert!(!auto_link_sub(url, "a/b", "0"));
+    }
+
+    #[test]
+    fn auto_link_sub_invalid_url_returns_false() {
+        // No extractable issue number → no mount attempted (no run_gh call).
+        assert!(!auto_link_sub("https://github.com/a/b/tree/main", "a/b", "205"));
+        assert!(!auto_link_sub("not-a-url", "a/b", "205"));
     }
 
     // The gate rejects when auto_link fails: intercept_issue_create returns 1.
-    // We test the branch logic that would trigger this:
-    // - non-epic labels + parent provided + auto_link fails → return 1
-
-    #[test]
-    fn auto_link_failure_path_returns_false() {
-        // Simulate: auto_link_sub POST returned rc != 0
-        // → auto_link_sub returns false → intercept_issue_create returns 1
-        let auto_link_ok = false;
-        let is_epic = false;
-        let parent = "205";
-        let parent_active = !parent.is_empty() && parent != "0";
-        // The branch: if !is_epic && parent_active && !auto_link_ok → return 1
-        assert!((!is_epic && parent_active && !auto_link_ok));
-    }
-
-    #[test]
-    fn auto_link_success_no_verify_failure() {
-        // auto_link succeeds (rc == 0) but verify_mount fails (not in list)
-        // → still returns 1 (mount verification hard gate)
-        let auto_link_ok = true;
-        let mounted = is_mounted("205\n207\n", "206");
-        assert!(!mounted);
-        assert!(auto_link_ok);
-        // Combined: either failure → gate rejects
-        assert!(!auto_link_ok || !mounted);
-    }
-
-    #[test]
-    fn full_mount_success_path() {
-        // auto_link succeeds AND verify_mount finds the sub-issue → gate passes
-        let auto_link_ok = true;
-        let mounted = is_mounted("205\n206\n", "206");
-        assert!(auto_link_ok && mounted);
-    }
-
-    #[test]
-    fn epic_skips_mount() {
-        // epics don't need auto_link_sub — the branch is skipped
-        let is_epic_val = true;
-        let parent = "205";
-        let parent_active = !parent.is_empty() && parent != "0";
-        // The condition `!is_epic && parent_active` is false → skip
-        assert!(!(is_epic_val && false) || !parent_active);
-    }
+    // The branch is `!is_epic && parent_active && !auto_link_ok`; the URL/parent
+    // short-circuits above exercise auto_link_sub's false paths directly.
+    // (The full intercept path needs a live gh — covered by e2e, not unit.)
 
     // --- IS-09 integration: body text placeholders caught ---
 

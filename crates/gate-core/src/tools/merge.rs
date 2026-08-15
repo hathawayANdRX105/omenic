@@ -262,7 +262,8 @@ fn rv07_decide(file_count: usize, crg_out: &str, ocr_out: &str) -> Finding {
     let cap = |s: &str| {
         let s = s.trim();
         if s.len() > 200 {
-            format!("{}…", crate::shared::truncate_utf8(s, 200))
+            // 197 字节截断 + 3 字节 "…" = 200 字节上限
+            format!("{}…", crate::shared::truncate_utf8(s, 197))
         } else {
             s.to_string()
         }

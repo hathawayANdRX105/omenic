@@ -111,7 +111,7 @@ fn table_re() -> &'static Regex {
 /// mutation is the ONLY acceptable linkage — body text is a fake link.
 fn cross_ref_re() -> &'static Regex {
     static RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?m)^(Depends on\s*[:：]|\*\*Depends.*[:：]|Blocks\s*[:：]|依赖[:：]|Related\s*[#：:]|Parent(\s+PR)?\s*[#：:])")
+        Regex::new(r"(?m)^(Depends on\s*[:：]|\*\*Depends.*[:：]|Blocks\s*[:：]|依赖[:：]|Related\s*[#：:]|Parent(?:\s+PR)?\s*[#：:])")
             .unwrap()
     });
     &RE
