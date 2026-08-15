@@ -281,7 +281,7 @@ fn query_open_subs(repo: &str, num: &str) -> Result<Vec<String>, String> {
             Ok(_) => open.push(sn.to_string()),
             Err(_) => {
                 let shown = crate::shared::truncate_utf8(sn, 20);
-                return Err(format!("#{shown} 非法编号"));
+                return Err(format!("sub_issues 响应含非法编号: '{shown}'"));
             }
         }
     }
