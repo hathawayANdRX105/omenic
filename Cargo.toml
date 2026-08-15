@@ -12,6 +12,10 @@ path = "src/main.rs"
 name = "oi"
 path = "src/main.rs"
 
+[workspace]
+members = ["bin/gate", "crates/gate-core"]
+resolver = "2"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 base64 = "0.22"
