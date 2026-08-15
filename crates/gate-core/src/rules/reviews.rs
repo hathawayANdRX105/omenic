@@ -245,7 +245,7 @@ pub fn run(comment_bodies: &[String], cfg: &YamlValue) -> Vec<Finding> {
             "RV-06",
             Severity::Fail,
             &format!(
-                "{}/{} inline findings have reply — every inline finding MUST have an Agent 🤖 - Fix:/Block:/Note: reply",
+                "{}/{} inline findings have reply — every inline finding MUST have an Agent 🤖 - Fix:/Block:/Resolve:/Note:/Withdraw:/Supersede: reply",
                 all_replies.len(),
                 inline_count
             ),

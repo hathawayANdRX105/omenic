@@ -95,32 +95,40 @@ pub fn run(args: &[String]) -> i32 {
         let pr = pr.unwrap();
         let comments = parse_ocr_comments(&ocr_raw);
         let has_findings = ocr_has_findings(&ocr_raw);
-        let inline_comments: Vec<OcrComment> =
-            comments.iter().filter(|c| c.start_line > 0).cloned().collect();
+        // comments 已 parse 过一次，inline 判定直接派生（避免二次 parse）。
+        let has_inline = comments.iter().any(|c| c.start_line > 0);
 
         if !has_findings {
             println!("无审查发现，不留言到 PR");
-        } else if post_inline && !inline_comments.is_empty() {
+        } else if post_inline && has_inline {
+            let inline_comments: Vec<&OcrComment> =
+                comments.iter().filter(|c| c.start_line > 0).collect();
             post_inline_review(&repo, pr, &inline_comments);
             if post {
-                let body = format!(
-                    "## 审查报告\n\n### CRG 变更影响\n\n```\n{}\n```\n\n### ocr 审查发现\n\n{}",
-                    if crg_out.len() > 1200 { crate::shared::truncate_utf8(&crg_out, 1200) } else { &crg_out },
-                    ocr_text
-                );
+                let body = review_report_body(&crg_out, &ocr_text);
                 post_pr_comment(&repo, pr, &body);
             }
         } else if post {
-            let body = format!(
-                "## 审查报告\n\n### CRG 变更影响\n\n```\n{}\n```\n\n### ocr 审查发现\n\n{}",
-                if crg_out.len() > 1200 { crate::shared::truncate_utf8(&crg_out, 1200) } else { &crg_out },
-                ocr_text
-            );
+            let body = review_report_body(&crg_out, &ocr_text);
             post_pr_comment(&repo, pr, &body);
+        } else {
+            // has_findings 但 (post_inline && !has_inline) 或两者都关 → 至少告知用户。
+            println!(
+                "有审查发现但未留言：post_inline={post_inline}（含行号 findings={has_inline}）, post={post}"
+            );
         }
     }
 
     0
+}
+
+/// 组装 PR 评论正文：CRG 变更影响 + ocr 审查发现。
+fn review_report_body(crg_out: &str, ocr_text: &str) -> String {
+    format!(
+        "## 审查报告\n\n### CRG 变更影响\n\n```\n{}\n```\n\n### ocr 审查发现\n\n{}",
+        crate::shared::truncate_utf8(crg_out, 1200),
+        ocr_text
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -290,35 +298,65 @@ fn format_bare_ocr(arr: &[JsonValue]) -> String {
 pub fn parse_ocr_comments(raw: &str) -> Vec<OcrComment> {
     match serde_json::from_str::<JsonValue>(raw) {
         Ok(data) => {
-            let Some(comments) = data.get("comments").and_then(|c| c.as_array()) else {
-                return Vec::new();
-            };
-            comments
-                .iter()
-                .map(|c| OcrComment {
-                    path: c
-                        .get("path")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    start_line: c.get("start_line").and_then(|v| v.as_u64()).unwrap_or(0),
-                    severity: c
-                        .get("severity")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("info")
-                        .to_string(),
-                    category: c
-                        .get("category")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    content: c
-                        .get("content")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                })
-                .collect()
+            // Primary shape: {"comments": [...]} (path/start_line/severity/...)
+            if let Some(comments) = data.get("comments").and_then(|c| c.as_array()) {
+                return comments
+                    .iter()
+                    .map(|c| OcrComment {
+                        path: c
+                            .get("path")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        start_line: c.get("start_line").and_then(|v| v.as_u64()).unwrap_or(0),
+                        severity: c
+                            .get("severity")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("info")
+                            .to_string(),
+                        category: c
+                            .get("category")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        content: c
+                            .get("content")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    })
+                    .collect();
+            }
+            // Legacy bare-array shape: [{file, line, severity, message}]
+            if let Some(arr) = data.as_array() {
+                return arr
+                    .iter()
+                    .map(|c| OcrComment {
+                        path: c
+                            .get("file")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        start_line: c.get("line").and_then(|v| v.as_u64()).unwrap_or(0),
+                        severity: c
+                            .get("severity")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("info")
+                            .to_string(),
+                        category: c
+                            .get("category")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        content: c
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    })
+                    .collect();
+            }
+            Vec::new()
         }
         Err(_) => Vec::new(),
     }
@@ -326,10 +364,15 @@ pub fn parse_ocr_comments(raw: &str) -> Vec<OcrComment> {
 
 /// True if `raw` ocr output contains at least one finding.
 /// Mirrors `format_ocr_results`: checks `{"comments": [...]}` and bare-array
-/// shapes. Non-JSON raw text (non-empty after trim) counts as findings.
+/// shapes. Non-JSON raw text (non-empty after trim) counts as findings —
+/// EXCEPT `[ocr]` prefixed error/timeout strings (run_ocr failure markers),
+/// which must not be mistaken for review findings.
 pub fn ocr_has_findings(raw: &str) -> bool {
     if raw.trim().is_empty() {
         return false;
+    }
+    if raw.trim_start().starts_with("[ocr]") {
+        return false; // run_ocr failure marker, not a finding
     }
     match serde_json::from_str::<JsonValue>(raw) {
         Ok(data) => {
@@ -341,14 +384,10 @@ pub fn ocr_has_findings(raw: &str) -> bool {
             }
             false
         }
-        Err(_) => !raw.trim().is_empty(),
+        Err(_) => true, // 非空非 JSON 的原文视为有 findings（顶部已排除空输入）
     }
 }
 
-/// True if any parsed ocr comment has a positive `start_line` (inline finding).
-pub fn ocr_has_inline_findings(raw: &str) -> bool {
-    parse_ocr_comments(raw).iter().any(|c| c.start_line > 0)
-}
 
 // ---------------------------------------------------------------------------
 // Posting to GitHub
@@ -368,7 +407,7 @@ pub fn post_pr_comment(repo: &str, pr_num: u64, body: &str) {
 /// Post inline review comments on the PR diff (Files changed page).
 ///
 /// POST to `repos/{repo}/pulls/{pr}/reviews` with event=COMMENT.
-pub fn post_inline_review(repo: &str, pr_num: u64, comments: &[OcrComment]) {
+pub fn post_inline_review(repo: &str, pr_num: u64, comments: &[&OcrComment]) {
     if comments.is_empty() {
         return;
     }
@@ -536,25 +575,13 @@ mod tests {
     }
 
     #[test]
-    fn ocr_has_inline_findings_no_line_numbers() {
-        let raw = r#"{"comments": [{"path": "a.rs", "start_line": 0, "severity": "info", "category": "", "content": "general note"}]}"#;
-        assert!(!ocr_has_inline_findings(raw));
+    fn ocr_has_findings_ocr_error_prefix_excluded() {
+        // run_ocr failure markers must NOT be treated as review findings.
+        assert!(!ocr_has_findings("[ocr] error: binary missing"));
+        assert!(!ocr_has_findings("[ocr] 超时（LLM 响应慢）"));
+        assert!(!ocr_has_findings("[ocr] spawn failed"));
     }
 
-    #[test]
-    fn ocr_has_inline_findings_with_line_numbers() {
-        let raw = r#"{"comments": [
-            {"path": "a.rs", "start_line": 10, "severity": "warn", "category": "style", "content": "unused var"},
-            {"path": "b.rs", "start_line": 0, "severity": "info", "category": "", "content": "no line"}
-        ]}"#;
-        assert!(ocr_has_inline_findings(raw));
-    }
-
-    #[test]
-    fn ocr_has_inline_findings_empty() {
-        assert!(!ocr_has_inline_findings(""));
-        assert!(!ocr_has_inline_findings(r#"{"comments": []}"#));
-    }
 
     #[test]
     #[ignore = "requires code-review-graph binary"]
@@ -575,7 +602,8 @@ mod tests {
 
     #[test]
     fn post_inline_review_empty_is_noop() {
-        post_inline_review("invalid/repo", 1, &[]);
+        let none: [&OcrComment; 0] = [];
+        post_inline_review("invalid/repo", 1, &none);
     }
 
     #[test]
@@ -587,6 +615,7 @@ mod tests {
             category: "nit".to_string(),
             content: "test".to_string(),
         }];
-        post_inline_review("invalid/repo", 999, &comments);
+        let refs: Vec<&OcrComment> = comments.iter().collect();
+        post_inline_review("invalid/repo", 999, &refs);
     }
 }

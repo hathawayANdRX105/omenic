@@ -508,4 +508,34 @@ mod tests {
         let res = run_external(&["this-binary-does-not-exist-xyz123"], None);
         assert!(res.is_err());
     }
+
+    #[test]
+    fn truncate_utf8_ascii_short() {
+        assert_eq!(truncate_utf8("hello", 10), "hello");
+        assert_eq!(truncate_utf8("", 5), "");
+    }
+
+    #[test]
+    fn truncate_utf8_ascii_cut() {
+        assert_eq!(truncate_utf8("hello world", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_utf8_cjk_boundary_safe() {
+        // "中文abc" = 2×3 + 3 = 9 bytes; cut at 6 lands exactly at char end.
+        assert_eq!(truncate_utf8("中文abc", 6), "中文");
+        // cut at 5 lands mid-CJK (second char) → truncated to first char.
+        assert_eq!(truncate_utf8("中文abc", 5), "中");
+        // max==0 on non-empty input → empty string, no panic.
+        assert_eq!(truncate_utf8("中文", 0), "");
+        // Boundary exactly at char end keeps the CJK char.
+        assert_eq!(truncate_utf8("中文abc", 9), "中文abc");
+    }
+
+    #[test]
+    fn truncate_utf8_mid_3byte_char() {
+        // "严" is U+4E25, 3 bytes (e4 b8 a5). max=1 lands mid-byte → "".
+        assert_eq!(truncate_utf8("严", 1), "");
+        assert_eq!(truncate_utf8("严", 3), "严");
+    }
 }
