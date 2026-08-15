@@ -260,6 +260,9 @@ fn gt06_open_sub_block(labels: &[String], open_subs: &[String]) -> Option<Vec<St
 /// Single API call: the sub_issues response already carries each sub-issue's
 /// `.state`, so the jq filter selects open ones directly (no N+1 per-sub query).
 fn query_open_subs(repo: &str, num: &str) -> Result<Vec<String>, String> {
+    if num.is_empty() || !num.chars().all(|c| c.is_ascii_digit()) {
+        return Err(format!("非法 issue 号: {num}"));
+    }
     let (rc, subs_json, _) = run_gh(&[
         "api".to_string(),
         format!("repos/{repo}/issues/{num}/sub_issues"),
@@ -667,8 +670,8 @@ pub fn intercept_pr_merge(args: &[String]) -> i32 {
 
 fn extract_num(url: &str, marker: &str) -> Option<String> {
     let seg = url.split(marker).nth(1)?.split('/').next()?;
-    // 只接受纯数字段（防止 URL 片段注入 API 路径）。
-    if seg.chars().all(|c| c.is_ascii_digit()) {
+    // 只接受非空纯数字段（防止 URL 片段注入 API 路径）。
+    if !seg.is_empty() && seg.chars().all(|c| c.is_ascii_digit()) {
         Some(seg.to_string())
     } else {
         None
