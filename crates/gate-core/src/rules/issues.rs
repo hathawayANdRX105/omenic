@@ -254,10 +254,8 @@ pub fn check_content(
             "parent mode: template structure n/a (Implementation Order instead)",
         ));
     } else {
-        let body_h: BTreeSet<&str> = headings(body)
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
+        let body_hs = headings(body);
+        let body_h: BTreeSet<&str> = body_hs.iter().map(|s| s.as_str()).collect();
         let missing: Vec<&&str> = DEFAULT_REQUIRED_HEADINGS
             .iter()
             .filter(|h| !body_h.contains(**h))
