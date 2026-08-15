@@ -1,3 +1,3 @@
-pub mod shared;
 pub mod rules;
+pub mod shared;
 pub mod tools;
