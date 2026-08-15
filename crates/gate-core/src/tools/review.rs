@@ -74,7 +74,7 @@ pub fn run(args: &[String]) -> i32 {
     if crg_out.is_empty() {
         println!("（无 CRG 输出）");
     } else if crg_out.len() > 2000 {
-        println!("{}", &crg_out[..2000]);
+        println!("{}", crate::shared::truncate_utf8(&crg_out, 2000));
     } else {
         println!("{crg_out}");
     }
@@ -105,7 +105,7 @@ pub fn run(args: &[String]) -> i32 {
             if post {
                 let body = format!(
                     "## 审查报告\n\n### CRG 变更影响\n\n```\n{}\n```\n\n### ocr 审查发现\n\n{}",
-                    if crg_out.len() > 1200 { &crg_out[..1200] } else { &crg_out },
+                    if crg_out.len() > 1200 { crate::shared::truncate_utf8(&crg_out, 1200) } else { &crg_out },
                     ocr_text
                 );
                 post_pr_comment(&repo, pr, &body);
@@ -113,7 +113,7 @@ pub fn run(args: &[String]) -> i32 {
         } else if post {
             let body = format!(
                 "## 审查报告\n\n### CRG 变更影响\n\n```\n{}\n```\n\n### ocr 审查发现\n\n{}",
-                if crg_out.len() > 1200 { &crg_out[..1200] } else { &crg_out },
+                if crg_out.len() > 1200 { crate::shared::truncate_utf8(&crg_out, 1200) } else { &crg_out },
                 ocr_text
             );
             post_pr_comment(&repo, pr, &body);

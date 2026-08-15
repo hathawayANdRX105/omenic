@@ -258,7 +258,7 @@ fn rv07_decide(file_count: usize, crg_out: &str, ocr_out: &str) -> Finding {
         return Finding::new("RV-07", Severity::Info, "无需审查（无文件改动）");
     }
     let crg_failed = crg_out.starts_with("[CRG]");
-    let ocr_failed = ocr_out.starts_with("[ocr]");
+    let ocr_failed = ocr_out.is_empty() || ocr_out.starts_with("[ocr]");
     let cap = |s: &str| {
         let s = s.trim();
         if s.len() > 200 {
@@ -353,5 +353,11 @@ mod tests {
         let f = rv07_decide(0, "", "");
         assert_eq!(f.severity, Severity::Info);
         assert!(f.msg.contains("无需审查"));
+    }
+
+    #[test]
+    fn ocr_empty_is_fail() {
+        let f = rv07_decide(3, "risk: low", "");
+        assert_eq!(f.severity, Severity::Fail);
     }
 }
