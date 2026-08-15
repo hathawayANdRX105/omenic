@@ -11,7 +11,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import importlib
-_mod = importlib.import_module("install_gh_gate")
+import importlib.machinery
+import importlib.util
+_loader = importlib.machinery.SourceFileLoader("install_gh_gate", str(Path(__file__).resolve().parents[1] / "install_gh_gate.py"))
+_spec = importlib.util.spec_from_loader("install_gh_gate", _loader)
+_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
 _section = _mod._section
 _check_done_when_fully_ticked = _mod._check_done_when_fully_ticked
 _extract = _mod._extract

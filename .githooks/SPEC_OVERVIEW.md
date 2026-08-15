@@ -147,7 +147,7 @@
 
 - pre-commit `git commit` — CM-01/CM-02/CM-03（commit 标题格式/CJK/与关联 PR type 一致）+ workspace（WS-*）+ code（CD-*）
 - pre-push `git push` — workspace + code（cargo 不传 target、ruff 排除 .githooks、file_placement 忽略 .githooks/）
-- merge 手动 `python .githooks/merge` — 全量（PR + reviews + cleanup + CRG + ocr）
+- merge 手动 `python .githooks/hooks/merge` — 全量（PR + reviews + cleanup + CRG + ocr）
 
 ### Commit 标题规则（CM-01 ~ CM-03）
 
@@ -155,7 +155,7 @@
 - CM-02 commit 标题禁 CJK（应为英文，同 PR-01）— FAIL
 - CM-03 分支有关联 open PR 时，commit 标题 type 必须与 PR 标题 type 一致（gh api 获取 PR 标题，失败/无 PR 跳过不阻塞）— FAIL
 
-实现位置：`.githooks/pre-commit`（非 spec；CM-03 调 gh api REST + 短超时）
+实现位置：`.githooks/hooks/pre-commit`（非 spec；CM-03 调 gh api REST + 短超时）
 
 ## 主题七：每日合规检查（GitHub Actions）
 
@@ -163,7 +163,7 @@
 - 有 FAIL → 自动创建 issue 记录（标题带日期、body 列违规清单、label chore）；全部 PASS → 无动作
 - 支持 workflow_dispatch 手动触发
 
-实现位置：`.githooks/audit.py` scan_recent + `.github/workflows/daily_audit.yml`
+实现位置：`.githooks/bin/audit.py` scan_recent + `.github/workflows/daily_audit.yml`
 
 
 ## 触发式（lazy）规则映射
@@ -183,6 +183,6 @@
 ## 更新与校验
 
 - 新增/修改规则：只改 `.githooks/spec/*.yaml` 参数 + 对应校验器逻辑，更新本文档
-- merge 时校验：spec 规则与本文档一致性（通过 `python .githooks/audit.py` 或校验器检测）
+- merge 时校验：spec 规则与本文档一致性（通过 `python .githooks/bin/audit.py` 或校验器检测）
 - 触发式按上表 lazy 执行，不全局扫描
 - 拦截门（install_gh_gate.py）改动后必须 `python .githooks/install_gh_gate.py --install` 重新部署

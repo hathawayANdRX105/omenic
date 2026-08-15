@@ -8,7 +8,7 @@ budget, severity ranking) without forcing a heavy package layout the project
 explicitly rejected.
 
 Usage:
-    from _shared import gh_api_get, gh_api_graphql, gh_api_paginate, \\
+    from lib._shared import gh_api_get, gh_api_graphql, gh_api_paginate, \\
         Finding, Severity, load_yaml, aggregate_result
 """
 

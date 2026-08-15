@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from _shared import aggregate_result, Severity
+from lib._shared import aggregate_result, Severity
 from github.pull_requests import run
 
 
@@ -87,7 +87,7 @@ def _pr_scripted(title="feat: 测试PR", body=None, state="closed", labels=None,
 # ---------------------------------------------------------------------------
 
 def test_load_yaml_config():
-    from _shared import load_yaml
+    from lib._shared import load_yaml
     cfg = load_yaml(Path(__file__).resolve().parents[1] / "spec" / "github_pull_requests.yaml")
     assert "Issue" in cfg["required_body_headings"]
     assert "What" in cfg["required_body_headings"]

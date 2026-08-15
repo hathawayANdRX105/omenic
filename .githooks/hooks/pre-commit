@@ -6,11 +6,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / ".."))
 
-from _shared import Finding, Severity, aggregate_result, print_findings, load_yaml  # noqa: E402
+from lib._shared import Finding, Severity, aggregate_result, print_findings, load_yaml  # noqa: E402
 
 def _check_commit_title() -> list[Finding]:
     """校验 commit 标题：必须 conventional commit 格式（与 PR 标题一致）。"""

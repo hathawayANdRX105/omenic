@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from _shared import (
+from lib._shared import (
     MAX_RETRIES,
     Severity,
     TRANSIENT_PATTERNS,
@@ -48,9 +48,9 @@ class FakeRunner:
 
 @pytest.fixture
 def fake_shared(monkeypatch):
-    monkeypatch.setattr("_shared.time.sleep", lambda s: None)
+    monkeypatch.setattr("lib._shared.time.sleep", lambda s: None)
     fake = FakeRunner([])
-    monkeypatch.setattr("_shared._run_gh", fake)
+    monkeypatch.setattr("lib._shared._run_gh", fake)
     yield fake
 
 

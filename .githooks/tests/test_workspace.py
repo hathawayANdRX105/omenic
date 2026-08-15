@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import importlib
 _tree = importlib.import_module("tree_hygiene")
 _placement = importlib.import_module("file_placement")
-from _shared import Severity
+from lib._shared import Severity
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +137,7 @@ def test_placement_clean(tmp_path):
 
 def test_load_yaml_configs():
     """Both workspace configs exist."""
-    from _shared import load_yaml
+    from lib._shared import load_yaml
     for name in ["workspace_tree_hygiene", "workspace_file_placement"]:
         path = Path(__file__).resolve().parents[1] / "spec" / f"{name}.yaml"
         cfg = load_yaml(path)

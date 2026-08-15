@@ -16,7 +16,7 @@ jobs:
         id: audit
         run: |
           set +e
-          OUT=$(python .githooks/audit.py ${{ github.repository }} --recent=1 2>&1)
+          OUT=$(python .githooks/bin/audit.py ${{ github.repository }} --recent=1 2>&1)
           RC=$?
           echo "$OUT"
           if [ $RC -ne 0 ]; then
@@ -39,7 +39,7 @@ jobs:
 
 ## Background
 
-每天自动全量合规检查（audit.py --recent=1），发现问题自动记录。
+每天自动全量合规检查（bin/audit.py --recent=1），发现问题自动记录。
 
 ## Done when
 

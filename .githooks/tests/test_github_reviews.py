@@ -11,7 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from _shared import Severity
+from lib._shared import Severity
 from github.reviews import run, _extract_replies, _extract_inline_reviews, _extract_crg_reviews
 
 

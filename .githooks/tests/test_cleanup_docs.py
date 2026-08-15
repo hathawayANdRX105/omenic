@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import importlib
 _mod = importlib.import_module("docs_hygiene")
 check_file = _mod.check_file
-from _shared import Severity
+from lib._shared import Severity
 
 CFG = {
     "check_fullwidth": True,
@@ -84,7 +84,7 @@ def test_missing_newline(tmp_path):
 
 
 def test_load_yaml_config():
-    from _shared import load_yaml
+    from lib._shared import load_yaml
     cfg = load_yaml(Path(__file__).resolve().parents[1] / "spec" / "cleanup_docs_hygiene.yaml")
     assert ".md" in cfg["file_extensions"]
     assert "TODO" in cfg["stale_marker_keywords"]

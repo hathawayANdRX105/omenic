@@ -34,8 +34,8 @@ scope → 隔离 → 实现 → 验证 → 审查 → 合并 → 清理
 ### 本地审查（CRG + ocr）
 
 ```bash
-python .githooks/crg_review.py              # 终端输出 CRG 影响 + ocr 发现
-python .githooks/crg_review.py --post-inline  # 提交到 PR Files changed
+python .githooks/bin/crg_review.py              # 终端输出 CRG 影响 + ocr 发现
+python .githooks/bin/crg_review.py --post-inline  # 提交到 PR Files changed
 ```
 
 ### 审查评论格式（spec/github_reviews.yaml）
@@ -63,7 +63,7 @@ python .githooks/crg_review.py --post-inline  # 提交到 PR Files changed
 
 ```bash
 # 合并检查：规则校验 + CRG 影响 + ocr 审查
-python .githooks/merge <owner/repo> <N> --dry-run
+python .githooks/hooks/merge <owner/repo> <N> --dry-run
 
 # 链式 PR：子 PR 先重设 base
 gh pr edit <child> --base main
@@ -88,5 +88,5 @@ python .githooks/cleanup/branch_cleanup.py --apply     # 确认后执行
 - [ ] 无密钥、私密端点、真实配置、用户数据、生成文件、无关格式化
 - [ ] 每个 inline review 线程有回复（修复 commit 或非阻塞说明）
 - [ ] gh 拦截门已安装（install_gh_gate.py --install）
-- [ ] merge 前跑过 `python .githooks/merge --dry-run`（含 review）
+- [ ] merge 前跑过 `python .githooks/hooks/merge --dry-run`（含 review）
 - [ ] 审查/CI/merge/issue/清理声明有当前证据

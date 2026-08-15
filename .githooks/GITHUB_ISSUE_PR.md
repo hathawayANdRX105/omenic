@@ -49,14 +49,14 @@ Fixes #152        # sub-issue
 ```bash
 python .githooks/github/issues.py <owner/repo> <#N>
 python .githooks/github/pull_requests.py <owner/repo> <#N>
-python .githooks/merge <owner/repo> <#N> --dry-run
+python .githooks/hooks/merge <owner/repo> <#N> --dry-run
 ```
 
 ## 本地审查
 
 ```bash
-python .githooks/crg_review.py                     # CRG 结构分析 + ocr AI 审查
-python .githooks/crg_review.py --post-inline       # 审查结果→PR inline review
+python .githooks/bin/crg_review.py                     # CRG 结构分析 + ocr AI 审查
+python .githooks/bin/crg_review.py --post-inline       # 审查结果→PR inline review
 ```
 
 ## 参考

@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / ".."))  # for running from repo root
 
-from _shared import (  # noqa: E402
+from lib._shared import (  # noqa: E402
     Finding,
     Severity,
     aggregate_result,

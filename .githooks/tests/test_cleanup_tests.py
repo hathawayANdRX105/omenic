@@ -18,7 +18,7 @@ import importlib
 _mod = importlib.import_module("tests_check")
 check_file = _mod.check_file
 run_lang = _mod.run_lang
-from _shared import Severity
+from lib._shared import Severity
 
 
 # ---------------------------------------------------------------------------
@@ -27,7 +27,7 @@ from _shared import Severity
 
 def test_load_yaml_configs():
     """All 4 language configs exist and have required fields."""
-    from _shared import load_yaml
+    from lib._shared import load_yaml
     for lang in ["rust", "go", "javascript", "bash"]:
         path = Path(__file__).resolve().parents[1] / "spec" / f"cleanup_tests_{lang}.yaml"
         cfg = load_yaml(path)
