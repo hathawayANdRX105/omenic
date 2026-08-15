@@ -20,7 +20,7 @@ exec gate pre-push
 const HOOK_MERGE: &str = "\
 #!/usr/bin/env bash
 # gate-managed hook — delegates to the gate binary
-exec gate merge
+exec gate merge \"$@\"
 ";
 
 /// `gate init` — copy current binary to `~/.local/bin/gate`, configure

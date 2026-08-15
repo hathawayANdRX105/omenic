@@ -298,35 +298,65 @@ fn format_bare_ocr(arr: &[JsonValue]) -> String {
 pub fn parse_ocr_comments(raw: &str) -> Vec<OcrComment> {
     match serde_json::from_str::<JsonValue>(raw) {
         Ok(data) => {
-            let Some(comments) = data.get("comments").and_then(|c| c.as_array()) else {
-                return Vec::new();
-            };
-            comments
-                .iter()
-                .map(|c| OcrComment {
-                    path: c
-                        .get("path")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    start_line: c.get("start_line").and_then(|v| v.as_u64()).unwrap_or(0),
-                    severity: c
-                        .get("severity")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("info")
-                        .to_string(),
-                    category: c
-                        .get("category")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    content: c
-                        .get("content")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                })
-                .collect()
+            // Primary shape: {"comments": [...]} (path/start_line/severity/...)
+            if let Some(comments) = data.get("comments").and_then(|c| c.as_array()) {
+                return comments
+                    .iter()
+                    .map(|c| OcrComment {
+                        path: c
+                            .get("path")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        start_line: c.get("start_line").and_then(|v| v.as_u64()).unwrap_or(0),
+                        severity: c
+                            .get("severity")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("info")
+                            .to_string(),
+                        category: c
+                            .get("category")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        content: c
+                            .get("content")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    })
+                    .collect();
+            }
+            // Legacy bare-array shape: [{file, line, severity, message}]
+            if let Some(arr) = data.as_array() {
+                return arr
+                    .iter()
+                    .map(|c| OcrComment {
+                        path: c
+                            .get("file")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        start_line: c.get("line").and_then(|v| v.as_u64()).unwrap_or(0),
+                        severity: c
+                            .get("severity")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("info")
+                            .to_string(),
+                        category: c
+                            .get("category")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        content: c
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    })
+                    .collect();
+            }
+            Vec::new()
         }
         Err(_) => Vec::new(),
     }

@@ -722,6 +722,9 @@ fn auto_link_sub(url: &str, repo: &str, parent_arg: &str) -> bool {
     if parent_arg.is_empty() || parent_arg == "0" {
         return false;
     }
+    if !parent_arg.chars().all(|c| c.is_ascii_digit()) {
+        return false; // 防路径注入：parent 必须是纯数字 issue 号
+    }
     let (_, sub_id_raw, _) = run_gh(&[
         "api".to_string(),
         format!("repos/{repo}/issues/{sub_num}"),
@@ -759,6 +762,9 @@ fn is_mounted(sub_issues_output: &str, sub_num: &str) -> bool {
 /// the new sub-issue number is present.  Returns true if mounted or
 /// not applicable (epic / no parent).
 fn verify_mount(repo: &str, sub_num: &str, parent: &str) -> bool {
+    if parent.is_empty() || !parent.chars().all(|c| c.is_ascii_digit()) {
+        return false; // 防路径注入：parent 必须是纯数字 issue 号
+    }
     let (rc, out, _) = run_gh(&[
         "api".to_string(),
         format!("repos/{repo}/issues/{parent}/sub_issues"),
