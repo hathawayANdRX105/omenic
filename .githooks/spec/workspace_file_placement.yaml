@@ -5,6 +5,8 @@ ignore_paths:
   - "target/"
   - "__pycache__/"
   - ".git/"
+  - ".benchmarks/"
+  - ".pytest_cache/"
 
 forbidden_patterns:
   - path_regex: 'src/.*_test\.rs$'
