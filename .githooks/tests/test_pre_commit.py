@@ -1,4 +1,4 @@
-"""Unit tests for .githooks/pre-commit CM-03 (commit title vs PR title consistency).
+"""Unit tests for .githooks/hooks/pre-commit CM-03 (commit title vs PR title consistency).
 
 Run from repo root:
     python -m pytest .githooks/tests/test_pre_commit.py -v
@@ -15,11 +15,11 @@ import importlib.machinery
 import importlib.util
 
 _loader = importlib.machinery.SourceFileLoader(
-    "pre_commit_hook", str(Path(__file__).resolve().parents[1] / "pre-commit"))
+    "pre_commit_hook", str(Path(__file__).resolve().parents[1] / "hooks" / "pre-commit"))
 _spec = importlib.util.spec_from_loader("pre_commit_hook", _loader)
 pc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(pc)  # type: ignore[union-attr]
-from _shared import Severity  # noqa: E402
+from lib._shared import Severity  # noqa: E402
 
 
 def _setup(repo: Path, commit_title: str, branch: str = "feat/foo") -> str:

@@ -43,6 +43,8 @@ def _log(action: str, target: str, result: str, detail: str = "") -> None:
 
 def _install() -> int:
     INSTALL_DIR.mkdir(parents=True, exist_ok=True)
+    # 配置 git hooks 路径
+    subprocess.run(["git", "config", "core.hooksPath", ".githooks/hooks"], capture_output=True, timeout=10)
     target = INSTALL_DIR / GATE_NAME
     shutil.copy2(__file__, target)
     target.chmod(0o755)
@@ -255,7 +257,7 @@ def _intercept_pr_create(args: list[str]) -> int:
 
 def _auto_link_sub(url: str, repo: str, githooks: Path, parent_arg: str) -> None:
     """创建后自动挂载 sub-issue 到 parent。"""
-    from _shared import load_yaml
+    from lib._shared import load_yaml
     cfg = load_yaml(githooks / "spec" / "github_issues.yaml")
     if not cfg.get("sub_issue_must_link_parent", False):
         return

@@ -16,11 +16,11 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / ".."))
 
-from _shared import Finding, Severity, aggregate_result, print_findings, gh_api_get  # noqa: E402
+from lib._shared import Finding, Severity, aggregate_result, print_findings, gh_api_get  # noqa: E402
 
 
 CRG_BIN = subprocess.run(["which", "code-review-graph"], capture_output=True, text=True).stdout.strip() or "/home/hathaway/.local/bin/code-review-graph"

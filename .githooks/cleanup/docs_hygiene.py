@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / ".."))
 
-from _shared import Finding, Severity, aggregate_result, print_findings, load_yaml  # noqa: E402
+from lib._shared import Finding, Severity, aggregate_result, print_findings, load_yaml  # noqa: E402
 
 FULLWIDTH_BRACKETS = "（）、「」【】『』《》〈〉﹁﹂"
 

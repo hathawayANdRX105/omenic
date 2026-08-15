@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / ".githooks"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / ".githooks"))
 
-from _shared import aggregate_result
+from lib._shared import aggregate_result
 from github.issues import run
 
 
@@ -75,7 +75,7 @@ def test_cli_missing_args():
 
 
 def test_load_yaml_config():
-    from _shared import load_yaml
+    from lib._shared import load_yaml
     cfg = load_yaml(Path(".githooks/spec/github_issues.yaml"))
     assert "Goal" in cfg["required_headings"]
     assert "Done when" in cfg["required_headings"]

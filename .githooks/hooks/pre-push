@@ -3,11 +3,11 @@
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / ".."))
 
-from _shared import Finding, Severity, aggregate_result, print_findings, load_yaml  # noqa: E402
+from lib._shared import Finding, Severity, aggregate_result, print_findings, load_yaml  # noqa: E402
 
 
 def main() -> int:

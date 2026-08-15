@@ -17,7 +17,7 @@ import importlib
 _lint = importlib.import_module("lint")
 run_lang = _lint.run_lang
 run = _lint.run
-from _shared import Severity
+from lib._shared import Severity
 
 
 # ---------------------------------------------------------------------------
@@ -26,7 +26,7 @@ from _shared import Severity
 
 def test_load_yaml_configs():
     """All 6 language configs exist and have required fields."""
-    from _shared import load_yaml
+    from lib._shared import load_yaml
     for lang in ["rust", "go", "javascript", "typescript", "python", "bash"]:
         path = Path(__file__).resolve().parents[1] / "spec" / f"code_{lang}.yaml"
         cfg = load_yaml(path)

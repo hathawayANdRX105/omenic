@@ -15,7 +15,7 @@ from pathlib import Path
 
 REPO = ""
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def _gh(args: list[str]) -> tuple[int, str]:

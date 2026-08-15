@@ -16,11 +16,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import importlib
 _mod = importlib.import_module("branch_cleanup")
 run = _mod.run
-from _shared import Severity
+from lib._shared import Severity
 
 
 def test_load_yaml_config():
-    from _shared import load_yaml
+    from lib._shared import load_yaml
     cfg = load_yaml(Path(__file__).resolve().parents[1] / "spec" / "cleanup_branch_cleanup.yaml")
     assert "main" in cfg["protected_branches"]
     assert cfg["local_merged"]["action"] == "WARN"
