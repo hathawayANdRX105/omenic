@@ -64,3 +64,10 @@ keyword_label_suggestions:
 # 关键词建议 (WARN 级) — 标题/body 命中关键字但缺对应 label 时提示
 # 工作方式: 读取 keyword_label_suggestions, 若 title/body 命中某关键字但对应 label 缺失, 则 WARN 建议
 # 示例: body 命中 "测试" 但 label 缺 "tests", 则 WARN "based on content keywords, consider also labeling: tests"
+
+# PR-10 关联机制 (check_content + run)
+# - check_content: Part of/Related #N 是纯文本，不产生 GitHub Development 关联 → INFO
+# - run: Fixes #N 目标是 parent issue (epic) 时提示 (epic 侧不显示 closing 关联, 应 Fixes sub-issue) → WARN
+linkage_check:
+  plain_text_links_severity: "INFO"   # Part of/Related 提示级别
+  fixes_epic_severity: "WARN"         # Fixes 目标是 parent issue 时提示级别

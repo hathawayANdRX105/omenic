@@ -73,9 +73,12 @@ def _pr_scripted(title="feat: 测试PR", body=None, state="closed", labels=None,
             "head": {"ref": head_ref},
             "draft": draft,
         }),
-        # repos/{repo}/labels (called twice in run: once as P-14, once as P-20)
         (0, repo_labels),
         (0, repo_labels),
+        # repos/{repo}/issues/{fn} — PR-10 epic 检查（body 有 Fixes #N 时消耗）
+        (0, {"number": 100, "title": "dummy issue"}),
+        # repos/{repo}/issues/{fn}/sub_issues — 空列表（普通 issue，非 parent）
+        (0, []),
     ]
 
 
