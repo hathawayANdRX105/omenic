@@ -969,9 +969,10 @@ tests pass.
 
     #[test]
     fn is14_keywords_aligned_info() {
-        // body contains "文档" and "documentation" label is present → aligned
+        // GOOD_SUB_BODY contains both "文档" and "测试" (per "运行测试通过"):
+        // providing both suggested labels → aligned → INFO.
         let body = GOOD_SUB_BODY.to_string() + "\n文档\n";
-        let f = check_content("添加功能", &body, &["documentation"], "sub", "open");
+        let f = check_content("添加功能", &body, &["documentation", "tests"], "sub", "open");
         assert!(find_rule(&f, "IS-14").iter().any(|x| x.severity == Severity::Info
             && x.msg.contains("keywords align")));
     }
