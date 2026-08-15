@@ -163,7 +163,7 @@
 - 有 FAIL → 自动创建 issue 记录（标题带日期、body 列违规清单、label chore）；全部 PASS → 无动作
 - 支持 workflow_dispatch 手动触发
 
-实现位置：`.githooks/bin/audit.py` scan_recent + `.github/workflows/daily_audit.yml`
+实现位置：`.githooks/dev/audit.py` scan_recent + `.github/workflows/daily_audit.yml`
 
 
 ## 触发式（lazy）规则映射
@@ -183,6 +183,6 @@
 ## 更新与校验
 
 - 新增/修改规则：只改 `.githooks/spec/*.yaml` 参数 + 对应校验器逻辑，更新本文档
-- merge 时校验：spec 规则与本文档一致性（通过 `python .githooks/bin/audit.py` 或校验器检测）
+- merge 时校验：spec 规则与本文档一致性（通过 `python .githooks/dev/audit.py` 或校验器检测）
 - 触发式按上表 lazy 执行，不全局扫描
 - 拦截门（install_gh_gate.py）改动后必须 `python .githooks/install_gh_gate.py --install` 重新部署
