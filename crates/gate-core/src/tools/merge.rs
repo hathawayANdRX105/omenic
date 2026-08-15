@@ -257,7 +257,8 @@ fn rv07_decide(file_count: usize, crg_out: &str, ocr_out: &str) -> Finding {
     const CRG_FAIL_PREFIX: &str = "[CRG]";
     const OCR_FAIL_PREFIX: &str = "[ocr]";
     const TRUNC_MAX: usize = 200;
-    const TRUNC_ELLIPSIS_BYTES: usize = 3; // "…" (U+2026) 是 3 字节 UTF-8
+    const ELLIPSIS: &str = "…";
+    const TRUNC_ELLIPSIS_BYTES: usize = ELLIPSIS.len(); // 3 字节 UTF-8
     if file_count == 0 {
         return Finding::new("RV-07", Severity::Info, "无需审查（无文件改动）");
     }
@@ -266,7 +267,7 @@ fn rv07_decide(file_count: usize, crg_out: &str, ocr_out: &str) -> Finding {
     let cap = |s: &str| {
         let s = s.trim();
         if s.len() > TRUNC_MAX {
-            format!("{}…", crate::shared::truncate_utf8(s, TRUNC_MAX.saturating_sub(TRUNC_ELLIPSIS_BYTES)))
+            format!("{ELLIPSIS}{}", crate::shared::truncate_utf8(s, TRUNC_MAX.saturating_sub(TRUNC_ELLIPSIS_BYTES)))
         } else {
             s.to_string()
         }

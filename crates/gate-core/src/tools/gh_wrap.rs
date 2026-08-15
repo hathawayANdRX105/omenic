@@ -346,7 +346,7 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
                 println!("\n⚠ 闸门: issue 已创建 ({url})，但自动挂载到 parent #{parent} 失败。");
                 println!("  issue 未回滚。请运行: gh api repos/{repo}/issues/{parent}/sub_issues -X POST -F sub_issue_id=<id>");
                 log("ISSUE_CREATE", crate::shared::truncate_utf8(&title, 40), "WARN", "created but auto_link failed");
-                return 0;
+                return 2; // 部分成功：issue 已创建但挂载失败，非 0 以区分全成功
             }
             if let Some(sub_num) = extract_num(&url, "/issues/") {
                 if !verify_mount(&repo, &sub_num, &parent) {
@@ -356,7 +356,7 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
                         println!("\n⚠ 闸门: issue 已创建 ({url})，但挂载验证失败（eventual consistency 重试后仍未出现）。");
                         println!("  issue 未回滚。请运行: gh api repos/{repo}/issues/{parent}/sub_issues -X POST -F sub_issue_id=<id>");
                         log("ISSUE_CREATE", crate::shared::truncate_utf8(&title, 40), "WARN", "created but mount verify failed");
-                        return 0;
+                        return 2; // 部分成功
                     }
                 }
             }

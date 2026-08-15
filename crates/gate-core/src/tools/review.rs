@@ -574,6 +574,14 @@ mod tests {
         assert!(ocr_has_findings("not json but has content"));
     }
 
+    #[test]
+    fn ocr_has_findings_ocr_error_prefix_excluded() {
+        // run_ocr failure markers must NOT be treated as review findings.
+        assert!(!ocr_has_findings("[ocr] error: binary missing"));
+        assert!(!ocr_has_findings("[ocr] 超时（LLM 响应慢）"));
+        assert!(!ocr_has_findings("[ocr] spawn failed"));
+    }
+
 
     #[test]
     #[ignore = "requires code-review-graph binary"]
