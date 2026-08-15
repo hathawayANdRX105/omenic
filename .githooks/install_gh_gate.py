@@ -421,8 +421,8 @@ def _intercept_pr_merge(args: list[str]) -> int:
                 return 1
 
             # 检查 Fixes 关联 issue 的 checkbox 全勾（merge 会连带关闭 issue）
-            import re as _re
-            fixes = _re.findall(r"(?:Fixes|Closes|Resolves)\s+#(\d+)", body.strip())
+            
+            fixes = re.findall(r"(?:Fixes|Closes|Resolves)\s+#(\d+)", body.strip())
             for fn in fixes:
                 rc2, issue_body, _ = _run_gh(["api", f"repos/{repo}/issues/{fn}", "--jq", ".body"])
                 if rc2 == 0 and issue_body.strip():
@@ -434,20 +434,9 @@ def _intercept_pr_merge(args: list[str]) -> int:
                         print("合并 PR 会连带关闭 issue，必须先完成 issue 的 checkbox 再合并。")
                         _log("PR_MERGE", f"PR #{pr_num}", "REJECT", f"issue #{fn} checkbox {len(unticked)} unticked")
                         return 1
-            for fn in fixes:
-                rc2, issue_body, _ = _run_gh(["api", f"repos/{repo}/issues/{fn}", "--jq", ".body"])
-                if rc2 == 0 and issue_body.strip():
-                    all_ticked, unticked = _check_done_when_fully_ticked(issue_body.strip())
-                    if not all_ticked:
-                        print(f"闸门: PR #{pr_num} 关联 issue #{fn} 的 Done when 未全部勾选，未勾 {len(unticked)} 项：")
-                        for item in unticked[:5]:
-                            print(f"  - [ ] {item}")
-                        print("合并 PR 会连带关闭 issue，必须先完成 issue 的 Done when 再合并。")
-                        _log("PR_MERGE", f"PR #{pr_num}", "REJECT", f"issue #{fn} Done when {len(unticked)} unticked")
-                        return 1
 
     # GT 增强: squash 标题（--title 或 PR 标题）必须符合 conventional commit（CM-01/CM-02 同款）
-    import re as _re
+    
     merge_title = ""
     for i, a in enumerate(args):
         if a == "--title" and i + 1 < len(args):
@@ -461,12 +450,12 @@ def _intercept_pr_merge(args: list[str]) -> int:
         if rc3 == 0:
             merge_title = pr_title.strip()
     if merge_title:
-        if not _re.match(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?:\s+\S+", merge_title):
+        if not re.match(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?:\s+\S+", merge_title):
             print(f"闸门: merge 标题非 conventional commit 格式: '{merge_title}'")
             print("  示例: feat: add widget / fix(scope): correct bug")
             _log("PR_MERGE", f"PR #{pr_num}", "REJECT", f"title not CC: {merge_title[:60]}")
             return 1
-        if _re.search(r"[\u4e00-\u9fff]", merge_title):
+        if re.search(r"[\u4e00-\u9fff]", merge_title):
             print(f"闸门: merge 标题含 CJK（应为英文）: '{merge_title}'")
             _log("PR_MERGE", f"PR #{pr_num}", "REJECT", f"title CJK: {merge_title[:60]}")
             return 1

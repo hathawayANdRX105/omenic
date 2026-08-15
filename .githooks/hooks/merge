@@ -70,8 +70,8 @@ def main() -> int:
             findings.append(Finding("RV-07", Severity.FAIL,
                                     f"PR #{pr_num} 有文件改动但审查失败: {e}"))
 
+    rc = aggregate_result(findings)
     if rc == 0 and not dry_run:
-        print("All checks passed. Ready for squash-merge.")
         # Extract Fixes from PR body
         try:
             pr = gh_api_get(f"repos/{repo}/pulls/{pr_num}")
