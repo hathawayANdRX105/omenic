@@ -254,39 +254,35 @@ fn gt06_open_sub_block(labels: &[String], open_subs: &[String]) -> Option<Vec<St
 
 /// Query the GitHub sub_issues endpoint and return the numbers whose state is
 /// `open`. Returns `Err` on any API failure (so the caller can BLOCK rather
-/// than silently allow — failing open on an unverifiable epic-close check is
-/// the safe direction). `Ok(vec![])` only on a genuine "no open subs".
+/// than silently allow — failing closed on an unverifiable epic-close check
+/// is the safe direction). `Ok(vec![])` only on a genuine "no open subs".
+///
+/// Single API call: the sub_issues response already carries each sub-issue's
+/// `.state`, so the jq filter selects open ones directly (no N+1 per-sub query).
 fn query_open_subs(repo: &str, num: &str) -> Result<Vec<String>, String> {
-    let (rc, subs_json, _) = run_gh(&[
+    if num.is_empty() || !num.chars().all(|c| c.is_ascii_digit()) {
+        return Err(format!("非法 issue 号: {num}"));
+    }
+    let (rc, subs_json, err) = run_gh(&[
         "api".to_string(),
         format!("repos/{repo}/issues/{num}/sub_issues"),
         "--jq".to_string(),
-        ".[].number".to_string(),
+        r#".[] | select(.state == "open") | .number"#.to_string(),
     ], None);
-    if rc != 0 || subs_json.trim().is_empty() {
-        if rc != 0 {
-            return Err(format!("sub_issues 查询失败 (rc={rc})"));
-        }
-        return Ok(vec![]); // truly no sub-issues
+    if rc != 0 {
+        return Err(format!("sub_issues 查询失败 (rc={rc}): {}", err.trim()));
+    }
+    if subs_json.trim().is_empty() {
+        return Ok(vec![]); // truly no open sub-issues
     }
     let mut open = Vec::new();
     for sn in subs_json.split_whitespace() {
         match sn.parse::<u32>() {
-            Ok(sn_i) => {
-                let (rc3, st, _) = run_gh(&[
-                    "api".to_string(),
-                    format!("repos/{repo}/issues/{sn_i}"),
-                    "--jq".to_string(),
-                    ".state".to_string(),
-                ], None);
-                if rc3 != 0 {
-                    return Err(format!("#{sn} 状态查询失败 (rc={rc3})"));
-                }
-                if st.trim() == "open" {
-                    open.push(sn.to_string());
-                }
+            Ok(_) => open.push(sn.to_string()),
+            Err(_) => {
+                let shown = crate::shared::truncate_utf8(sn, 20);
+                return Err(format!("sub_issues 响应含非法编号: '{shown}'"));
             }
-            Err(_) => return Err(format!("#{sn} 非法编号")),
         }
     }
     Ok(open)
@@ -301,7 +297,7 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
     let (title, body, labels, _, parent) = extract(args);
 
     if args.iter().any(|a| a == "--disable-check") {
-        log("ISSUE_CREATE", &title[..title.len().min(40)], "BYPASS", "--disable-check");
+        log("ISSUE_CREATE", crate::shared::truncate_utf8(&title, 40), "BYPASS", "--disable-check");
         println!("⚠ 闸门: --disable-check 跳过校验（已记入 gate.log；仅本次调用生效）");
         let clean: Vec<String> = args.iter().filter(|a| *a != "--disable-check").cloned().collect();
         let mut full = vec!["issue".to_string(), "create".to_string()];
@@ -319,7 +315,7 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
     }
     if !fails.is_empty() {
         println!("闸门: 校验 FAIL，拒绝创建。修正后重试。");
-        log("ISSUE_CREATE", &title[..title.len().min(40)], "REJECT", &format!("FAIL={}", fails.len()));
+        log("ISSUE_CREATE", crate::shared::truncate_utf8(&title, 40), "REJECT", &format!("FAIL={}", fails.len()));
         return 1;
     }
 
@@ -344,16 +340,25 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
             // IS-09/Linkage gate: body text like "Parent: #N" is already
             // rejected by check_content above.  Here we verify the REAL
             // addSubIssue mutation actually mounted the sub-issue.
-            if !auto_link_sub(&url, &repo, parent.clone()) {
-                println!("闸门: 挂载失败，拒绝。请运行 gh api addSubIssue 或用 --parent 重建。");
-                log("ISSUE_CREATE", &title[..title.len().min(40)], "FAIL", "auto_link failed");
-                return 1;
+            if !auto_link_sub(&url, &repo, &parent) {
+                // Issue is ALREADY created — do not return 1 or the user retries
+                // and duplicates it. Warn loudly and let them fix linkage manually.
+                println!("\n⚠ 闸门: issue 已创建 ({url})，但自动挂载到 parent #{parent} 失败。");
+                println!("  issue 未回滚。请运行: gh api repos/{repo}/issues/{parent}/sub_issues -X POST -F sub_issue_id=<id>");
+                log("ISSUE_CREATE", crate::shared::truncate_utf8(&title, 40), "WARN", "created but auto_link failed");
+                return 2; // 部分成功：issue 已创建但挂载失败，非 0 以区分全成功
             }
-            let sub_num = extract_num(&url, "/issues/").unwrap_or_default();
-            if !verify_mount(&repo, &sub_num, &parent) {
-                println!("FAIL\t闸门: sub-issue #{sub_num} 未挂载到 parent #{parent}（mount verification 失败）");
-                log("ISSUE_CREATE", &title[..title.len().min(40)], "FAIL", "not mounted");
-                return 1;
+            if let Some(sub_num) = extract_num(&url, "/issues/") {
+                if !verify_mount(&repo, &sub_num, &parent) {
+                    // Retry once: GitHub sub_issues list may lag the mutation.
+                    std::thread::sleep(std::time::Duration::from_millis(800));
+                    if !verify_mount(&repo, &sub_num, &parent) {
+                        println!("\n⚠ 闸门: issue 已创建 ({url})，但挂载验证失败（eventual consistency 重试后仍未出现）。");
+                        println!("  issue 未回滚。请运行: gh api repos/{repo}/issues/{parent}/sub_issues -X POST -F sub_issue_id=<id>");
+                        log("ISSUE_CREATE", crate::shared::truncate_utf8(&title, 40), "WARN", "created but mount verify failed");
+                        return 2; // 部分成功
+                    }
+                }
             }
         }
     }
@@ -394,32 +399,22 @@ pub fn intercept_issue_close(args: &[String]) -> i32 {
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                 .unwrap_or_default();
 
-            // GT-06
+            // GT-06 (#199): epic close with open sub-issues must be blocked.
+            // Fail-closed: a sub_issues query failure also blocks (Err path),
+            // and the query is a single jq call (no per-sub N+1).
             if is_epic(&labels) {
-                let (rc2, subs_json, _) = run_gh(&[
-                    "api".to_string(),
-                    format!("repos/{repo}/issues/{num}/sub_issues"),
-                    "--jq".to_string(),
-                    ".[].number".to_string(),
-                ], None);
-                if rc2 == 0 && !subs_json.trim().is_empty() {
-                    let open_subs: Vec<String> = subs_json.split_whitespace()
-                        .filter(|sn| {
-                            sn.parse::<u32>().ok().map_or(false, |sn_i| {
-                                let (rc3, st, _) = run_gh(&[
-                                    "api".to_string(),
-                                    format!("repos/{repo}/issues/{sn_i}"),
-                                    "--jq".to_string(),
-                                    ".state".to_string(),
-                                ], None);
-                                rc3 == 0 && st.trim() == "open"
-                            })
-                        })
-                        .map(String::from)
-                        .collect();
-                    if !open_subs.is_empty() {
-                        println!("闸门: #{num} 是 epic，但有 sub-issue 未关闭: #{}", open_subs.join(", #"));
-                        log("ISSUE_CLOSE", &format!("#{num}"), "REJECT", &format!("epic with open subs: {}", open_subs.join(",")));
+                match query_open_subs(&repo, &num) {
+                    Ok(open_subs) => {
+                        if let Some(block) = gt06_open_sub_block(&labels, &open_subs) {
+                            println!("闸门: #{num} 是 epic，但有 sub-issue 未关闭: #{}", block.join(", #"));
+                            log("ISSUE_CLOSE", &format!("#{num}"), "REJECT",
+                                &format!("epic with open subs: {}", block.join(",")));
+                            return 1;
+                        }
+                    }
+                    Err(e) => {
+                        println!("闸门: 无法确认 epic #{num} 的 sub-issues，为安全起见拒绝关闭: {e}");
+                        log("ISSUE_CLOSE", &format!("#{num}"), "REJECT", &format!("sub query failed: {e}"));
                         return 1;
                     }
                 }
@@ -482,7 +477,7 @@ pub fn intercept_pr_create(args: &[String]) -> i32 {
     }
     if !fails.is_empty() {
         println!("闸门: 校验 FAIL，拒绝创建。修正后重试。");
-        log("PR_CREATE", &title[..title.len().min(40)], "REJECT", &format!("FAIL={}", fails.len()));
+        log("PR_CREATE", crate::shared::truncate_utf8(&title, 40), "REJECT", &format!("FAIL={}", fails.len()));
         return 1;
     }
 
@@ -502,7 +497,7 @@ pub fn intercept_pr_create(args: &[String]) -> i32 {
     let url = out.trim().to_string();
     if url.starts_with("https://github.com/") && url.contains("/pull/") {
         if let Some(num) = extract_num(&url, "/pull/") {
-            log("PR_CREATE", &format!("PR #{num}"), "CREATED", &title[..title.len().min(40)]);
+            log("PR_CREATE", &format!("PR #{num}"), "CREATED", crate::shared::truncate_utf8(&title, 40));
         }
     }
     0
@@ -547,7 +542,15 @@ pub fn intercept_pr_merge(args: &[String]) -> i32 {
                     "--jq".to_string(),
                     "{body, labels: [.labels[].name]}".to_string(),
                 ], None);
-                if rc2 == 0 && !issue_data.trim().is_empty() {
+                if rc2 != 0 || issue_data.trim().is_empty() {
+                    // Fail-closed: a failed issue fetch must NOT silently skip
+                    // the checkbox / GT-06 epic checks below.
+                    println!("闸门: 关联 issue #{fn_} 数据查询失败，为安全起见拒绝合并 (rc={rc2})");
+                    log("PR_MERGE", &format!("PR #{num}"), "REJECT",
+                        &format!("issue #{fn_} fetch failed (rc={rc2})"));
+                    return 1;
+                }
+                {
                     let parsed: serde_json::Value = match serde_json::from_str(&issue_data) {
                         Ok(v) => v,
                         Err(e) => {
@@ -569,22 +572,25 @@ pub fn intercept_pr_merge(args: &[String]) -> i32 {
                         return 1;
                     }
 
-                    // GT-06 (#199): if the Fixes target is an epic, block the merge
-                    // when any sub-issue is still open — preventing the PR-merge
-                    // auto-close path from collapsing an epic with live subs.
-                    match query_open_subs(&repo, &fn_) {
-                        Ok(open_subs) => {
-                            if let Some(block) = gt06_open_sub_block(&labels, &open_subs) {
-                                println!("闸门: 合并会关闭 epic #{fn_}，但存在 open sub-issue #{}", block.join(", #"));
-                                log("PR_MERGE", &format!("PR #{num}"), "REJECT",
-                                    &format!("epic #{fn_} with open subs: {}", block.join(",")));
+                    // GT-06 (#199): only when the Fixes target is an epic do we
+                    // need the open-sub check. Non-epic targets skip the
+                    // sub_issues query entirely (no extra API call, and a
+                    // transient sub-query failure can't block a non-epic merge).
+                    if is_epic(&labels) {
+                        match query_open_subs(&repo, &fn_) {
+                            Ok(open_subs) => {
+                                if let Some(block) = gt06_open_sub_block(&labels, &open_subs) {
+                                    println!("闸门: 合并会关闭 epic #{fn_}，但存在 open sub-issue #{}", block.join(", #"));
+                                    log("PR_MERGE", &format!("PR #{num}"), "REJECT",
+                                        &format!("epic #{fn_} with open subs: {}", block.join(",")));
+                                    return 1;
+                                }
+                            }
+                            Err(e) => {
+                                println!("闸门: 无法确认 epic #{fn_} 的 sub-issues，为安全起见拒绝合并: {e}");
+                                log("PR_MERGE", &format!("PR #{num}"), "REJECT", &format!("epic #{fn_} sub query failed: {e}"));
                                 return 1;
                             }
-                        }
-                        Err(e) => {
-                            println!("闸门: 无法确认 epic #{fn_} 的 sub-issues，为安全起见拒绝合并: {e}");
-                            log("PR_MERGE", &format!("PR #{num}"), "REJECT", &format!("epic #{fn_} sub query failed: {e}"));
-                            return 1;
                         }
                     }
                 }
@@ -664,7 +670,13 @@ pub fn intercept_pr_merge(args: &[String]) -> i32 {
 // ---------------------------------------------------------------------------
 
 fn extract_num(url: &str, marker: &str) -> Option<String> {
-    url.split(marker).nth(1).and_then(|s| s.split('/').next()).map(String::from)
+    let seg = url.split(marker).nth(1)?.split('/').next()?;
+    // 只接受非空纯数字段（防止 URL 片段注入 API 路径）。
+    if !seg.is_empty() && seg.chars().all(|c| c.is_ascii_digit()) {
+        Some(seg.to_string())
+    } else {
+        None
+    }
 }
 
 fn extract_merge_title(args: &[String], repo: &str, pr_num: &str) -> String {
@@ -706,13 +718,16 @@ fn extract_merge_body(args: &[String]) -> String {
 
 /// Attempt to mount sub-issue to parent via addSubIssue API.
 /// Returns true on success, false on failure or no-op.
-fn auto_link_sub(url: &str, repo: &str, parent_arg: String) -> bool {
+fn auto_link_sub(url: &str, repo: &str, parent_arg: &str) -> bool {
     let sub_num = match extract_num(url, "/issues/") {
         Some(n) => n,
         None => return false,
     };
     if parent_arg.is_empty() || parent_arg == "0" {
         return false;
+    }
+    if !parent_arg.chars().all(|c| c.is_ascii_digit()) {
+        return false; // 防路径注入：parent 必须是纯数字 issue 号
     }
     let (_, sub_id_raw, _) = run_gh(&[
         "api".to_string(),
@@ -751,6 +766,9 @@ fn is_mounted(sub_issues_output: &str, sub_num: &str) -> bool {
 /// the new sub-issue number is present.  Returns true if mounted or
 /// not applicable (epic / no parent).
 fn verify_mount(repo: &str, sub_num: &str, parent: &str) -> bool {
+    if parent.is_empty() || !parent.chars().all(|c| c.is_ascii_digit()) {
+        return false; // 防路径注入：parent 必须是纯数字 issue 号
+    }
     let (rc, out, _) = run_gh(&[
         "api".to_string(),
         format!("repos/{repo}/issues/{parent}/sub_issues"),
@@ -814,61 +832,27 @@ mod tests {
 
     // --- auto_link_sub: failure path ---
 
-    // auto_link_sub returns false when parent_arg is empty or "0".
-    // These are pure-path tests that don't touch run_gh.
+    // auto_link_sub returns false on pure short-circuit paths, without
+    // touching run_gh: empty/"0" parent, or URL with no /issues/ number.
 
     #[test]
     fn auto_link_sub_empty_parent_returns_false() {
-        // URL is valid but parent is empty → no mount attempted → false
-        let result = false; // simulates the short-circuit path
-        assert!(!result);
+        let url = "https://github.com/a/b/issues/5";
+        assert!(!auto_link_sub(url, "a/b", ""));
+        assert!(!auto_link_sub(url, "a/b", "0"));
+    }
+
+    #[test]
+    fn auto_link_sub_invalid_url_returns_false() {
+        // No extractable issue number → no mount attempted (no run_gh call).
+        assert!(!auto_link_sub("https://github.com/a/b/tree/main", "a/b", "205"));
+        assert!(!auto_link_sub("not-a-url", "a/b", "205"));
     }
 
     // The gate rejects when auto_link fails: intercept_issue_create returns 1.
-    // We test the branch logic that would trigger this:
-    // - non-epic labels + parent provided + auto_link fails → return 1
-
-    #[test]
-    fn auto_link_failure_path_returns_false() {
-        // Simulate: auto_link_sub POST returned rc != 0
-        // → auto_link_sub returns false → intercept_issue_create returns 1
-        let auto_link_ok = false;
-        let is_epic = false;
-        let parent = "205";
-        let parent_active = !parent.is_empty() && parent != "0";
-        // The branch: if !is_epic && parent_active && !auto_link_ok → return 1
-        assert!((!is_epic && parent_active && !auto_link_ok));
-    }
-
-    #[test]
-    fn auto_link_success_no_verify_failure() {
-        // auto_link succeeds (rc == 0) but verify_mount fails (not in list)
-        // → still returns 1 (mount verification hard gate)
-        let auto_link_ok = true;
-        let mounted = is_mounted("205\n207\n", "206");
-        assert!(!mounted);
-        assert!(auto_link_ok);
-        // Combined: either failure → gate rejects
-        assert!(!auto_link_ok || !mounted);
-    }
-
-    #[test]
-    fn full_mount_success_path() {
-        // auto_link succeeds AND verify_mount finds the sub-issue → gate passes
-        let auto_link_ok = true;
-        let mounted = is_mounted("205\n206\n", "206");
-        assert!(auto_link_ok && mounted);
-    }
-
-    #[test]
-    fn epic_skips_mount() {
-        // epics don't need auto_link_sub — the branch is skipped
-        let is_epic_val = true;
-        let parent = "205";
-        let parent_active = !parent.is_empty() && parent != "0";
-        // The condition `!is_epic && parent_active` is false → skip
-        assert!(!(is_epic_val && false) || !parent_active);
-    }
+    // The branch is `!is_epic && parent_active && !auto_link_ok`; the URL/parent
+    // short-circuits above exercise auto_link_sub's false paths directly.
+    // (The full intercept path needs a live gh — covered by e2e, not unit.)
 
     // --- IS-09 integration: body text placeholders caught ---
 

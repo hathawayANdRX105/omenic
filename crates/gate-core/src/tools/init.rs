@@ -33,7 +33,19 @@ pub fn install() -> anyhow::Result<()> {
     fs::create_dir_all(&install_dir)?;
 
     let current_exe = std::env::current_exe()?;
-    if current_exe != target {
+    // current_exe() canonicalizes symlinks; compare against canonical target
+    // so a symlinked HOME/.local/bin doesn't mismatch and self-truncate.
+    let already_installed = match fs::canonicalize(&target) {
+        Ok(t) => t == current_exe,
+        Err(_) => false,
+    };
+    if !already_installed {
+        // Broken symlink or non-canonicalizable target: fs::copy would follow
+        // the dangling link and leave it behind — remove it first so the real
+        // binary replaces the link.
+        if target.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+            fs::remove_file(&target)?;
+        }
         fs::copy(&current_exe, &target)?;
         chmod_755(&target);
     }

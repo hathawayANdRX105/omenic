@@ -254,15 +254,20 @@ fn check_pr_review(repo: &str, pr_num: u32) -> Vec<Finding> {
 ///   ocr: `run_ocr()` prefixes every failure with "[ocr]" (spawn error, stderr,
 ///        or 超时 timeout); success returns the raw stdout.
 fn rv07_decide(file_count: usize, crg_out: &str, ocr_out: &str) -> Finding {
+    const CRG_FAIL_PREFIX: &str = "[CRG]";
+    const OCR_FAIL_PREFIX: &str = "[ocr]";
+    const TRUNC_MAX: usize = 200;
+    const ELLIPSIS: &str = "…";
+    const TRUNC_ELLIPSIS_BYTES: usize = ELLIPSIS.len(); // 3 字节 UTF-8
     if file_count == 0 {
         return Finding::new("RV-07", Severity::Info, "无需审查（无文件改动）");
     }
-    let crg_failed = crg_out.is_empty() || crg_out.starts_with("[CRG]");
-    let ocr_failed = ocr_out.is_empty() || ocr_out.starts_with("[ocr]");
+    let crg_failed = crg_out.is_empty() || crg_out.starts_with(CRG_FAIL_PREFIX);
+    let ocr_failed = ocr_out.is_empty() || ocr_out.starts_with(OCR_FAIL_PREFIX);
     let cap = |s: &str| {
         let s = s.trim();
-        if s.len() > 200 {
-            format!("{}…", crate::shared::truncate_utf8(s, 200))
+        if s.len() > TRUNC_MAX {
+            format!("{ELLIPSIS}{}", crate::shared::truncate_utf8(s, TRUNC_MAX.saturating_sub(TRUNC_ELLIPSIS_BYTES)))
         } else {
             s.to_string()
         }
