@@ -338,15 +338,23 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
             // rejected by check_content above.  Here we verify the REAL
             // addSubIssue mutation actually mounted the sub-issue.
             if !auto_link_sub(&url, &repo, &parent) {
-                println!("闸门: 挂载失败，拒绝。请运行 gh api addSubIssue 或用 --parent 重建。");
-                log("ISSUE_CREATE", crate::shared::truncate_utf8(&title, 40), "FAIL", "auto_link failed");
-                return 1;
+                // Issue is ALREADY created — do not return 1 or the user retries
+                // and duplicates it. Warn loudly and let them fix linkage manually.
+                println!("\n⚠ 闸门: issue 已创建 ({url})，但自动挂载到 parent #{parent} 失败。");
+                println!("  issue 未回滚。请运行: gh api repos/{repo}/issues/{parent}/sub_issues -X POST -F sub_issue_id=<id>");
+                log("ISSUE_CREATE", crate::shared::truncate_utf8(&title, 40), "WARN", "created but auto_link failed");
+                return 0;
             }
             let sub_num = extract_num(&url, "/issues/").unwrap_or_default();
             if !verify_mount(&repo, &sub_num, &parent) {
-                println!("FAIL\t闸门: sub-issue #{sub_num} 未挂载到 parent #{parent}（mount verification 失败）");
-                log("ISSUE_CREATE", crate::shared::truncate_utf8(&title, 40), "FAIL", "not mounted");
-                return 1;
+                // Retry once: GitHub sub_issues list may lag the mutation.
+                std::thread::sleep(std::time::Duration::from_millis(800));
+                if !verify_mount(&repo, &sub_num, &parent) {
+                    println!("\n⚠ 闸门: issue 已创建 ({url})，但挂载验证失败（eventual consistency 重试后仍未出现）。");
+                    println!("  issue 未回滚。请运行: gh api repos/{repo}/issues/{parent}/sub_issues -X POST -F sub_issue_id=<id>");
+                    log("ISSUE_CREATE", crate::shared::truncate_utf8(&title, 40), "WARN", "created but mount verify failed");
+                    return 0;
+                }
             }
         }
     }
@@ -658,7 +666,13 @@ pub fn intercept_pr_merge(args: &[String]) -> i32 {
 // ---------------------------------------------------------------------------
 
 fn extract_num(url: &str, marker: &str) -> Option<String> {
-    url.split(marker).nth(1).and_then(|s| s.split('/').next()).map(String::from)
+    let seg = url.split(marker).nth(1)?.split('/').next()?;
+    // 只接受纯数字段（防止 URL 片段注入 API 路径）。
+    if seg.chars().all(|c| c.is_ascii_digit()) {
+        Some(seg.to_string())
+    } else {
+        None
+    }
 }
 
 fn extract_merge_title(args: &[String], repo: &str, pr_num: &str) -> String {

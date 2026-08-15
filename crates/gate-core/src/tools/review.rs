@@ -95,7 +95,8 @@ pub fn run(args: &[String]) -> i32 {
         let pr = pr.unwrap();
         let comments = parse_ocr_comments(&ocr_raw);
         let has_findings = ocr_has_findings(&ocr_raw);
-        let has_inline = ocr_has_inline_findings(&ocr_raw);
+        // comments 已 parse 过一次，inline 判定直接派生（避免二次 parse）。
+        let has_inline = comments.iter().any(|c| c.start_line > 0);
 
         if !has_findings {
             println!("无审查发现，不留言到 PR");
@@ -357,10 +358,6 @@ pub fn ocr_has_findings(raw: &str) -> bool {
     }
 }
 
-/// True if any parsed ocr comment has a positive `start_line` (inline finding).
-pub fn ocr_has_inline_findings(raw: &str) -> bool {
-    parse_ocr_comments(raw).iter().any(|c| c.start_line > 0)
-}
 
 // ---------------------------------------------------------------------------
 // Posting to GitHub
@@ -547,26 +544,6 @@ mod tests {
         assert!(ocr_has_findings("not json but has content"));
     }
 
-    #[test]
-    fn ocr_has_inline_findings_no_line_numbers() {
-        let raw = r#"{"comments": [{"path": "a.rs", "start_line": 0, "severity": "info", "category": "", "content": "general note"}]}"#;
-        assert!(!ocr_has_inline_findings(raw));
-    }
-
-    #[test]
-    fn ocr_has_inline_findings_with_line_numbers() {
-        let raw = r#"{"comments": [
-            {"path": "a.rs", "start_line": 10, "severity": "warn", "category": "style", "content": "unused var"},
-            {"path": "b.rs", "start_line": 0, "severity": "info", "category": "", "content": "no line"}
-        ]}"#;
-        assert!(ocr_has_inline_findings(raw));
-    }
-
-    #[test]
-    fn ocr_has_inline_findings_empty() {
-        assert!(!ocr_has_inline_findings(""));
-        assert!(!ocr_has_inline_findings(r#"{"comments": []}"#));
-    }
 
     #[test]
     #[ignore = "requires code-review-graph binary"]
