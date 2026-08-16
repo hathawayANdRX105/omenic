@@ -1127,7 +1127,9 @@ fn init_cmd_at(dir: &std::path::Path, json: bool) -> Result<u8, String> {
     }
     // Spec templates (never overwrite user edits).
     crate::spec::write_default_specs(&oi_dir).map_err(|e| format!("spec templates: {e}"))?;
-
+    // Task templates (never overwrite user edits).
+    crate::template::write_default_templates(&oi_dir)
+        .map_err(|e| format!("task templates: {e}"))?;
     let msg = match (dir_existed, config_existed) {
         (true, true) => "workspace already initialized",
         (false, false) => "initialized: .oi/, .oi/config.toml, .oi/specs/",
@@ -1467,32 +1469,54 @@ fn board_cmd(json: bool) -> Result<u8, String> {
     Ok(0)
 }
 
-/// `template list` subcommand: list built-in orchestration templates.
+/// `template list` subcommand: list orchestration templates from
+/// `<data>/templates/{phases,steps}/`.
 fn template_list_cmd(json: bool) -> Result<u8, String> {
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let templates = crate::template::load_all_templates(&config.data_dir)
+        .map_err(|e| format!("template error: {e}"))?;
+    if templates.is_empty() {
+        eprintln!(
+            "no templates in {} (run `oi init` first)",
+            config.data_dir.join("templates").display()
+        );
+        return Ok(1);
+    }
     if json {
-        let list: Vec<serde_json::Value> = crate::template::TEMPLATES
+        let list: Vec<serde_json::Value> = templates
             .iter()
             .map(|t| {
                 serde_json::json!({
                     "name": t.name,
-                    "description": t.description,
-                    "steps": t.steps.iter().map(|s| s.name).collect::<Vec<_>>(),
+                    "kind": match t.kind {
+                        crate::template::TemplateKind::Phase => "phase",
+                        crate::template::TemplateKind::Step => "step",
+                    },
+                    "tasks": t.tasks.iter().map(|x| x.key.clone()).collect::<Vec<_>>(),
                 })
             })
             .collect();
         print_json(&list);
     } else {
-        for t in crate::template::TEMPLATES {
-            println!("{} — {}", t.name, t.description);
-            for s in t.steps {
-                println!("  - {}", s.name);
+        for t in &templates {
+            let kind = match t.kind {
+                crate::template::TemplateKind::Phase => "phase",
+                crate::template::TemplateKind::Step => "step",
+            };
+            println!(
+                "{kind}: {} — {}",
+                t.name,
+                t.tasks.first().map(|x| x.title.as_str()).unwrap_or("")
+            );
+            for x in &t.tasks {
+                println!("  - {}", x.key);
             }
         }
     }
     Ok(0)
 }
 
-/// `template apply` subcommand: create topic task + step chain from a template.
+/// `template apply` subcommand: create topic + phase + steps from a template.
 fn template_apply_cmd(
     store: &Store,
     name: &str,
@@ -1500,9 +1524,9 @@ fn template_apply_cmd(
     parent: Option<String>,
     json: bool,
 ) -> Result<u8, String> {
-    let tpl = crate::template::find(name)
-        .ok_or_else(|| format!("unknown template `{name}` (try `oi template list`)"))?;
-    let ids = crate::template::apply(store, tpl, topic, parent)?;
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let ids = crate::template::apply(store, &config.data_dir, name, topic, parent)
+        .map_err(|e| format!("template error: {e} — try `oi template list` or `oi init`"))?;
     if json {
         let obj = serde_json::json!({ "created": ids });
         print_json(&obj);
