@@ -19,12 +19,14 @@
 //! worker.abort()?;
 //! ```
 
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::rpc;
 
 /// Events emitted by the worker during agent execution.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
 pub enum WorkerEvent {
     /// Agent started processing.
     AgentStart,
@@ -84,6 +86,11 @@ impl Worker {
         let id = self.client.next_id_str();
         let req = rpc::Request::new("abort").with_id(&id).done();
         self.client.send(&req)
+    }
+
+    /// PID of the underlying omp worker process (its process group leader).
+    pub fn child_pid(&self) -> u32 {
+        self.client.child_pid()
     }
 
     /// Read the next event from the agent, blocking until one arrives.

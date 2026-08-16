@@ -137,6 +137,30 @@ fn m3_e2e_end_to_end_run() {
         "brief wrong: {brief}"
     );
 
+    // F1: observable agent-call artifacts — prompt.json (input) and
+    // events.jsonl (process) alongside the brief and result.
+    let prompt_path = ctx_dir.join("prompt.json");
+    assert!(prompt_path.exists(), "prompt.json missing");
+    let prompt: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&prompt_path).unwrap()).unwrap();
+    assert_eq!(prompt["task_id"], feat_id, "prompt.task_id wrong");
+    assert!(prompt["brief"].is_string(), "prompt.brief missing");
+    assert!(prompt["deps"].is_array(), "prompt.deps missing");
+    assert!(prompt["materials"].is_string(), "prompt.materials missing");
+
+    let events_path = ctx_dir.join("events.jsonl");
+    assert!(events_path.exists(), "events.jsonl missing");
+    let events = fs::read_to_string(&events_path).unwrap();
+    assert!(!events.trim().is_empty(), "events.jsonl empty after run");
+    for line in events.lines() {
+        let v: serde_json::Value =
+            serde_json::from_str(line).expect("each events.jsonl line is valid JSON");
+        assert!(
+            v["event"].is_string(),
+            "event line lacks 'event' tag: {line}"
+        );
+    }
+
     let result_path = ctx_dir.join("result.json");
     assert!(result_path.exists(), "result.json missing");
     let result: serde_json::Value =

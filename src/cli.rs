@@ -37,11 +37,13 @@ enum Command {
     },
     /// Show task details (alias for `task show`)
     Show { id: String },
-    /// Render the task tree / Graphviz DOT
+    /// Render the task tree / Graphviz DOT / board view
     Plan {
         /// Output Graphviz DOT format
         #[arg(long)]
         dot: bool,
+        #[command(subcommand)]
+        sub: Option<PlanSub>,
     },
     /// Execute a task via a worker session
     Run { id: String },
@@ -62,6 +64,25 @@ enum Command {
         #[command(subcommand)]
         sub: DepCmd,
     },
+    /// Task board: tasks partitioned by status/readiness
+    Board,
+    /// Built-in orchestration templates
+    Template {
+        #[command(subcommand)]
+        sub: TemplateCmd,
+    },
+    /// Spec tables (规范表) for GitHub artifacts
+    Spec {
+        #[command(subcommand)]
+        sub: SpecCmd,
+    },
+}
+
+/// Sub-views of `oi plan`.
+#[derive(Subcommand)]
+enum PlanSub {
+    /// Partitioned board view (ready / blocked / in_progress / done)
+    Board,
 }
 
 #[derive(Subcommand)]
@@ -95,6 +116,8 @@ enum TaskCmd {
         id: String,
         #[arg(long)]
         title: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
         #[arg(long)]
         status: Option<String>,
         #[arg(long)]
@@ -132,6 +155,48 @@ enum DepCmd {
     Remove { id: String, dep_id: String },
 }
 
+#[derive(Subcommand)]
+enum TemplateCmd {
+    /// List built-in templates
+    List,
+    /// Apply a template: create topic task + ordered step chain
+    Apply {
+        /// Template name (dev | plan)
+        name: String,
+        /// Topic title; becomes the parent task id
+        topic: String,
+        /// Parent task id for the topic (e.g. a milestone)
+        #[arg(short = 'p', long)]
+        parent: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SpecCmd {
+    /// List spec tables
+    List,
+    /// Generate a blank spec table skeleton
+    New {
+        /// Spec kind (issue | epic | pr | review)
+        kind: String,
+        /// Document title (becomes the `#` heading)
+        #[arg(long)]
+        title: Option<String>,
+        /// Write to file instead of stdout
+        #[arg(short = 'o', long)]
+        output: Option<String>,
+    },
+    /// Validate a filled spec document against the kind's rules
+    Check {
+        /// Spec kind to validate against
+        kind: String,
+        /// Markdown file to check
+        file: String,
+    },
+    /// Print a spec document (agent-facing view)
+    View { file: String },
+}
+
 /// Entry point: parse argv via clap and dispatch to a subcommand.
 pub fn run() -> ExitCode {
     let cli = Cli::parse();
@@ -167,13 +232,23 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
                 TaskCmd::Update {
                     id,
                     title,
+                    description,
                     status,
                     deps,
                     acceptance,
                     priority,
                     kind,
                 } => task_update(
-                    &store, &id, title, status, deps, acceptance, priority, kind, json,
+                    &store,
+                    &id,
+                    title,
+                    description,
+                    status,
+                    deps,
+                    acceptance,
+                    priority,
+                    kind,
+                    json,
                 ),
                 TaskCmd::Delete { id } => task_delete(&store, &id, json),
                 TaskCmd::List {
@@ -185,7 +260,10 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
             }
         }
         Command::Show { id } => show_cmd(&id, json),
-        Command::Plan { dot } => plan_cmd(dot, json),
+        Command::Plan { dot, sub } => match sub {
+            Some(PlanSub::Board) => board_cmd(json),
+            None => plan_cmd(dot, json),
+        },
         Command::Run { id } => run_cmd(&id),
         Command::Steer { id, message } => steer_cmd(&id, &message, json),
         Command::Abort { id } => abort_cmd(&id, json),
@@ -201,6 +279,29 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
                 DepCmd::Remove { id, dep_id } => dep_remove(&store, &id, &dep_id, json),
             }
         }
+        Command::Board => board_cmd(json),
+        Command::Template { sub } => {
+            let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+            let store = Store::new(&config.data_dir);
+            match sub {
+                TemplateCmd::List => template_list_cmd(json),
+                TemplateCmd::Apply {
+                    name,
+                    topic,
+                    parent,
+                } => template_apply_cmd(&store, &name, &topic, parent, json),
+            }
+        }
+        Command::Spec { sub } => match sub {
+            SpecCmd::List => spec_list_cmd(json),
+            SpecCmd::New {
+                kind,
+                title,
+                output,
+            } => spec_new_cmd(&kind, title, output, json),
+            SpecCmd::Check { kind, file } => spec_check_cmd(&kind, &file, json),
+            SpecCmd::View { file } => spec_view_cmd(&file),
+        },
     }
 }
 
@@ -219,30 +320,6 @@ fn print_json<T: ?Sized + serde::Serialize>(value: &T) {
 fn json_ok(message: &str) {
     let obj = serde_json::json!({"status": "ok", "message": message});
     print_json(&obj);
-}
-
-fn now_iso() -> String {
-    // ISO-8601-ish UTC timestamp; seconds precision is plenty for MVP.
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    // Days since epoch -> civil date via a small conversion.
-    let days = secs / 86_400;
-    let rem = secs % 86_400;
-    let (hh, mm, ss) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    // Howard Hinnant's civil_from_days algorithm.
-    let z = days as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -303,7 +380,7 @@ fn task_add(
 
     let mut created_ids = Vec::new();
     for title in titles {
-        let now = now_iso();
+        let now = crate::task::now_iso();
         let task = Task {
             id: title.clone(),
             title: title.clone(),
@@ -349,7 +426,7 @@ fn task_done(store: &Store, id: &str, json: bool) -> Result<u8, String> {
         return Ok(1);
     }
     task.status = TaskStatus::Done;
-    task.updated_at = now_iso();
+    task.updated_at = crate::task::now_iso();
     store
         .append(&task)
         .map_err(|e| format!("store error: {e}"))?;
@@ -454,7 +531,7 @@ fn dep_add(store: &Store, task_id: &str, dep_id: &str, json: bool) -> Result<u8,
 
     task.deps.push(dep_id.to_string());
     task.deps.sort();
-    task.updated_at = now_iso();
+    task.updated_at = crate::task::now_iso();
     store
         .append(&task)
         .map_err(|e| format!("store error: {e}"))?;
@@ -482,7 +559,7 @@ fn dep_remove(store: &Store, task_id: &str, dep_id: &str, json: bool) -> Result<
     }
 
     task.deps.retain(|d| d != dep_id);
-    task.updated_at = now_iso();
+    task.updated_at = crate::task::now_iso();
     store
         .append(&task)
         .map_err(|e| format!("store error: {e}"))?;
@@ -501,6 +578,7 @@ fn task_update(
     store: &Store,
     id: &str,
     title: Option<String>,
+    description: Option<String>,
     status: Option<String>,
     deps: Option<String>,
     acceptance: Option<String>,
@@ -518,6 +596,9 @@ fn task_update(
 
     if let Some(v) = title {
         task.title = v;
+    }
+    if let Some(v) = description {
+        task.description = v;
     }
     if let Some(v) = status {
         task.status = parse_status(&v)?;
@@ -568,7 +649,7 @@ fn task_update(
         }
     }
 
-    task.updated_at = now_iso();
+    task.updated_at = crate::task::now_iso();
     store
         .append(&task)
         .map_err(|e| format!("store error: {e}"))?;
@@ -832,6 +913,15 @@ fn run_cmd(id: &str) -> Result<u8, String> {
         return Ok(1);
     }
 
+    // F3: mark the task running (InProgress) before the worker starts so the
+    // board shows it live; the runner outcome flips it to Done/Failed.
+    let mut running = task.clone();
+    running.status = TaskStatus::InProgress;
+    running.updated_at = crate::task::now_iso();
+    store
+        .append(&running)
+        .map_err(|e| format!("store error: {e}"))?;
+
     // Runner takes over from here; its outcome decides the store flip.
     let outcome = runner::run(
         &runner::Ctx {
@@ -849,15 +939,12 @@ fn run_cmd(id: &str) -> Result<u8, String> {
     .map_err(|e| format!("runner error: {e}"))?;
 
     // Flip status and append back to store on Done; keep in_progress on Failed.
-    let mut updated = task.clone();
+    let mut updated = running.clone();
     updated.status = match outcome.status {
         runner::RunStatus::Done => TaskStatus::Done,
         runner::RunStatus::Failed => TaskStatus::InProgress,
     };
-    updated.updated_at = now_iso();
-    store
-        .append(&updated)
-        .map_err(|e| format!("store error: {e}"))?;
+    updated.updated_at = crate::task::now_iso();
 
     // Evidence drop per MVP §3.2: result.json in <data_dir>/tasks/<id>/.
     let task_dir = config.data_dir.join("tasks").join(id);
@@ -891,25 +978,54 @@ fn run_cmd(id: &str) -> Result<u8, String> {
     }
 }
 
-/// `steer` subcommand: note that MVP steer is local-only (no live worker yet).
+/// `steer` subcommand: if the task is running (InProgress), queue a live
+/// steering message via `steer-cmd.txt` — the runner polls and forwards it
+/// to the worker. Non-running tasks get a stored note instead.
 fn steer_cmd(id: &str, message: &[String], json: bool) -> Result<u8, String> {
     if message.is_empty() {
-        return Err(format!("usage: omenic steer {id} <message>"));
+        return Err(format!("usage: oi steer {id} <message>"));
     }
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let store = Store::new(&config.data_dir);
+    let Some(task) = store
+        .load_task(id)
+        .map_err(|e| format!("store error: {e}"))?
+    else {
+        eprintln!("task not found: {id}");
+        return Ok(1);
+    };
     let msg = message.join(" ");
-    let note = format!("steer note for {id}: {msg}");
-    if json {
-        json_ok(&note);
+    if task.status == TaskStatus::InProgress {
+        let dir = config.data_dir.join("tasks").join(id);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("create task dir: {e}"))?;
+        std::fs::write(dir.join("steer-cmd.txt"), &msg)
+            .map_err(|e| format!("write steer inbox: {e}"))?;
+        let note = format!("steer queued for running task {id}: {msg}");
+        if json {
+            json_ok(&note);
+        } else {
+            println!("{note}");
+        }
     } else {
-        println!("{note}");
-        println!(
-            "(M3: steer is a stored instruction for a future worker session; live worker attachment is post-MVP)"
+        let note = format!(
+            "steer note for {id}: {msg} (task not running; status {:?})",
+            task.status
         );
+        if json {
+            json_ok(&note);
+        } else {
+            println!("{note}");
+        }
     }
     Ok(0)
 }
 
-/// `abort` subcommand: mark the task as open again so it can be re-run.
+/// `abort` subcommand: if the task is running (InProgress), SIGTERM both the
+/// omp worker's process group (`kill -TERM -<omp-pid>`, it is a group leader
+/// via `process_group(0)`) and the runner process, then reset the task to
+/// open so it can be re-run. Signal (not a polled file) because the worker
+/// may be mid-thinking with no events to poll between. Non-running tasks are
+/// reset to open directly.
 fn abort_cmd(id: &str, json: bool) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
     let store = Store::new(&config.data_dir);
@@ -920,12 +1036,40 @@ fn abort_cmd(id: &str, json: bool) -> Result<u8, String> {
         eprintln!("task not found: {id}");
         return Ok(1);
     };
-    task.status = TaskStatus::Open;
-    task.updated_at = now_iso();
-    store
-        .append(&task)
-        .map_err(|e| format!("store error: {e}"))?;
-    let msg = format!("aborted {id}; status reset to open");
+    let msg;
+    if task.status == TaskStatus::InProgress {
+        let dir = config.data_dir.join("tasks").join(id);
+        let pids: Vec<i32> = std::fs::read_to_string(dir.join("run.pid"))
+            .ok()
+            .map(|s| {
+                s.split_whitespace()
+                    .filter_map(|p| p.parse::<i32>().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if pids.len() == 2 {
+            let (run_pid, omp_pid) = (pids[0], pids[1]);
+            // Worker tree first (process group), then the runner itself.
+            // .output() discards kill's stderr — abort success is defined by
+            // the store reset below, not by kill diagnostics.
+            let _ = std::process::Command::new("kill")
+                .args(["-TERM", &format!("-{omp_pid}")])
+                .output();
+            let _ = std::process::Command::new("kill")
+                .args(["-TERM", &run_pid.to_string()])
+                .output();
+            msg = format!("abort sent to omp group {omp_pid} + runner {run_pid} for {id}");
+        } else {
+            msg = format!("no live run for {id}; reset to open");
+        }
+        task.status = TaskStatus::Open;
+        task.updated_at = crate::task::now_iso();
+        store
+            .append(&task)
+            .map_err(|e| format!("store error: {e}"))?;
+    } else {
+        msg = format!("aborted {id}; status reset to open");
+    }
     if json {
         json_ok(&msg);
     } else {
@@ -956,8 +1100,9 @@ fn compact_cmd(json: bool) -> Result<u8, String> {
     Ok(0)
 }
 
-/// `init` subcommand: create `omenic-data/` and a default `omenic.toml`.
-/// Idempotent: existing artifacts are never overwritten.
+/// `init` subcommand: create `.oi/` (config dir), `.oi/config.toml` and the
+/// spec template files under `.oi/specs/`. Idempotent — existing artifacts
+/// are never overwritten.
 fn init_cmd(json: bool) -> Result<u8, String> {
     let dir = std::env::current_dir().map_err(|e| format!("cwd error: {e}"))?;
     init_cmd_at(&dir, json)
@@ -965,28 +1110,29 @@ fn init_cmd(json: bool) -> Result<u8, String> {
 
 /// init internals, testable with an explicit directory.
 fn init_cmd_at(dir: &std::path::Path, json: bool) -> Result<u8, String> {
-    let data_dir = dir.join("omenic-data");
-    let config_path = dir.join("omenic.toml");
-    let data_existed = data_dir.exists();
+    let oi_dir = dir.join(".oi");
+    let config_path = oi_dir.join("config.toml");
+    let dir_existed = oi_dir.exists();
     let config_existed = config_path.exists();
 
-    if !data_existed {
-        std::fs::create_dir_all(&data_dir)
-            .map_err(|e| format!("could not create omenic-data/: {e}"))?;
+    if !dir_existed {
+        std::fs::create_dir_all(&oi_dir).map_err(|e| format!("could not create .oi/: {e}"))?;
     }
     if !config_existed {
         let default = "omp_path = \"omp\"\n\
-                       data_dir = \"./omenic-data\"\n\
+                       data_dir = \"./.oi\"\n\
                        model = \"default\"\n";
         std::fs::write(&config_path, default)
-            .map_err(|e| format!("could not create omenic.toml: {e}"))?;
+            .map_err(|e| format!("could not create .oi/config.toml: {e}"))?;
     }
+    // Spec templates (never overwrite user edits).
+    crate::spec::write_default_specs(&oi_dir).map_err(|e| format!("spec templates: {e}"))?;
 
-    let msg = match (data_existed, config_existed) {
+    let msg = match (dir_existed, config_existed) {
         (true, true) => "workspace already initialized",
-        (false, false) => "initialized: omenic-data/, omenic.toml",
-        (false, true) => "created: omenic-data/",
-        (true, false) => "created: omenic.toml",
+        (false, false) => "initialized: .oi/, .oi/config.toml, .oi/specs/",
+        (false, true) => "created: .oi/, .oi/specs/",
+        (true, false) => "created: .oi/config.toml, .oi/specs/",
     };
     if json {
         json_ok(msg);
@@ -1074,8 +1220,40 @@ fn blocked_cmd(json: bool) -> Result<u8, String> {
     Ok(0)
 }
 
+/// cx/bd-style status glyph: `○` open-ready, `●` open-blocked,
+/// `◐` in_progress, `✓` done.
+fn status_glyph(t: &Task, map: &std::collections::HashMap<String, Task>) -> &'static str {
+    match t.status {
+        TaskStatus::Done => "✓",
+        TaskStatus::InProgress => "◐",
+        TaskStatus::Open => {
+            if crate::graph::is_ready(map, &t.id) {
+                "○"
+            } else {
+                "●"
+            }
+        }
+    }
+}
+
+/// cx task_line format: `<icon> <id> ● P<priority> <title>`.
+fn task_line(t: &Task, map: &std::collections::HashMap<String, Task>) -> String {
+    format!(
+        "{} {} ● P{} {}",
+        status_glyph(t, map),
+        t.id,
+        t.priority,
+        t.title
+    )
+}
+
+/// Status legend footer, matching bd/cx output conventions.
+fn status_legend() -> &'static str {
+    "Status: ○ open  ◐ in_progress  ● blocked  ✓ done\n"
+}
+
 /// Render the task tree as an indented plan view (roots first, children
-/// nested under their parent with box-drawing prefixes).
+/// nested under their parent with box-drawing prefixes), cx/bd style.
 ///
 /// Tasks whose `parent` is missing (dangling) or `None` are treated as roots.
 /// A visited set guards against parent cycles in malformed stores.
@@ -1083,11 +1261,10 @@ fn render_plan(tasks: &[Task]) -> String {
     use std::collections::{HashMap, HashSet};
 
     if tasks.is_empty() {
-        return "(no tasks)
-"
-        .to_string();
+        return "(no tasks)\n".to_string();
     }
 
+    let map: HashMap<String, Task> = tasks.iter().map(|t| (t.id.clone(), t.clone())).collect();
     let ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
 
     let mut children: HashMap<&str, Vec<&Task>> = HashMap::new();
@@ -1099,21 +1276,10 @@ fn render_plan(tasks: &[Task]) -> String {
         }
     }
 
-    fn status_str(s: &TaskStatus) -> &'static str {
-        match s {
-            TaskStatus::Open => "open",
-            TaskStatus::InProgress => "in_progress",
-            TaskStatus::Done => "done",
-        }
-    }
-
-    fn fmt_node(t: &Task) -> String {
-        format!("{} [{}] P{}", t.id, status_str(&t.status), t.priority)
-    }
-
     fn print_children(
         parent: &Task,
         children: &HashMap<&str, Vec<&Task>>,
+        map: &HashMap<String, Task>,
         prefix: &str,
         visited: &mut HashSet<String>,
         out: &mut String,
@@ -1123,18 +1289,14 @@ fn render_plan(tasks: &[Task]) -> String {
         };
         for (i, kid) in kids.iter().enumerate() {
             let is_last = i == kids.len() - 1;
-            let branch = if is_last { "└── " } else { "├── " };
+            let branch = if is_last { "└─ " } else { "├─ " };
             // Mark before printing so a cycle back-edge is skipped, not re-printed.
             if !visited.insert(kid.id.clone()) {
                 continue;
             }
-            out.push_str(&format!(
-                "{prefix}{branch}{}
-",
-                fmt_node(kid)
-            ));
-            let next_prefix = format!("{prefix}{}", if is_last { "    " } else { "│   " });
-            print_children(kid, children, &next_prefix, visited, out);
+            out.push_str(&format!("{prefix}{branch}{}\n", task_line(kid, map)));
+            let next_prefix = format!("{prefix}{}", if is_last { "   " } else { "│  " });
+            print_children(kid, children, map, &next_prefix, visited, out);
         }
     }
 
@@ -1145,25 +1307,18 @@ fn render_plan(tasks: &[Task]) -> String {
         if !visited.insert(root.id.clone()) {
             continue;
         }
-        out.push_str(&format!(
-            "{}
-",
-            fmt_node(root)
-        ));
-        print_children(root, &children, "", &mut visited, &mut out);
+        out.push_str(&format!("{}\n", task_line(root, &map)));
+        print_children(root, &children, &map, "", &mut visited, &mut out);
     }
     // Fallback: tasks in a pure parent-cycle (no root exists) still show once.
     for t in tasks {
         if !visited.insert(t.id.clone()) {
             continue;
         }
-        out.push_str(&format!(
-            "{}
-",
-            fmt_node(t)
-        ));
-        print_children(t, &children, "", &mut visited, &mut out);
+        out.push_str(&format!("{}\n", task_line(t, &map)));
+        print_children(t, &children, &map, "", &mut visited, &mut out);
     }
+    out.push_str(status_legend());
     out
 }
 
@@ -1238,6 +1393,240 @@ fn render_dot(tasks: &[Task]) -> String {
 
     out.push_str("}\n");
     out
+}
+
+/// `board` subcommand: the task running board — tasks partitioned by
+/// status/readiness so an agent can see what to run next and what is blocked.
+fn board_cmd(json: bool) -> Result<u8, String> {
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let store = Store::new(&config.data_dir);
+    let all = store.load_all().map_err(|e| format!("store error: {e}"))?;
+    let map: std::collections::HashMap<String, Task> =
+        all.iter().map(|t| (t.id.clone(), t.clone())).collect();
+
+    let mut done: Vec<&Task> = Vec::new();
+    let mut in_progress: Vec<&Task> = Vec::new();
+    let mut ready: Vec<&Task> = Vec::new();
+    let mut blocked: Vec<&Task> = Vec::new();
+    for t in &all {
+        match t.status {
+            TaskStatus::Done => done.push(t),
+            TaskStatus::InProgress => in_progress.push(t),
+            TaskStatus::Open => {
+                if crate::graph::is_ready(&map, &t.id) {
+                    ready.push(t);
+                } else {
+                    blocked.push(t);
+                }
+            }
+        }
+    }
+    let by_priority = |a: &&Task, b: &&Task| a.priority.cmp(&b.priority).then(a.id.cmp(&b.id));
+    done.sort_by(by_priority);
+    in_progress.sort_by(by_priority);
+    ready.sort_by(by_priority);
+    blocked.sort_by(by_priority);
+
+    if json {
+        let part = |v: &[&Task]| -> Vec<serde_json::Value> {
+            v.iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "id": t.id,
+                        "title": t.title,
+                        "priority": t.priority,
+                        "deps": t.deps,
+                    })
+                })
+                .collect()
+        };
+        let obj = serde_json::json!({
+            "done": part(&done),
+            "in_progress": part(&in_progress),
+            "ready": part(&ready),
+            "blocked": part(&blocked),
+        });
+        print_json(&obj);
+    } else {
+        let section = |name: &str, v: &[&Task]| -> String {
+            let mut s = format!("## {name} ({})\n", v.len());
+            for t in v {
+                s.push_str(&format!("  {}\n", task_line(t, &map)));
+            }
+            s
+        };
+        print!(
+            "{}{}{}{}{}",
+            section("done", &done),
+            section("in_progress", &in_progress),
+            section("ready", &ready),
+            section("blocked", &blocked),
+            status_legend(),
+        );
+    }
+    Ok(0)
+}
+
+/// `template list` subcommand: list built-in orchestration templates.
+fn template_list_cmd(json: bool) -> Result<u8, String> {
+    if json {
+        let list: Vec<serde_json::Value> = crate::template::TEMPLATES
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "steps": t.steps.iter().map(|s| s.name).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        print_json(&list);
+    } else {
+        for t in crate::template::TEMPLATES {
+            println!("{} — {}", t.name, t.description);
+            for s in t.steps {
+                println!("  - {}", s.name);
+            }
+        }
+    }
+    Ok(0)
+}
+
+/// `template apply` subcommand: create topic task + step chain from a template.
+fn template_apply_cmd(
+    store: &Store,
+    name: &str,
+    topic: &str,
+    parent: Option<String>,
+    json: bool,
+) -> Result<u8, String> {
+    let tpl = crate::template::find(name)
+        .ok_or_else(|| format!("unknown template `{name}` (try `oi template list`)"))?;
+    let ids = crate::template::apply(store, tpl, topic, parent)?;
+    if json {
+        let obj = serde_json::json!({ "created": ids });
+        print_json(&obj);
+    } else {
+        for id in &ids {
+            println!("created {id}");
+        }
+    }
+    Ok(0)
+}
+
+/// `spec list` subcommand: list spec tables loaded from `<data>/specs/`.
+fn spec_list_cmd(json: bool) -> Result<u8, String> {
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let specs =
+        crate::spec::load_all_specs(&config.data_dir).map_err(|e| format!("spec error: {e}"))?;
+    if specs.is_empty() {
+        eprintln!(
+            "no spec templates in {} (run `oi init` first)",
+            config.data_dir.join("specs").display()
+        );
+        return Ok(1);
+    }
+    if json {
+        let list: Vec<serde_json::Value> = specs
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "name": s.name,
+                    "description": s.description,
+                    "fields": s.fields.iter().map(|f| {
+                        serde_json::json!({
+                            "heading": f.heading,
+                            "required": f.required,
+                            "checkbox": f.checkbox,
+                        })
+                    }).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        print_json(&list);
+    } else {
+        for s in &specs {
+            println!("{} — {}", s.name, s.description);
+            for f in &s.fields {
+                let mark = if f.required { "req" } else { "opt" };
+                let cb = if f.checkbox { " [checkbox]" } else { "" };
+                println!("  {mark}: ## {}{cb}", f.heading);
+            }
+        }
+    }
+    Ok(0)
+}
+
+/// `spec new` subcommand: generate a blank spec table skeleton.
+fn spec_new_cmd(
+    kind: &str,
+    title: Option<String>,
+    output: Option<String>,
+    json: bool,
+) -> Result<u8, String> {
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let spec = crate::spec::load_spec(&config.data_dir, kind)
+        .map_err(|e| format!("spec error: {e} — try `oi spec list` or `oi init`"))?;
+    let doc = crate::spec::render_skeleton(&spec, title.as_deref().unwrap_or(""));
+    match output {
+        Some(path) => {
+            std::fs::write(&path, &doc).map_err(|e| format!("write {}: {e}", path))?;
+            let msg = format!("spec skeleton written to {path}");
+            if json {
+                json_ok(&msg);
+            } else {
+                println!("{msg}");
+            }
+        }
+        None => {
+            use std::io::Write;
+            print!("{doc}");
+            std::io::stdout().flush().ok();
+        }
+    }
+    Ok(0)
+}
+
+/// `spec check` subcommand: validate a filled document against the kind's rules.
+fn spec_check_cmd(kind: &str, file: &str, json: bool) -> Result<u8, String> {
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let spec = crate::spec::load_spec(&config.data_dir, kind)
+        .map_err(|e| format!("spec error: {e} — try `oi spec list` or `oi init`"))?;
+    let findings = crate::spec::check_file(&spec, std::path::Path::new(file))?;
+    let fails: Vec<_> = findings.iter().filter(|f| f.fail).collect();
+    if json {
+        let obj = serde_json::json!({
+            "spec": spec.name,
+            "file": file,
+            "ok": fails.is_empty(),
+            "findings": findings.iter().map(|f| serde_json::json!({
+                "rule": f.rule,
+                "fail": f.fail,
+                "message": f.message,
+            })).collect::<Vec<_>>(),
+        });
+        print_json(&obj);
+    } else {
+        for f in &findings {
+            let tag = if f.fail { "FAIL" } else { "ok  " };
+            println!("{tag} [{}] {}", f.rule, f.message);
+        }
+        if fails.is_empty() {
+            println!("RESULT: ALL PASS");
+        } else {
+            println!("RESULT: FAIL ({} issue(s))", fails.len());
+        }
+    }
+    Ok(if fails.is_empty() { 0 } else { 1 })
+}
+
+/// `spec view` subcommand: print a spec document for the agent to inspect.
+fn spec_view_cmd(file: &str) -> Result<u8, String> {
+    let doc = std::fs::read_to_string(file).map_err(|e| format!("read {}: {e}", file))?;
+    use std::io::Write;
+    print!("{doc}");
+    std::io::stdout().flush().ok();
+    Ok(0)
 }
 
 #[cfg(test)]
@@ -1362,7 +1751,7 @@ mod tests {
 
     #[test]
     fn now_iso_format() {
-        let s = now_iso();
+        let s = crate::task::now_iso();
         assert_eq!(s.len(), 20); // 2026-08-10T12:34:56Z
         assert!(s.ends_with('Z'));
         assert!(s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' && s.as_bytes()[10] == b'T');
@@ -1394,11 +1783,12 @@ mod tests {
             mk_task("scheme-workflow-02", Some("dev-shell"), TaskStatus::Done),
         ];
         let expected = "\
-dev-shell [open] P2
-├── scheme-workflow-01 [open] P2
-│   ├── imp-cli [open] P2
-│   └── imp-rpc [open] P2
-└── scheme-workflow-02 [done] P2
+○ dev-shell ● P2 dev-shell
+├─ ○ scheme-workflow-01 ● P2 scheme-workflow-01
+│  ├─ ○ imp-cli ● P2 imp-cli
+│  └─ ○ imp-rpc ● P2 imp-rpc
+└─ ✓ scheme-workflow-02 ● P2 scheme-workflow-02
+Status: ○ open  ◐ in_progress  ● blocked  ✓ done
 ";
         assert_eq!(render_plan(&tasks), expected);
     }
@@ -1416,8 +1806,8 @@ dev-shell [open] P2
             mk_task("b", None, TaskStatus::Open),
         ];
         let out = render_plan(&tasks);
-        assert!(out.starts_with("a [open] P2\n"));
-        assert!(out.contains("b [open] P2"));
+        assert!(out.starts_with("○ a ● P2 a\n"));
+        assert!(out.contains("○ b ● P2 b"));
     }
 
     #[test]
@@ -1428,8 +1818,8 @@ dev-shell [open] P2
         ];
         let out = render_plan(&tasks);
         // Both appear exactly once; renderer terminates.
-        assert_eq!(out.matches("a [open] P2").count(), 1);
-        assert_eq!(out.matches("b [open] P2").count(), 1);
+        assert_eq!(out.matches("○ a ● P2 a").count(), 1);
+        assert_eq!(out.matches("○ b ● P2 b").count(), 1);
     }
 
     #[test]
@@ -1440,9 +1830,9 @@ dev-shell [open] P2
             mk_task("t-done", None, TaskStatus::Done),
         ];
         let out = render_plan(&tasks);
-        assert!(out.contains("t-open [open] P2"));
-        assert!(out.contains("t-ip [in_progress] P2"));
-        assert!(out.contains("t-done [done] P2"));
+        assert!(out.contains("○ t-open ● P2 t-open"));
+        assert!(out.contains("◐ t-ip ● P2 t-ip"));
+        assert!(out.contains("✓ t-done ● P2 t-done"));
     }
 
     #[test]
@@ -1863,6 +2253,7 @@ dev-shell [open] P2
             &store,
             "t1",
             None,
+            None,
             Some("in_progress".to_string()),
             None,
             None,
@@ -1899,6 +2290,7 @@ dev-shell [open] P2
             None,
             None,
             None,
+            None,
             false,
         )
         .unwrap();
@@ -1924,6 +2316,7 @@ dev-shell [open] P2
         task_update(
             &store,
             "t1",
+            None,
             None,
             None,
             None,
@@ -1968,6 +2361,7 @@ dev-shell [open] P2
             "b",
             None,
             None,
+            None,
             Some("a".to_string()),
             None,
             None,
@@ -1983,7 +2377,10 @@ dev-shell [open] P2
     fn update_missing_task() {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let store = tmp_store("upd_404");
-        let code = task_update(&store, "nope", None, None, None, None, None, None, false).unwrap();
+        let code = task_update(
+            &store, "nope", None, None, None, None, None, None, None, false,
+        )
+        .unwrap();
         assert_eq!(code, 1);
     }
 
@@ -2006,6 +2403,7 @@ dev-shell [open] P2
             &store,
             "t1",
             None,
+            None,
             Some("bogus".to_string()),
             None,
             None,
@@ -2024,6 +2422,7 @@ dev-shell [open] P2
         let r = task_update(
             &store,
             "nonexistent",
+            None,
             None,
             None,
             None,
@@ -2055,6 +2454,7 @@ dev-shell [open] P2
             "t1",
             None,
             None,
+            None,
             Some("t1".to_string()),
             None,
             None,
@@ -2083,6 +2483,7 @@ dev-shell [open] P2
         let r = task_update(
             &store,
             "t1",
+            None,
             None,
             None,
             Some("ghost".to_string()),
@@ -2419,7 +2820,7 @@ dev-shell [open] P2
     }
 
     fn mk_task_titled(id: &str, title: &str) -> Task {
-        let now = now_iso();
+        let now = crate::task::now_iso();
         Task {
             id: id.to_string(),
             title: title.to_string(),
@@ -2555,11 +2956,12 @@ dev-shell [open] P2
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         init_cmd_at(&dir, false).unwrap();
-        assert!(dir.join("omenic-data").is_dir());
-        assert!(dir.join("omenic.toml").is_file());
-        let content = std::fs::read_to_string(dir.join("omenic.toml")).unwrap();
+        assert!(dir.join(".oi").is_dir());
+        assert!(dir.join(".oi/config.toml").is_file());
+        assert!(dir.join(".oi/specs").is_dir());
+        let content = std::fs::read_to_string(dir.join(".oi/config.toml")).unwrap();
         assert!(content.contains("omp_path = \"omp\""));
-        assert!(content.contains("data_dir = \"./omenic-data\""));
+        assert!(content.contains("data_dir = \"./.oi\""));
         assert!(content.contains("model = \"default\""));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2571,14 +2973,14 @@ dev-shell [open] P2
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         init_cmd_at(&dir, false).unwrap();
-        let toml = std::fs::read_to_string(dir.join("omenic.toml")).unwrap();
+        let toml = std::fs::read_to_string(dir.join(".oi/config.toml")).unwrap();
         init_cmd_at(&dir, false).unwrap();
         // Not overwritten.
         assert_eq!(
             toml,
-            std::fs::read_to_string(dir.join("omenic.toml")).unwrap()
+            std::fs::read_to_string(dir.join(".oi/config.toml")).unwrap()
         );
-        assert!(dir.join("omenic-data").is_dir());
+        assert!(dir.join(".oi").is_dir());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2589,11 +2991,11 @@ dev-shell [open] P2
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("omenic-data")).unwrap();
+        std::fs::create_dir_all(dir.join(".oi")).unwrap();
         init_cmd_at(&dir, false).unwrap();
-        // toml was created, data dir was already there.
-        assert!(dir.join("omenic.toml").is_file());
-        assert!(dir.join("omenic-data").is_dir());
+        // config.toml + specs created, .oi already there.
+        assert!(dir.join(".oi/config.toml").is_file());
+        assert!(dir.join(".oi/specs").is_dir());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
