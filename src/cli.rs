@@ -117,6 +117,8 @@ enum TaskCmd {
         #[arg(long)]
         title: Option<String>,
         #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
         status: Option<String>,
         #[arg(long)]
         deps: Option<String>,
@@ -230,13 +232,23 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
                 TaskCmd::Update {
                     id,
                     title,
+                    description,
                     status,
                     deps,
                     acceptance,
                     priority,
                     kind,
                 } => task_update(
-                    &store, &id, title, status, deps, acceptance, priority, kind, json,
+                    &store,
+                    &id,
+                    title,
+                    description,
+                    status,
+                    deps,
+                    acceptance,
+                    priority,
+                    kind,
+                    json,
                 ),
                 TaskCmd::Delete { id } => task_delete(&store, &id, json),
                 TaskCmd::List {
@@ -566,6 +578,7 @@ fn task_update(
     store: &Store,
     id: &str,
     title: Option<String>,
+    description: Option<String>,
     status: Option<String>,
     deps: Option<String>,
     acceptance: Option<String>,
@@ -583,6 +596,9 @@ fn task_update(
 
     if let Some(v) = title {
         task.title = v;
+    }
+    if let Some(v) = description {
+        task.description = v;
     }
     if let Some(v) = status {
         task.status = parse_status(&v)?;
@@ -2223,6 +2239,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
             &store,
             "t1",
             None,
+            None,
             Some("in_progress".to_string()),
             None,
             None,
@@ -2259,6 +2276,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
             None,
             None,
             None,
+            None,
             false,
         )
         .unwrap();
@@ -2284,6 +2302,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
         task_update(
             &store,
             "t1",
+            None,
             None,
             None,
             None,
@@ -2328,6 +2347,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
             "b",
             None,
             None,
+            None,
             Some("a".to_string()),
             None,
             None,
@@ -2343,7 +2363,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
     fn update_missing_task() {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let store = tmp_store("upd_404");
-        let code = task_update(&store, "nope", None, None, None, None, None, None, false).unwrap();
+        let code = task_update(&store, "nope", None, None, None, None, None, None, None, false).unwrap();
         assert_eq!(code, 1);
     }
 
@@ -2366,6 +2386,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
             &store,
             "t1",
             None,
+            None,
             Some("bogus".to_string()),
             None,
             None,
@@ -2384,6 +2405,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
         let r = task_update(
             &store,
             "nonexistent",
+            None,
             None,
             None,
             None,
@@ -2415,6 +2437,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
             "t1",
             None,
             None,
+            None,
             Some("t1".to_string()),
             None,
             None,
@@ -2443,6 +2466,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
         let r = task_update(
             &store,
             "t1",
+            None,
             None,
             None,
             Some("ghost".to_string()),
