@@ -17,8 +17,8 @@ enum Commands {
     PreCommit,
     /// Run pre-push hooks
     PrePush,
-    /// Run merge checks
-    Merge,
+    /// Run merge checks: `gate merge <owner/repo> <pr_number> [--dry-run]`
+    Merge(MergeArgs),
     /// Run CRG + ocr code review
     Review(ReviewArgs),
     /// Audit issues/PRs for checkbox & linkage compliance
@@ -40,6 +40,17 @@ struct ReviewArgs {
     /// PR number to post to (auto-detected if omitted)
     #[arg(long)]
     pr: Option<u64>,
+}
+
+#[derive(clap::Args)]
+struct MergeArgs {
+    /// owner/repo
+    repo: String,
+    /// PR number
+    pr: u32,
+    /// Plan only, no squash
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(clap::Args)]
@@ -85,7 +96,13 @@ fn main() -> ExitCode {
         }
         Commands::PreCommit => ExitCode::from(gate_core::tools::pre_commit::run() as u8),
         Commands::PrePush => ExitCode::from(gate_core::tools::pre_push::run() as u8),
-        Commands::Merge => ExitCode::from(gate_core::tools::merge::run(&[]) as u8),
+        Commands::Merge(args) => {
+            let mut arg_vec = vec![args.repo, args.pr.to_string()];
+            if args.dry_run {
+                arg_vec.push("--dry-run".to_string());
+            }
+            ExitCode::from(gate_core::tools::merge::run(&arg_vec) as u8)
+        }
         Commands::Issue => ExitCode::from(gate_core::tools::gh_wrap::intercept_issue_create(&[]) as u8),
         Commands::Pr => ExitCode::from(gate_core::tools::gh_wrap::intercept_pr_create(&[]) as u8),
         Commands::Review(args) => {
