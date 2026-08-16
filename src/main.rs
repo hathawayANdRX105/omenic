@@ -8,6 +8,7 @@ mod config;
 mod graph;
 mod rpc;
 mod runner;
+mod spec;
 mod store;
 mod task;
 mod template;

@@ -37,11 +37,13 @@ enum Command {
     },
     /// Show task details (alias for `task show`)
     Show { id: String },
-    /// Render the task tree / Graphviz DOT
+    /// Render the task tree / Graphviz DOT / board view
     Plan {
         /// Output Graphviz DOT format
         #[arg(long)]
         dot: bool,
+        #[command(subcommand)]
+        sub: Option<PlanSub>,
     },
     /// Execute a task via a worker session
     Run { id: String },
@@ -69,12 +71,18 @@ enum Command {
         #[command(subcommand)]
         sub: TemplateCmd,
     },
-    /// Run the real GitHub CLI (skips the gate shim, strips proxy env)
-    Gh {
-        /// Pass-through args for the real gh binary
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
+    /// Spec tables (规范表) for GitHub artifacts
+    Spec {
+        #[command(subcommand)]
+        sub: SpecCmd,
     },
+}
+
+/// Sub-views of `oi plan`.
+#[derive(Subcommand)]
+enum PlanSub {
+    /// Partitioned board view (ready / blocked / in_progress / done)
+    Board,
 }
 
 #[derive(Subcommand)]
@@ -161,6 +169,32 @@ enum TemplateCmd {
     },
 }
 
+#[derive(Subcommand)]
+enum SpecCmd {
+    /// List spec tables
+    List,
+    /// Generate a blank spec table skeleton
+    New {
+        /// Spec kind (issue | epic | pr | review)
+        kind: String,
+        /// Document title (becomes the `#` heading)
+        #[arg(long)]
+        title: Option<String>,
+        /// Write to file instead of stdout
+        #[arg(short = 'o', long)]
+        output: Option<String>,
+    },
+    /// Validate a filled spec document against the kind's rules
+    Check {
+        /// Spec kind to validate against
+        kind: String,
+        /// Markdown file to check
+        file: String,
+    },
+    /// Print a spec document (agent-facing view)
+    View { file: String },
+}
+
 /// Entry point: parse argv via clap and dispatch to a subcommand.
 pub fn run() -> ExitCode {
     let cli = Cli::parse();
@@ -214,7 +248,10 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
             }
         }
         Command::Show { id } => show_cmd(&id, json),
-        Command::Plan { dot } => plan_cmd(dot, json),
+        Command::Plan { dot, sub } => match sub {
+            Some(PlanSub::Board) => board_cmd(json),
+            None => plan_cmd(dot, json),
+        },
         Command::Run { id } => run_cmd(&id),
         Command::Steer { id, message } => steer_cmd(&id, &message, json),
         Command::Abort { id } => abort_cmd(&id, json),
@@ -243,7 +280,16 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
                 } => template_apply_cmd(&store, &name, &topic, parent, json),
             }
         }
-        Command::Gh { args } => gh_cmd(&args),
+        Command::Spec { sub } => match sub {
+            SpecCmd::List => spec_list_cmd(json),
+            SpecCmd::New {
+                kind,
+                title,
+                output,
+            } => spec_new_cmd(&kind, title, output, json),
+            SpecCmd::Check { kind, file } => spec_check_cmd(&kind, &file, json),
+            SpecCmd::View { file } => spec_view_cmd(&file),
+        },
     }
 }
 
@@ -1156,8 +1202,40 @@ fn blocked_cmd(json: bool) -> Result<u8, String> {
     Ok(0)
 }
 
+/// cx/bd-style status glyph: `○` open-ready, `●` open-blocked,
+/// `◐` in_progress, `✓` done.
+fn status_glyph(t: &Task, map: &std::collections::HashMap<String, Task>) -> &'static str {
+    match t.status {
+        TaskStatus::Done => "✓",
+        TaskStatus::InProgress => "◐",
+        TaskStatus::Open => {
+            if crate::graph::is_ready(map, &t.id) {
+                "○"
+            } else {
+                "●"
+            }
+        }
+    }
+}
+
+/// cx task_line format: `<icon> <id> ● P<priority> <title>`.
+fn task_line(t: &Task, map: &std::collections::HashMap<String, Task>) -> String {
+    format!(
+        "{} {} ● P{} {}",
+        status_glyph(t, map),
+        t.id,
+        t.priority,
+        t.title
+    )
+}
+
+/// Status legend footer, matching bd/cx output conventions.
+fn status_legend() -> &'static str {
+    "Status: ○ open  ◐ in_progress  ● blocked  ✓ done\n"
+}
+
 /// Render the task tree as an indented plan view (roots first, children
-/// nested under their parent with box-drawing prefixes).
+/// nested under their parent with box-drawing prefixes), cx/bd style.
 ///
 /// Tasks whose `parent` is missing (dangling) or `None` are treated as roots.
 /// A visited set guards against parent cycles in malformed stores.
@@ -1165,11 +1243,10 @@ fn render_plan(tasks: &[Task]) -> String {
     use std::collections::{HashMap, HashSet};
 
     if tasks.is_empty() {
-        return "(no tasks)
-"
-        .to_string();
+        return "(no tasks)\n".to_string();
     }
 
+    let map: HashMap<String, Task> = tasks.iter().map(|t| (t.id.clone(), t.clone())).collect();
     let ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
 
     let mut children: HashMap<&str, Vec<&Task>> = HashMap::new();
@@ -1181,21 +1258,10 @@ fn render_plan(tasks: &[Task]) -> String {
         }
     }
 
-    fn status_str(s: &TaskStatus) -> &'static str {
-        match s {
-            TaskStatus::Open => "open",
-            TaskStatus::InProgress => "in_progress",
-            TaskStatus::Done => "done",
-        }
-    }
-
-    fn fmt_node(t: &Task) -> String {
-        format!("{} [{}] P{}", t.id, status_str(&t.status), t.priority)
-    }
-
     fn print_children(
         parent: &Task,
         children: &HashMap<&str, Vec<&Task>>,
+        map: &HashMap<String, Task>,
         prefix: &str,
         visited: &mut HashSet<String>,
         out: &mut String,
@@ -1205,18 +1271,14 @@ fn render_plan(tasks: &[Task]) -> String {
         };
         for (i, kid) in kids.iter().enumerate() {
             let is_last = i == kids.len() - 1;
-            let branch = if is_last { "└── " } else { "├── " };
+            let branch = if is_last { "└─ " } else { "├─ " };
             // Mark before printing so a cycle back-edge is skipped, not re-printed.
             if !visited.insert(kid.id.clone()) {
                 continue;
             }
-            out.push_str(&format!(
-                "{prefix}{branch}{}
-",
-                fmt_node(kid)
-            ));
-            let next_prefix = format!("{prefix}{}", if is_last { "    " } else { "│   " });
-            print_children(kid, children, &next_prefix, visited, out);
+            out.push_str(&format!("{prefix}{branch}{}\n", task_line(kid, map)));
+            let next_prefix = format!("{prefix}{}", if is_last { "   " } else { "│  " });
+            print_children(kid, children, map, &next_prefix, visited, out);
         }
     }
 
@@ -1227,25 +1289,18 @@ fn render_plan(tasks: &[Task]) -> String {
         if !visited.insert(root.id.clone()) {
             continue;
         }
-        out.push_str(&format!(
-            "{}
-",
-            fmt_node(root)
-        ));
-        print_children(root, &children, "", &mut visited, &mut out);
+        out.push_str(&format!("{}\n", task_line(root, &map)));
+        print_children(root, &children, &map, "", &mut visited, &mut out);
     }
     // Fallback: tasks in a pure parent-cycle (no root exists) still show once.
     for t in tasks {
         if !visited.insert(t.id.clone()) {
             continue;
         }
-        out.push_str(&format!(
-            "{}
-",
-            fmt_node(t)
-        ));
-        print_children(t, &children, "", &mut visited, &mut out);
+        out.push_str(&format!("{}\n", task_line(t, &map)));
+        print_children(t, &children, &map, "", &mut visited, &mut out);
     }
+    out.push_str(status_legend());
     out
 }
 
@@ -1375,20 +1430,20 @@ fn board_cmd(json: bool) -> Result<u8, String> {
         });
         print_json(&obj);
     } else {
-        let line = |t: &Task| format!("{} (P{}) — {}", t.id, t.priority, t.title);
         let section = |name: &str, v: &[&Task]| -> String {
             let mut s = format!("## {name} ({})\n", v.len());
             for t in v {
-                s.push_str(&format!("  {}\n", line(t)));
+                s.push_str(&format!("  {}\n", task_line(t, &map)));
             }
             s
         };
         print!(
-            "{}{}{}{}",
+            "{}{}{}{}{}",
             section("done", &done),
             section("in_progress", &in_progress),
             section("ready", &ready),
             section("blocked", &blocked),
+            status_legend(),
         );
     }
     Ok(0)
@@ -1441,44 +1496,107 @@ fn template_apply_cmd(
     Ok(0)
 }
 
-/// `gh` subcommand: run the real GitHub CLI directly — skips the gate shim
-/// installed at `~/.local/bin/gh` and strips proxy env vars (the local proxy
-/// at 127.0.0.1:7890 frequently refuses connections). Exit code passes
-/// through unchanged so scripts can branch on gh's own status.
-fn gh_cmd(args: &[String]) -> Result<u8, String> {
-    let Some(real) = find_real_gh() else {
-        return Err(
-            "real gh not found on PATH (outside ~/.local/bin); install via pacman: gh".to_string(),
-        );
-    };
-    let status = std::process::Command::new(&real)
-        .args(args)
-        .env_remove("http_proxy")
-        .env_remove("https_proxy")
-        .env_remove("HTTP_PROXY")
-        .env_remove("HTTPS_PROXY")
-        .env_remove("ALL_PROXY")
-        .env_remove("all_proxy")
-        .status()
-        .map_err(|e| format!("spawn {}: {e}", real.display()))?;
-    Ok(status.code().unwrap_or(1) as u8)
+/// `spec list` subcommand: list the four spec tables.
+fn spec_list_cmd(json: bool) -> Result<u8, String> {
+    if json {
+        let list: Vec<serde_json::Value> = crate::spec::SPECS
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "name": s.name,
+                    "description": s.description,
+                    "fields": s.fields.iter().map(|f| {
+                        serde_json::json!({
+                            "heading": f.heading,
+                            "required": f.required,
+                            "checkbox": f.checkbox,
+                        })
+                    }).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        print_json(&list);
+    } else {
+        for s in crate::spec::SPECS {
+            println!("{} — {}", s.name, s.description);
+            for f in s.fields {
+                let mark = if f.required { "req" } else { "opt" };
+                let cb = if f.checkbox { " [checkbox]" } else { "" };
+                println!("  {mark}: ## {}{cb}", f.heading);
+            }
+        }
+    }
+    Ok(0)
 }
 
-/// First `gh` on PATH that is not inside `~/.local/bin` (the gate shim
-/// deployment dir). Canonical comparison so symlinked PATH entries resolve.
-fn find_real_gh() -> Option<std::path::PathBuf> {
-    let shim = std::fs::canonicalize(
-        std::path::PathBuf::from(std::env::var_os("HOME")?).join(".local/bin"),
-    )
-    .ok()?;
-    std::env::split_paths(&std::env::var_os("PATH")?)
-        .map(|d| d.join("gh"))
-        .filter(|p| p.is_file())
-        .find(|p| {
-            std::fs::canonicalize(p)
-                .map(|c| !c.starts_with(&shim))
-                .unwrap_or(true)
-        })
+/// `spec new` subcommand: generate a blank spec table skeleton.
+fn spec_new_cmd(
+    kind: &str,
+    title: Option<String>,
+    output: Option<String>,
+    json: bool,
+) -> Result<u8, String> {
+    let spec = crate::spec::find(kind)
+        .ok_or_else(|| format!("unknown spec `{kind}` (try `oi spec list`)"))?;
+    let doc = crate::spec::render_skeleton(spec, title.as_deref().unwrap_or(""));
+    match output {
+        Some(path) => {
+            std::fs::write(&path, &doc).map_err(|e| format!("write {}: {e}", path))?;
+            let msg = format!("spec skeleton written to {path}");
+            if json {
+                json_ok(&msg);
+            } else {
+                println!("{msg}");
+            }
+        }
+        None => {
+            use std::io::Write;
+            print!("{doc}");
+            std::io::stdout().flush().ok();
+        }
+    }
+    Ok(0)
+}
+
+/// `spec check` subcommand: validate a filled document against the kind's rules.
+fn spec_check_cmd(kind: &str, file: &str, json: bool) -> Result<u8, String> {
+    let spec = crate::spec::find(kind)
+        .ok_or_else(|| format!("unknown spec `{kind}` (try `oi spec list`)"))?;
+    let findings = crate::spec::check_file(spec, std::path::Path::new(file))?;
+    let fails: Vec<_> = findings.iter().filter(|f| f.fail).collect();
+    if json {
+        let obj = serde_json::json!({
+            "spec": spec.name,
+            "file": file,
+            "ok": fails.is_empty(),
+            "findings": findings.iter().map(|f| serde_json::json!({
+                "rule": f.rule,
+                "fail": f.fail,
+                "message": f.message,
+            })).collect::<Vec<_>>(),
+        });
+        print_json(&obj);
+    } else {
+        for f in &findings {
+            let tag = if f.fail { "FAIL" } else { "ok  " };
+            println!("{tag} [{}] {}", f.rule, f.message);
+        }
+        if fails.is_empty() {
+            println!("RESULT: ALL PASS");
+        } else {
+            println!("RESULT: FAIL ({} issue(s))", fails.len());
+        }
+    }
+    Ok(if fails.is_empty() { 0 } else { 1 })
+}
+
+/// `spec view` subcommand: print a spec document for the agent to inspect.
+fn spec_view_cmd(file: &str) -> Result<u8, String> {
+    let doc = std::fs::read_to_string(file).map_err(|e| format!("read {}: {e}", file))?;
+    use std::io::Write;
+    print!("{doc}");
+    std::io::stdout().flush().ok();
+    Ok(0)
 }
 
 #[cfg(test)]
@@ -1635,11 +1753,12 @@ mod tests {
             mk_task("scheme-workflow-02", Some("dev-shell"), TaskStatus::Done),
         ];
         let expected = "\
-dev-shell [open] P2
-├── scheme-workflow-01 [open] P2
-│   ├── imp-cli [open] P2
-│   └── imp-rpc [open] P2
-└── scheme-workflow-02 [done] P2
+○ dev-shell ● P2 dev-shell
+├─ ○ scheme-workflow-01 ● P2 scheme-workflow-01
+│  ├─ ○ imp-cli ● P2 imp-cli
+│  └─ ○ imp-rpc ● P2 imp-rpc
+└─ ✓ scheme-workflow-02 ● P2 scheme-workflow-02
+Status: ○ open  ◐ in_progress  ● blocked  ✓ done
 ";
         assert_eq!(render_plan(&tasks), expected);
     }
@@ -1657,8 +1776,8 @@ dev-shell [open] P2
             mk_task("b", None, TaskStatus::Open),
         ];
         let out = render_plan(&tasks);
-        assert!(out.starts_with("a [open] P2\n"));
-        assert!(out.contains("b [open] P2"));
+        assert!(out.starts_with("○ a ● P2 a\n"));
+        assert!(out.contains("○ b ● P2 b"));
     }
 
     #[test]
@@ -1669,8 +1788,8 @@ dev-shell [open] P2
         ];
         let out = render_plan(&tasks);
         // Both appear exactly once; renderer terminates.
-        assert_eq!(out.matches("a [open] P2").count(), 1);
-        assert_eq!(out.matches("b [open] P2").count(), 1);
+        assert_eq!(out.matches("○ a ● P2 a").count(), 1);
+        assert_eq!(out.matches("○ b ● P2 b").count(), 1);
     }
 
     #[test]
@@ -1681,9 +1800,9 @@ dev-shell [open] P2
             mk_task("t-done", None, TaskStatus::Done),
         ];
         let out = render_plan(&tasks);
-        assert!(out.contains("t-open [open] P2"));
-        assert!(out.contains("t-ip [in_progress] P2"));
-        assert!(out.contains("t-done [done] P2"));
+        assert!(out.contains("○ t-open ● P2 t-open"));
+        assert!(out.contains("◐ t-ip ● P2 t-ip"));
+        assert!(out.contains("✓ t-done ● P2 t-done"));
     }
 
     #[test]
