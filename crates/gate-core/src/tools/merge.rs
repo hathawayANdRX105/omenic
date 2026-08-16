@@ -6,10 +6,8 @@
 //!
 //! Usage: `gate merge <owner/repo> <pr_number> [--dry-run]`
 
-
-
 use crate::shared::{
-    exit_code, gh_api, gh_api_paginate, load_yaml, print_findings, run_external, Finding, Severity,
+    Finding, Severity, exit_code, gh_api, gh_api_paginate, load_yaml, print_findings, run_external,
 };
 use crate::tools::git;
 
@@ -39,8 +37,8 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
 
-    let githooks = git::find_githooks_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from(".githooks"));
+    let githooks =
+        git::find_githooks_dir().unwrap_or_else(|| std::path::PathBuf::from(".githooks"));
     let spec_dir = githooks.join("spec");
     let dispatch_path = spec_dir.join("dispatch.yaml");
     let cfg = match load_yaml(dispatch_path.to_str().unwrap_or("")) {
@@ -60,7 +58,11 @@ pub fn run(args: &[String]) -> i32 {
         Some(c) => c
             .get("merge")
             .and_then(|v| v.as_sequence())
-            .map(|seq| seq.iter().filter_map(|t| t.as_str().map(String::from)).collect())
+            .map(|seq| {
+                seq.iter()
+                    .filter_map(|t| t.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default(),
         None => vec![
             "github/pull_requests".into(),
@@ -95,7 +97,10 @@ pub fn run(args: &[String]) -> i32 {
                 print!("Fixes: #{}", fixes.join(", #"));
                 println!();
             }
-            if let Some(head) = pr.get("head").and_then(|h| h.get("ref")).and_then(|r| r.as_str())
+            if let Some(head) = pr
+                .get("head")
+                .and_then(|h| h.get("ref"))
+                .and_then(|r| r.as_str())
             {
                 println!("Branch: {}", head);
             }
@@ -128,19 +133,12 @@ fn run_pr_rules(repo: &str, pr_num: u32) -> Vec<Finding> {
 }
 
 fn run_review_rules(repo: &str, pr_num: u32, spec_dir: &std::path::Path) -> Vec<Finding> {
-    let review_cfg = load_yaml(
-        spec_dir
-            .join("github_reviews.yaml")
-            .to_str()
-            .unwrap_or(""),
-    )
-    .ok();
+    let review_cfg = load_yaml(spec_dir.join("github_reviews.yaml").to_str().unwrap_or("")).ok();
 
     // Collect all review + issue comments
     let mut bodies = Vec::new();
 
-    if let Ok(comments) =
-        gh_api_paginate(&format!("repos/{}/pulls/{}/comments", repo, pr_num), 100)
+    if let Ok(comments) = gh_api_paginate(&format!("repos/{}/pulls/{}/comments", repo, pr_num), 100)
     {
         for c in &comments {
             if let Some(body) = c.get("body").and_then(|b| b.as_str()) {
@@ -169,12 +167,10 @@ fn run_review_rules(repo: &str, pr_num: u32, spec_dir: &std::path::Path) -> Vec<
 }
 
 fn run_cleanup(dry_run: bool) -> Vec<Finding> {
-    let githooks = git::find_githooks_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from(".githooks"));
+    let githooks =
+        git::find_githooks_dir().unwrap_or_else(|| std::path::PathBuf::from(".githooks"));
     let script = githooks.join("cleanup").join("branch_cleanup.py");
-    let cwd = githooks
-        .parent()
-        .map(|p| p.to_string_lossy().to_string());
+    let cwd = githooks.parent().map(|p| p.to_string_lossy().to_string());
     let mut cmd_args = vec!["python3", script.to_str().unwrap_or("")];
     if !dry_run {
         cmd_args.push("--apply");
@@ -187,7 +183,10 @@ fn run_cleanup(dry_run: bool) -> Vec<Finding> {
                 vec![Finding::new(
                     "cleanup",
                     Severity::Warn,
-                    &format!("branch cleanup reported issues:\n{}", &output[..output.len().min(500)]),
+                    &format!(
+                        "branch cleanup reported issues:\n{}",
+                        &output[..output.len().min(500)]
+                    ),
                 )]
             }
         }
@@ -207,7 +206,7 @@ fn check_pr_review(repo: &str, pr_num: u32) -> Vec<Finding> {
                 "RV-07",
                 Severity::Fail,
                 &format!("could not fetch PR files: {}", e),
-            )]
+            )];
         }
     };
     let file_count = pr_files.as_array().map(|a| a.len()).unwrap_or(0);
@@ -216,10 +215,7 @@ fn check_pr_review(repo: &str, pr_num: u32) -> Vec<Finding> {
         return vec![rv07_decide(0, "", "")];
     }
 
-    println!(
-        "PR #{} 有 {} 个文件改动，必须审查：",
-        pr_num, file_count
-    );
+    println!("PR #{} 有 {} 个文件改动，必须审查：", pr_num, file_count);
     if let Some(files) = pr_files.as_array() {
         for f in files.iter().take(10) {
             let name = f.get("filename").and_then(|n| n.as_str()).unwrap_or("?");
@@ -267,7 +263,10 @@ fn rv07_decide(file_count: usize, crg_out: &str, ocr_out: &str) -> Finding {
     let cap = |s: &str| {
         let s = s.trim();
         if s.len() > TRUNC_MAX {
-            format!("{ELLIPSIS}{}", crate::shared::truncate_utf8(s, TRUNC_MAX.saturating_sub(TRUNC_ELLIPSIS_BYTES)))
+            format!(
+                "{ELLIPSIS}{}",
+                crate::shared::truncate_utf8(s, TRUNC_MAX.saturating_sub(TRUNC_ELLIPSIS_BYTES))
+            )
         } else {
             s.to_string()
         }
@@ -292,11 +291,7 @@ fn rv07_decide(file_count: usize, crg_out: &str, ocr_out: &str) -> Finding {
             Severity::Fail,
             &format!("ocr 失败/超时: {}", cap(ocr_out)),
         ),
-        (false, false) => Finding::new(
-            "RV-07",
-            Severity::Info,
-            "审查完成: CRG + ocr 双重审查通过",
-        ),
+        (false, false) => Finding::new("RV-07", Severity::Info, "审查完成: CRG + ocr 双重审查通过"),
     }
 }
 

@@ -24,8 +24,7 @@ static UNTICKED_RE: LazyLock<Regex> =
 static CHECKBOX_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^\s*-\s*\[([ xX])\]").unwrap());
 
-static NEXT_HEADING_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)^## ").unwrap());
+static NEXT_HEADING_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^## ").unwrap());
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -54,7 +53,9 @@ pub fn run(args: &[String]) -> i32 {
     }
 
     if positional.is_empty() {
-        eprintln!("Usage: gate audit <owner/repo> [--issues=N,M] [--recent=N] [--limit=N] [--workers=N]");
+        eprintln!(
+            "Usage: gate audit <owner/repo> [--issues=N,M] [--recent=N] [--limit=N] [--workers=N]"
+        );
         return 1;
     }
     let repo = &positional[0];
@@ -68,7 +69,10 @@ pub fn run(args: &[String]) -> i32 {
         None => {
             let mut nums = Vec::new();
             if let Ok(json) = gh_api(
-                &format!("search/issues?q=repo:{}+is:closed&sort=updated&per_page=20", repo),
+                &format!(
+                    "search/issues?q=repo:{}+is:closed&sort=updated&per_page=20",
+                    repo
+                ),
                 None,
             ) {
                 if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
@@ -113,7 +117,10 @@ pub fn run(args: &[String]) -> i32 {
                 .and_then(|h| h.get("ref"))
                 .and_then(|r| r.as_str())
                 .unwrap_or("");
-            let draft = pr_data.get("draft").and_then(|d| d.as_bool()).unwrap_or(false);
+            let draft = pr_data
+                .get("draft")
+                .and_then(|d| d.as_bool())
+                .unwrap_or(false);
             crate::rules::pull_requests::check_content(
                 title, body, &labels, head, state, draft, None,
             )
@@ -137,11 +144,7 @@ pub fn run(args: &[String]) -> i32 {
     }
 
     println!("\n检查完成。");
-    if has_fail {
-        1
-    } else {
-        0
-    }
+    if has_fail { 1 } else { 0 }
 }
 
 // ---------------------------------------------------------------------------
@@ -201,10 +204,7 @@ pub fn scan_recent(repo: &str, days: u32, limit: u32, workers: u32) -> i32 {
 
     let mut has_fail = false;
     for item in &items {
-        let num = item
-            .get("number")
-            .and_then(|n| n.as_u64())
-            .unwrap_or(0) as u32;
+        let num = item.get("number").and_then(|n| n.as_u64()).unwrap_or(0) as u32;
         let is_pr = item.get("pull_request").is_some();
         let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("");
         let body = item.get("body").and_then(|b| b.as_str()).unwrap_or("");
@@ -227,7 +227,10 @@ pub fn scan_recent(repo: &str, days: u32, limit: u32, workers: u32) -> i32 {
                 .and_then(|h| h.get("ref"))
                 .and_then(|r| r.as_str())
                 .unwrap_or("");
-            let draft = pr_data.get("draft").and_then(|d| d.as_bool()).unwrap_or(false);
+            let draft = pr_data
+                .get("draft")
+                .and_then(|d| d.as_bool())
+                .unwrap_or(false);
             crate::rules::pull_requests::check_content(
                 title, body, &labels, head, state, draft, None,
             )
@@ -251,11 +254,7 @@ pub fn scan_recent(repo: &str, days: u32, limit: u32, workers: u32) -> i32 {
         }
     }
 
-    if has_fail {
-        1
-    } else {
-        0
-    }
+    if has_fail { 1 } else { 0 }
 }
 
 /// Check an issue's "Done when" section for unchecked items.
@@ -270,7 +269,11 @@ pub fn check_issue_done_when(repo: &str, num: u64) -> Vec<String> {
     let sec = section(&body, "Done when");
     UNTICKED_RE
         .captures_iter(&sec)
-        .map(|c| c.get(1).map(|m| m.as_str().trim().to_string()).unwrap_or_default())
+        .map(|c| {
+            c.get(1)
+                .map(|m| m.as_str().trim().to_string())
+                .unwrap_or_default()
+        })
         .collect()
 }
 
@@ -297,7 +300,11 @@ pub fn check_pr_body(repo: &str, num: u64) -> Vec<String> {
         }
         let unticked: Vec<String> = UNTICKED_RE
             .captures_iter(&sec)
-            .map(|c| c.get(1).map(|m| m.as_str().trim().to_string()).unwrap_or_default())
+            .map(|c| {
+                c.get(1)
+                    .map(|m| m.as_str().trim().to_string())
+                    .unwrap_or_default()
+            })
             .collect();
         if !unticked.is_empty() {
             problems.push(format!("{sec_name} 未勾: {unticked:?}"));

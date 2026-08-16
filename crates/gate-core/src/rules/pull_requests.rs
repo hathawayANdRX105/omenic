@@ -25,13 +25,7 @@ const DEFAULT_BODY_HEADINGS: &[&str] = &[
 ];
 
 const DEFAULT_BRANCH_PREFIXES: &[&str] = &[
-    "feat/",
-    "fix/",
-    "chore/",
-    "epic/",
-    "main",
-    "master",
-    "release/",
+    "feat/", "fix/", "chore/", "epic/", "main", "master", "release/",
 ];
 
 const DEFAULT_TYPE_LABELS: &[&str] = &[
@@ -157,7 +151,10 @@ fn extract_fixes(body: &str) -> Vec<String> {
 
 fn cfg_body_headings(cfg: Option<&YamlValue>) -> Vec<String> {
     if let Some(c) = cfg {
-        if let Some(arr) = c.get("required_body_headings").and_then(|v| v.as_sequence()) {
+        if let Some(arr) = c
+            .get("required_body_headings")
+            .and_then(|v| v.as_sequence())
+        {
             let vals: Vec<String> = arr
                 .iter()
                 .filter_map(|v| v.as_str().map(String::from))
@@ -167,7 +164,10 @@ fn cfg_body_headings(cfg: Option<&YamlValue>) -> Vec<String> {
             }
         }
     }
-    DEFAULT_BODY_HEADINGS.iter().map(|s| s.to_string()).collect()
+    DEFAULT_BODY_HEADINGS
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn cfg_branch_prefixes(cfg: Option<&YamlValue>) -> Vec<String> {
@@ -185,7 +185,10 @@ fn cfg_branch_prefixes(cfg: Option<&YamlValue>) -> Vec<String> {
             }
         }
     }
-    DEFAULT_BRANCH_PREFIXES.iter().map(|s| s.to_string()).collect()
+    DEFAULT_BRANCH_PREFIXES
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn cfg_type_labels(cfg: Option<&YamlValue>) -> Vec<String> {
@@ -207,7 +210,10 @@ fn cfg_type_labels(cfg: Option<&YamlValue>) -> Vec<String> {
 /// Falls back to `DEFAULT_KEYWORD_SUGGESTIONS` when absent or empty.
 fn cfg_keyword_suggestions(cfg: Option<&YamlValue>) -> Vec<(String, String)> {
     if let Some(c) = cfg {
-        if let Some(map) = c.get("keyword_label_suggestions").and_then(|v| v.as_mapping()) {
+        if let Some(map) = c
+            .get("keyword_label_suggestions")
+            .and_then(|v| v.as_mapping())
+        {
             let pairs: Vec<(String, String)> = map
                 .iter()
                 .filter_map(|(k, v)| {
@@ -261,11 +267,7 @@ pub fn check_content(
             "title contains CJK (title should be English)",
         ));
     } else {
-        findings.push(Finding::new(
-            "PR-01",
-            Severity::Info,
-            "title is English",
-        ));
+        findings.push(Finding::new("PR-01", Severity::Info, "title is English"));
     }
     if conv_commit_re().is_match(title) {
         findings.push(Finding::new(
@@ -388,11 +390,7 @@ pub fn check_content(
         ));
     }
     if fixes_count == 1 {
-        findings.push(Finding::new(
-            "PR-05",
-            Severity::Info,
-            "exactly one Fixes #",
-        ));
+        findings.push(Finding::new("PR-05", Severity::Info, "exactly one Fixes #"));
     } else if fixes_count == 0 {
         if draft {
             findings.push(Finding::new(
@@ -415,11 +413,7 @@ pub fn check_content(
         ));
     }
     if fixes_count <= 1 {
-        findings.push(Finding::new(
-            "PR-05",
-            Severity::Info,
-            "one primary issue",
-        ));
+        findings.push(Finding::new("PR-05", Severity::Info, "one primary issue"));
     } else {
         findings.push(Finding::new(
             "PR-05",
@@ -456,11 +450,7 @@ pub fn check_content(
     let type_labels = cfg_type_labels(cfg);
     let label_set: HashSet<&str> = labels.iter().copied().collect();
     if type_labels.iter().any(|l| label_set.contains(l.as_str())) {
-        findings.push(Finding::new(
-            "PR-06",
-            Severity::Info,
-            "type label present",
-        ));
+        findings.push(Finding::new("PR-06", Severity::Info, "type label present"));
     } else {
         findings.push(Finding::new(
             "PR-06",
@@ -533,11 +523,7 @@ pub fn check_content(
     // PR-06 duplicate block (Python emits it a second time before P-31).
     // We replicate faithfully.
     if type_labels.iter().any(|l| label_set.contains(l.as_str())) {
-        findings.push(Finding::new(
-            "PR-06",
-            Severity::Info,
-            "type label present",
-        ));
+        findings.push(Finding::new("PR-06", Severity::Info, "type label present"));
     } else {
         findings.push(Finding::new(
             "PR-06",
@@ -635,16 +621,40 @@ run the tests
 
     #[test]
     fn pr01_english_title_passes() {
-        let findings = check_content("feat: add gate", GOOD_BODY, &[], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: add gate",
+            GOOD_BODY,
+            &[],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr01 = find_rule(&findings, "PR-01");
         assert!(!pr01.is_empty());
-        assert_eq!(pr01[0].severity, Severity::Info, "English title should be INFO");
-        assert!(!findings.iter().any(|f| f.rule_id == "PR-01" && f.severity == Severity::Fail));
+        assert_eq!(
+            pr01[0].severity,
+            Severity::Info,
+            "English title should be INFO"
+        );
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.rule_id == "PR-01" && f.severity == Severity::Fail)
+        );
     }
 
     #[test]
     fn pr01_cjk_title_fails() {
-        let findings = check_content("feat: 添加功能", GOOD_BODY, &[], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: 添加功能",
+            GOOD_BODY,
+            &[],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr01 = find_rule(&findings, "PR-01");
         assert!(!pr01.is_empty());
         assert_eq!(pr01[0].severity, Severity::Fail, "CJK title should FAIL");
@@ -656,7 +666,15 @@ run the tests
 
     #[test]
     fn pr02_conventional_title_passes() {
-        let findings = check_content("feat: add gate", GOOD_BODY, &[], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: add gate",
+            GOOD_BODY,
+            &[],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr02 = find_rule(&findings, "PR-02");
         assert!(pr02.iter().any(|f| f.severity == Severity::Info));
     }
@@ -670,7 +688,15 @@ run the tests
 
     #[test]
     fn pr02_conventional_with_scope_passes() {
-        let findings = check_content("fix(core): panic on nil", GOOD_BODY, &[], "fix/y", "open", false, None);
+        let findings = check_content(
+            "fix(core): panic on nil",
+            GOOD_BODY,
+            &[],
+            "fix/y",
+            "open",
+            false,
+            None,
+        );
         let pr02 = find_rule(&findings, "PR-02");
         assert!(pr02.iter().any(|f| f.severity == Severity::Info));
         assert!(!pr02.iter().any(|f| f.severity == Severity::Warn));
@@ -682,12 +708,23 @@ run the tests
 
     #[test]
     fn pr03_good_body_no_fail() {
-        let findings = check_content("feat: x", GOOD_BODY, &["enhancement"], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            GOOD_BODY,
+            &["enhancement"],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr03: Vec<&Finding> = find_rule(&findings, "PR-03");
         assert!(
             !pr03.iter().any(|f| f.severity == Severity::Fail),
             "GOOD_BODY should produce no PR-03 FAIL, got: {:?}",
-            pr03.iter().filter(|f| f.severity == Severity::Fail).map(|f| &f.msg).collect::<Vec<_>>()
+            pr03.iter()
+                .filter(|f| f.severity == Severity::Fail)
+                .map(|f| &f.msg)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -695,9 +732,20 @@ run the tests
     fn pr03_missing_heading_fails() {
         // Remove "## How to test" by replacing it with plain text
         let bad_body = GOOD_BODY.replace("## How to test", "How to test");
-        let findings = check_content("feat: x", &bad_body, &["enhancement"], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            &bad_body,
+            &["enhancement"],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr03 = find_rule(&findings, "PR-03");
-        assert!(pr03.iter().any(|f| f.severity == Severity::Fail && f.msg.contains("How to test")));
+        assert!(
+            pr03.iter()
+                .any(|f| f.severity == Severity::Fail && f.msg.contains("How to test"))
+        );
     }
 
     #[test]
@@ -718,10 +766,24 @@ test
 ## Checklist
 - [x] only one
 ";
-        let findings = check_content("feat: x", bad_body, &["enhancement"], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            bad_body,
+            &["enhancement"],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr03 = find_rule(&findings, "PR-03");
-        assert!(pr03.iter().any(|f| f.severity == Severity::Fail && f.msg.contains("Construction plan")));
-        assert!(pr03.iter().any(|f| f.severity == Severity::Fail && f.msg.contains("Checklist")));
+        assert!(
+            pr03.iter()
+                .any(|f| f.severity == Severity::Fail && f.msg.contains("Construction plan"))
+        );
+        assert!(
+            pr03.iter()
+                .any(|f| f.severity == Severity::Fail && f.msg.contains("Checklist"))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -730,9 +792,20 @@ test
 
     #[test]
     fn pr04_english_headings_and_chinese_what_pass() {
-        let findings = check_content("feat: x", GOOD_BODY, &["enhancement"], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            GOOD_BODY,
+            &["enhancement"],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr04 = find_rule(&findings, "PR-04");
-        assert!(pr04.iter().any(|f| f.severity == Severity::Info && f.msg.contains("headings are English")));
+        assert!(
+            pr04.iter()
+                .any(|f| f.severity == Severity::Info && f.msg.contains("headings are English"))
+        );
         assert!(pr04.iter().any(|f| f.severity == Severity::Info && f.msg.contains("What section has Chinese")));
         assert!(!pr04.iter().any(|f| f.severity == Severity::Fail));
         assert!(!pr04.iter().any(|f| f.severity == Severity::Warn));
@@ -741,17 +814,39 @@ test
     #[test]
     fn pr04_cjk_heading_fails() {
         let bad_body = GOOD_BODY.replace("## What", "## 什幺么");
-        let findings = check_content("feat: x", &bad_body, &["enhancement"], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            &bad_body,
+            &["enhancement"],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr04 = find_rule(&findings, "PR-04");
-        assert!(pr04.iter().any(|f| f.severity == Severity::Fail && f.msg.contains("headings contain CJK")));
+        assert!(
+            pr04.iter()
+                .any(|f| f.severity == Severity::Fail && f.msg.contains("headings contain CJK"))
+        );
     }
 
     #[test]
     fn pr04_what_no_chinese_warns() {
         let bad_body = GOOD_BODY.replace("这是修改内容的中文说明。", "english only text here");
-        let findings = check_content("feat: x", &bad_body, &["enhancement"], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            &bad_body,
+            &["enhancement"],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr04 = find_rule(&findings, "PR-04");
-        assert!(pr04.iter().any(|f| f.severity == Severity::Warn && f.msg.contains("no Chinese prose")));
+        assert!(
+            pr04.iter()
+                .any(|f| f.severity == Severity::Warn && f.msg.contains("no Chinese prose"))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -762,42 +857,100 @@ test
     fn pr05_one_fixes_open_warns_premature() {
         // Open PR with Fixes → WARN premature; but exactly one → INFO; ≤1 → INFO primary
         let body = GOOD_BODY.to_string() + "Fixes #1";
-        let findings = check_content("feat: x", &body, &["enhancement"], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            &body,
+            &["enhancement"],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr05 = find_rule(&findings, "PR-05");
-        assert!(pr05.iter().any(|f| f.severity == Severity::Warn && f.msg.contains("prematurely")));
-        assert!(pr05.iter().any(|f| f.severity == Severity::Info && f.msg.contains("exactly one")));
+        assert!(
+            pr05.iter()
+                .any(|f| f.severity == Severity::Warn && f.msg.contains("prematurely"))
+        );
+        assert!(
+            pr05.iter()
+                .any(|f| f.severity == Severity::Info && f.msg.contains("exactly one"))
+        );
     }
 
     #[test]
     fn pr05_no_fixes_non_draft_warns() {
-        let findings = check_content("feat: x", GOOD_BODY, &["enhancement"], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            GOOD_BODY,
+            &["enhancement"],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr05 = find_rule(&findings, "PR-05");
-        assert!(pr05.iter().any(|f| f.severity == Severity::Warn && f.msg.contains("no Fixes # yet")));
+        assert!(
+            pr05.iter()
+                .any(|f| f.severity == Severity::Warn && f.msg.contains("no Fixes # yet"))
+        );
     }
 
     #[test]
     fn pr05_no_fixes_draft_info() {
-        let findings = check_content("feat: x", GOOD_BODY, &["enhancement"], "feat/x", "open", true, None);
+        let findings = check_content(
+            "feat: x",
+            GOOD_BODY,
+            &["enhancement"],
+            "feat/x",
+            "open",
+            true,
+            None,
+        );
         let pr05 = find_rule(&findings, "PR-05");
-        assert!(pr05.iter().any(|f| f.severity == Severity::Info && f.msg.contains("draft PR")));
+        assert!(
+            pr05.iter()
+                .any(|f| f.severity == Severity::Info && f.msg.contains("draft PR"))
+        );
     }
 
     #[test]
     fn pr05_multiple_fixes_fails_primary() {
         let body = GOOD_BODY.to_string() + "Fixes #1\nFixes #2\nFixes #3";
-        let findings = check_content("feat: x", &body, &["enhancement"], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            &body,
+            &["enhancement"],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr05 = find_rule(&findings, "PR-05");
         // >1 Fixes → FAIL "one PR should close one primary issue"
-        assert!(pr05.iter().any(|f| f.severity == Severity::Fail && f.msg.contains("primary issue")));
+        assert!(
+            pr05.iter()
+                .any(|f| f.severity == Severity::Fail && f.msg.contains("primary issue"))
+        );
     }
 
     #[test]
     fn pr05_closed_pr_with_fixes_is_ok() {
         let body = GOOD_BODY.to_string() + "Fixes #1";
-        let findings = check_content("feat: x", &body, &["enhancement"], "feat/x", "closed", false, None);
+        let findings = check_content(
+            "feat: x",
+            &body,
+            &["enhancement"],
+            "feat/x",
+            "closed",
+            false,
+            None,
+        );
         let pr05 = find_rule(&findings, "PR-05");
         // state != "open" → no premature WARN
-        assert!(pr05.iter().any(|f| f.severity == Severity::Info && f.msg.contains("not open")));
+        assert!(
+            pr05.iter()
+                .any(|f| f.severity == Severity::Info && f.msg.contains("not open"))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -806,34 +959,78 @@ test
 
     #[test]
     fn pr06_type_label_present_info() {
-        let findings = check_content("feat: x", GOOD_BODY, &["enhancement"], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            GOOD_BODY,
+            &["enhancement"],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr06 = find_rule(&findings, "PR-06");
-        assert!(pr06.iter().any(|f| f.severity == Severity::Info && f.msg.contains("type label present")));
+        assert!(
+            pr06.iter()
+                .any(|f| f.severity == Severity::Info && f.msg.contains("type label present"))
+        );
     }
 
     #[test]
     fn pr06_no_type_label_fails() {
-        let findings = check_content("feat: x", GOOD_BODY, &["question"], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            GOOD_BODY,
+            &["question"],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr06 = find_rule(&findings, "PR-06");
-        assert!(pr06.iter().any(|f| f.severity == Severity::Fail && f.msg.contains("no type label")));
+        assert!(
+            pr06.iter()
+                .any(|f| f.severity == Severity::Fail && f.msg.contains("no type label"))
+        );
     }
 
     #[test]
     fn pr06_keyword_suggestion_warn() {
         // body contains "测试" (tests) but no "tests" label
         let body = GOOD_BODY.to_string() + "\ntest content 测试 here";
-        let findings = check_content("feat: x", &body, &["enhancement"], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            &body,
+            &["enhancement"],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr06 = find_rule(&findings, "PR-06");
-        assert!(pr06.iter().any(|f| f.severity == Severity::Warn && f.msg.contains("consider")));
+        assert!(
+            pr06.iter()
+                .any(|f| f.severity == Severity::Warn && f.msg.contains("consider"))
+        );
     }
 
     #[test]
     fn pr06_keywords_aligned_info() {
         // body contains "测试" and "tests" label is present
         let body = GOOD_BODY.to_string() + "\ntest 测试 content";
-        let findings = check_content("feat: x", &body, &["enhancement", "tests"], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            &body,
+            &["enhancement", "tests"],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr06 = find_rule(&findings, "PR-06");
-        assert!(pr06.iter().any(|f| f.severity == Severity::Info && f.msg.contains("keywords align")));
+        assert!(
+            pr06.iter()
+                .any(|f| f.severity == Severity::Info && f.msg.contains("keywords align"))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -842,17 +1039,39 @@ test
 
     #[test]
     fn pr08_normal_branch_passes() {
-        let findings = check_content("feat: x", GOOD_BODY, &["enhancement"], "feat/my-feature", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            GOOD_BODY,
+            &["enhancement"],
+            "feat/my-feature",
+            "open",
+            false,
+            None,
+        );
         let pr08 = find_rule(&findings, "PR-08");
-        assert!(pr08.iter().any(|f| f.severity == Severity::Info && f.msg.contains("branch name OK")));
+        assert!(
+            pr08.iter()
+                .any(|f| f.severity == Severity::Info && f.msg.contains("branch name OK"))
+        );
         assert!(!pr08.iter().any(|f| f.severity == Severity::Fail));
     }
 
     #[test]
     fn pr08_bad_branch_fails() {
-        let findings = check_content("feat: x", GOOD_BODY, &["enhancement"], "random/branch", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            GOOD_BODY,
+            &["enhancement"],
+            "random/branch",
+            "open",
+            false,
+            None,
+        );
         let pr08 = find_rule(&findings, "PR-08");
-        assert!(pr08.iter().any(|f| f.severity == Severity::Fail && f.msg.contains("not allowed")));
+        assert!(
+            pr08.iter()
+                .any(|f| f.severity == Severity::Fail && f.msg.contains("not allowed"))
+        );
     }
 
     #[test]
@@ -871,7 +1090,8 @@ test
         );
         let pr08 = find_rule(&findings, "PR-08");
         assert!(
-            pr08.iter().any(|f| f.severity == Severity::Info && f.msg.contains("branch name OK")),
+            pr08.iter()
+                .any(|f| f.severity == Severity::Info && f.msg.contains("branch name OK")),
             "fork \"user:feat/foo\" must pass PR-08 after prefix strip; got: {:?}",
             pr08
         );
@@ -895,7 +1115,15 @@ test
 
     #[test]
     fn pr08_main_branch_passes() {
-        let findings = check_content("feat: x", GOOD_BODY, &["enhancement"], "main", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            GOOD_BODY,
+            &["enhancement"],
+            "main",
+            "open",
+            false,
+            None,
+        );
         let pr08 = find_rule(&findings, "PR-08");
         assert!(pr08.iter().any(|f| f.severity == Severity::Info));
     }
@@ -906,7 +1134,15 @@ test
 
     #[test]
     fn pr09_always_warns() {
-        let findings = check_content("feat: x", GOOD_BODY, &["enhancement"], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            GOOD_BODY,
+            &["enhancement"],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr09 = find_rule(&findings, "PR-09");
         assert!(pr09.iter().all(|f| f.severity == Severity::Warn));
         assert!(pr09.iter().any(|f| f.msg.contains("maintainer review")));
@@ -919,17 +1155,39 @@ test
     #[test]
     fn pr10_plain_text_links_info() {
         let body = GOOD_BODY.to_string() + "\nPart of #5\nRelated #10";
-        let findings = check_content("feat: x", &body, &["enhancement"], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            &body,
+            &["enhancement"],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr10 = find_rule(&findings, "PR-10");
-        assert!(pr10.iter().any(|f| f.severity == Severity::Info && f.msg.contains("Part of/Related")));
+        assert!(
+            pr10.iter()
+                .any(|f| f.severity == Severity::Info && f.msg.contains("Part of/Related"))
+        );
         assert!(pr10.iter().any(|f| f.msg.contains("#(5, 10)")));
     }
 
     #[test]
     fn pr10_no_links_info() {
-        let findings = check_content("feat: x", GOOD_BODY, &["enhancement"], "feat/x", "open", false, None);
+        let findings = check_content(
+            "feat: x",
+            GOOD_BODY,
+            &["enhancement"],
+            "feat/x",
+            "open",
+            false,
+            None,
+        );
         let pr10 = find_rule(&findings, "PR-10");
-        assert!(pr10.iter().any(|f| f.severity == Severity::Info && f.msg.contains("no plain-text")));
+        assert!(
+            pr10.iter()
+                .any(|f| f.severity == Severity::Info && f.msg.contains("no plain-text"))
+        );
         assert!(pr10.iter().all(|f| f.severity == Severity::Info));
     }
 
@@ -981,7 +1239,10 @@ cd /tmp/gate-work && cargo test -p gate-core
         assert!(
             !pr03.iter().any(|f| f.severity == Severity::Fail),
             "smoke: PR-03 should have no FAIL for a complete body, got: {:?}",
-            pr03.iter().filter(|f| f.severity == Severity::Fail).map(|f| &f.msg).collect::<Vec<_>>()
+            pr03.iter()
+                .filter(|f| f.severity == Severity::Fail)
+                .map(|f| &f.msg)
+                .collect::<Vec<_>>()
         );
 
         // PR-01 should be INFO (English title)
@@ -1015,12 +1276,28 @@ allowed_branch_prefixes:
 "#;
         let cfg: YamlValue = serde_yaml::from_str(yaml_str).unwrap();
         // "feat/x" is NOT in custom config → FAIL
-        let findings = check_content("feat: x", GOOD_BODY, &["enhancement"], "feat/x", "open", false, Some(&cfg));
+        let findings = check_content(
+            "feat: x",
+            GOOD_BODY,
+            &["enhancement"],
+            "feat/x",
+            "open",
+            false,
+            Some(&cfg),
+        );
         let pr08 = find_rule(&findings, "PR-08");
         assert!(pr08.iter().any(|f| f.severity == Severity::Fail));
 
         // "custom/x" IS in custom config → INFO
-        let findings2 = check_content("feat: x", GOOD_BODY, &["enhancement"], "custom/x", "open", false, Some(&cfg));
+        let findings2 = check_content(
+            "feat: x",
+            GOOD_BODY,
+            &["enhancement"],
+            "custom/x",
+            "open",
+            false,
+            Some(&cfg),
+        );
         let pr08b = find_rule(&findings2, "PR-08");
         assert!(pr08b.iter().any(|f| f.severity == Severity::Info));
     }

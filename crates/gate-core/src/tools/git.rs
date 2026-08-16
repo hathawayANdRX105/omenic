@@ -80,10 +80,7 @@ pub fn git_root() -> Option<PathBuf> {
 /// Find the open PR number for a given branch via `gh api`.
 pub fn find_pr_for_branch(repo: &str, branch: &str) -> Option<u32> {
     let owner = repo.split('/').next()?;
-    let path = format!(
-        "repos/{}/pulls?head={}:{}&state=open",
-        repo, owner, branch
-    );
+    let path = format!("repos/{}/pulls?head={}:{}&state=open", repo, owner, branch);
     let json = crate::shared::gh_api(&path, None).ok()?;
     let prs = json.as_array()?;
     let pr = prs.first()?;

@@ -43,7 +43,11 @@ pub fn install() -> anyhow::Result<()> {
         // Broken symlink or non-canonicalizable target: fs::copy would follow
         // the dangling link and leave it behind — remove it first so the real
         // binary replaces the link.
-        if target.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+        if target
+            .symlink_metadata()
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
             fs::remove_file(&target)?;
         }
         fs::copy(&current_exe, &target)?;

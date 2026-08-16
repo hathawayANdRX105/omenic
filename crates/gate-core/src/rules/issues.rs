@@ -50,7 +50,14 @@ const DEFAULT_FORBIDDEN_KEYWORDS: &[&str] = &["TODO", "TBD", "FIXME", "XXX"];
 
 /// Type label set for IS-14 (mirrors the Python hard-coded set).
 const TYPE_LABELS: &[&str] = &[
-    "bug", "enhancement", "feature", "documentation", "chore", "refactor", "tests", "epic",
+    "bug",
+    "enhancement",
+    "feature",
+    "documentation",
+    "chore",
+    "refactor",
+    "tests",
+    "epic",
 ];
 
 /// `keyword_label_suggestions` — flat array of (keyword, suggested-label).
@@ -75,33 +82,28 @@ const DEFAULT_KEYWORD_SUGGESTIONS: &[(&str, &str)] = &[
 // ---------------------------------------------------------------------------
 
 fn cjk_re() -> &'static Regex {
-    static RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"[\u4e00-\u9fff]").unwrap());
+    static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\u4e00-\u9fff]").unwrap());
     &RE
 }
 
 /// H1 = a line starting with exactly `# ` then a non-`#`. `^# [^#]` m.
 fn h1_re() -> &'static Regex {
-    static RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?m)^# [^#]").unwrap());
+    static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^# [^#]").unwrap());
     &RE
 }
 
 fn heading_re() -> &'static Regex {
-    static RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?m)^#{1,6} ").unwrap());
+    static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^#{1,6} ").unwrap());
     &RE
 }
 
 fn checkbox_re() -> &'static Regex {
-    static RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?m)^\s*-\s*\[([ xX])\]").unwrap());
+    static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^\s*-\s*\[([ xX])\]").unwrap());
     &RE
 }
 
 fn table_re() -> &'static Regex {
-    static RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?m)^\|[- ]+\|").unwrap());
+    static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^\|[- ]+\|").unwrap());
     &RE
 }
 
@@ -120,9 +122,8 @@ fn cross_ref_re() -> &'static Regex {
 /// IS-10 sub-mode PR placeholders. Python compiles this *without* MULTILINE,
 /// but the alternation has no `^` anchor so flags don't change the matches.
 fn pr_placeholder_re() -> &'static Regex {
-    static RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(待补\s*PR|TODO.*PR|需\s*PR|PR 关联[：:])").unwrap()
-    });
+    static RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(待补\s*PR|TODO.*PR|需\s*PR|PR 关联[：:])").unwrap());
     &RE
 }
 
@@ -216,11 +217,7 @@ pub fn check_content(
         ));
     }
     if title.contains(r"\n") || title.contains(r"\r") {
-        findings.push(Finding::new(
-            "IS-16",
-            Severity::Fail,
-            "标题含字面 \\n/\\r",
-        ));
+        findings.push(Finding::new("IS-16", Severity::Fail, "标题含字面 \\n/\\r"));
     }
 
     // -----------------------------------------------------------------------
@@ -360,11 +357,7 @@ pub fn check_content(
     // IS-05 / IS-06 / IS-07: language checks
     // -----------------------------------------------------------------------
     if has_cjk(title) {
-        findings.push(Finding::new(
-            "IS-05",
-            Severity::Info,
-            "title is Chinese",
-        ));
+        findings.push(Finding::new("IS-05", Severity::Info, "title is Chinese"));
     } else {
         findings.push(Finding::new(
             "IS-05",
@@ -372,10 +365,7 @@ pub fn check_content(
             "title lacks Chinese (repo convention)",
         ));
     }
-    let bad_h: Vec<String> = headings(body)
-        .into_iter()
-        .filter(|h| has_cjk(h))
-        .collect();
+    let bad_h: Vec<String> = headings(body).into_iter().filter(|h| has_cjk(h)).collect();
     if !bad_h.is_empty() {
         findings.push(Finding::new(
             "IS-06",
@@ -420,14 +410,19 @@ pub fn check_content(
     }
 
     // IS-16: fullwidth brackets in title
-    let brackets: BTreeSet<char> =
-        title.chars().filter(|c| DEFAULT_FORBIDDEN_BRACKETS.contains(c)).collect();
+    let brackets: BTreeSet<char> = title
+        .chars()
+        .filter(|c| DEFAULT_FORBIDDEN_BRACKETS.contains(c))
+        .collect();
     if !brackets.is_empty() {
         let joined: Vec<String> = brackets.iter().map(|c| c.to_string()).collect();
         findings.push(Finding::new(
             "IS-16",
             Severity::Fail,
-            &format!("title contains fullwidth brackets: {{{}}}", joined.join(", ")),
+            &format!(
+                "title contains fullwidth brackets: {{{}}}",
+                joined.join(", ")
+            ),
         ));
     } else {
         findings.push(Finding::new(
@@ -472,11 +467,7 @@ pub fn check_content(
                 ),
             ));
         } else {
-            findings.push(Finding::new(
-                "IS-10",
-                Severity::Info,
-                "no PR placeholders",
-            ));
+            findings.push(Finding::new("IS-10", Severity::Info, "no PR placeholders"));
         }
     } else if mode == "parent" {
         // IS-11: parent must NOT have Done when
@@ -517,11 +508,7 @@ pub fn check_content(
         .iter()
         .any(|l| TYPE_LABELS.contains(&l.as_str()))
     {
-        findings.push(Finding::new(
-            "IS-14",
-            Severity::Info,
-            "type label present",
-        ));
+        findings.push(Finding::new("IS-14", Severity::Info, "type label present"));
     } else {
         findings.push(Finding::new(
             "IS-14",
@@ -584,9 +571,7 @@ pub fn check_content(
                 findings.push(Finding::new(
                     "IS-15",
                     Severity::Info,
-                    &format!(
-                        "sub-issue Done when all checked on close ({checked}/{total})"
-                    ),
+                    &format!("sub-issue Done when all checked on close ({checked}/{total})"),
                 ));
             } else {
                 findings.push(Finding::new(
@@ -666,15 +651,34 @@ mod tests {
 
     #[test]
     fn is00_sub_prefix_forbidden_fails() {
-        let f = check_content("sub: 添加功能", GOOD_SUB_BODY, &["enhancement"], "sub", "open");
+        let f = check_content(
+            "sub: 添加功能",
+            GOOD_SUB_BODY,
+            &["enhancement"],
+            "sub",
+            "open",
+        );
         let r = find_rule(&f, "IS-00");
-        assert!(r.iter().any(|x| x.severity == Severity::Fail && x.msg.contains("禁用前缀")));
+        assert!(
+            r.iter()
+                .any(|x| x.severity == Severity::Fail && x.msg.contains("禁用前缀"))
+        );
     }
 
     #[test]
     fn is00_case_insensitive_prefix() {
-        let f = check_content("ISSUE: 添加功能", GOOD_SUB_BODY, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-00").iter().any(|x| x.severity == Severity::Fail));
+        let f = check_content(
+            "ISSUE: 添加功能",
+            GOOD_SUB_BODY,
+            &["enhancement"],
+            "sub",
+            "open",
+        );
+        assert!(
+            find_rule(&f, "IS-00")
+                .iter()
+                .any(|x| x.severity == Severity::Fail)
+        );
     }
 
     #[test]
@@ -682,8 +686,9 @@ mod tests {
         let body = format!("{GOOD_SUB_BODY}## Labels\n- enhancement\n");
         let f = check_content("添加功能", &body, &["enhancement"], "sub", "open");
         assert!(
-            find_rule(&f, "IS-00").iter().any(|x| x.severity == Severity::Fail
-                && x.msg.contains("禁止 Labels")),
+            find_rule(&f, "IS-00")
+                .iter()
+                .any(|x| x.severity == Severity::Fail && x.msg.contains("禁止 Labels")),
             "body with ## Labels must FAIL IS-00"
         );
     }
@@ -691,7 +696,11 @@ mod tests {
     #[test]
     fn is00_clean_title_no_prefix_fail() {
         let f = check_content("添加新功能", GOOD_SUB_BODY, &["enhancement"], "sub", "open");
-        assert!(!find_rule(&f, "IS-00").iter().any(|x| x.severity == Severity::Fail));
+        assert!(
+            !find_rule(&f, "IS-00")
+                .iter()
+                .any(|x| x.severity == Severity::Fail)
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -701,22 +710,32 @@ mod tests {
     #[test]
     fn is01_sub_all_headings_info() {
         let f = check_content("添加功能", GOOD_SUB_BODY, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-01").iter().any(|x| x.severity == Severity::Info
-            && x.msg.contains("all template headings")));
+        assert!(
+            find_rule(&f, "IS-01")
+                .iter()
+                .any(|x| x.severity == Severity::Info && x.msg.contains("all template headings"))
+        );
     }
 
     #[test]
     fn is01_sub_missing_heading_fails() {
         let bad = GOOD_SUB_BODY.replace("## Out of scope\n不修改文档。\n", "");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-01").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("Out of scope")));
+        assert!(
+            find_rule(&f, "IS-01")
+                .iter()
+                .any(|x| x.severity == Severity::Fail && x.msg.contains("Out of scope"))
+        );
     }
 
     #[test]
     fn is01_parent_mode_info_na() {
         let f = check_content("epic 跟踪", GOOD_PARENT_BODY, &["epic"], "parent", "open");
-        assert!(find_rule(&f, "IS-01").iter().all(|x| x.severity == Severity::Info));
+        assert!(
+            find_rule(&f, "IS-01")
+                .iter()
+                .all(|x| x.severity == Severity::Info)
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -726,7 +745,11 @@ mod tests {
     #[test]
     fn is02_sub_populated_info() {
         let f = check_content("添加功能", GOOD_SUB_BODY, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-02").iter().any(|x| x.severity == Severity::Info));
+        assert!(
+            find_rule(&f, "IS-02")
+                .iter()
+                .any(|x| x.severity == Severity::Info)
+        );
     }
 
     #[test]
@@ -736,8 +759,11 @@ mod tests {
             "## Suspected areas\n\n",
         );
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-02").iter().any(|x| x.severity == Severity::Warn
-            && x.msg.contains("Suspected areas empty")));
+        assert!(
+            find_rule(&f, "IS-02")
+                .iter()
+                .any(|x| x.severity == Severity::Warn && x.msg.contains("Suspected areas empty"))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -756,8 +782,11 @@ mod tests {
     fn is03_sub_multiple_h1_warns() {
         let bad = format!("# 标题一\n\n{GOOD_SUB_BODY}# 标题二\n");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-03").iter().any(|x| x.severity == Severity::Warn
-            && x.msg.contains("multiple H1")));
+        assert!(
+            find_rule(&f, "IS-03")
+                .iter()
+                .any(|x| x.severity == Severity::Warn && x.msg.contains("multiple H1"))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -768,32 +797,49 @@ mod tests {
     fn is04_sub_checkboxes_info() {
         let f = check_content("添加功能", GOOD_SUB_BODY, &["enhancement"], "sub", "open");
         let r = find_rule(&f, "IS-04");
-        assert!(r.iter().any(|x| x.severity == Severity::Info && x.msg.contains("uses checkboxes")));
+        assert!(
+            r.iter()
+                .any(|x| x.severity == Severity::Info && x.msg.contains("uses checkboxes"))
+        );
         assert!(!r.iter().any(|x| x.severity == Severity::Fail));
     }
 
     #[test]
     fn is04_sub_no_checkbox_fails() {
-        let bad = GOOD_SUB_BODY.replace("## Done when\n- [ ] 第一步完成\n- [ ] 第二步完成\n",
-            "## Done when\nplain prose no boxes\n");
+        let bad = GOOD_SUB_BODY.replace(
+            "## Done when\n- [ ] 第一步完成\n- [ ] 第二步完成\n",
+            "## Done when\nplain prose no boxes\n",
+        );
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-04").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("lacks checkbox")));
+        assert!(
+            find_rule(&f, "IS-04")
+                .iter()
+                .any(|x| x.severity == Severity::Fail && x.msg.contains("lacks checkbox"))
+        );
     }
 
     #[test]
     fn is04_sub_table_fails() {
-        let bad = GOOD_SUB_BODY.replace("## Done when\n- [ ] 第一步完成\n- [ ] 第二步完成\n",
-            "## Done when\n| a | b |\n|---|---|\n| 1 | 2 |\n");
+        let bad = GOOD_SUB_BODY.replace(
+            "## Done when\n- [ ] 第一步完成\n- [ ] 第二步完成\n",
+            "## Done when\n| a | b |\n|---|---|\n| 1 | 2 |\n",
+        );
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-04").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("table")));
+        assert!(
+            find_rule(&f, "IS-04")
+                .iter()
+                .any(|x| x.severity == Severity::Fail && x.msg.contains("table"))
+        );
     }
 
     #[test]
     fn is04_parent_na_info() {
         let f = check_content("epic 跟踪", GOOD_PARENT_BODY, &["epic"], "parent", "open");
-        assert!(find_rule(&f, "IS-04").iter().all(|x| x.severity == Severity::Info));
+        assert!(
+            find_rule(&f, "IS-04")
+                .iter()
+                .all(|x| x.severity == Severity::Info)
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -803,14 +849,27 @@ mod tests {
     #[test]
     fn is05_chinese_title_info() {
         let f = check_content("添加新功能", GOOD_SUB_BODY, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-05").iter().any(|x| x.severity == Severity::Info));
+        assert!(
+            find_rule(&f, "IS-05")
+                .iter()
+                .any(|x| x.severity == Severity::Info)
+        );
     }
 
     #[test]
     fn is05_english_only_title_fails() {
-        let f = check_content("add new feature", GOOD_SUB_BODY, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-05").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("lacks Chinese")));
+        let f = check_content(
+            "add new feature",
+            GOOD_SUB_BODY,
+            &["enhancement"],
+            "sub",
+            "open",
+        );
+        assert!(
+            find_rule(&f, "IS-05")
+                .iter()
+                .any(|x| x.severity == Severity::Fail && x.msg.contains("lacks Chinese"))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -820,15 +879,22 @@ mod tests {
     #[test]
     fn is06_english_headings_info() {
         let f = check_content("添加功能", GOOD_SUB_BODY, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-06").iter().any(|x| x.severity == Severity::Info));
+        assert!(
+            find_rule(&f, "IS-06")
+                .iter()
+                .any(|x| x.severity == Severity::Info)
+        );
     }
 
     #[test]
     fn is06_cjk_heading_fails() {
         let bad = GOOD_SUB_BODY.replace("## Goal", "## 目标");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-06").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("headings contain CJK")));
+        assert!(
+            find_rule(&f, "IS-06")
+                .iter()
+                .any(|x| x.severity == Severity::Fail && x.msg.contains("headings contain CJK"))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -838,7 +904,11 @@ mod tests {
     #[test]
     fn is07_chinese_body_info() {
         let f = check_content("添加功能", GOOD_SUB_BODY, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-07").iter().any(|x| x.severity == Severity::Info));
+        assert!(
+            find_rule(&f, "IS-07")
+                .iter()
+                .any(|x| x.severity == Severity::Info)
+        );
     }
 
     #[test]
@@ -865,8 +935,11 @@ none.
 tests pass.
 ";
         let f = check_content("添加功能", english_body, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-07").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("lacks Chinese prose")));
+        assert!(
+            find_rule(&f, "IS-07")
+                .iter()
+                .any(|x| x.severity == Severity::Fail && x.msg.contains("lacks Chinese prose"))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -876,71 +949,107 @@ tests pass.
     #[test]
     fn is09_sub_no_cross_info() {
         let f = check_content("添加功能", GOOD_SUB_BODY, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Info));
+        assert!(
+            find_rule(&f, "IS-09")
+                .iter()
+                .any(|x| x.severity == Severity::Info)
+        );
     }
 
     #[test]
     fn is09_sub_depends_on_fails() {
         let bad = format!("{GOOD_SUB_BODY}Depends on: #42\n");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("forbidden cross-references")));
+        assert!(
+            find_rule(&f, "IS-09")
+                .iter()
+                .any(|x| x.severity == Severity::Fail
+                    && x.msg.contains("forbidden cross-references"))
+        );
     }
 
     #[test]
     fn is09_sub_related_hash_fails() {
         let bad = format!("{GOOD_SUB_BODY}Related #7\n");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("forbidden cross-references")));
+        assert!(
+            find_rule(&f, "IS-09")
+                .iter()
+                .any(|x| x.severity == Severity::Fail
+                    && x.msg.contains("forbidden cross-references"))
+        );
     }
 
     #[test]
     fn is09_sub_parent_colon_fails() {
         let bad = format!("{GOOD_SUB_BODY}Parent: #205\n");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("forbidden cross-references")));
+        assert!(
+            find_rule(&f, "IS-09")
+                .iter()
+                .any(|x| x.severity == Severity::Fail
+                    && x.msg.contains("forbidden cross-references"))
+        );
     }
 
     #[test]
     fn is09_sub_parent_hash_fails() {
         let bad = format!("{GOOD_SUB_BODY}Parent #205\n");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("forbidden cross-references")));
+        assert!(
+            find_rule(&f, "IS-09")
+                .iter()
+                .any(|x| x.severity == Severity::Fail
+                    && x.msg.contains("forbidden cross-references"))
+        );
     }
 
     #[test]
     fn is09_sub_related_colon_fails() {
         let bad = format!("{GOOD_SUB_BODY}Related: #205\n");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("forbidden cross-references")));
+        assert!(
+            find_rule(&f, "IS-09")
+                .iter()
+                .any(|x| x.severity == Severity::Fail
+                    && x.msg.contains("forbidden cross-references"))
+        );
     }
 
     #[test]
     fn is09_sub_parent_pr_colon_fails() {
         let bad = format!("{GOOD_SUB_BODY}Parent PR: #10\n");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("forbidden cross-references")));
+        assert!(
+            find_rule(&f, "IS-09")
+                .iter()
+                .any(|x| x.severity == Severity::Fail
+                    && x.msg.contains("forbidden cross-references"))
+        );
     }
 
     #[test]
     fn is09_sub_blocks_fails() {
         let bad = format!("{GOOD_SUB_BODY}Blocks: #99\n");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("forbidden cross-references")));
+        assert!(
+            find_rule(&f, "IS-09")
+                .iter()
+                .any(|x| x.severity == Severity::Fail
+                    && x.msg.contains("forbidden cross-references"))
+        );
     }
 
     #[test]
     fn is09_sub_dependency_cn_fails() {
         let bad = format!("{GOOD_SUB_BODY}依赖: #88\n");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-09").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("forbidden cross-references")));
+        assert!(
+            find_rule(&f, "IS-09")
+                .iter()
+                .any(|x| x.severity == Severity::Fail
+                    && x.msg.contains("forbidden cross-references"))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -950,15 +1059,22 @@ tests pass.
     #[test]
     fn is10_sub_no_placeholder_info() {
         let f = check_content("添加功能", GOOD_SUB_BODY, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-10").iter().any(|x| x.severity == Severity::Info));
+        assert!(
+            find_rule(&f, "IS-10")
+                .iter()
+                .any(|x| x.severity == Severity::Info)
+        );
     }
 
     #[test]
     fn is10_sub_pr_placeholder_fails() {
         let bad = format!("{GOOD_SUB_BODY}待补 PR\n");
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-10").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("PR placeholders")));
+        assert!(
+            find_rule(&f, "IS-10")
+                .iter()
+                .any(|x| x.severity == Severity::Fail && x.msg.contains("PR placeholders"))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -968,14 +1084,22 @@ tests pass.
     #[test]
     fn is11_parent_no_done_when_info() {
         let f = check_content("epic 跟踪", GOOD_PARENT_BODY, &["epic"], "parent", "open");
-        assert!(find_rule(&f, "IS-11").iter().any(|x| x.severity == Severity::Info));
+        assert!(
+            find_rule(&f, "IS-11")
+                .iter()
+                .any(|x| x.severity == Severity::Info)
+        );
     }
 
     #[test]
     fn is11_parent_has_done_when_fails() {
         let bad = format!("{GOOD_PARENT_BODY}## Done when\n- [ ] x\n");
         let f = check_content("epic 跟踪", &bad, &["epic"], "parent", "open");
-        assert!(find_rule(&f, "IS-11").iter().any(|x| x.severity == Severity::Fail));
+        assert!(
+            find_rule(&f, "IS-11")
+                .iter()
+                .any(|x| x.severity == Severity::Fail)
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -997,15 +1121,21 @@ tests pass.
     #[test]
     fn is14_type_label_present_info() {
         let f = check_content("添加功能", GOOD_SUB_BODY, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-14").iter().any(|x| x.severity == Severity::Info
-            && x.msg.contains("type label present")));
+        assert!(
+            find_rule(&f, "IS-14")
+                .iter()
+                .any(|x| x.severity == Severity::Info && x.msg.contains("type label present"))
+        );
     }
 
     #[test]
     fn is14_no_type_label_fails() {
         let f = check_content("添加功能", GOOD_SUB_BODY, &["question"], "sub", "open");
-        assert!(find_rule(&f, "IS-14").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("no type label")));
+        assert!(
+            find_rule(&f, "IS-14")
+                .iter()
+                .any(|x| x.severity == Severity::Fail && x.msg.contains("no type label"))
+        );
     }
 
     #[test]
@@ -1014,8 +1144,11 @@ tests pass.
         // but "documentation" is not → WARN suggestion.
         let body = GOOD_SUB_BODY.to_string() + "\n文档清理\n";
         let f = check_content("添加功能", &body, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-14").iter().any(|x| x.severity == Severity::Warn
-            && x.msg.contains("consider")));
+        assert!(
+            find_rule(&f, "IS-14")
+                .iter()
+                .any(|x| x.severity == Severity::Warn && x.msg.contains("consider"))
+        );
     }
 
     #[test]
@@ -1023,9 +1156,18 @@ tests pass.
         // GOOD_SUB_BODY contains both "文档" and "测试" (per "运行测试通过"):
         // providing both suggested labels → aligned → INFO.
         let body = GOOD_SUB_BODY.to_string() + "\n文档\n";
-        let f = check_content("添加功能", &body, &["documentation", "tests"], "sub", "open");
-        assert!(find_rule(&f, "IS-14").iter().any(|x| x.severity == Severity::Info
-            && x.msg.contains("keywords align")));
+        let f = check_content(
+            "添加功能",
+            &body,
+            &["documentation", "tests"],
+            "sub",
+            "open",
+        );
+        assert!(
+            find_rule(&f, "IS-14")
+                .iter()
+                .any(|x| x.severity == Severity::Info && x.msg.contains("keywords align"))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1036,17 +1178,23 @@ tests pass.
     fn is15_open_info_na() {
         let f = check_content("添加功能", GOOD_SUB_BODY, &["enhancement"], "sub", "open");
         let r = find_rule(&f, "IS-15");
-        assert!(r.iter().any(|x| x.severity == Severity::Info && x.msg.contains("closure rule n/a")));
+        assert!(
+            r.iter()
+                .any(|x| x.severity == Severity::Info && x.msg.contains("closure rule n/a"))
+        );
     }
 
     #[test]
     fn is15_closed_sub_all_checked_info() {
-        let body = GOOD_SUB_BODY.replace("- [ ] 第一步完成", "- [x] 第一步完成")
+        let body = GOOD_SUB_BODY
+            .replace("- [ ] 第一步完成", "- [x] 第一步完成")
             .replace("- [ ] 第二步完成", "- [x] 第二步完成");
         let f = check_content("添加功能", &body, &["enhancement"], "sub", "closed");
         let r = find_rule(&f, "IS-15");
-        assert!(r.iter().any(|x| x.severity == Severity::Info
-            && x.msg.contains("all checked on close")));
+        assert!(
+            r.iter()
+                .any(|x| x.severity == Severity::Info && x.msg.contains("all checked on close"))
+        );
         assert!(!r.iter().any(|x| x.severity == Severity::Fail));
     }
 
@@ -1055,17 +1203,24 @@ tests pass.
         let f = check_content("添加功能", GOOD_SUB_BODY, &["enhancement"], "sub", "closed");
         let r = find_rule(&f, "IS-15");
         // GOOD body has two unchecked boxes → FAIL
-        assert!(r.iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("Done when unchecked")));
+        assert!(
+            r.iter()
+                .any(|x| x.severity == Severity::Fail && x.msg.contains("Done when unchecked"))
+        );
     }
 
     #[test]
     fn is15_closed_sub_no_boxes_warns() {
-        let bad = GOOD_SUB_BODY.replace("## Done when\n- [ ] 第一步完成\n- [ ] 第二步完成\n",
-            "## Done when\nplain prose no boxes\n");
+        let bad = GOOD_SUB_BODY.replace(
+            "## Done when\n- [ ] 第一步完成\n- [ ] 第二步完成\n",
+            "## Done when\nplain prose no boxes\n",
+        );
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "closed");
-        assert!(find_rule(&f, "IS-15").iter().any(|x| x.severity == Severity::Warn
-            && x.msg.contains("no Done when boxes")));
+        assert!(
+            find_rule(&f, "IS-15")
+                .iter()
+                .any(|x| x.severity == Severity::Warn && x.msg.contains("no Done when boxes"))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1076,38 +1231,61 @@ tests pass.
     fn is16_literal_backslash_n_body_fails() {
         let bad = GOOD_SUB_BODY.to_string() + r"\n literal here";
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-16").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("字面")));
+        assert!(
+            find_rule(&f, "IS-16")
+                .iter()
+                .any(|x| x.severity == Severity::Fail && x.msg.contains("字面"))
+        );
     }
 
     #[test]
     fn is16_replacement_char_fails() {
         let bad = GOOD_SUB_BODY.to_string() + "\u{fffd}";
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-16").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("U+FFFD")));
+        assert!(
+            find_rule(&f, "IS-16")
+                .iter()
+                .any(|x| x.severity == Severity::Fail && x.msg.contains("U+FFFD"))
+        );
     }
 
     #[test]
     fn is16_forbidden_keyword_todo_fails() {
         let bad = GOOD_SUB_BODY.to_string() + "\nTODO: finish\n";
         let f = check_content("添加功能", &bad, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-16").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("forbidden keyword") && x.msg.contains("TODO")));
+        assert!(
+            find_rule(&f, "IS-16")
+                .iter()
+                .any(|x| x.severity == Severity::Fail
+                    && x.msg.contains("forbidden keyword")
+                    && x.msg.contains("TODO"))
+        );
     }
 
     #[test]
     fn is16_fullwidth_bracket_in_title_fails() {
-        let f = check_content("添加（功能）", GOOD_SUB_BODY, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-16").iter().any(|x| x.severity == Severity::Fail
-            && x.msg.contains("fullwidth brackets")));
+        let f = check_content(
+            "添加（功能）",
+            GOOD_SUB_BODY,
+            &["enhancement"],
+            "sub",
+            "open",
+        );
+        assert!(
+            find_rule(&f, "IS-16")
+                .iter()
+                .any(|x| x.severity == Severity::Fail && x.msg.contains("fullwidth brackets"))
+        );
     }
 
     #[test]
     fn is16_clean_title_no_brackets_info() {
         let f = check_content("添加功能", GOOD_SUB_BODY, &["enhancement"], "sub", "open");
-        assert!(find_rule(&f, "IS-16").iter().any(|x| x.severity == Severity::Info
-            && x.msg.contains("no fullwidth brackets")));
+        assert!(
+            find_rule(&f, "IS-16")
+                .iter()
+                .any(|x| x.severity == Severity::Info && x.msg.contains("no fullwidth brackets"))
+        );
     }
 
     // -----------------------------------------------------------------------
