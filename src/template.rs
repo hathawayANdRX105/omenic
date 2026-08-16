@@ -268,6 +268,65 @@ deps:
     ),
     (
         TemplateKind::Phase,
+        "pdca",
+        r#"tasks:
+  - key: phase
+    title: "pdca: plan → implement → audit → smoke → tidy"
+    kind: task
+    description: |
+      PDCA 编排 phase：plan → implement → audit → smoke → tidy 顺序链。
+    acceptance: |
+      PDCA 五步全部完成；phase 在 tidy 完成后关闭。
+  - key: plan
+    title: "plan: define approach and steps"
+    kind: task
+    description: |
+      定义方案与实施步骤（同层第一步）。
+    acceptance: |
+      方案与步骤已定义。
+  - key: implement
+    title: "implement: deliver the work item"
+    kind: task
+    description: |
+      按方案实现：模块/测试/CLI 路径。
+    acceptance: |
+      工作项已实现。
+  - key: audit
+    title: "audit: check against plan and contract"
+    kind: task
+    description: |
+      对照方案与可观察契约审查实现。
+    acceptance: |
+      审计完成：实现与方案/契约一致。
+  - key: smoke
+    title: "smoke: run and observe"
+    kind: task
+    description: |
+      跑通主路径并记录观察结果。
+    acceptance: |
+      smoke 通过：命令 + 结果已记录。
+  - key: tidy
+    title: "tidy: clean obsolete artifacts"
+    kind: task
+    description: |
+      清理脚手架/死代码/过期注释。
+    acceptance: |
+      清理完成。
+deps:
+  - task: implement
+    depends_on: plan
+  - task: audit
+    depends_on: implement
+  - task: smoke
+    depends_on: audit
+  - task: tidy
+    depends_on: smoke
+  - task: phase
+    depends_on: tidy
+"#,
+    ),
+    (
+        TemplateKind::Phase,
         "plan",
         r#"tasks:
   - key: scope
@@ -752,6 +811,31 @@ mod tests {
     }
 
     #[test]
+    fn pdca_template_has_five_step_chain_and_phase_aggregation() {
+        let t = parse_template(
+            "pdca",
+            TemplateKind::Phase,
+            DEFAULT_TEMPLATES
+                .iter()
+                .find(|(_, n, _)| *n == "pdca")
+                .unwrap()
+                .2,
+        )
+        .unwrap();
+        let keys: Vec<&str> = t.tasks.iter().map(|x| x.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec!["phase", "plan", "implement", "audit", "smoke", "tidy"]
+        );
+        // Sibling chain derived automatically even with explicit deps present.
+        let apply_result = {
+            let tmp = tempdir().unwrap();
+            let store = tmp_store(tmp.path());
+            write_default_templates(tmp.path()).unwrap();
+            apply(&store, tmp.path(), "pdca", "t-pd", None).unwrap()
+        };
+        assert_eq!(apply_result.len(), 1 + 1 + 5, "{apply_result:?}");
+    }
     fn apply_auto_sibling_chain_and_terminal_aggregation() {
         let tmp = tempdir().unwrap();
         let store = tmp_store(tmp.path());
