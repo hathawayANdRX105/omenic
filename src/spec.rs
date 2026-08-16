@@ -3,7 +3,7 @@
 //! Four kinds, stored as editable markdown template files under
 //! `<data_dir>/specs/` (`.oi/specs/` in the default `.oi` layout):
 //!
-//! - `issue` — must have **Done when** (checkbox acceptance)
+//! - `issue` — 拆分描述（Goal/Background/Suspected areas），验收与编排进 PR
 //! - `epic`  — must have **Implement order**, must NOT contain **Done when**
 //! - `pr`    — must have **Construction plan** (>= 2 checkboxes)
 //! - `review`— CRG + ocr review format
@@ -15,7 +15,7 @@
 //!
 //! ```markdown
 //! <!-- spec: issue -->
-//! <!-- desc: 普通 issue：必须有 Done when -->
+//! <!-- desc: 普通 issue：拆分描述，无 Done when（验收在 PR）-->
 //! # <issue 标题>
 //! ## Goal [req]
 //! <!-- 提示文字 -->
@@ -57,7 +57,7 @@ pub const DEFAULT_TEMPLATES: &[(&str, &str)] = &[
     (
         "issue",
         r#"<!-- spec: issue -->
-<!-- desc: 普通 issue（task/bug/chore）：必须有 Done when -->
+<!-- desc: 普通 issue（task/bug/chore）：拆分描述，无 Done when；验收与编排在 PR，审查 findings 回写本 issue 评论区 -->
 
 # <issue 标题>
 
@@ -66,10 +66,6 @@ pub const DEFAULT_TEMPLATES: &[(&str, &str)] = &[
 
 ## Background [req]
 <!-- 为什么现在做、之前的决定或链接（必填） -->
-
-## Done when [req] [checkbox]
-<!-- 可观察的验收条件（必填） -->
-- [ ]
 
 ## Suspected areas [req]
 <!-- 改动范围：文件/package/符号/workflow/文档（必填） -->
@@ -517,7 +513,6 @@ mod tests {
         for (h, body) in [
             ("Goal", "goal text"),
             ("Background", "bg text"),
-            ("Done when", "- [x] one\n- [ ] two"),
             ("Suspected areas", "src/foo.rs"),
         ] {
             doc = doc.replace(&format!("## {h}\n"), &format!("## {h}\n{body}\n"));
@@ -535,14 +530,13 @@ mod tests {
     }
 
     #[test]
-    fn issue_spec_has_done_when_checkbox() {
+    fn issue_spec_has_no_done_when() {
         let spec = issue_spec();
-        let done = spec
-            .fields
-            .iter()
-            .find(|f| f.heading == "Done when")
-            .unwrap();
-        assert!(done.required && done.checkbox);
+        assert!(
+            !spec.fields.iter().any(|f| f.heading == "Done when"),
+            "issue spec must not require Done when (acceptance lives in the PR)"
+        );
+        assert!(spec.fields.iter().any(|f| f.heading == "Suspected areas"));
     }
 
     #[test]
