@@ -29,9 +29,16 @@ fn timestamp() -> String {
 }
 
 /// Find the real gh binary in PATH, skipping our own executable.
+///
+/// gate is deployed as BOTH `~/.local/bin/gate` and `~/.local/bin/gh`
+/// (argv[0]==gh interception). When gate-as-gh runs `--version` it passes
+/// through to the real gh, so version sniffing cannot distinguish them —
+/// skip the gate install dir (`~/.local/bin`) plus same-file candidates.
 pub fn find_real_gh() -> String {
     let self_path = env::current_exe().ok();
     let self_resolved = self_path.as_ref().and_then(|p| p.canonicalize().ok());
+    let gate_dir =
+        env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local").join("bin"));
 
     if let Some(path) = env::var_os("PATH") {
         for dir in env::split_paths(&path) {
@@ -44,8 +51,18 @@ pub fn find_real_gh() -> String {
                         }
                     }
                 }
+                // gate's install dir — this is the intercept binary, not the
+                // real gh. The real gh lives elsewhere on PATH or in fallbacks.
+                if let Some(gd) = &gate_dir {
+                    if dir == *gd {
+                        continue;
+                    }
+                }
+                // Sanity: must report a gh version (covers gate-as-gh copies
+                // outside ~/.local/bin, e.g. during tests).
                 if let Ok(out) = Command::new(&candidate).arg("--version").output() {
-                    if out.status.success() {
+                    let ver = String::from_utf8_lossy(&out.stdout);
+                    if out.status.success() && ver.trim_start().starts_with("gh version") {
                         return candidate.to_string_lossy().to_string();
                     }
                 }
@@ -158,16 +175,31 @@ pub fn gh_args(args: &[String]) -> Vec<String> {
             skip = false;
             continue;
         }
-        if a == "--parent" || a == "-P" {
+        if a == "--parent" || a == "-P" || a == "--repo" || a == "-R" {
             skip = true;
             continue;
         }
-        if a.starts_with("--parent=") {
+        if a.starts_with("--parent=") || a.starts_with("--repo=") {
             continue;
         }
         out.push(a.clone());
     }
     out
+}
+
+/// Extract the `--repo X` / `-R X` / `--repo=X` value from gh args, if any.
+fn arg_repo(args: &[String]) -> Option<String> {
+    let mut i = 0;
+    while i < args.len() {
+        if (args[i] == "--repo" || args[i] == "-R") && i + 1 < args.len() {
+            return Some(args[i + 1].clone());
+        }
+        if let Some(v) = args[i].strip_prefix("--repo=") {
+            return Some(v.to_string());
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Append a line to ~/.local/share/gh-gate/gate.log.
@@ -419,7 +451,7 @@ pub fn intercept_issue_close(args: &[String]) -> i32 {
         .iter()
         .find(|a| a.chars().all(|c| c.is_ascii_digit()))
         .cloned();
-    let repo = derive_repo();
+    let repo = arg_repo(args).unwrap_or_else(|| derive_repo());
     if let (Some(num), false) = (&issue_num, repo.is_empty()) {
         let (rc, data, _) = run_gh(
             &[
@@ -529,7 +561,7 @@ pub fn intercept_issue_close(args: &[String]) -> i32 {
     }
 
     let mut full = vec!["issue".to_string(), "close".to_string()];
-    full.extend(args.iter().cloned());
+    full.extend(gh_args(args));
     let (rc, out, err) = run_gh(&full, None);
     if !out.is_empty() {
         print!("{out}");
@@ -988,8 +1020,11 @@ pub fn dispatch(args: &[String]) -> i32 {
         return passthrough(&[]);
     }
     let cmd = &args[0];
-    let rest = &args[1..];
-    match (cmd.as_str(), rest.first().map(|s| s.as_str())) {
+    // args[1] is the subcommand (create/close/merge); the intercept handlers
+    // expect ONLY the subcommand's arguments (they re-prefix "issue <sub>"
+    // themselves when passing through). Forward args[2..].
+    let rest = &args[2..];
+    match (cmd.as_str(), args.get(1).map(|s| s.as_str())) {
         ("issue", Some("create")) => intercept_issue_create(rest),
         ("issue", Some("close")) => intercept_issue_close(rest),
         ("pr", Some("create")) => intercept_pr_create(rest),
@@ -1005,6 +1040,78 @@ pub fn dispatch(args: &[String]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- gh_args / arg_repo: argument stripping ---
+
+    #[test]
+    fn gh_args_strips_repo_and_parent() {
+        let args = vec![
+            "5".to_string(),
+            "--repo".to_string(),
+            "owner/repo".to_string(),
+            "--comment".to_string(),
+            "reason".to_string(),
+            "--parent".to_string(),
+            "3".to_string(),
+        ];
+        let out = gh_args(&args);
+        assert_eq!(out, vec!["5", "--comment", "reason"]);
+    }
+
+    #[test]
+    fn find_real_gh_never_returns_gate_install_dir() {
+        // ~/.local/bin/gh IS gate (intercept binary). find_real_gh must skip it
+        // and return the real gh (/usr/bin/gh etc.), otherwise run_gh recurses.
+        let gh = find_real_gh();
+        assert!(
+            !gh.starts_with(&format!(
+                "{}/.local/bin/gh",
+                env::var("HOME").unwrap_or_default()
+            )),
+            "find_real_gh returned gate itself: {gh}"
+        );
+        assert!(gh.ends_with("gh"), "expected a gh binary, got: {gh}");
+    }
+
+    #[test]
+    fn dispatch_forwards_subcommand_args_only() {
+        // dispatch receives argv after argv[0]; intercept handlers expect the
+        // args AFTER the subcommand (they re-prefix "issue <sub>" themselves).
+        // This test guards against the "close close <n>" double-subcommand bug.
+        let args = vec![
+            "issue".to_string(),
+            "close".to_string(),
+            "42".to_string(),
+            "--comment".to_string(),
+            "reason".to_string(),
+        ];
+        let rest = &args[2..];
+        assert_eq!(rest, &["42", "--comment", "reason"]);
+        assert_eq!(args.get(1).map(|s| s.as_str()), Some("close"));
+    }
+
+    #[test]
+    fn gh_args_strips_repo_eq_and_r() {
+        assert_eq!(gh_args(&["5".into(), "--repo=o/r".into()]), vec!["5"]);
+        assert_eq!(gh_args(&["5".into(), "-R".into(), "o/r".into()]), vec!["5"]);
+    }
+
+    #[test]
+    fn arg_repo_extracts_value() {
+        assert_eq!(
+            arg_repo(&["5".into(), "--repo".into(), "a/b".into()]),
+            Some("a/b".into())
+        );
+        assert_eq!(
+            arg_repo(&["5".into(), "--repo=a/b".into()]),
+            Some("a/b".into())
+        );
+        assert_eq!(
+            arg_repo(&["5".into(), "-R".into(), "c/d".into()]),
+            Some("c/d".into())
+        );
+        assert_eq!(arg_repo(&["5".into()]), None);
+    }
 
     // --- is_mounted: mount verification pure logic ---
 
