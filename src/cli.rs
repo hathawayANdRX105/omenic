@@ -62,6 +62,19 @@ enum Command {
         #[command(subcommand)]
         sub: DepCmd,
     },
+    /// Task board: tasks partitioned by status/readiness
+    Board,
+    /// Built-in orchestration templates
+    Template {
+        #[command(subcommand)]
+        sub: TemplateCmd,
+    },
+    /// Run the real GitHub CLI (skips the gate shim, strips proxy env)
+    Gh {
+        /// Pass-through args for the real gh binary
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -130,6 +143,22 @@ enum DepCmd {
     Add { id: String, dep_id: String },
     /// Remove a dependency edge
     Remove { id: String, dep_id: String },
+}
+
+#[derive(Subcommand)]
+enum TemplateCmd {
+    /// List built-in templates
+    List,
+    /// Apply a template: create topic task + ordered step chain
+    Apply {
+        /// Template name (dev | plan)
+        name: String,
+        /// Topic title; becomes the parent task id
+        topic: String,
+        /// Parent task id for the topic (e.g. a milestone)
+        #[arg(short = 'p', long)]
+        parent: Option<String>,
+    },
 }
 
 /// Entry point: parse argv via clap and dispatch to a subcommand.
@@ -201,6 +230,20 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
                 DepCmd::Remove { id, dep_id } => dep_remove(&store, &id, &dep_id, json),
             }
         }
+        Command::Board => board_cmd(json),
+        Command::Template { sub } => {
+            let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+            let store = Store::new(&config.data_dir);
+            match sub {
+                TemplateCmd::List => template_list_cmd(json),
+                TemplateCmd::Apply {
+                    name,
+                    topic,
+                    parent,
+                } => template_apply_cmd(&store, &name, &topic, parent, json),
+            }
+        }
+        Command::Gh { args } => gh_cmd(&args),
     }
 }
 
@@ -219,30 +262,6 @@ fn print_json<T: ?Sized + serde::Serialize>(value: &T) {
 fn json_ok(message: &str) {
     let obj = serde_json::json!({"status": "ok", "message": message});
     print_json(&obj);
-}
-
-fn now_iso() -> String {
-    // ISO-8601-ish UTC timestamp; seconds precision is plenty for MVP.
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    // Days since epoch -> civil date via a small conversion.
-    let days = secs / 86_400;
-    let rem = secs % 86_400;
-    let (hh, mm, ss) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    // Howard Hinnant's civil_from_days algorithm.
-    let z = days as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -303,7 +322,7 @@ fn task_add(
 
     let mut created_ids = Vec::new();
     for title in titles {
-        let now = now_iso();
+        let now = crate::task::now_iso();
         let task = Task {
             id: title.clone(),
             title: title.clone(),
@@ -349,7 +368,7 @@ fn task_done(store: &Store, id: &str, json: bool) -> Result<u8, String> {
         return Ok(1);
     }
     task.status = TaskStatus::Done;
-    task.updated_at = now_iso();
+    task.updated_at = crate::task::now_iso();
     store
         .append(&task)
         .map_err(|e| format!("store error: {e}"))?;
@@ -454,7 +473,7 @@ fn dep_add(store: &Store, task_id: &str, dep_id: &str, json: bool) -> Result<u8,
 
     task.deps.push(dep_id.to_string());
     task.deps.sort();
-    task.updated_at = now_iso();
+    task.updated_at = crate::task::now_iso();
     store
         .append(&task)
         .map_err(|e| format!("store error: {e}"))?;
@@ -482,7 +501,7 @@ fn dep_remove(store: &Store, task_id: &str, dep_id: &str, json: bool) -> Result<
     }
 
     task.deps.retain(|d| d != dep_id);
-    task.updated_at = now_iso();
+    task.updated_at = crate::task::now_iso();
     store
         .append(&task)
         .map_err(|e| format!("store error: {e}"))?;
@@ -568,7 +587,7 @@ fn task_update(
         }
     }
 
-    task.updated_at = now_iso();
+    task.updated_at = crate::task::now_iso();
     store
         .append(&task)
         .map_err(|e| format!("store error: {e}"))?;
@@ -832,6 +851,15 @@ fn run_cmd(id: &str) -> Result<u8, String> {
         return Ok(1);
     }
 
+    // F3: mark the task running (InProgress) before the worker starts so the
+    // board shows it live; the runner outcome flips it to Done/Failed.
+    let mut running = task.clone();
+    running.status = TaskStatus::InProgress;
+    running.updated_at = crate::task::now_iso();
+    store
+        .append(&running)
+        .map_err(|e| format!("store error: {e}"))?;
+
     // Runner takes over from here; its outcome decides the store flip.
     let outcome = runner::run(
         &runner::Ctx {
@@ -849,15 +877,12 @@ fn run_cmd(id: &str) -> Result<u8, String> {
     .map_err(|e| format!("runner error: {e}"))?;
 
     // Flip status and append back to store on Done; keep in_progress on Failed.
-    let mut updated = task.clone();
+    let mut updated = running.clone();
     updated.status = match outcome.status {
         runner::RunStatus::Done => TaskStatus::Done,
         runner::RunStatus::Failed => TaskStatus::InProgress,
     };
-    updated.updated_at = now_iso();
-    store
-        .append(&updated)
-        .map_err(|e| format!("store error: {e}"))?;
+    updated.updated_at = crate::task::now_iso();
 
     // Evidence drop per MVP §3.2: result.json in <data_dir>/tasks/<id>/.
     let task_dir = config.data_dir.join("tasks").join(id);
@@ -891,25 +916,54 @@ fn run_cmd(id: &str) -> Result<u8, String> {
     }
 }
 
-/// `steer` subcommand: note that MVP steer is local-only (no live worker yet).
+/// `steer` subcommand: if the task is running (InProgress), queue a live
+/// steering message via `steer-cmd.txt` — the runner polls and forwards it
+/// to the worker. Non-running tasks get a stored note instead.
 fn steer_cmd(id: &str, message: &[String], json: bool) -> Result<u8, String> {
     if message.is_empty() {
-        return Err(format!("usage: omenic steer {id} <message>"));
+        return Err(format!("usage: oi steer {id} <message>"));
     }
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let store = Store::new(&config.data_dir);
+    let Some(task) = store
+        .load_task(id)
+        .map_err(|e| format!("store error: {e}"))?
+    else {
+        eprintln!("task not found: {id}");
+        return Ok(1);
+    };
     let msg = message.join(" ");
-    let note = format!("steer note for {id}: {msg}");
-    if json {
-        json_ok(&note);
+    if task.status == TaskStatus::InProgress {
+        let dir = config.data_dir.join("tasks").join(id);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("create task dir: {e}"))?;
+        std::fs::write(dir.join("steer-cmd.txt"), &msg)
+            .map_err(|e| format!("write steer inbox: {e}"))?;
+        let note = format!("steer queued for running task {id}: {msg}");
+        if json {
+            json_ok(&note);
+        } else {
+            println!("{note}");
+        }
     } else {
-        println!("{note}");
-        println!(
-            "(M3: steer is a stored instruction for a future worker session; live worker attachment is post-MVP)"
+        let note = format!(
+            "steer note for {id}: {msg} (task not running; status {:?})",
+            task.status
         );
+        if json {
+            json_ok(&note);
+        } else {
+            println!("{note}");
+        }
     }
     Ok(0)
 }
 
-/// `abort` subcommand: mark the task as open again so it can be re-run.
+/// `abort` subcommand: if the task is running (InProgress), SIGTERM both the
+/// omp worker's process group (`kill -TERM -<omp-pid>`, it is a group leader
+/// via `process_group(0)`) and the runner process, then reset the task to
+/// open so it can be re-run. Signal (not a polled file) because the worker
+/// may be mid-thinking with no events to poll between. Non-running tasks are
+/// reset to open directly.
 fn abort_cmd(id: &str, json: bool) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
     let store = Store::new(&config.data_dir);
@@ -920,12 +974,40 @@ fn abort_cmd(id: &str, json: bool) -> Result<u8, String> {
         eprintln!("task not found: {id}");
         return Ok(1);
     };
-    task.status = TaskStatus::Open;
-    task.updated_at = now_iso();
-    store
-        .append(&task)
-        .map_err(|e| format!("store error: {e}"))?;
-    let msg = format!("aborted {id}; status reset to open");
+    let msg;
+    if task.status == TaskStatus::InProgress {
+        let dir = config.data_dir.join("tasks").join(id);
+        let pids: Vec<i32> = std::fs::read_to_string(dir.join("run.pid"))
+            .ok()
+            .map(|s| {
+                s.split_whitespace()
+                    .filter_map(|p| p.parse::<i32>().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if pids.len() == 2 {
+            let (run_pid, omp_pid) = (pids[0], pids[1]);
+            // Worker tree first (process group), then the runner itself.
+            // .output() discards kill's stderr — abort success is defined by
+            // the store reset below, not by kill diagnostics.
+            let _ = std::process::Command::new("kill")
+                .args(["-TERM", &format!("-{omp_pid}")])
+                .output();
+            let _ = std::process::Command::new("kill")
+                .args(["-TERM", &run_pid.to_string()])
+                .output();
+            msg = format!("abort sent to omp group {omp_pid} + runner {run_pid} for {id}");
+        } else {
+            msg = format!("no live run for {id}; reset to open");
+        }
+        task.status = TaskStatus::Open;
+        task.updated_at = crate::task::now_iso();
+        store
+            .append(&task)
+            .map_err(|e| format!("store error: {e}"))?;
+    } else {
+        msg = format!("aborted {id}; status reset to open");
+    }
     if json {
         json_ok(&msg);
     } else {
@@ -1240,6 +1322,165 @@ fn render_dot(tasks: &[Task]) -> String {
     out
 }
 
+/// `board` subcommand: the task running board — tasks partitioned by
+/// status/readiness so an agent can see what to run next and what is blocked.
+fn board_cmd(json: bool) -> Result<u8, String> {
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let store = Store::new(&config.data_dir);
+    let all = store.load_all().map_err(|e| format!("store error: {e}"))?;
+    let map: std::collections::HashMap<String, Task> =
+        all.iter().map(|t| (t.id.clone(), t.clone())).collect();
+
+    let mut done: Vec<&Task> = Vec::new();
+    let mut in_progress: Vec<&Task> = Vec::new();
+    let mut ready: Vec<&Task> = Vec::new();
+    let mut blocked: Vec<&Task> = Vec::new();
+    for t in &all {
+        match t.status {
+            TaskStatus::Done => done.push(t),
+            TaskStatus::InProgress => in_progress.push(t),
+            TaskStatus::Open => {
+                if crate::graph::is_ready(&map, &t.id) {
+                    ready.push(t);
+                } else {
+                    blocked.push(t);
+                }
+            }
+        }
+    }
+    let by_priority = |a: &&Task, b: &&Task| a.priority.cmp(&b.priority).then(a.id.cmp(&b.id));
+    done.sort_by(by_priority);
+    in_progress.sort_by(by_priority);
+    ready.sort_by(by_priority);
+    blocked.sort_by(by_priority);
+
+    if json {
+        let part = |v: &[&Task]| -> Vec<serde_json::Value> {
+            v.iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "id": t.id,
+                        "title": t.title,
+                        "priority": t.priority,
+                        "deps": t.deps,
+                    })
+                })
+                .collect()
+        };
+        let obj = serde_json::json!({
+            "done": part(&done),
+            "in_progress": part(&in_progress),
+            "ready": part(&ready),
+            "blocked": part(&blocked),
+        });
+        print_json(&obj);
+    } else {
+        let line = |t: &Task| format!("{} (P{}) — {}", t.id, t.priority, t.title);
+        let section = |name: &str, v: &[&Task]| -> String {
+            let mut s = format!("## {name} ({})\n", v.len());
+            for t in v {
+                s.push_str(&format!("  {}\n", line(t)));
+            }
+            s
+        };
+        print!(
+            "{}{}{}{}",
+            section("done", &done),
+            section("in_progress", &in_progress),
+            section("ready", &ready),
+            section("blocked", &blocked),
+        );
+    }
+    Ok(0)
+}
+
+/// `template list` subcommand: list built-in orchestration templates.
+fn template_list_cmd(json: bool) -> Result<u8, String> {
+    if json {
+        let list: Vec<serde_json::Value> = crate::template::TEMPLATES
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "steps": t.steps.iter().map(|s| s.name).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        print_json(&list);
+    } else {
+        for t in crate::template::TEMPLATES {
+            println!("{} — {}", t.name, t.description);
+            for s in t.steps {
+                println!("  - {}", s.name);
+            }
+        }
+    }
+    Ok(0)
+}
+
+/// `template apply` subcommand: create topic task + step chain from a template.
+fn template_apply_cmd(
+    store: &Store,
+    name: &str,
+    topic: &str,
+    parent: Option<String>,
+    json: bool,
+) -> Result<u8, String> {
+    let tpl = crate::template::find(name)
+        .ok_or_else(|| format!("unknown template `{name}` (try `oi template list`)"))?;
+    let ids = crate::template::apply(store, tpl, topic, parent)?;
+    if json {
+        let obj = serde_json::json!({ "created": ids });
+        print_json(&obj);
+    } else {
+        for id in &ids {
+            println!("created {id}");
+        }
+    }
+    Ok(0)
+}
+
+/// `gh` subcommand: run the real GitHub CLI directly — skips the gate shim
+/// installed at `~/.local/bin/gh` and strips proxy env vars (the local proxy
+/// at 127.0.0.1:7890 frequently refuses connections). Exit code passes
+/// through unchanged so scripts can branch on gh's own status.
+fn gh_cmd(args: &[String]) -> Result<u8, String> {
+    let Some(real) = find_real_gh() else {
+        return Err(
+            "real gh not found on PATH (outside ~/.local/bin); install via pacman: gh".to_string(),
+        );
+    };
+    let status = std::process::Command::new(&real)
+        .args(args)
+        .env_remove("http_proxy")
+        .env_remove("https_proxy")
+        .env_remove("HTTP_PROXY")
+        .env_remove("HTTPS_PROXY")
+        .env_remove("ALL_PROXY")
+        .env_remove("all_proxy")
+        .status()
+        .map_err(|e| format!("spawn {}: {e}", real.display()))?;
+    Ok(status.code().unwrap_or(1) as u8)
+}
+
+/// First `gh` on PATH that is not inside `~/.local/bin` (the gate shim
+/// deployment dir). Canonical comparison so symlinked PATH entries resolve.
+fn find_real_gh() -> Option<std::path::PathBuf> {
+    let shim = std::fs::canonicalize(
+        std::path::PathBuf::from(std::env::var_os("HOME")?).join(".local/bin"),
+    )
+    .ok()?;
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|d| d.join("gh"))
+        .filter(|p| p.is_file())
+        .find(|p| {
+            std::fs::canonicalize(p)
+                .map(|c| !c.starts_with(&shim))
+                .unwrap_or(true)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1362,7 +1603,7 @@ mod tests {
 
     #[test]
     fn now_iso_format() {
-        let s = now_iso();
+        let s = crate::task::now_iso();
         assert_eq!(s.len(), 20); // 2026-08-10T12:34:56Z
         assert!(s.ends_with('Z'));
         assert!(s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' && s.as_bytes()[10] == b'T');
@@ -2419,7 +2660,7 @@ dev-shell [open] P2
     }
 
     fn mk_task_titled(id: &str, title: &str) -> Task {
-        let now = now_iso();
+        let now = crate::task::now_iso();
         Task {
             id: id.to_string(),
             title: title.to_string(),

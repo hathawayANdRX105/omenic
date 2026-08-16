@@ -10,6 +10,7 @@ mod rpc;
 mod runner;
 mod store;
 mod task;
+mod template;
 mod worker;
 
 use std::process::ExitCode;
