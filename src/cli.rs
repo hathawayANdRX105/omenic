@@ -76,6 +76,18 @@ enum Command {
         #[command(subcommand)]
         sub: SpecCmd,
     },
+    /// Render task tree as PR Construction plan
+    Pr {
+        #[command(subcommand)]
+        sub: PrCmd,
+    },
+}
+
+/// Sub-views of `oi pr`.
+#[derive(Subcommand)]
+enum PrCmd {
+    /// Render a task subtree as Construction plan checkboxes
+    Render { id: String },
 }
 
 /// Sub-views of `oi plan`.
@@ -301,6 +313,9 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
             } => spec_new_cmd(&kind, title, output, json),
             SpecCmd::Check { kind, file } => spec_check_cmd(&kind, &file, json),
             SpecCmd::View { file } => spec_view_cmd(&file),
+        },
+        Command::Pr { sub } => match sub {
+            PrCmd::Render { id } => pr_render_cmd(&id, json),
         },
     }
 }
@@ -1127,7 +1142,9 @@ fn init_cmd_at(dir: &std::path::Path, json: bool) -> Result<u8, String> {
     }
     // Spec templates (never overwrite user edits).
     crate::spec::write_default_specs(&oi_dir).map_err(|e| format!("spec templates: {e}"))?;
-
+    // Task templates (never overwrite user edits).
+    crate::template::write_default_templates(&oi_dir)
+        .map_err(|e| format!("task templates: {e}"))?;
     let msg = match (dir_existed, config_existed) {
         (true, true) => "workspace already initialized",
         (false, false) => "initialized: .oi/, .oi/config.toml, .oi/specs/",
@@ -1276,6 +1293,53 @@ fn render_plan(tasks: &[Task]) -> String {
         }
     }
 
+    /// Stable topological order of a sibling list: if `a` depends on `b`
+    /// (both in the list), `b` renders before `a`. Kahn's algorithm with
+    /// declaration order as the tie-breaker (sibling chain from #216).
+    fn topo_sort<'a>(kids: &[&'a Task], map: &HashMap<String, Task>) -> Vec<&'a Task> {
+        use std::collections::HashMap as H;
+        let ids: std::collections::HashSet<&str> = kids.iter().map(|k| k.id.as_str()).collect();
+        let mut indeg: H<&str, usize> = H::new();
+        let mut deps_map: H<&str, Vec<&str>> = H::new();
+        let mut order: H<&str, usize> = H::new();
+        for (i, k) in kids.iter().enumerate() {
+            indeg.insert(k.id.as_str(), 0);
+            order.insert(k.id.as_str(), i);
+        }
+        for k in kids {
+            for d in &k.deps {
+                if ids.contains(d.as_str()) && d != &k.id {
+                    deps_map.entry(d.as_str()).or_default().push(k.id.as_str());
+                    *indeg.get_mut(k.id.as_str()).unwrap() += 1;
+                }
+            }
+        }
+        let mut queue: Vec<&Task> = kids
+            .iter()
+            .filter(|k| indeg[k.id.as_str()] == 0)
+            .copied()
+            .collect();
+        let mut out = Vec::new();
+        while !queue.is_empty() {
+            queue.sort_by_key(|k| order[k.id.as_str()]);
+            let n = queue.remove(0);
+            out.push(n);
+            if let Some(ms) = deps_map.get(n.id.as_str()).cloned() {
+                for m in ms {
+                    let e = indeg.get_mut(m).unwrap();
+                    *e -= 1;
+                    if *e == 0 {
+                        if let Some(t) = kids.iter().find(|k| k.id == m) {
+                            queue.push(t);
+                        }
+                    }
+                }
+            }
+        }
+        let _ = map; // reserved: ready/blocked glyph already computed by task_line
+        out
+    }
+
     fn print_children(
         parent: &Task,
         children: &HashMap<&str, Vec<&Task>>,
@@ -1287,7 +1351,7 @@ fn render_plan(tasks: &[Task]) -> String {
         let Some(kids) = children.get(parent.id.as_str()) else {
             return;
         };
-        for (i, kid) in kids.iter().enumerate() {
+        for (i, kid) in topo_sort(kids, map).iter().enumerate() {
             let is_last = i == kids.len() - 1;
             let branch = if is_last { "└─ " } else { "├─ " };
             // Mark before printing so a cycle back-edge is skipped, not re-printed.
@@ -1467,32 +1531,54 @@ fn board_cmd(json: bool) -> Result<u8, String> {
     Ok(0)
 }
 
-/// `template list` subcommand: list built-in orchestration templates.
+/// `template list` subcommand: list orchestration templates from
+/// `<data>/templates/{phases,steps}/`.
 fn template_list_cmd(json: bool) -> Result<u8, String> {
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let templates = crate::template::load_all_templates(&config.data_dir)
+        .map_err(|e| format!("template error: {e}"))?;
+    if templates.is_empty() {
+        eprintln!(
+            "no templates in {} (run `oi init` first)",
+            config.data_dir.join("templates").display()
+        );
+        return Ok(1);
+    }
     if json {
-        let list: Vec<serde_json::Value> = crate::template::TEMPLATES
+        let list: Vec<serde_json::Value> = templates
             .iter()
             .map(|t| {
                 serde_json::json!({
                     "name": t.name,
-                    "description": t.description,
-                    "steps": t.steps.iter().map(|s| s.name).collect::<Vec<_>>(),
+                    "kind": match t.kind {
+                        crate::template::TemplateKind::Phase => "phase",
+                        crate::template::TemplateKind::Step => "step",
+                    },
+                    "tasks": t.tasks.iter().map(|x| x.key.clone()).collect::<Vec<_>>(),
                 })
             })
             .collect();
         print_json(&list);
     } else {
-        for t in crate::template::TEMPLATES {
-            println!("{} — {}", t.name, t.description);
-            for s in t.steps {
-                println!("  - {}", s.name);
+        for t in &templates {
+            let kind = match t.kind {
+                crate::template::TemplateKind::Phase => "phase",
+                crate::template::TemplateKind::Step => "step",
+            };
+            println!(
+                "{kind}: {} — {}",
+                t.name,
+                t.tasks.first().map(|x| x.title.as_str()).unwrap_or("")
+            );
+            for x in &t.tasks {
+                println!("  - {}", x.key);
             }
         }
     }
     Ok(0)
 }
 
-/// `template apply` subcommand: create topic task + step chain from a template.
+/// `template apply` subcommand: create topic + phase + steps from a template.
 fn template_apply_cmd(
     store: &Store,
     name: &str,
@@ -1500,9 +1586,9 @@ fn template_apply_cmd(
     parent: Option<String>,
     json: bool,
 ) -> Result<u8, String> {
-    let tpl = crate::template::find(name)
-        .ok_or_else(|| format!("unknown template `{name}` (try `oi template list`)"))?;
-    let ids = crate::template::apply(store, tpl, topic, parent)?;
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let ids = crate::template::apply(store, &config.data_dir, name, topic, parent)
+        .map_err(|e| format!("template error: {e} — try `oi template list` or `oi init`"))?;
     if json {
         let obj = serde_json::json!({ "created": ids });
         print_json(&obj);
@@ -1626,6 +1712,109 @@ fn spec_view_cmd(file: &str) -> Result<u8, String> {
     use std::io::Write;
     print!("{doc}");
     std::io::stdout().flush().ok();
+    Ok(0)
+}
+
+/// `pr render <task-id>` subcommand: render a task subtree (topic → phase →
+/// steps, sibling order from deps) as a PR Construction plan checkbox list.
+fn pr_render_cmd(id: &str, json: bool) -> Result<u8, String> {
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let store = Store::new(&config.data_dir);
+    let all = store.load_all().map_err(|e| format!("store error: {e}"))?;
+    if !all.iter().any(|t| t.id == id) {
+        eprintln!("task not found: {id}");
+        return Ok(1);
+    }
+    let map: std::collections::HashMap<String, Task> =
+        all.iter().map(|t| (t.id.clone(), t.clone())).collect();
+
+    // Children of a parent, in dependency-topological order (Kahn).
+    fn children_of<'a>(all: &'a [Task], parent: &str) -> Vec<&'a Task> {
+        let mut kids: Vec<&Task> = all
+            .iter()
+            .filter(|t| t.parent.as_deref() == Some(parent))
+            .collect();
+        let ids: std::collections::HashSet<&str> = kids.iter().map(|k| k.id.as_str()).collect();
+        let mut indeg: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        let mut deps_map: std::collections::HashMap<&str, Vec<&str>> =
+            std::collections::HashMap::new();
+        for k in &kids {
+            indeg.insert(k.id.as_str(), 0);
+        }
+        for k in &kids {
+            for d in &k.deps {
+                if ids.contains(d.as_str()) && d != &k.id {
+                    deps_map.entry(d.as_str()).or_default().push(k.id.as_str());
+                    *indeg.get_mut(k.id.as_str()).unwrap() += 1;
+                }
+            }
+        }
+        let mut queue: Vec<&Task> = kids
+            .iter()
+            .filter(|k| indeg[k.id.as_str()] == 0)
+            .copied()
+            .collect();
+        let mut order: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for (i, k) in kids.iter().enumerate() {
+            order.insert(k.id.as_str(), i);
+        }
+        let mut out = Vec::new();
+        while !queue.is_empty() {
+            queue.sort_by_key(|k| order[k.id.as_str()]);
+            let n = queue.remove(0);
+            out.push(n);
+            if let Some(ms) = deps_map.get(n.id.as_str()).cloned() {
+                for m in ms {
+                    let e = indeg.get_mut(m).unwrap();
+                    *e -= 1;
+                    if *e == 0 {
+                        if let Some(t) = kids.iter().find(|k| k.id == m) {
+                            queue.push(t);
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn emit<'a>(
+        t: &'a Task,
+        all: &'a [Task],
+        json_list: &mut Vec<serde_json::Value>,
+        out: &mut String,
+        depth: usize,
+    ) {
+        let pad = "  ".repeat(depth);
+        out.push_str(&format!("{pad}- [ ] {}：{}\n", t.id, t.title));
+        json_list.push(serde_json::json!({
+            "id": t.id,
+            "title": t.title,
+            "depth": depth,
+            "deps": t.deps,
+        }));
+        for kid in children_of(all, &t.id) {
+            emit(kid, all, json_list, out, depth + 1);
+        }
+    }
+
+    let root = &map[id];
+    let mut out = String::from("## Construction plan\n");
+    let mut json_list: Vec<serde_json::Value> = Vec::new();
+    out.push_str(&format!("- [ ] {}：{}\n", root.id, root.title));
+    json_list.push(
+        serde_json::json!({"id": root.id, "title": root.title, "depth": 0, "deps": root.deps}),
+    );
+    for kid in children_of(&all, id) {
+        emit(kid, &all, &mut json_list, &mut out, 1);
+    }
+    if json {
+        print_json(&json_list);
+    } else {
+        use std::io::Write;
+        print!("{out}");
+        std::io::stdout().flush().ok();
+    }
     Ok(0)
 }
 
