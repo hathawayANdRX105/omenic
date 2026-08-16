@@ -3,7 +3,7 @@
 //! Four kinds, stored as editable markdown template files under
 //! `<data_dir>/specs/` (`.oi/specs/` in the default `.oi` layout):
 //!
-//! - `issue` — must have **Done when** (checkbox acceptance)
+//! - `issue` — 拆分描述（Goal/Background/Suspected areas），验收与编排进 PR
 //! - `epic`  — must have **Implement order**, must NOT contain **Done when**
 //! - `pr`    — must have **Construction plan** (>= 2 checkboxes)
 //! - `review`— CRG + ocr review format
@@ -15,7 +15,7 @@
 //!
 //! ```markdown
 //! <!-- spec: issue -->
-//! <!-- desc: 普通 issue：必须有 Done when -->
+//! <!-- desc: 普通 issue：拆分描述，无 Done when（验收在 PR）-->
 //! # <issue 标题>
 //! ## Goal [req]
 //! <!-- 提示文字 -->
@@ -57,7 +57,7 @@ pub const DEFAULT_TEMPLATES: &[(&str, &str)] = &[
     (
         "issue",
         r#"<!-- spec: issue -->
-<!-- desc: 普通 issue（task/bug/chore）：必须有 Done when -->
+<!-- desc: 普通 issue（task/bug/chore）：拆分描述，无 Done when；验收与编排在 PR，审查 findings 回写本 issue 评论区 -->
 
 # <issue 标题>
 
@@ -66,10 +66,6 @@ pub const DEFAULT_TEMPLATES: &[(&str, &str)] = &[
 
 ## Background [req]
 <!-- 为什么现在做、之前的决定或链接（必填） -->
-
-## Done when [req] [checkbox]
-<!-- 可观察的验收条件（必填） -->
-- [ ]
 
 ## Suspected areas [req]
 <!-- 改动范围：文件/package/符号/workflow/文档（必填） -->
@@ -289,8 +285,8 @@ pub fn load_all_specs(dir: &Path) -> Result<Vec<Spec>, String> {
     entries.sort_by_key(|e| e.file_name());
     for entry in entries {
         let path = entry.path();
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| format!("read {}: {e}", path.display()))?;
+        let content =
+            std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
         match parse_spec(&content) {
             Ok(spec) => specs.push(spec),
             Err(e) => return Err(format!("{}: {e}", path.display())),
@@ -334,10 +330,18 @@ pub struct CheckFinding {
 
 impl CheckFinding {
     fn ok(rule: &'static str, message: String) -> Self {
-        CheckFinding { rule, fail: false, message }
+        CheckFinding {
+            rule,
+            fail: false,
+            message,
+        }
     }
     fn fail(rule: &'static str, message: String) -> Self {
-        CheckFinding { rule, fail: true, message }
+        CheckFinding {
+            rule,
+            fail: true,
+            message,
+        }
     }
 }
 
@@ -399,7 +403,9 @@ pub fn check(spec: &Spec, doc: &str) -> Vec<CheckFinding> {
             }
             continue;
         }
-        let body: &[&str] = heading_body(&f.heading).map(|b| b.as_slice()).unwrap_or(&[]);
+        let body: &[&str] = heading_body(&f.heading)
+            .map(|b| b.as_slice())
+            .unwrap_or(&[]);
         let content: String = body.join("\n");
         if content.trim().is_empty() {
             if f.required {
@@ -439,7 +445,10 @@ pub fn check(spec: &Spec, doc: &str) -> Vec<CheckFinding> {
                 format!("{}: {} checkbox(es)", f.heading, n_boxes),
             ));
         } else {
-            findings.push(CheckFinding::ok("SPEC-01", format!("{}: filled", f.heading)));
+            findings.push(CheckFinding::ok(
+                "SPEC-01",
+                format!("{}: filled", f.heading),
+            ));
         }
     }
 
@@ -504,7 +513,6 @@ mod tests {
         for (h, body) in [
             ("Goal", "goal text"),
             ("Background", "bg text"),
-            ("Done when", "- [x] one\n- [ ] two"),
             ("Suspected areas", "src/foo.rs"),
         ] {
             doc = doc.replace(&format!("## {h}\n"), &format!("## {h}\n{body}\n"));
@@ -522,15 +530,25 @@ mod tests {
     }
 
     #[test]
-    fn issue_spec_has_done_when_checkbox() {
+    fn issue_spec_has_no_done_when() {
         let spec = issue_spec();
-        let done = spec.fields.iter().find(|f| f.heading == "Done when").unwrap();
-        assert!(done.required && done.checkbox);
+        assert!(
+            !spec.fields.iter().any(|f| f.heading == "Done when"),
+            "issue spec must not require Done when (acceptance lives in the PR)"
+        );
+        assert!(spec.fields.iter().any(|f| f.heading == "Suspected areas"));
     }
 
     #[test]
     fn epic_spec_forbids_done_when() {
-        let epic = parse_spec(DEFAULT_TEMPLATES.iter().find(|(n, _)| *n == "epic").unwrap().1).unwrap();
+        let epic = parse_spec(
+            DEFAULT_TEMPLATES
+                .iter()
+                .find(|(n, _)| *n == "epic")
+                .unwrap()
+                .1,
+        )
+        .unwrap();
         assert_eq!(epic.forbid_heading.as_deref(), Some("Done when"));
     }
 
@@ -566,7 +584,14 @@ mod tests {
 
     #[test]
     fn epic_forbids_done_when() {
-        let spec = parse_spec(DEFAULT_TEMPLATES.iter().find(|(n, _)| *n == "epic").unwrap().1).unwrap();
+        let spec = parse_spec(
+            DEFAULT_TEMPLATES
+                .iter()
+                .find(|(n, _)| *n == "epic")
+                .unwrap()
+                .1,
+        )
+        .unwrap();
         let mut doc = render_skeleton(&spec, "epic x");
         for (h, body) in [
             ("Description", "desc"),
@@ -586,7 +611,9 @@ mod tests {
         let bad = format!("{doc}\n## Done when\n- [ ] x\n");
         let findings = check(&spec, &bad);
         assert!(
-            findings.iter().any(|f| f.fail && f.message.contains("Done when")),
+            findings
+                .iter()
+                .any(|f| f.fail && f.message.contains("Done when")),
             "epic must reject Done when: {:?}",
             findings
         );
@@ -594,7 +621,14 @@ mod tests {
 
     #[test]
     fn pr_needs_two_checkboxes_in_construction_plan() {
-        let spec = parse_spec(DEFAULT_TEMPLATES.iter().find(|(n, _)| *n == "pr").unwrap().1).unwrap();
+        let spec = parse_spec(
+            DEFAULT_TEMPLATES
+                .iter()
+                .find(|(n, _)| *n == "pr")
+                .unwrap()
+                .1,
+        )
+        .unwrap();
         // Drop the skeleton's default single checkbox under Construction plan,
         // plus the Checklist default so only the test body counts.
         let mut doc = render_skeleton(&spec, "pr x")
@@ -602,13 +636,19 @@ mod tests {
                 "## Construction plan\n<!-- 最小实现步骤（必填，≥2 个 checkbox） -->\n- [ ]\n",
                 "## Construction plan\n",
             )
-            .replace("## Checklist\n<!-- 提交前自检（必填） -->\n- [ ]\n", "## Checklist\n");
+            .replace(
+                "## Checklist\n<!-- 提交前自检（必填） -->\n- [ ]\n",
+                "## Checklist\n",
+            );
         for (h, body) in [
             ("What", "what text"),
             ("Why", "why text"),
             ("Issue", "Fixes #1"),
             ("Construction plan", "- [ ] only one\n"),
-            ("Delivery record", "- Delivered: x\n- Verification: y\n- Follow-up: none"),
+            (
+                "Delivery record",
+                "- Delivered: x\n- Verification: y\n- Follow-up: none",
+            ),
             ("How to test", "cargo test"),
             ("Checklist", "- [x] a\n- [x] b\n- [x] c"),
         ] {
@@ -616,7 +656,9 @@ mod tests {
         }
         let findings = check(&spec, &doc);
         assert!(
-            findings.iter().any(|f| f.fail && f.message.contains("at least 2")),
+            findings
+                .iter()
+                .any(|f| f.fail && f.message.contains("at least 2")),
             "1-checkbox plan must fail: {:?}",
             findings
         );
@@ -636,7 +678,9 @@ mod tests {
         let doc = format!("{}\n## EmptySection\n", filled_issue());
         let findings = check(&spec, &doc);
         assert!(
-            findings.iter().any(|f| f.fail && f.message.contains("EmptySection")),
+            findings
+                .iter()
+                .any(|f| f.fail && f.message.contains("EmptySection")),
             "{:?}",
             findings
         );
@@ -644,7 +688,14 @@ mod tests {
 
     #[test]
     fn review_crg_heading_matches_real_title() {
-        let spec = parse_spec(DEFAULT_TEMPLATES.iter().find(|(n, _)| *n == "review").unwrap().1).unwrap();
+        let spec = parse_spec(
+            DEFAULT_TEMPLATES
+                .iter()
+                .find(|(n, _)| *n == "review")
+                .unwrap()
+                .1,
+        )
+        .unwrap();
         let doc = "\
 ## Agent 🤖 - CRG Review: oi mvp agent loop
 8 files, 0 findings.
@@ -657,6 +708,10 @@ mod tests {
 ";
         let findings = check(&spec, doc);
         let fails: Vec<_> = findings.iter().filter(|f| f.fail).collect();
-        assert!(fails.is_empty(), "review should pass with real title: {:?}", fails);
+        assert!(
+            fails.is_empty(),
+            "review should pass with real title: {:?}",
+            fails
+        );
     }
 }
