@@ -11,8 +11,8 @@ use super::pre_commit::run_python_topic;
 
 /// `gate pre-push` — runs dispatched workspace + code topics.
 pub fn run() -> i32 {
-    let githooks_root = git::find_githooks_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from(".githooks"));
+    let githooks_root =
+        git::find_githooks_dir().unwrap_or_else(|| std::path::PathBuf::from(".githooks"));
     let spec_dir = githooks_root.join("spec");
     let dispatch_path = spec_dir.join("dispatch.yaml");
     let cfg = crate::shared::load_yaml(dispatch_path.to_str().unwrap_or("")).ok();
@@ -21,7 +21,11 @@ pub fn run() -> i32 {
         Some(c) => c
             .get("pre-push")
             .and_then(|v| v.as_sequence())
-            .map(|seq| seq.iter().filter_map(|t| t.as_str().map(String::from)).collect())
+            .map(|seq| {
+                seq.iter()
+                    .filter_map(|t| t.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default(),
         None => vec!["workspace".into(), "code".into()],
     };

@@ -160,11 +160,10 @@ pub fn run_crg() -> String {
 pub fn run_ocr() -> String {
     use std::sync::mpsc;
     let (tx, rx) = mpsc::channel();
-    let cmd_args: Vec<String> =
-        ["ocr", "review", "--format", "json", "--audience", "agent"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+    let cmd_args: Vec<String> = ["ocr", "review", "--format", "json", "--audience", "agent"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     std::thread::spawn(move || {
         let refs: Vec<&str> = cmd_args.iter().map(|s| s.as_str()).collect();
         let result = std::process::Command::new(refs[0])
@@ -240,18 +239,9 @@ fn format_comment_list(comments: &[JsonValue]) -> String {
             lines.push(format!("\n## {path}"));
             cur_path = Some(path);
         }
-        let sev = c
-            .get("severity")
-            .and_then(|v| v.as_str())
-            .unwrap_or("info");
-        let cat = c
-            .get("category")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let content = c
-            .get("content")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let sev = c.get("severity").and_then(|v| v.as_str()).unwrap_or("info");
+        let cat = c.get("category").and_then(|v| v.as_str()).unwrap_or("");
+        let content = c.get("content").and_then(|v| v.as_str()).unwrap_or("");
         let start = c.get("start_line").and_then(|v| v.as_u64()).unwrap_or(0);
         let loc = if start > 0 {
             format!(" L{start}")
@@ -275,18 +265,9 @@ fn format_bare_ocr(arr: &[JsonValue]) -> String {
             .get("severity")
             .and_then(|s| s.as_str())
             .unwrap_or("unknown");
-        let file = item
-            .get("file")
-            .and_then(|f| f.as_str())
-            .unwrap_or("?");
-        let line = item
-            .get("line")
-            .and_then(|l| l.as_u64())
-            .unwrap_or(0);
-        let msg = item
-            .get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("");
+        let file = item.get("file").and_then(|f| f.as_str()).unwrap_or("?");
+        let line = item.get("line").and_then(|l| l.as_u64()).unwrap_or(0);
+        let msg = item.get("message").and_then(|m| m.as_str()).unwrap_or("");
         lines.push(format!("- [{severity}] {file}:{line} {msg}"));
     }
     lines.join("\n")
@@ -388,7 +369,6 @@ pub fn ocr_has_findings(raw: &str) -> bool {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Posting to GitHub
 // ---------------------------------------------------------------------------
@@ -430,10 +410,7 @@ pub fn post_inline_review(repo: &str, pr_num: u64, comments: &[&OcrComment]) {
     let payload_str = payload.to_string();
     params.insert("body", payload_str.as_str());
     match gh_api(&path, Some(&params)) {
-        Ok(_) => println!(
-            "已提交 {} 条 inline review 到 PR #{pr_num}",
-            comments.len()
-        ),
+        Ok(_) => println!("已提交 {} 条 inline review 到 PR #{pr_num}", comments.len()),
         Err(e) => eprintln!("inline review 失败: {e}"),
     }
 }
@@ -479,10 +456,7 @@ mod tests {
         let result = format_ocr_results(raw);
         assert!(result.contains("## a.rs"));
         assert!(result.contains("## b.rs"));
-        assert_eq!(
-            result.lines().filter(|l| l.starts_with("- ")).count(),
-            3
-        );
+        assert_eq!(result.lines().filter(|l| l.starts_with("- ")).count(), 3);
     }
 
     #[test]
@@ -565,7 +539,9 @@ mod tests {
 
     #[test]
     fn ocr_has_findings_bare_array_legacy() {
-        assert!(ocr_has_findings(r#"[{"severity":"HIGH","file":"x.rs","line":1,"message":"bad"}]"#));
+        assert!(ocr_has_findings(
+            r#"[{"severity":"HIGH","file":"x.rs","line":1,"message":"bad"}]"#
+        ));
     }
 
     #[test]
@@ -581,7 +557,6 @@ mod tests {
         assert!(!ocr_has_findings("[ocr] 超时（LLM 响应慢）"));
         assert!(!ocr_has_findings("[ocr] spawn failed"));
     }
-
 
     #[test]
     #[ignore = "requires code-review-graph binary"]

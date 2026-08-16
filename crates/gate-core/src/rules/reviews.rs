@@ -22,10 +22,7 @@ fn has_cjk(s: &str) -> bool {
 /// Extract `Agent 🤖 - Fix: <reason>` / `Block:` / ... reply entries.
 /// Returns `(intent_word, reason)` pairs.
 fn extract_replies(body: &str) -> Vec<(&str, String)> {
-    let re = Regex::new(
-        r"Agent 🤖 - (Fix|Block|Resolve|Note|Withdraw|Supersede):\s*(.+)",
-    )
-    .unwrap();
+    let re = Regex::new(r"Agent 🤖 - (Fix|Block|Resolve|Note|Withdraw|Supersede):\s*(.+)").unwrap();
     re.captures_iter(body)
         .map(|m| {
             let typ = m.get(1).unwrap().as_str();
@@ -49,8 +46,7 @@ fn extract_inline_reviews(body: &str) -> Vec<(&str, String)> {
 
 /// Extract `## Agent 🤖 - CRG Review: <title>` entries (case-insensitive heading).
 fn extract_crg_reviews(body: &str) -> Vec<String> {
-    let re =
-        Regex::new(r"(?mi)^## Agent 🤖 - CRG Review:\s*(.+)").unwrap();
+    let re = Regex::new(r"(?mi)^## Agent 🤖 - CRG Review:\s*(.+)").unwrap();
     re.captures_iter(body)
         .map(|m| m.get(1).unwrap().as_str().trim().to_string())
         .collect()
@@ -104,7 +100,12 @@ pub fn run(comment_bodies: &[String], cfg: &YamlValue) -> Vec<Finding> {
                 .filter_map(|v| v.as_str().map(String::from))
                 .collect()
         })
-        .unwrap_or_else(|| ["P0", "P1", "P2", "P3"].iter().map(|s| (*s).to_string()).collect());
+        .unwrap_or_else(|| {
+            ["P0", "P1", "P2", "P3"]
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect()
+        });
 
     for body in &bodies {
         for crg in extract_crg_reviews(body) {
@@ -129,9 +130,7 @@ pub fn run(comment_bodies: &[String], cfg: &YamlValue) -> Vec<Finding> {
                 findings.push(Finding::new(
                     "RV-04",
                     Severity::Fail,
-                    &format!(
-                        "Inline Review level '{level}' not in allowed {allowed_levels:?}"
-                    ),
+                    &format!("Inline Review level '{level}' not in allowed {allowed_levels:?}"),
                 ));
             } else {
                 findings.push(Finding::new(
@@ -196,16 +195,16 @@ pub fn run(comment_bodies: &[String], cfg: &YamlValue) -> Vec<Finding> {
             findings.push(Finding::new(
                 "RV-03",
                 Severity::Warn,
-                &format!("{short}/{} replies lack sufficient detail", all_replies.len()),
+                &format!(
+                    "{short}/{} replies lack sufficient detail",
+                    all_replies.len()
+                ),
             ));
         } else {
             findings.push(Finding::new(
                 "RV-03",
                 Severity::Info,
-                &format!(
-                    "all {} replies have sufficient detail",
-                    all_replies.len()
-                ),
+                &format!("all {} replies have sufficient detail", all_replies.len()),
             ));
         }
     }
@@ -229,7 +228,11 @@ pub fn run(comment_bodies: &[String], cfg: &YamlValue) -> Vec<Finding> {
     // ---- P-37 inline findings have reply (RV-06) ----
     let inline_count: usize = bodies.iter().map(|b| extract_inline_reviews(b).len()).sum();
     if inline_count == 0 {
-        findings.push(Finding::new("RV-06", Severity::Info, "no inline findings to resolve"));
+        findings.push(Finding::new(
+            "RV-06",
+            Severity::Info,
+            "no inline findings to resolve",
+        ));
     } else if all_replies.len() >= inline_count {
         findings.push(Finding::new(
             "RV-06",
@@ -477,9 +480,7 @@ review_formats:
     #[test]
     fn rv06_inline_no_reply_fail() {
         let cfg = test_cfg();
-        let bodies = vec![
-            "Agent 🤖 - Inline Review P2: fix the typo".to_string(),
-        ];
+        let bodies = vec!["Agent 🤖 - Inline Review P2: fix the typo".to_string()];
         let f = run(&bodies, &cfg);
         let r = rule_findings(&f, "RV-06");
         assert_eq!(r.len(), 1);

@@ -7,11 +7,10 @@
 //! CM-* checks are native Rust. Topic validators (workspace, code) are
 //! delegated to the existing Python scripts under `.githooks/`.
 
-use std::sync::LazyLock;
 use regex::Regex;
+use std::sync::LazyLock;
 
-
-use crate::shared::{exit_code, print_findings, run_external, Finding, Severity};
+use crate::shared::{Finding, Severity, exit_code, print_findings, run_external};
 use crate::tools::git;
 
 // ---------------------------------------------------------------------------
@@ -27,8 +26,7 @@ static CONV_COMMIT_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(r"^(?:{types})(?:\(.+\))?!?:\s+\S+")).unwrap()
 });
 
-static CJK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[\u{4e00}-\u{9fff}]").unwrap());
+static CJK_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\u{4e00}-\u{9fff}]").unwrap());
 
 static TYPE_RE: LazyLock<Regex> = LazyLock::new(|| {
     let types = CONV_COMMIT_TYPES.join("|");
@@ -85,10 +83,7 @@ fn check_commit_pr_consistency() -> Vec<Finding> {
         Ok(j) => j,
         Err(_) => return vec![],
     };
-    let pr_title = pr_json
-        .get("title")
-        .and_then(|t| t.as_str())
-        .unwrap_or("");
+    let pr_title = pr_json.get("title").and_then(|t| t.as_str()).unwrap_or("");
     let pr_type = match TYPE_RE
         .captures(pr_title)
         .map(|c| c.get(1).unwrap().as_str().to_string())
@@ -132,9 +127,7 @@ pub fn run_python_topic(script_rel: &str) -> Vec<Finding> {
         None => return vec![Finding::new("topic", Severity::Warn, ".githooks not found")],
     };
     let script = githooks.join(script_rel);
-    let cwd = githooks
-        .parent()
-        .map(|p| p.to_string_lossy().to_string());
+    let cwd = githooks.parent().map(|p| p.to_string_lossy().to_string());
 
     match run_external(&["python3", script.to_str().unwrap_or("")], cwd.as_deref()) {
         Ok((rc, output)) => parse_topic_output(&output, rc),
@@ -192,7 +185,9 @@ fn parse_finding_line(line: &str) -> Option<Finding> {
         _ => return None,
     };
     let line_hint = if tokens.len() == 3 {
-        tokens[2].strip_prefix("L").and_then(|s| s.parse::<u32>().ok())
+        tokens[2]
+            .strip_prefix("L")
+            .and_then(|s| s.parse::<u32>().ok())
     } else {
         None
     };
@@ -210,8 +205,8 @@ fn parse_finding_line(line: &str) -> Option<Finding> {
 
 /// `gate pre-commit` — runs commit-title checks + dispatched topics.
 pub fn run() -> i32 {
-    let githooks_root = git::find_githooks_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from(".githooks"));
+    let githooks_root =
+        git::find_githooks_dir().unwrap_or_else(|| std::path::PathBuf::from(".githooks"));
     let spec_dir = githooks_root.join("spec");
     let dispatch_path = spec_dir.join("dispatch.yaml");
     let cfg = crate::shared::load_yaml(dispatch_path.to_str().unwrap_or("")).ok();
@@ -232,7 +227,11 @@ pub fn run() -> i32 {
         Some(c) => c
             .get("pre-commit")
             .and_then(|v| v.as_sequence())
-            .map(|seq| seq.iter().filter_map(|t| t.as_str().map(String::from)).collect())
+            .map(|seq| {
+                seq.iter()
+                    .filter_map(|t| t.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default(),
         None => vec!["workspace".into(), "code".into()],
     };
