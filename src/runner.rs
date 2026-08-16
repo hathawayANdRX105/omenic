@@ -21,6 +21,7 @@
 //! 8. Return RunOutcome { Done|Failed, summary, events_seen }.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::PathBuf;
 
 use crate::graph;
@@ -91,12 +92,14 @@ pub fn run(ctx: &Ctx, task_id: &str) -> Result<RunOutcome, RunnerError> {
         .tasks
         .get(task_id)
         .ok_or_else(|| RunnerError::NotFound(task_id.to_string()))?;
-    if task.status != TaskStatus::Open {
+    if task.status == TaskStatus::Done {
         return Err(RunnerError::InvalidStatus(format!(
-            "task {task_id} is not open (status: {:?})",
+            "task {task_id} is done; reopen before re-running (status: {:?})",
             task.status
         )));
     }
+    // Open and InProgress both run: InProgress marks a running/resumed task
+    // on the board while the worker session is live (F3).
     if !graph::is_ready(&ctx.tasks, task_id) {
         return Err(RunnerError::Blocked(task_id.to_string()));
     }
@@ -111,8 +114,52 @@ pub fn run(ctx: &Ctx, task_id: &str) -> Result<RunOutcome, RunnerError> {
     std::fs::write(&brief_path, &brief)
         .map_err(|e| RunnerError::Blocked(format!("write brief {}: {e}", brief_path.display())))?;
 
+    // F1: stage structured prompt.json alongside brief.md so the agent call
+    // is observable — prompt.json (input) + events.jsonl (process) are
+    // written here; result.json (output) is written by the CLI caller.
+    let prompt = serde_json::json!({
+        "task_id": task.id,
+        "title": task.title,
+        "description": task.description,
+        "acceptance": task.acceptance,
+        "materials": task_dir.display().to_string(),
+        "deps": task.deps.iter().map(|dep| {
+            let (title, status) = ctx.tasks.get(dep)
+                .map(|d| (d.title.clone(), format!("{:?}", d.status)))
+                .unwrap_or_else(|| ("(missing from store)".into(), "missing".into()));
+            serde_json::json!({ "id": dep, "title": title, "status": status })
+        }).collect::<Vec<_>>(),
+        "brief": brief,
+    });
+    let prompt_path = task_dir.join("prompt.json");
+    std::fs::write(&prompt_path, serde_json::to_string_pretty(&prompt).unwrap()).map_err(|e| {
+        RunnerError::Blocked(format!("write prompt {}: {e}", prompt_path.display()))
+    })?;
+
+    // Event log: fresh file per run (truncate any prior run's log).
+    let events_path = task_dir.join("events.jsonl");
+    let mut events_log = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&events_path)
+        .map_err(|e| {
+            RunnerError::Blocked(format!("open events log {}: {e}", events_path.display()))
+        })?;
+
     let mut worker = Worker::new(ctx.omp_path.to_str().unwrap_or("omp"))
         .map_err(|e| RunnerError::Blocked(format!("worker spawn: {e}")))?;
+
+    // F3 liveness marker for `oi abort`: `<run-pid> <omp-pid>`. Both are
+    // signalled so the worker tree dies even without job control grouping
+    // the runner into its own process group.
+    let pid_path = task_dir.join("run.pid");
+    std::fs::write(
+        &pid_path,
+        format!("{} {}", std::process::id(), worker.child_pid()),
+    )
+    .map_err(|e| RunnerError::Blocked(format!("write run.pid: {e}")))?;
+    let _pid_guard = RunPidGuard(pid_path);
 
     let mut events_seen = 0usize;
     let mut last_text = String::new();
@@ -131,11 +178,28 @@ pub fn run(ctx: &Ctx, task_id: &str) -> Result<RunOutcome, RunnerError> {
         match worker.read_event() {
             Ok(Some(event)) => {
                 events_seen += 1;
+                // F1: append every event to events.jsonl. Best-effort — a
+                // failing diagnostic log must not fail the run.
+                match serde_json::to_string(&event) {
+                    Ok(line) => {
+                        if let Err(e) = writeln!(events_log, "{line}") {
+                            eprintln!("warning: write {}: {e}", events_path.display());
+                        }
+                    }
+                    Err(e) => eprintln!("warning: serialize event: {e}"),
+                }
                 if let WorkerEvent::Message { text } = event {
                     println!("[worker] {text}");
                     if !text.is_empty() {
                         last_text = text;
                     }
+                }
+                // F3: poll the steer inbox between events so an external
+                // `oi steer` can drive the live worker. Abort uses a
+                // process-group signal (`run.pid` + kill -TERM -<pid>) so it
+                // works even while the model is silent — the poll can't.
+                if let Err(e) = poll_steer(&task_dir, &mut worker) {
+                    eprintln!("warning: steer poll: {e}");
                 }
             }
             Ok(None) => {
@@ -163,6 +227,38 @@ pub fn run(ctx: &Ctx, task_id: &str) -> Result<RunOutcome, RunnerError> {
             }
         }
     }
+}
+
+/// RAII: remove `<task_dir>/run.pid` on drop so every run exit path cleans
+/// up the liveness marker consumed by `oi abort`.
+struct RunPidGuard(PathBuf);
+
+impl Drop for RunPidGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Poll the steer inbox: `steer-cmd.txt` is forwarded to the worker and
+/// removed.
+///
+/// ponytail: polling happens only at event boundaries — a steer issued
+/// during a long silent thinking stretch is delivered at the next event.
+/// Replace with a dedicated control channel if interactive latency matters.
+fn poll_steer(task_dir: &std::path::Path, worker: &mut Worker) -> Result<(), String> {
+    let steer_path = task_dir.join("steer-cmd.txt");
+    if steer_path.exists() {
+        let text =
+            std::fs::read_to_string(&steer_path).map_err(|e| format!("read steer inbox: {e}"))?;
+        let _ = std::fs::remove_file(&steer_path);
+        let msg = text.trim();
+        if !msg.is_empty() {
+            worker
+                .steer(msg)
+                .map_err(|e| format!("steer forward: {e}"))?;
+        }
+    }
+    Ok(())
 }
 
 /// Assemble the MVP brief: description + acceptance + materials path, plus a
@@ -220,6 +316,60 @@ mod tests {
             created_at: "2026-01-01".into(),
             updated_at: "2026-01-01".into(),
         }
+    }
+    #[test]
+    fn run_stages_artifacts_before_worker_spawn() {
+        // /bin/true is not an omp RPC server → Worker::new fails, but the
+        // staged artifacts (brief.md + prompt.json + events.jsonl) must
+        // already exist when it does (F1 observable input/process/output).
+        let task = mk_task("artifact-task", vec![], TaskStatus::Open);
+        let (ctx, _tmp) = ctx_with_tmp(vec![task.clone()]);
+        let r = run(&ctx, "artifact-task");
+        assert!(matches!(r, Err(RunnerError::Blocked(s)) if s.contains("worker spawn")));
+        let dir = ctx.data_dir.join("tasks/artifact-task");
+        assert!(dir.join("brief.md").exists());
+        assert!(dir.join("prompt.json").exists());
+        assert!(dir.join("events.jsonl").exists());
+        let prompt: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("prompt.json")).unwrap())
+                .unwrap();
+        assert_eq!(prompt["task_id"], "artifact-task");
+        assert_eq!(prompt["deps"], serde_json::json!([]));
+        assert!(
+            prompt["brief"]
+                .as_str()
+                .unwrap()
+                .contains("desc artifact-task")
+        );
+    }
+
+    #[test]
+    fn prompt_json_lists_completed_deps_with_status() {
+        let dep = Task {
+            id: "dep-1".into(),
+            title: "scaffold".into(),
+            kind: crate::task::TaskKind::Task,
+            status: TaskStatus::Done,
+            priority: 2,
+            parent: None,
+            deps: vec![],
+            description: String::new(),
+            acceptance: String::new(),
+            created_at: "2026-01-01".into(),
+            updated_at: "2026-01-01".into(),
+        };
+        let task = mk_task("feat-x", vec!["dep-1".into()], TaskStatus::Open);
+        let (ctx, _tmp) = ctx_with_tmp(vec![dep, task.clone()]);
+        let _ = run(&ctx, "feat-x");
+        let dir = ctx.data_dir.join("tasks/feat-x");
+        let prompt: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("prompt.json")).unwrap())
+                .unwrap();
+        let deps = prompt["deps"].as_array().unwrap();
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0]["id"], "dep-1");
+        assert_eq!(deps[0]["status"], "Done");
+        assert_eq!(deps[0]["title"], "scaffold");
     }
 
     fn ctx(tasks: Vec<Task>, omp_path: &str) -> Ctx {
@@ -301,16 +451,17 @@ mod tests {
 
     #[test]
     fn run_delegates_status_guard() {
-        // Task with status InProgress or Done should be rejected.
-        let tasks = vec![
-            mk_task("in-progress", vec![], TaskStatus::InProgress),
-            mk_task("done-already", vec![], TaskStatus::Done),
-        ];
-        let ctx = ctx(tasks, "/bin/true");
+        // Done tasks are rejected (would re-run a finished step)…
+        let done = mk_task("done-already", vec![], TaskStatus::Done);
+        let r = run(&ctx(vec![done], "/bin/true"), "done-already");
+        assert!(matches!(r, Err(RunnerError::InvalidStatus(s)) if s.contains("done")));
+
+        // …but InProgress (F3 running marker) is allowed so an aborted or
+        // resumed task can re-run; /bin/true is not omp → fails at spawn.
+        let in_progress = mk_task("in-progress", vec![], TaskStatus::InProgress);
+        let (ctx, _tmp) = ctx_with_tmp(vec![in_progress]);
         let r = run(&ctx, "in-progress");
-        assert!(matches!(r, Err(RunnerError::InvalidStatus(_))));
-        let r = run(&ctx, "done-already");
-        assert!(matches!(r, Err(RunnerError::InvalidStatus(_))));
+        assert!(matches!(r, Err(RunnerError::Blocked(s)) if s.contains("worker spawn")));
     }
 
     #[test]

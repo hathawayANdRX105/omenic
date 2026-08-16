@@ -24,6 +24,7 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::process::CommandExt;
 use std::process::{Child, ChildStdin, Command, Stdio};
 
 use serde::{Deserialize, Serialize};
@@ -181,6 +182,15 @@ pub struct Client {
     chunks: HashMap<String, ChunkState>,
 }
 
+impl Client {
+    /// PID of the spawned omp worker process. Its process group id equals
+    /// this pid (set via `process_group(0)`), so `kill -TERM -<pid>` stops
+    /// the whole worker tree on abort.
+    pub fn child_pid(&self) -> u32 {
+        self.process.id()
+    }
+}
+
 struct ChunkState {
     count: u32,
     parts: Vec<Option<String>>,
@@ -199,6 +209,7 @@ impl Client {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
+            .process_group(0)
             .spawn()?;
 
         let stdin = process

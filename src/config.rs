@@ -74,21 +74,31 @@ impl From<toml::de::Error> for ConfigError {
 
 impl Config {
     /// Load configuration with priority: env > TOML file > defaults.
+    ///
+    /// Config lives in the `.oi/` directory (`.oi/config.toml`); the legacy
+    /// root `omenic.toml` is still read when present so pre-.oi workspaces
+    /// keep working (migrate with `oi init`).
     pub fn load() -> Result<Config, ConfigError> {
-        // Start with defaults
+        // Start with defaults (data lives inside the `.oi/` config dir).
         let mut config = Config {
             omp_path: PathBuf::from("omp"),
-            data_dir: PathBuf::from("./omenic-data"),
+            data_dir: PathBuf::from("./.oi"),
             model: String::from("default"),
         };
 
-        // Load from TOML file (./omenic.toml in CWD); missing file is not an error.
-        let toml_path = PathBuf::from("./omenic.toml");
-        if let Ok(content) = std::fs::read_to_string(&toml_path) {
-            let toml_config: TomlConfig = toml::from_str(&content)?;
-            config = toml_config.merge_into(config);
+        // Load from TOML file (.oi/config.toml, legacy fallback omenic.toml);
+        // a missing file is not an error.
+        let candidates = [
+            PathBuf::from("./.oi/config.toml"),
+            PathBuf::from("./omenic.toml"),
+        ];
+        for toml_path in candidates {
+            if let Ok(content) = std::fs::read_to_string(&toml_path) {
+                let toml_config: TomlConfig = toml::from_str(&content)?;
+                config = toml_config.merge_into(config);
+                break;
+            }
         }
-        // missing toml is fine (skip); other I/O errors propagate below as needed.
 
         // Environment variables override everything
         if let Ok(v) = env::var("OMENIC_OMP_PATH") {
@@ -244,7 +254,7 @@ mod tests {
         let _d = tmp_dir("default");
         let config = Config::load().unwrap();
         assert_eq!(config.omp_path, PathBuf::from("omp"));
-        assert_eq!(config.data_dir, PathBuf::from("./omenic-data"));
+        assert_eq!(config.data_dir, PathBuf::from("./.oi"));
         assert_eq!(config.model, "default");
     }
 
@@ -255,7 +265,7 @@ mod tests {
         set_env(None, None, Some("claude"));
         let config = Config::load().unwrap();
         assert_eq!(config.omp_path, PathBuf::from("omp"));
-        assert_eq!(config.data_dir, PathBuf::from("./omenic-data"));
+        assert_eq!(config.data_dir, PathBuf::from("./.oi"));
         assert_eq!(config.model, "claude");
     }
 
@@ -300,7 +310,7 @@ mod tests {
         .unwrap();
         let config = Config::load().unwrap();
         assert_eq!(config.omp_path, PathBuf::from("toml-omp"));
-        assert_eq!(config.data_dir, PathBuf::from("./omenic-data"));
+        assert_eq!(config.data_dir, PathBuf::from("./.oi"));
         assert_eq!(config.model, "toml-model");
     }
 
@@ -327,7 +337,7 @@ mod tests {
         // No omenic.toml present; load() must skip (NotFound) and use defaults.
         let config = Config::load().unwrap();
         assert_eq!(config.omp_path, PathBuf::from("omp"));
-        assert_eq!(config.data_dir, PathBuf::from("./omenic-data"));
+        assert_eq!(config.data_dir, PathBuf::from("./.oi"));
         assert_eq!(config.model, "default");
     }
 
