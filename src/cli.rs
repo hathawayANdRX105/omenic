@@ -76,6 +76,18 @@ enum Command {
         #[command(subcommand)]
         sub: SpecCmd,
     },
+    /// Render task tree as PR Construction plan
+    Pr {
+        #[command(subcommand)]
+        sub: PrCmd,
+    },
+}
+
+/// Sub-views of `oi pr`.
+#[derive(Subcommand)]
+enum PrCmd {
+    /// Render a task subtree as Construction plan checkboxes
+    Render { id: String },
 }
 
 /// Sub-views of `oi plan`.
@@ -301,6 +313,9 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
             } => spec_new_cmd(&kind, title, output, json),
             SpecCmd::Check { kind, file } => spec_check_cmd(&kind, &file, json),
             SpecCmd::View { file } => spec_view_cmd(&file),
+        },
+        Command::Pr { sub } => match sub {
+            PrCmd::Render { id } => pr_render_cmd(&id, json),
         },
     }
 }
@@ -1697,6 +1712,109 @@ fn spec_view_cmd(file: &str) -> Result<u8, String> {
     use std::io::Write;
     print!("{doc}");
     std::io::stdout().flush().ok();
+    Ok(0)
+}
+
+/// `pr render <task-id>` subcommand: render a task subtree (topic → phase →
+/// steps, sibling order from deps) as a PR Construction plan checkbox list.
+fn pr_render_cmd(id: &str, json: bool) -> Result<u8, String> {
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let store = Store::new(&config.data_dir);
+    let all = store.load_all().map_err(|e| format!("store error: {e}"))?;
+    if !all.iter().any(|t| t.id == id) {
+        eprintln!("task not found: {id}");
+        return Ok(1);
+    }
+    let map: std::collections::HashMap<String, Task> =
+        all.iter().map(|t| (t.id.clone(), t.clone())).collect();
+
+    // Children of a parent, in dependency-topological order (Kahn).
+    fn children_of<'a>(all: &'a [Task], parent: &str) -> Vec<&'a Task> {
+        let mut kids: Vec<&Task> = all
+            .iter()
+            .filter(|t| t.parent.as_deref() == Some(parent))
+            .collect();
+        let ids: std::collections::HashSet<&str> = kids.iter().map(|k| k.id.as_str()).collect();
+        let mut indeg: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        let mut deps_map: std::collections::HashMap<&str, Vec<&str>> =
+            std::collections::HashMap::new();
+        for k in &kids {
+            indeg.insert(k.id.as_str(), 0);
+        }
+        for k in &kids {
+            for d in &k.deps {
+                if ids.contains(d.as_str()) && d != &k.id {
+                    deps_map.entry(d.as_str()).or_default().push(k.id.as_str());
+                    *indeg.get_mut(k.id.as_str()).unwrap() += 1;
+                }
+            }
+        }
+        let mut queue: Vec<&Task> = kids
+            .iter()
+            .filter(|k| indeg[k.id.as_str()] == 0)
+            .copied()
+            .collect();
+        let mut order: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for (i, k) in kids.iter().enumerate() {
+            order.insert(k.id.as_str(), i);
+        }
+        let mut out = Vec::new();
+        while !queue.is_empty() {
+            queue.sort_by_key(|k| order[k.id.as_str()]);
+            let n = queue.remove(0);
+            out.push(n);
+            if let Some(ms) = deps_map.get(n.id.as_str()).cloned() {
+                for m in ms {
+                    let e = indeg.get_mut(m).unwrap();
+                    *e -= 1;
+                    if *e == 0 {
+                        if let Some(t) = kids.iter().find(|k| k.id == m) {
+                            queue.push(t);
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn emit<'a>(
+        t: &'a Task,
+        all: &'a [Task],
+        json_list: &mut Vec<serde_json::Value>,
+        out: &mut String,
+        depth: usize,
+    ) {
+        let pad = "  ".repeat(depth);
+        out.push_str(&format!("{pad}- [ ] {}：{}\n", t.id, t.title));
+        json_list.push(serde_json::json!({
+            "id": t.id,
+            "title": t.title,
+            "depth": depth,
+            "deps": t.deps,
+        }));
+        for kid in children_of(all, &t.id) {
+            emit(kid, all, json_list, out, depth + 1);
+        }
+    }
+
+    let root = &map[id];
+    let mut out = String::from("## Construction plan\n");
+    let mut json_list: Vec<serde_json::Value> = Vec::new();
+    out.push_str(&format!("- [ ] {}：{}\n", root.id, root.title));
+    json_list.push(
+        serde_json::json!({"id": root.id, "title": root.title, "depth": 0, "deps": root.deps}),
+    );
+    for kid in children_of(&all, id) {
+        emit(kid, &all, &mut json_list, &mut out, 1);
+    }
+    if json {
+        print_json(&json_list);
+    } else {
+        use std::io::Write;
+        print!("{out}");
+        std::io::stdout().flush().ok();
+    }
     Ok(0)
 }
 
