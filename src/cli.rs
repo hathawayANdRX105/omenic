@@ -1278,6 +1278,53 @@ fn render_plan(tasks: &[Task]) -> String {
         }
     }
 
+    /// Stable topological order of a sibling list: if `a` depends on `b`
+    /// (both in the list), `b` renders before `a`. Kahn's algorithm with
+    /// declaration order as the tie-breaker (sibling chain from #216).
+    fn topo_sort<'a>(kids: &[&'a Task], map: &HashMap<String, Task>) -> Vec<&'a Task> {
+        use std::collections::HashMap as H;
+        let ids: std::collections::HashSet<&str> = kids.iter().map(|k| k.id.as_str()).collect();
+        let mut indeg: H<&str, usize> = H::new();
+        let mut deps_map: H<&str, Vec<&str>> = H::new();
+        let mut order: H<&str, usize> = H::new();
+        for (i, k) in kids.iter().enumerate() {
+            indeg.insert(k.id.as_str(), 0);
+            order.insert(k.id.as_str(), i);
+        }
+        for k in kids {
+            for d in &k.deps {
+                if ids.contains(d.as_str()) && d != &k.id {
+                    deps_map.entry(d.as_str()).or_default().push(k.id.as_str());
+                    *indeg.get_mut(k.id.as_str()).unwrap() += 1;
+                }
+            }
+        }
+        let mut queue: Vec<&Task> = kids
+            .iter()
+            .filter(|k| indeg[k.id.as_str()] == 0)
+            .copied()
+            .collect();
+        let mut out = Vec::new();
+        while !queue.is_empty() {
+            queue.sort_by_key(|k| order[k.id.as_str()]);
+            let n = queue.remove(0);
+            out.push(n);
+            if let Some(ms) = deps_map.get(n.id.as_str()).cloned() {
+                for m in ms {
+                    let e = indeg.get_mut(m).unwrap();
+                    *e -= 1;
+                    if *e == 0 {
+                        if let Some(t) = kids.iter().find(|k| k.id == m) {
+                            queue.push(t);
+                        }
+                    }
+                }
+            }
+        }
+        let _ = map; // reserved: ready/blocked glyph already computed by task_line
+        out
+    }
+
     fn print_children(
         parent: &Task,
         children: &HashMap<&str, Vec<&Task>>,
@@ -1289,7 +1336,7 @@ fn render_plan(tasks: &[Task]) -> String {
         let Some(kids) = children.get(parent.id.as_str()) else {
             return;
         };
-        for (i, kid) in kids.iter().enumerate() {
+        for (i, kid) in topo_sort(kids, map).iter().enumerate() {
             let is_last = i == kids.len() - 1;
             let branch = if is_last { "└─ " } else { "├─ " };
             // Mark before printing so a cycle back-edge is skipped, not re-printed.

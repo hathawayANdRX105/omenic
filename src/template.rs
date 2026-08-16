@@ -670,9 +670,14 @@ pub fn apply(
         id_of.insert("phase".to_string(), pid.clone());
     }
 
-    // Dep edges: map keys → ids. Unknown keys are skipped (warned by caller
-    // not possible here — keep strict: error out).
-    let mut task_list = store.load_all().map_err(|e| format!("store error: {e}"))?;
+    // Dep edges: explicit template deps, then two #216 automatic edges:
+    // 1) sibling chain — same-parent tasks in declaration order get
+    //    `later depends_on earlier` when no explicit edge exists;
+    // 2) parent aggregation — the phase task depends on every terminal step
+    //    (a step no other step depends on), so the phase closes only after
+    //    all its steps, even when the template omits a `phase` dep entry.
+    let mut explicit: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
     for (task_key, dep_key) in &tpl.deps {
         let tid = id_of
             .get(task_key)
@@ -680,9 +685,48 @@ pub fn apply(
         let did = id_of
             .get(dep_key)
             .ok_or_else(|| format!("template dep target `{dep_key}` not generated"))?;
-        if tid == did {
+        if tid != did {
+            explicit.insert((tid.clone(), did.clone()));
+        }
+    }
+
+    // Sibling chain: ordered step ids (declaration order).
+    let step_ids: Vec<String> = tpl
+        .tasks
+        .iter()
+        .filter(|t| t.key != "phase")
+        .filter_map(|t| id_of.get(&t.key).cloned())
+        .collect();
+    for pair in step_ids.windows(2) {
+        let (prev, next) = (&pair[0], &pair[1]);
+        if !explicit.contains(&(next.clone(), prev.clone()))
+            && !explicit.contains(&(prev.clone(), next.clone()))
+        {
+            explicit.insert((next.clone(), prev.clone()));
+        }
+    }
+
+    // Parent aggregation: phase depends on every terminal step. Terminal =
+    // a step that no OTHER step depends on (explicit or auto-chain edges).
+    let phase_id_str = phase_id.clone().unwrap_or_else(|| topic.to_string());
+    let step_depended: std::collections::HashSet<String> = explicit
+        .iter()
+        .filter(|(_, did)| did != &phase_id_str)
+        .map(|(_, did)| did.clone())
+        .collect();
+    for t in &tpl.tasks {
+        if t.key == "phase" {
             continue;
         }
+        if let Some(sid) = id_of.get(&t.key)
+            && !step_depended.contains(sid)
+        {
+            explicit.insert((phase_id_str.clone(), sid.clone()));
+        }
+    }
+
+    let mut task_list = store.load_all().map_err(|e| format!("store error: {e}"))?;
+    for (tid, did) in &explicit {
         if let Some(t) = task_list.iter_mut().find(|t| &t.id == tid) {
             if !t.deps.contains(did) {
                 t.deps.push(did.clone());
@@ -792,6 +836,92 @@ mod tests {
         };
         assert_eq!(apply_result.len(), 1 + 1 + 5, "{apply_result:?}");
     }
+    fn apply_auto_sibling_chain_and_terminal_aggregation() {
+        let tmp = tempdir().unwrap();
+        let store = tmp_store(tmp.path());
+        // Template WITHOUT explicit deps: order + aggregation must be derived.
+        let no_deps = r#"tasks:
+  - key: a
+    title: "a"
+    kind: task
+    description: "a"
+    acceptance: "a"
+  - key: b
+    title: "b"
+    kind: task
+    description: "b"
+    acceptance: "b"
+  - key: c
+    title: "c"
+    kind: task
+    description: "c"
+    acceptance: "c"
+deps: []
+"#;
+        let tdir = tmp.path().join("templates").join("phases");
+        std::fs::create_dir_all(&tdir).unwrap();
+        std::fs::write(tdir.join("chain.yaml"), no_deps).unwrap();
+
+        apply(&store, tmp.path(), "chain", "t-x", None).unwrap();
+        let all = store.load_all().unwrap();
+        let map: std::collections::HashMap<String, Task> =
+            all.into_iter().map(|t| (t.id.clone(), t)).collect();
+
+        // Sibling chain: b deps a, c deps b.
+        assert_eq!(map["t-x-chain-a"].deps, Vec::<String>::new());
+        assert_eq!(map["t-x-chain-b"].deps, vec!["t-x-chain-a".to_string()]);
+        assert_eq!(map["t-x-chain-c"].deps, vec!["t-x-chain-b".to_string()]);
+        // Terminal aggregation: phase deps = c (the only terminal step).
+        assert_eq!(map["t-x-chain"].deps, vec!["t-x-chain-c".to_string()]);
+    }
+
+    #[test]
+    fn apply_phase_terminal_aggregation_without_phase_dep() {
+        let tmp = tempdir().unwrap();
+        let store = tmp_store(tmp.path());
+        // Explicit sibling deps but NO `phase` dep entry: the phase task must
+        // still aggregate its terminal step.
+        let yaml = r#"tasks:
+  - key: phase
+    title: "phase p"
+    kind: task
+    description: "p"
+    acceptance: "p"
+  - key: first
+    title: "first"
+    kind: task
+    description: "f"
+    acceptance: "f"
+  - key: last
+    title: "last"
+    kind: task
+    description: "l"
+    acceptance: "l"
+deps:
+  - task: last
+    depends_on: first
+"#;
+        let tdir = tmp.path().join("templates").join("phases");
+        std::fs::create_dir_all(&tdir).unwrap();
+        std::fs::write(tdir.join("agg.yaml"), yaml).unwrap();
+
+        apply(&store, tmp.path(), "agg", "t-y", None).unwrap();
+        let all = store.load_all().unwrap();
+        let map: std::collections::HashMap<String, Task> =
+            all.into_iter().map(|t| (t.id.clone(), t)).collect();
+        let phase = &map["t-y-agg"];
+        assert_eq!(
+            phase.deps,
+            vec!["t-y-agg-last".to_string()],
+            "phase must aggregate its terminal step even without explicit deps"
+        );
+        // Idempotent re-apply doesn't duplicate deps.
+        apply(&store, tmp.path(), "agg", "t-y", None).unwrap();
+        let all = store.load_all().unwrap();
+        let phase = all.iter().find(|t| t.id == "t-y-agg").unwrap();
+        assert_eq!(phase.deps, vec!["t-y-agg-last".to_string()]);
+    }
+
     #[test]
     fn apply_step_creates_single_task_under_topic() {
         let tmp = tempdir().unwrap();
