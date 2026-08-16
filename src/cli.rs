@@ -1100,8 +1100,9 @@ fn compact_cmd(json: bool) -> Result<u8, String> {
     Ok(0)
 }
 
-/// `init` subcommand: create `omenic-data/` and a default `omenic.toml`.
-/// Idempotent: existing artifacts are never overwritten.
+/// `init` subcommand: create `.oi/` (config dir), `.oi/config.toml` and the
+/// spec template files under `.oi/specs/`. Idempotent — existing artifacts
+/// are never overwritten.
 fn init_cmd(json: bool) -> Result<u8, String> {
     let dir = std::env::current_dir().map_err(|e| format!("cwd error: {e}"))?;
     init_cmd_at(&dir, json)
@@ -1109,28 +1110,29 @@ fn init_cmd(json: bool) -> Result<u8, String> {
 
 /// init internals, testable with an explicit directory.
 fn init_cmd_at(dir: &std::path::Path, json: bool) -> Result<u8, String> {
-    let data_dir = dir.join("omenic-data");
-    let config_path = dir.join("omenic.toml");
-    let data_existed = data_dir.exists();
+    let oi_dir = dir.join(".oi");
+    let config_path = oi_dir.join("config.toml");
+    let dir_existed = oi_dir.exists();
     let config_existed = config_path.exists();
 
-    if !data_existed {
-        std::fs::create_dir_all(&data_dir)
-            .map_err(|e| format!("could not create omenic-data/: {e}"))?;
+    if !dir_existed {
+        std::fs::create_dir_all(&oi_dir).map_err(|e| format!("could not create .oi/: {e}"))?;
     }
     if !config_existed {
         let default = "omp_path = \"omp\"\n\
-                       data_dir = \"./omenic-data\"\n\
+                       data_dir = \"./.oi\"\n\
                        model = \"default\"\n";
         std::fs::write(&config_path, default)
-            .map_err(|e| format!("could not create omenic.toml: {e}"))?;
+            .map_err(|e| format!("could not create .oi/config.toml: {e}"))?;
     }
+    // Spec templates (never overwrite user edits).
+    crate::spec::write_default_specs(&oi_dir).map_err(|e| format!("spec templates: {e}"))?;
 
-    let msg = match (data_existed, config_existed) {
+    let msg = match (dir_existed, config_existed) {
         (true, true) => "workspace already initialized",
-        (false, false) => "initialized: omenic-data/, omenic.toml",
-        (false, true) => "created: omenic-data/",
-        (true, false) => "created: omenic.toml",
+        (false, false) => "initialized: .oi/, .oi/config.toml, .oi/specs/",
+        (false, true) => "created: .oi/, .oi/specs/",
+        (true, false) => "created: .oi/config.toml, .oi/specs/",
     };
     if json {
         json_ok(msg);
@@ -1512,10 +1514,20 @@ fn template_apply_cmd(
     Ok(0)
 }
 
-/// `spec list` subcommand: list the four spec tables.
+/// `spec list` subcommand: list spec tables loaded from `<data>/specs/`.
 fn spec_list_cmd(json: bool) -> Result<u8, String> {
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let specs =
+        crate::spec::load_all_specs(&config.data_dir).map_err(|e| format!("spec error: {e}"))?;
+    if specs.is_empty() {
+        eprintln!(
+            "no spec templates in {} (run `oi init` first)",
+            config.data_dir.join("specs").display()
+        );
+        return Ok(1);
+    }
     if json {
-        let list: Vec<serde_json::Value> = crate::spec::SPECS
+        let list: Vec<serde_json::Value> = specs
             .iter()
             .map(|s| {
                 serde_json::json!({
@@ -1533,9 +1545,9 @@ fn spec_list_cmd(json: bool) -> Result<u8, String> {
             .collect();
         print_json(&list);
     } else {
-        for s in crate::spec::SPECS {
+        for s in &specs {
             println!("{} — {}", s.name, s.description);
-            for f in s.fields {
+            for f in &s.fields {
                 let mark = if f.required { "req" } else { "opt" };
                 let cb = if f.checkbox { " [checkbox]" } else { "" };
                 println!("  {mark}: ## {}{cb}", f.heading);
@@ -1552,9 +1564,10 @@ fn spec_new_cmd(
     output: Option<String>,
     json: bool,
 ) -> Result<u8, String> {
-    let spec = crate::spec::find(kind)
-        .ok_or_else(|| format!("unknown spec `{kind}` (try `oi spec list`)"))?;
-    let doc = crate::spec::render_skeleton(spec, title.as_deref().unwrap_or(""));
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let spec = crate::spec::load_spec(&config.data_dir, kind)
+        .map_err(|e| format!("spec error: {e} — try `oi spec list` or `oi init`"))?;
+    let doc = crate::spec::render_skeleton(&spec, title.as_deref().unwrap_or(""));
     match output {
         Some(path) => {
             std::fs::write(&path, &doc).map_err(|e| format!("write {}: {e}", path))?;
@@ -1576,9 +1589,10 @@ fn spec_new_cmd(
 
 /// `spec check` subcommand: validate a filled document against the kind's rules.
 fn spec_check_cmd(kind: &str, file: &str, json: bool) -> Result<u8, String> {
-    let spec = crate::spec::find(kind)
-        .ok_or_else(|| format!("unknown spec `{kind}` (try `oi spec list`)"))?;
-    let findings = crate::spec::check_file(spec, std::path::Path::new(file))?;
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    let spec = crate::spec::load_spec(&config.data_dir, kind)
+        .map_err(|e| format!("spec error: {e} — try `oi spec list` or `oi init`"))?;
+    let findings = crate::spec::check_file(&spec, std::path::Path::new(file))?;
     let fails: Vec<_> = findings.iter().filter(|f| f.fail).collect();
     if json {
         let obj = serde_json::json!({
@@ -2363,7 +2377,10 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
     fn update_missing_task() {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let store = tmp_store("upd_404");
-        let code = task_update(&store, "nope", None, None, None, None, None, None, None, false).unwrap();
+        let code = task_update(
+            &store, "nope", None, None, None, None, None, None, None, false,
+        )
+        .unwrap();
         assert_eq!(code, 1);
     }
 
@@ -2939,11 +2956,12 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         init_cmd_at(&dir, false).unwrap();
-        assert!(dir.join("omenic-data").is_dir());
-        assert!(dir.join("omenic.toml").is_file());
-        let content = std::fs::read_to_string(dir.join("omenic.toml")).unwrap();
+        assert!(dir.join(".oi").is_dir());
+        assert!(dir.join(".oi/config.toml").is_file());
+        assert!(dir.join(".oi/specs").is_dir());
+        let content = std::fs::read_to_string(dir.join(".oi/config.toml")).unwrap();
         assert!(content.contains("omp_path = \"omp\""));
-        assert!(content.contains("data_dir = \"./omenic-data\""));
+        assert!(content.contains("data_dir = \"./.oi\""));
         assert!(content.contains("model = \"default\""));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2955,14 +2973,14 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         init_cmd_at(&dir, false).unwrap();
-        let toml = std::fs::read_to_string(dir.join("omenic.toml")).unwrap();
+        let toml = std::fs::read_to_string(dir.join(".oi/config.toml")).unwrap();
         init_cmd_at(&dir, false).unwrap();
         // Not overwritten.
         assert_eq!(
             toml,
-            std::fs::read_to_string(dir.join("omenic.toml")).unwrap()
+            std::fs::read_to_string(dir.join(".oi/config.toml")).unwrap()
         );
-        assert!(dir.join("omenic-data").is_dir());
+        assert!(dir.join(".oi").is_dir());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2973,11 +2991,11 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("omenic-data")).unwrap();
+        std::fs::create_dir_all(dir.join(".oi")).unwrap();
         init_cmd_at(&dir, false).unwrap();
-        // toml was created, data dir was already there.
-        assert!(dir.join("omenic.toml").is_file());
-        assert!(dir.join("omenic-data").is_dir());
+        // config.toml + specs created, .oi already there.
+        assert!(dir.join(".oi/config.toml").is_file());
+        assert!(dir.join(".oi/specs").is_dir());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
