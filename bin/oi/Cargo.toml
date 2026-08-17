@@ -1,0 +1,17 @@
+[package]
+name = "oi"
+version = "0.1.0"
+edition = "2024"
+description = "Task-driven agent orchestrator CLI"
+license = "MIT"
+
+[[bin]]
+name = "oi"
+path = "src/main.rs"
+
+[dependencies]
+oi-core = { path = "../../crates/oi-core" }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+serde_json = { workspace = true }
