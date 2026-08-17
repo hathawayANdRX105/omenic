@@ -53,15 +53,19 @@ pub struct TemplateDef {
     pub tasks: Vec<TaskDef>,
     /// (task_key, depends_on_key) edges.
     pub deps: Vec<(String, String)>,
+    /// Step keys that must be present in tasks. If any is missing, `apply`
+    /// returns an error. Declared via `mandatory:` in the YAML.
+    pub mandatory: Vec<String>,
 }
 
 // --- YAML shapes -----------------------------------------------------------
-
 #[derive(Deserialize)]
 struct YamlTemplate {
     tasks: Vec<YamlTask>,
     #[serde(default)]
     deps: Vec<YamlDep>,
+    #[serde(default)]
+    mandatory: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -454,6 +458,124 @@ deps: []
 deps: []
 "#,
     ),
+    (
+        TemplateKind::Phase,
+        "lifecycle",
+        r#"mandatory:
+  - plan
+  - implement
+  - audit
+  - smoke
+
+tasks:
+  - key: phase
+    title: "lifecycle: full delivery lifecycle"
+    kind: task
+    description: |
+      全生命周期编排：plan → issue → implement → audit → smoke → tidy → pr → review → close。
+      mandatory phase（plan/implement/audit/smoke）必须完成；optional phase 按场景选用。
+      review 末尾有"等待用户确认"step，agent 不得自动跳过。
+    acceptance: |
+      所有 mandatory phase 完成；optional phase 按需完成。
+
+  - key: plan
+    title: "plan: define approach and steps"
+    kind: task
+    description: |
+      定义方案与实施步骤。包括：要做什么文件、什么接口、什么行为、验收标准。
+      产出：方案文档 + step recipe 清单。
+    acceptance: |
+      方案与步骤已定义；每个 step 有具体 description + acceptance。
+
+  - key: issue
+    title: "issue: generate spec + create GitHub issue"
+    kind: task
+    description: |
+      生成 issue spec 正文（oi spec new issue）；通过 gh-gate 创建 GitHub issue；
+      校验 issue 层级与正文符合 spec 规则。
+    acceptance: |
+      GitHub issue 已创建；spec check 通过。
+
+  - key: implement
+    title: "implement: deliver the work item"
+    kind: task
+    description: |
+      按方案实现：创建隔离 worktree、编写代码、编写测试。
+      具体文件/函数/行为由 plan phase 的 step recipe 定义。
+    acceptance: |
+      工作项已实现；主路径可运行。
+
+  - key: audit
+    title: "audit: check against plan and contract"
+    kind: task
+    description: |
+      对照方案与可观察契约审查实现：语法检查、一致性核对、依赖边界。
+    acceptance: |
+      审计完成：实现与方案/契约一致。
+
+  - key: smoke
+    title: "smoke: run and observe"
+    kind: task
+    description: |
+      跑通主路径并记录观察结果：合法输入 + 非法输入 + 边界。
+    acceptance: |
+      smoke 通过：命令 + 结果已记录。
+
+  - key: tidy
+    title: "tidy: clean obsolete artifacts"
+    kind: task
+    description: |
+      清理脚手架/死代码/过期注释/调试输出。
+    acceptance: |
+      清理完成。
+
+  - key: pr
+    title: "pr: generate spec + create PR"
+    kind: task
+    description: |
+      生成 PR spec 正文（oi pr render + oi spec new pr）；通过 gh-gate 创建 PR；
+      校验 PR 关联与规范。
+    acceptance: |
+      PR 已创建；spec check 通过。
+
+  - key: review
+    title: "review: CRG + ocr + user confirmation"
+    kind: task
+    description: |
+      运行 CRG 与 ocr 审查；回写审查结果到 PR；等待用户确认审查结果。
+      agent 不得自动跳过用户确认门。
+    acceptance: |
+      CRG + ocr 审查完成；用户已确认。
+
+  - key: close
+    title: "close: gate merge + close issues"
+    kind: task
+    description: |
+      通过 gate 合并 PR；勾选 sub issue Done when；关闭 sub issue 与 epic。
+    acceptance: |
+      PR 已合并；sub issue 与 epic 已关闭。
+
+deps:
+  - task: issue
+    depends_on: plan
+  - task: implement
+    depends_on: issue
+  - task: audit
+    depends_on: implement
+  - task: smoke
+    depends_on: audit
+  - task: tidy
+    depends_on: smoke
+  - task: pr
+    depends_on: tidy
+  - task: review
+    depends_on: pr
+  - task: close
+    depends_on: review
+  - task: phase
+    depends_on: close
+"#,
+    ),
 ];
 
 /// Write default templates into `<dir>/templates/{phases,steps}/` —
@@ -506,6 +628,7 @@ pub fn parse_template(
         kind,
         tasks,
         deps,
+        mandatory: yaml.mandatory,
     })
 }
 
@@ -575,6 +698,26 @@ pub fn apply(
     parent: Option<String>,
 ) -> Result<Vec<String>, String> {
     let tpl = load_template(dir, name)?;
+
+    // Mandatory phase check: if the template declares mandatory keys, all
+    // must be present in the tasks. This enforces required phases at apply
+    // time, preventing agents from skipping plan/implement/audit/smoke.
+    if !tpl.mandatory.is_empty() {
+        let task_keys: std::collections::HashSet<&str> =
+            tpl.tasks.iter().map(|t| t.key.as_str()).collect();
+        let missing: Vec<&str> = tpl
+            .mandatory
+            .iter()
+            .filter(|k| !task_keys.contains(k.as_str()))
+            .map(|s| s.as_str())
+            .collect();
+        if !missing.is_empty() {
+            return Err(format!(
+                "template `{name}` is missing mandatory phase(s): {}",
+                missing.join(", ")
+            ));
+        }
+    }
 
     // Topic task: reuse if exists, else create (kind=feature).
     let all = store.load_all().map_err(|e| format!("store error: {e}"))?;
