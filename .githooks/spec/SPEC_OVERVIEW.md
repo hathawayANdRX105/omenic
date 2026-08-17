@@ -30,23 +30,6 @@
 ├── PR_DEV_WORKFLOW.md         # PR 开发工作流指南（含 CRG + ocr 审查流程）
 └── WORKFLOW.md                # 工作隔离规范（.wt/ worktree 分支目录）
 
-Rust 实现（不在 .githooks/ 内，随 omenic 仓库构建与部署）：
-├── bin/gate/                  # gate CLI（clap）：init/pre-commit/pre-push/merge/review/audit/issue/pr
-├── crates/gate-core/          # 核心逻辑：
-│   ├── tools/gh_wrap.rs      # gh 拦截门（argv[0]==gh 时拦截 issue/pr 命令，其余透传真实 gh）
-│   │                         #   GT-01/03 issue create、GT-02 pr create、GT-04/04b/06 issue close、
-│   │                         #   GT-05/07 pr merge（含 squash 标题 CM-01/CM-02）
-│   ├── tools/merge.rs        # RV-07（CRG + ocr 强审）+ PR/review/cleanup topic 调度
-│   ├── tools/review.rs       # CRG + ocr 运行与 PR 留言（--post/--post-inline）
-│   ├── tools/audit.rs        # issue/PR 批量合规扫描（--recent/--limit/--workers）
-│   ├── tools/pre_commit.rs   # CM-01/02/03 + 调用 workspace/code validator
-│   ├── rules/issues.rs       # IS-01 ~ IS-16（纯 Rust 实现）
-│   ├── rules/pull_requests.rs# PR-01 ~ PR-12（纯 Rust 实现）
-│   └── rules/reviews.rs      # RV-01 ~ RV-06（纯 Rust 实现）
-├── Cargo.toml                 # release profile：opt-level=z + lto=fat + codegen-units=1 + strip
-│                             # 构建后 upx --best --lzma 压缩（~2.8MB → ~660KB）
-└── ~/.local/bin/gate          # 安装目标（gate init / install 部署，同二进制复制为 gh）
-└── ~/.local/bin/gh            # 拦截器（argv[0]==gh 走 gh_wrap::dispatch，其余透传真实 gh）
 ```
 
 ### 外部工具依赖
@@ -63,11 +46,11 @@ Rust 实现（不在 .githooks/ 内，随 omenic 仓库构建与部署）：
 - 规则**只**在 `.githooks/spec/*.yaml`（参数）和 Rust/Python 校验器（逻辑）两处，改规则只改 spec
 - **新增/修改规则后必须更新本文档**
 - 规则编号采用**主题前缀 + 连续编号**（IS/PR/RV/GT/WS/CD/CL/CM）
-- commit 标题规则 CM-01/02/03 实现在 `gate pre-commit`（Rust），语义与 PR-01/PR-02 对齐
+- commit 标题规则 CM-01/02/03 实现在 `gate pre-commit`，语义与 PR-01/PR-02 对齐
 
-## 主题一：GitHub 规则（IS/PR/RV，纯 Rust 实现）
+## 主题一：GitHub 规则（IS/PR/RV）
 
-实现位置：`crates/gate-core/src/rules/{issues,pull_requests,reviews}.rs` + `spec/github_*.yaml`
+参数在 `spec/github_*.yaml`，逻辑在 gate 二进制。
 
 ### Issue 规则（IS-01 ~ IS-16）
 
@@ -112,9 +95,9 @@ Rust 实现（不在 .githooks/ 内，随 omenic 仓库构建与部署）：
 - RV-05 CRG Review 存在 — FAIL
 - RV-06 inline findings 有回复 — WARN
 
-## 主题二：拦截门（GT-01 ~ GT-07，gh_wrap.rs）
+## 主题二：拦截门（GT-01 ~ GT-07）
 
-实现位置：`crates/gate-core/src/tools/gh_wrap.rs`（部署为 `~/.local/bin/gh`，argv[0]==gh 时拦截）
+部署为 `~/.local/bin/gh`（argv[0]==gh 时拦截）。
 
 - GT-01 issue create 前校验（调 IS-*，FAIL 拒）；支持 `--disable-check` 逃生门 — 触发：gh issue create
 - GT-02 pr create 前校验（调 PR-*，FAIL 拒）— 触发：gh pr create
@@ -141,7 +124,6 @@ Rust 实现（不在 .githooks/ 内，随 omenic 仓库构建与部署）：
 - CM-02 禁 CJK（应为英文，同 PR-01）— FAIL
 - CM-03 分支有关联 open PR 时 type 与 PR 标题一致（gh api，失败/无 PR 跳过）— FAIL
 
-实现位置：`crates/gate-core/src/tools/pre_commit.rs`
 
 ## 主题四：Code（CD-01 ~ CD-06，code/lint.py）
 
@@ -167,7 +149,7 @@ Rust 实现（不在 .githooks/ 内，随 omenic 仓库构建与部署）：
 
 ## 主题七：本地审查（RV-07，gate review）
 
-`gate review [--post|--post-inline] [--pr N]`（crates/gate-core/src/tools/review.rs）：
+`gate review [--post|--post-inline] [--pr N]`：
 
 1. CRG 结构分析：`code-review-graph detect-changes --brief --base main` → 影响文件/风险分
 2. ocr AI 审查：`ocr review --format json --audience agent` → findings（path/start_line/severity/category/content）
@@ -180,7 +162,6 @@ Rust 实现（不在 .githooks/ 内，随 omenic 仓库构建与部署）：
 - `.github/workflows/daily_audit.yml`：每天 UTC 0:30 自动跑 `gate audit --recent=1`
 - 有 FAIL → 自动建 issue 记录；全部 PASS → 无动作；支持 workflow_dispatch
 
-实现位置：`crates/gate-core/src/tools/audit.rs` + `gate audit`（纯 Rust）
 
 ## 触发式（lazy）规则映射
 
