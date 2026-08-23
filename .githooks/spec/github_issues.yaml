@@ -38,7 +38,7 @@ forbidden_brackets_in_title:
   - "〈"
   - "〉"
 
-# 正文禁止关键词 (I-xx)
+# 正文禁止关键词 (IS-16)
 forbidden_keywords:
   - "TODO"
   - "TBD"
