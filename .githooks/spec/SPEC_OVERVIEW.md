@@ -12,20 +12,9 @@
 │   ├── github_issues.yaml    # Issue 规则（IS-* 检查项）
 │   ├── github_pull_requests.yaml  # PR 规则（PR-* 检查项）
 │   ├── github_reviews.yaml   # Review 评论格式（RV-* 检查项）
-│   ├── code_{rust,go,javascript,typescript,python,bash}.yaml  # 六语言 lint
-│   ├── workspace_{tree_hygiene,file_placement}.yaml           # 工作区检查
-│   ├── cleanup_{branch_cleanup,tests_*,docs_hygiene}.yaml     # 清理检查
-├── workspace/                 # Python validator（gate pre-commit 调用）
-│   ├── tree_hygiene.py      # 目录整洁（空目录/深度/单文件/孤儿）
-│   └── file_placement.py    # 文件位置合理性（os.walk 目录剪枝，跳过 ignore 子树）
-├── code/
-│   └── lint.py               # 六语言 lint 分发器（读 code_*.yaml）
-├── cleanup/
-│   ├── branch_cleanup.py    # 分支清理（merged/orphan/temp，gate merge 调用）
-│   ├── tests_check.py       # 测试代码检查（保留备用）
-│   └── docs_hygiene.py      # 文档清洁（保留备用）
-├── lib/                       # Python 共享库（被上述 validator import）
-│   └── _shared.py            # Finding / Severity / load_yaml / run_external
+│   ├── code_{rust,go,javascript,typescript,python,bash}.yaml  # Rust code lint 参数
+│   ├── workspace_{tree_hygiene,file_placement}.yaml           # Rust workspace 检查参数
+│   └── cleanup_branch_cleanup.yaml                            # Rust cleanup 检查参数
 ├── GITHUB_ISSUE_PR.md         # Issue/PR 创建指南（含关联机制）
 ├── PR_DEV_WORKFLOW.md         # PR 开发工作流指南（含 CRG + ocr 审查流程）
 └── WORKFLOW.md                # 工作隔离规范（.wt/ worktree 分支目录）
@@ -43,7 +32,7 @@
 
 本文档是 gate 全部检查规则的**唯一总览**，供人/agent 对照审查：
 
-- 规则**只**在 `.githooks/spec/*.yaml`（参数）和 Rust/Python 校验器（逻辑）两处，改规则只改 spec
+- 规则**只**在 `.githooks/spec/*.yaml`（参数）和 Rust 校验器（逻辑）两处，改规则只改 spec
 - **新增/修改规则后必须更新本文档**
 - 规则编号采用**主题前缀 + 连续编号**（IS/PR/RV/GT/WS/CD/CL/CM）
 - commit 标题规则 CM-01/02/03 实现在 `gate pre-commit`，语义与 PR-01/PR-02 对齐
@@ -125,7 +114,7 @@
 - CM-03 分支有关联 open PR 时 type 与 PR 标题一致（gh api，失败/无 PR 跳过）— FAIL
 
 
-## 主题四：Code（CD-01 ~ CD-06，code/lint.py）
+## 主题四：Code（CD-01 ~ CD-06，Rust code lint dispatcher）
 
 - CD-01 rust：cargo fmt --check（spec/code_rust.yaml）
 - CD-02 go：gofmt -l（spec/code_go.yaml）
@@ -136,16 +125,14 @@
 
 工具缺失 → WARN 跳过（优雅降级：仅 rc==127 或完整 "command not found" 短语视为缺失，防 lint 输出干扰）。公共字段：enabled/command/args/fail_severity/paths_include/paths_exclude。
 
-## 主题五：Workspace（WS-01 ~ WS-02，workspace/*.py）
+## 主题五：Workspace（WS-01 ~ WS-02，Rust workspace validators）
 
 - WS-01 tree_hygiene：空目录、单文件目录、深度 > max_depth、孤儿目录（spec/workspace_tree_hygiene.yaml）— WARN
 - WS-02 file_placement：forbidden_patterns、expected_locations（spec/workspace_file_placement.yaml）— WARN；`os.walk` 目录剪枝（ignore 含 node_modules/.git/ 等子树时跳过遍历，防大仓库卡死）
 
-## 主题六：Cleanup（CL-01 ~ CL-03，cleanup/*.py）
+## 主题六：Cleanup（CL-01，Rust cleanup validator）
 
 - CL-01 branch_cleanup：merged/orphan/temp 分支清理，dry-run 默认（gate merge 调用）— WARN
-- CL-02 tests_check：四语言测试命名/断言/helper（spec/cleanup_tests_*.yaml）— WARN
-- CL-03 docs_hygiene：全角括号/死链/遗留标记/空文件/CRLF（spec/cleanup_docs_hygiene.yaml）— WARN
 
 ## 主题七：本地审查（RV-07，gate review）
 

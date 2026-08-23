@@ -1,5 +1,5 @@
 # github_pull_requests.yaml — PR 元数据 + body 结构契约
-# 使用方式: .githooks/github/pull_requests.py 读取本文件, 脚本逻辑由 YAML 驱动 (规则参数从 yaml 读取, 不硬编码)。
+# 使用方式: gate Rust PR validator 读取本文件, 规则参数从 YAML 读取。
 # 审查评论格式契约请参考 #103 (github_reviews.yaml)。
 
 # 必填的 body 段 (按出现顺序检查)

@@ -2,17 +2,20 @@
 
 ## Issue/PR 创建
 
-创建 issue/PR 前必须先读 `.githooks/gh-gate`，然后通过它创建，禁止直接 `gh issue create` / `gh pr create`。
+创建 issue/PR 前必须读 `.github/ISSUE_TEMPLATE/` 或 `.github/PULL_REQUEST_TEMPLATE.md`，然后通过已安装 gate 拦截的 `gh` 创建，禁止绕过 gate。
 
 ```bash
+# 安装/更新拦截门
+gate init
+
 # issue（正文按 .github/ISSUE_TEMPLATE/ 下模板）
-python .githooks/gh-gate issue create --title "..." --body "..." --label <epic|sub|...>
+gh issue create --title "..." --body "..." --label <epic|sub|...>
 
 # PR（正文按 .github/PULL_REQUEST_TEMPLATE.md）
-python .githooks/gh-gate pr create --title "..." --body "..." --head <branch>
+gh pr create --title "..." --body "..." --head <branch>
 ```
 
-gate 自动做创建前校验（规则在 `.githooks/spec/`）+ 创建后调 issues.py / pull_requests.py 现实校验，FAIL 拒绝创建。
+gate 自动做创建前校验（规则在 `.githooks/spec/`）+ 创建后现实校验，FAIL 拒绝创建。
 
 ## Demo 验证沙盒
 

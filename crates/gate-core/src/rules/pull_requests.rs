@@ -1,8 +1,7 @@
-//! PR-* validation rules — port of `.githooks/github/pull_requests.py` `check_content`.
+//! PR-* validation rules.
 //!
-//! Pure content checks driven by `spec/github_pull_requests.yaml`.
-//! Mirrors the Python logic rule-for-rule including the fork "user:" prefix
-//! strip on `head_ref` (PR-08).
+//! Pure content checks driven by `spec/github_pull_requests.yaml`, including
+//! the fork "user:" prefix strip on `head_ref` (PR-08).
 
 use regex::Regex;
 use serde_yaml::Value as YamlValue;
@@ -150,18 +149,16 @@ fn extract_fixes(body: &str) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 fn cfg_body_headings(cfg: Option<&YamlValue>) -> Vec<String> {
-    if let Some(c) = cfg {
-        if let Some(arr) = c
-            .get("required_body_headings")
-            .and_then(|v| v.as_sequence())
-        {
-            let vals: Vec<String> = arr
-                .iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect();
-            if !vals.is_empty() {
-                return vals;
-            }
+    if let Some(arr) = cfg
+        .and_then(|c| c.get("required_body_headings"))
+        .and_then(|v| v.as_sequence())
+    {
+        let vals: Vec<String> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+        if !vals.is_empty() {
+            return vals;
         }
     }
     DEFAULT_BODY_HEADINGS
@@ -171,18 +168,16 @@ fn cfg_body_headings(cfg: Option<&YamlValue>) -> Vec<String> {
 }
 
 fn cfg_branch_prefixes(cfg: Option<&YamlValue>) -> Vec<String> {
-    if let Some(c) = cfg {
-        if let Some(arr) = c
-            .get("allowed_branch_prefixes")
-            .and_then(|v| v.as_sequence())
-        {
-            let vals: Vec<String> = arr
-                .iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect();
-            if !vals.is_empty() {
-                return vals;
-            }
+    if let Some(arr) = cfg
+        .and_then(|c| c.get("allowed_branch_prefixes"))
+        .and_then(|v| v.as_sequence())
+    {
+        let vals: Vec<String> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+        if !vals.is_empty() {
+            return vals;
         }
     }
     DEFAULT_BRANCH_PREFIXES
@@ -192,15 +187,16 @@ fn cfg_branch_prefixes(cfg: Option<&YamlValue>) -> Vec<String> {
 }
 
 fn cfg_type_labels(cfg: Option<&YamlValue>) -> Vec<String> {
-    if let Some(c) = cfg {
-        if let Some(arr) = c.get("type_labels_cfg").and_then(|v| v.as_sequence()) {
-            let vals: Vec<String> = arr
-                .iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect();
-            if !vals.is_empty() {
-                return vals;
-            }
+    if let Some(arr) = cfg
+        .and_then(|c| c.get("type_labels_cfg"))
+        .and_then(|v| v.as_sequence())
+    {
+        let vals: Vec<String> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+        if !vals.is_empty() {
+            return vals;
         }
     }
     DEFAULT_TYPE_LABELS.iter().map(|s| s.to_string()).collect()
@@ -209,22 +205,20 @@ fn cfg_type_labels(cfg: Option<&YamlValue>) -> Vec<String> {
 /// Extract keyword→label suggestions map from config YAML.
 /// Falls back to `DEFAULT_KEYWORD_SUGGESTIONS` when absent or empty.
 fn cfg_keyword_suggestions(cfg: Option<&YamlValue>) -> Vec<(String, String)> {
-    if let Some(c) = cfg {
-        if let Some(map) = c
-            .get("keyword_label_suggestions")
-            .and_then(|v| v.as_mapping())
-        {
-            let pairs: Vec<(String, String)> = map
-                .iter()
-                .filter_map(|(k, v)| {
-                    let key = k.as_str()?.to_string();
-                    let val = v.as_str()?.to_string();
-                    Some((key, val))
-                })
-                .collect();
-            if !pairs.is_empty() {
-                return pairs;
-            }
+    if let Some(map) = cfg
+        .and_then(|c| c.get("keyword_label_suggestions"))
+        .and_then(|v| v.as_mapping())
+    {
+        let pairs: Vec<(String, String)> = map
+            .iter()
+            .filter_map(|(k, v)| {
+                let key = k.as_str()?.to_string();
+                let val = v.as_str()?.to_string();
+                Some((key, val))
+            })
+            .collect();
+        if !pairs.is_empty() {
+            return pairs;
         }
     }
     DEFAULT_KEYWORD_SUGGESTIONS

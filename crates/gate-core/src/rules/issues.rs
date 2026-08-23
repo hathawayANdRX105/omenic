@@ -1,7 +1,7 @@
-//! IS-* issue validation rules — port of `.githooks/github/issues.py` `check_content`.
+//! IS-* issue validation rules.
 //!
-//! Pure content checks driven by `spec/github_issues.yaml`.  Mirrors the
-//! Python logic rule-for-rule.  The `cfg` parameter was deliberately dropped
+//! Pure content checks driven by `spec/github_issues.yaml`. The `cfg`
+//! parameter was deliberately dropped
 //! (see sub-issue #188): the YAML-driven defaults are embedded as `const`
 //! arrays below so the function works without a spec file on disk, exactly
 //! like the sibling `pull_requests` rules fall back to `DEFAULT_*` when no
@@ -521,7 +521,7 @@ pub fn check_content(
     let haystack = format!("{title}\n{body}").to_lowercase();
     let mut missing: Vec<String> = Vec::new();
     for (keyword, suggested) in kw_map {
-        if haystack.contains(&keyword.to_lowercase()) && !labels.iter().any(|l| *l == *suggested) {
+        if haystack.contains(&keyword.to_lowercase()) && !labels.contains(suggested) {
             missing.push(suggested.to_string());
         }
     }

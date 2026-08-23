@@ -1,6 +1,6 @@
 # cleanup_branch_cleanup.yaml — branch cleanup configuration
 #
-# branch_cleanup.py reads this file for all policy decisions.
+# gate Rust cleanup validator reads this file for all policy decisions.
 
 protected_branches:
   - main

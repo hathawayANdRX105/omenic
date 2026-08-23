@@ -1,4 +1,4 @@
-//! PR review comment validation — port of `.githooks/github/reviews.py`.
+//! PR review comment validation.
 //!
 //! Implements `run`: validates PR review comments against
 //! `.githooks/spec/github_reviews.yaml`.

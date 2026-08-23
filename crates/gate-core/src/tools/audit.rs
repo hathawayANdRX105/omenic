@@ -1,9 +1,8 @@
 //! gate audit — validate issue/PR checkboxes and rule compliance.
 //!
-//! Port of `.githooks/dev/audit.py`. Uses the already-ported Rust rules
-//! (issues, pull_requests) and the gh API client.
+//! Uses the Rust issue/PR rules and the gh API client.
 //!
-//! Usage: `gate audit <owner/repo> [--issues=N,M] [--recent=N] [--limit=N] [--workers=N]`
+//! Usage: `gate audit [owner/repo] [--issues=N,M] [--recent=N] [--limit=N] [--workers=N]`
 
 use std::sync::LazyLock;
 
@@ -30,7 +29,7 @@ static NEXT_HEADING_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^## 
 // Entry point
 // ---------------------------------------------------------------------------
 
-/// `gate audit <owner/repo> [...]` — scan issues/PRs for rule violations.
+/// `gate audit [owner/repo] [...]` — scan issues/PRs for rule violations.
 pub fn run(args: &[String]) -> i32 {
     let mut positional = Vec::new();
     let mut specific: Option<Vec<u32>> = None;
@@ -54,7 +53,7 @@ pub fn run(args: &[String]) -> i32 {
 
     if positional.is_empty() {
         eprintln!(
-            "Usage: gate audit <owner/repo> [--issues=N,M] [--recent=N] [--limit=N] [--workers=N]"
+            "Usage: gate audit [owner/repo] [--issues=N,M] [--recent=N] [--limit=N] [--workers=N]"
         );
         return 1;
     }
@@ -64,26 +63,26 @@ pub fn run(args: &[String]) -> i32 {
         return scan_recent(repo, days, limit, workers);
     }
 
-    let nums = match specific {
-        Some(n) => n,
-        None => {
-            let mut nums = Vec::new();
-            if let Ok(json) = gh_api(
-                &format!(
-                    "search/issues?q=repo:{}+is:closed&sort=updated&per_page=20",
-                    repo
-                ),
-                None,
-            ) {
-                if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
+    let nums =
+        match specific {
+            Some(n) => n,
+            None => {
+                let mut nums = Vec::new();
+                if let Ok(json) = gh_api(
+                    &format!(
+                        "search/issues?q=repo:{}+is:closed&sort=updated&per_page=20",
+                        repo
+                    ),
+                    None,
+                ) && let Some(items) = json.get("items").and_then(|i| i.as_array())
+                {
                     nums.extend(items.iter().filter_map(|i| {
                         i.get("number").and_then(|n| n.as_u64()).map(|n| n as u32)
                     }));
                 }
+                nums
             }
-            nums
-        }
-    };
+        };
 
     println!("检查 {} 的 issue/PR...\n", repo);
     let mut has_fail = false;
