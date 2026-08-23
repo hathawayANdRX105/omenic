@@ -10,15 +10,12 @@ protected_branches:
 
 local_merged:
   action: WARN    # WARN | DELETE
-  age_days: 0
 
 remote_merged:
   action: WARN
-  age_days: 7
 
 orphan_local:
   action: WARN
-  age_days: 30
 
 temp_branch_prefixes:
   - "tmp/"

@@ -67,6 +67,40 @@ fn is_protected(branch: &str, protected: &[String], current: &str) -> bool {
     branch == current || protected.iter().any(|p| p == branch)
 }
 
+fn delete_branch(
+    findings: &mut Vec<Finding>,
+    deleted: &mut Vec<String>,
+    label: String,
+    args: &[&str],
+) {
+    match run_git(args) {
+        Ok((0, _)) => deleted.push(label),
+        Ok((rc, output)) => findings.push(Finding::new(
+            "CL-01",
+            Severity::Warn,
+            &format!("failed to delete '{label}' (rc={rc}): {output}"),
+        )),
+        Err(error) => findings.push(Finding::new(
+            "CL-01",
+            Severity::Warn,
+            &format!("failed to delete '{label}': {error}"),
+        )),
+    }
+}
+
+fn orphan_branch_name<'a>(line: &'a str, protected: &[String], current: &str) -> Option<&'a str> {
+    let branch_line = line.trim().trim_start_matches('*').trim();
+    let name = branch_line.split_whitespace().next()?;
+    if is_protected(name, protected, current) {
+        return None;
+    }
+    let has_upstream = branch_line.contains('[');
+    if has_upstream && !branch_line.contains(": gone]") {
+        return None;
+    }
+    Some(name)
+}
+
 pub fn run(dry_run: bool) -> Vec<Finding> {
     let githooks = crate::tools::git::find_githooks_dir()
         .unwrap_or_else(|| Path::new(".githooks").to_path_buf());
@@ -101,8 +135,12 @@ pub fn run(dry_run: bool) -> Vec<Finding> {
                 &format!("local branch '{branch}' is merged into main"),
             ));
             if !dry_run && cfg.local_merged_action == "DELETE" {
-                let _ = run_git(&["branch", "-d", &branch]);
-                deleted.push(branch);
+                delete_branch(
+                    &mut findings,
+                    &mut deleted,
+                    branch.clone(),
+                    &["branch", "-d", &branch],
+                );
             }
         }
     }
@@ -122,31 +160,41 @@ pub fn run(dry_run: bool) -> Vec<Finding> {
                 &format!("remote branch '{remote_ref}' is merged into origin/main"),
             ));
             if !dry_run && cfg.remote_merged_action == "DELETE" {
-                let _ = run_git(&["push", "origin", "--delete", branch]);
-                deleted.push(format!("remote:{branch}"));
+                let label = format!("remote:{branch}");
+                delete_branch(
+                    &mut findings,
+                    &mut deleted,
+                    label,
+                    &["push", "origin", "--delete", branch],
+                );
             }
         }
     }
 
     if let Ok((0, output)) = run_git(&["branch", "-vv"]) {
         for line in output.lines() {
-            let branch_line = line.trim().trim_start_matches('*').trim();
-            let Some(name) = branch_line.split_whitespace().next() else {
+            let Some(name) = orphan_branch_name(line, &cfg.protected_branches, &current_branch)
+            else {
                 continue;
             };
-            if is_protected(name, &cfg.protected_branches, &current_branch)
-                || branch_line.contains('[')
-            {
-                continue;
-            }
+            let branch_line = line.trim().trim_start_matches('*').trim();
+            let reason = if branch_line.contains(": gone]") {
+                "tracks deleted remote"
+            } else {
+                "has no remote tracking"
+            };
             findings.push(Finding::new(
                 "CL-01",
                 Severity::Warn,
-                &format!("local branch '{name}' has no remote tracking"),
+                &format!("local branch '{name}' {reason}"),
             ));
             if !dry_run && cfg.orphan_local_action == "DELETE" {
-                let _ = run_git(&["branch", "-D", name]);
-                deleted.push(name.to_string());
+                delete_branch(
+                    &mut findings,
+                    &mut deleted,
+                    name.to_string(),
+                    &["branch", "-D", name],
+                );
             }
         }
     }
@@ -167,8 +215,12 @@ pub fn run(dry_run: bool) -> Vec<Finding> {
                     &format!("temp branch '{branch}' matches temp prefix"),
                 ));
                 if !dry_run {
-                    let _ = run_git(&["branch", "-D", &branch]);
-                    deleted.push(branch);
+                    delete_branch(
+                        &mut findings,
+                        &mut deleted,
+                        branch.clone(),
+                        &["branch", "-D", &branch],
+                    );
                 }
             }
         }
@@ -207,5 +259,22 @@ mod tests {
         assert!(is_protected("main", &protected, "feat/current"));
         assert!(is_protected("feat/current", &protected, "feat/current"));
         assert!(!is_protected("release/1", &protected, "feat/current"));
+    }
+
+    #[test]
+    fn orphan_branch_name_includes_gone_upstream() {
+        let protected = Vec::new();
+        assert_eq!(
+            orphan_branch_name("feat/x abc123 [origin/feat/x: gone] msg", &protected, ""),
+            Some("feat/x")
+        );
+        assert_eq!(
+            orphan_branch_name("feat/y abc123 [origin/feat/y] msg", &protected, ""),
+            None
+        );
+        assert_eq!(
+            orphan_branch_name("feat/z abc123 msg", &protected, ""),
+            Some("feat/z")
+        );
     }
 }

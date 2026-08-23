@@ -51,13 +51,14 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
 
-    if positional.is_empty() {
+    let repo = positional.first().cloned().unwrap_or_else(derive_repo);
+    if repo.is_empty() {
         eprintln!(
             "Usage: gate audit [owner/repo] [--issues=N,M] [--recent=N] [--limit=N] [--workers=N]"
         );
         return 1;
     }
-    let repo = &positional[0];
+    let repo = &repo;
 
     if let Some(days) = recent {
         return scan_recent(repo, days, limit, workers);

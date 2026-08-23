@@ -31,6 +31,8 @@ pub fn install() -> anyhow::Result<()> {
     let gate_target = install_dir.join("gate");
     let gh_target = install_dir.join("gh");
 
+    fs::create_dir_all(&install_dir)?;
+
     let current_exe = std::env::current_exe()?;
     for target in [&gate_target, &gh_target] {
         // current_exe() canonicalizes symlinks; compare against canonical target

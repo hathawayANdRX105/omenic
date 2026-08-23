@@ -101,15 +101,17 @@ pub fn passthrough(args: &[String]) -> i32 {
     rc
 }
 
-fn read_body_file(path: &str) -> String {
+fn read_body_file(path: &str) -> Result<String, String> {
     if path == "-" {
-        return String::new();
+        return Err(
+            "--body-file - is not supported; pass --body or a readable file path".to_string(),
+        );
     }
-    fs::read_to_string(path).unwrap_or_default()
+    fs::read_to_string(path).map_err(|e| format!("failed to read --body-file '{path}': {e}"))
 }
 
 /// Extract (title, body, labels, head, parent) from gh args. Mirrors Python `_extract`.
-pub fn extract(args: &[String]) -> (String, String, Vec<String>, String, String) {
+pub fn extract(args: &[String]) -> Result<(String, String, Vec<String>, String, String), String> {
     let mut title = String::new();
     let mut body = String::new();
     let mut head = String::new();
@@ -135,7 +137,7 @@ pub fn extract(args: &[String]) -> (String, String, Vec<String>, String, String)
             }
             "--body-file" => {
                 if let Some(v) = next {
-                    body = read_body_file(v);
+                    body = read_body_file(v)?;
                     i += 1;
                 }
             }
@@ -163,7 +165,7 @@ pub fn extract(args: &[String]) -> (String, String, Vec<String>, String, String)
                 } else if let Some(stripped) = a.strip_prefix("--body=") {
                     body = stripped.to_string();
                 } else if let Some(stripped) = a.strip_prefix("--body-file=") {
-                    body = read_body_file(stripped);
+                    body = read_body_file(stripped)?;
                 } else if let Some(stripped) = a.strip_prefix("--label=") {
                     labels.extend(stripped.split(',').map(|s| s.to_string()));
                 } else if let Some(stripped) = a.strip_prefix("--head=") {
@@ -175,7 +177,7 @@ pub fn extract(args: &[String]) -> (String, String, Vec<String>, String, String)
         }
         i += 1;
     }
-    (title, body, labels, head, parent)
+    Ok((title, body, labels, head, parent))
 }
 
 /// Strip gate-only flags (--parent) from args before passing to real gh.
@@ -318,15 +320,8 @@ fn query_open_subs(repo: &str, num: &str) -> Result<Vec<String>, String> {
 
 /// GT-01 + GT-03: issue create
 pub fn intercept_issue_create(args: &[String]) -> i32 {
-    let (title, body, labels, _, parent) = extract(args);
-
     if args.iter().any(|a| a == "--disable-check") {
-        log(
-            "ISSUE_CREATE",
-            crate::shared::truncate_utf8(&title, 40),
-            "BYPASS",
-            "--disable-check",
-        );
+        log("ISSUE_CREATE", "?", "BYPASS", "--disable-check");
         println!("⚠ 闸门: --disable-check 跳过校验（已记入 gate.log；仅本次调用生效）");
         let clean: Vec<String> = args
             .iter()
@@ -338,6 +333,14 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
         return passthrough(&full);
     }
 
+    let (title, body, labels, _, parent) = match extract(args) {
+        Ok(parts) => parts,
+        Err(error) => {
+            println!("闸门: {error}");
+            log("ISSUE_CREATE", "?", "REJECT", &error);
+            return 1;
+        }
+    };
     let repo = derive_repo();
     let mode = if is_epic(&labels) { "parent" } else { "sub" };
     let labels_str: Vec<&str> = labels.iter().map(String::as_str).collect();
@@ -570,7 +573,14 @@ pub fn intercept_issue_close(args: &[String]) -> i32 {
 
 /// GT-02: pr create
 pub fn intercept_pr_create(args: &[String]) -> i32 {
-    let (title, body, labels, head, _) = extract(args);
+    let (title, body, labels, head, _) = match extract(args) {
+        Ok(parts) => parts,
+        Err(error) => {
+            println!("闸门: {error}");
+            log("PR_CREATE", "?", "REJECT", &error);
+            return 1;
+        }
+    };
     let labels_str: Vec<&str> = labels.iter().map(String::as_str).collect();
 
     let findings =
@@ -1097,12 +1107,19 @@ mod tests {
         std::fs::write(&path, "## What\n正文").expect("write body file");
         let path = path.to_string_lossy().to_string();
 
-        let (_, body, _, _, _) = extract(&["--body-file".into(), path.clone()]);
-        let (_, body_eq, _, _, _) = extract(&[format!("--body-file={path}")]);
+        let (_, body, _, _, _) = extract(&["--body-file".into(), path.clone()]).expect("extract");
+        let (_, body_eq, _, _, _) = extract(&[format!("--body-file={path}")]).expect("extract");
         let _ = std::fs::remove_file(&path);
 
         assert_eq!(body, "## What\n正文");
         assert_eq!(body_eq, "## What\n正文");
+    }
+
+    #[test]
+    fn extract_rejects_missing_body_file() {
+        let err = extract(&["--body-file".into(), "/definitely/missing/body.md".into()])
+            .expect_err("missing body file should fail");
+        assert!(err.contains("failed to read --body-file"));
     }
 
     #[test]
