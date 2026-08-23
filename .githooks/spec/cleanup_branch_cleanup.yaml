@@ -17,6 +17,9 @@ remote_merged:
 orphan_local:
   action: WARN
 
+temp_branch:
+  action: WARN
+
 temp_branch_prefixes:
   - "tmp/"
   - "wip/"

@@ -54,8 +54,10 @@ pub fn install() -> anyhow::Result<()> {
             }
             fs::copy(&current_exe, target)?;
             chmod_755(target);
+            println!("✓ Installed {}", target.display());
+        } else {
+            println!("  Already installed: {}", target.display());
         }
-        println!("✓ Installed {}", target.display());
     }
 
     // git config core.hooksPath .githooks/hooks
@@ -91,7 +93,7 @@ pub fn uninstall() -> anyhow::Result<()> {
     let gh_target = bin_dir.join("gh");
 
     for target in [&gate_target, &gh_target] {
-        if target.exists() {
+        if target.symlink_metadata().is_ok() {
             fs::remove_file(target)?;
             println!("✓ Removed {}", target.display());
         } else {
