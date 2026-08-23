@@ -101,6 +101,13 @@ pub fn passthrough(args: &[String]) -> i32 {
     rc
 }
 
+fn read_body_file(path: &str) -> String {
+    if path == "-" {
+        return String::new();
+    }
+    fs::read_to_string(path).unwrap_or_default()
+}
+
 /// Extract (title, body, labels, head, parent) from gh args. Mirrors Python `_extract`.
 pub fn extract(args: &[String]) -> (String, String, Vec<String>, String, String) {
     let mut title = String::new();
@@ -123,6 +130,12 @@ pub fn extract(args: &[String]) -> (String, String, Vec<String>, String, String)
             "--body" | "-b" => {
                 if let Some(v) = next {
                     body = v.to_string();
+                    i += 1;
+                }
+            }
+            "--body-file" => {
+                if let Some(v) = next {
+                    body = read_body_file(v);
                     i += 1;
                 }
             }
@@ -149,6 +162,8 @@ pub fn extract(args: &[String]) -> (String, String, Vec<String>, String, String)
                     title = stripped.to_string();
                 } else if let Some(stripped) = a.strip_prefix("--body=") {
                     body = stripped.to_string();
+                } else if let Some(stripped) = a.strip_prefix("--body-file=") {
+                    body = read_body_file(stripped);
                 } else if let Some(stripped) = a.strip_prefix("--label=") {
                     labels.extend(stripped.split(',').map(|s| s.to_string()));
                 } else if let Some(stripped) = a.strip_prefix("--head=") {
@@ -1069,6 +1084,25 @@ mod tests {
     fn gh_args_strips_repo_eq_and_r() {
         assert_eq!(gh_args(&["5".into(), "--repo=o/r".into()]), vec!["5"]);
         assert_eq!(gh_args(&["5".into(), "-R".into(), "o/r".into()]), vec!["5"]);
+    }
+
+    #[test]
+    fn extract_reads_body_file() {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "gate-body-file-{}-{}.md",
+            std::process::id(),
+            timestamp()
+        ));
+        std::fs::write(&path, "## What\n正文").expect("write body file");
+        let path = path.to_string_lossy().to_string();
+
+        let (_, body, _, _, _) = extract(&["--body-file".into(), path.clone()]);
+        let (_, body_eq, _, _, _) = extract(&[format!("--body-file={path}")]);
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(body, "## What\n正文");
+        assert_eq!(body_eq, "## What\n正文");
     }
 
     #[test]
