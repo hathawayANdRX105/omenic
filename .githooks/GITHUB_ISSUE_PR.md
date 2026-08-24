@@ -1,13 +1,13 @@
 # GitHub Issue/PR 指南
 
 本指南指导 agent 创建、更新、关联 GitHub issue/PR。
-检查由 `.githooks/` 强制（install_gh_gate.py 安装后 ~/.local/bin/gh 自动拦截 + issues.py/pull_requests.py 校验）。
-本文件只讲怎么做，规则见 `.githooks/SPEC_OVERVIEW.md`。
+检查由 gate 二进制强制（`gate init` 安装后 `~/.local/bin/gh` 自动拦截，Rust 规则校验）。
+本文件只讲怎么做，规则见 `.githooks/spec/SPEC_OVERVIEW.md`。
 
 ## 创建前必读
 
-- `.githooks/install_gh_gate.py --install` — 安装 gh 拦截门（自动创建 `~/.local/bin/gh`）
-- 安装后 `gh issue create` / `gh pr create` 自动走校验（禁止绕过）
+- `gate init` — 安装 gh 拦截门（自动创建 `~/.local/bin/gh`）
+- 安装后 `gh issue create` / `gh pr create` 自动走 Rust gate 校验（禁止绕过）
 - `.github/ISSUE_TEMPLATE/` — 选模板：`task.yml` / `feature.yml` / `bug.yml`
 - `.github/PULL_REQUEST_TEMPLATE.md` — PR 正文结构
 - `gh label list` — 确认 label 真实存在于仓库
@@ -53,9 +53,9 @@ Fixes #152        # sub-issue
 ## 创建后校验
 
 ```bash
-gate issue <owner/repo> <#N>
-gate pr <owner/repo> <#N>
-python .githooks/hooks/merge <owner/repo> <#N> --dry-run
+gate audit <owner/repo> --issues=N
+gate audit <owner/repo> --issues=N,M
+gate merge <owner/repo> <PR_N> --dry-run
 ```
 
 ## 本地审查

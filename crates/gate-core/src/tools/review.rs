@@ -1,8 +1,8 @@
 //! gate review — CRG structural analysis + ocr AI review.
 //!
-//! Port of `.githooks/dev/ocr_review.py`. Runs `code-review-graph detect-changes`
-//! for structural analysis and `ocr review` for AI code review, then optionally
-//! posts results to GitHub PR conversation / inline review.
+//! Runs `code-review-graph detect-changes` for structural analysis and
+//! `ocr review` for AI code review, then optionally posts results to GitHub PR
+//! conversation / inline review.
 
 use std::collections::BTreeMap;
 
@@ -60,7 +60,7 @@ pub fn run(args: &[String]) -> i32 {
     let repo = positional
         .first()
         .cloned()
-        .or_else(|| git::derive_repo())
+        .or_else(git::derive_repo)
         .unwrap_or_default();
 
     let branch = git::current_branch().unwrap_or_default();
@@ -91,8 +91,10 @@ pub fn run(args: &[String]) -> i32 {
     // 3. Summary + post
     println!("=== 审查完成 ===");
 
-    if (post || post_inline) && pr.is_some() && !repo.is_empty() {
-        let pr = pr.unwrap();
+    if (post || post_inline)
+        && !repo.is_empty()
+        && let Some(pr) = pr
+    {
         let comments = parse_ocr_comments(&ocr_raw);
         let has_findings = ocr_has_findings(&ocr_raw);
         // comments 已 parse 过一次，inline 判定直接派生（避免二次 parse）。
@@ -147,7 +149,7 @@ pub fn run_crg() -> String {
         ],
         None,
     ) {
-        Ok((rc, out)) if rc == 0 => out,
+        Ok((0, out)) => out,
         Ok((_rc, out)) => format!("[CRG] {out}"),
         Err(e) => format!("[CRG] error: {e}"),
     }
@@ -257,7 +259,7 @@ fn format_comment_list(comments: &[JsonValue]) -> String {
     }
 }
 
-/// Format bare-array ocr output (legacy format from ocr_review.py).
+/// Format legacy bare-array ocr output.
 fn format_bare_ocr(arr: &[JsonValue]) -> String {
     let mut lines = Vec::new();
     for item in arr {
@@ -583,7 +585,7 @@ mod tests {
 
     #[test]
     fn post_inline_review_no_panic() {
-        let comments = vec![OcrComment {
+        let comments = [OcrComment {
             path: "test.rs".to_string(),
             start_line: 1,
             severity: "info".to_string(),

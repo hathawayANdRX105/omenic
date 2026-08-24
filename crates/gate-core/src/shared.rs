@@ -1,8 +1,8 @@
 //! Shared helpers for the gate validators.
 //!
-//! Port of `.githooks/lib/_shared.py` — centralizes the three primitives every
-//! topic validator needs: a GitHub API client that tolerates flaky networks, a
-//! `Finding` contract flowing through rule checks, and a YAML loader.
+//! Centralizes the primitives every validator needs: a GitHub API client that
+//! tolerates flaky networks, a Finding contract flowing through rule checks,
+//! and a YAML loader.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -462,7 +462,7 @@ mod tests {
         drop(fh);
         let v = load_yaml(path.to_str().unwrap()).unwrap();
         let headings = v
-            .get(&serde_yaml::Value::String("required_headings".into()))
+            .get(serde_yaml::Value::String("required_headings".into()))
             .expect("required_headings present");
         let seq = headings.as_sequence().expect("sequence");
         assert_eq!(seq.len(), 2);

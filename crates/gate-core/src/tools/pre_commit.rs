@@ -5,13 +5,13 @@
 //! the Python hook does unconditionally.
 //!
 //! CM-* checks are native Rust. Topic validators (workspace, code) are
-//! delegated to the existing Python scripts under `.githooks/`.
+//! native Rust functions in `crate::tools::workspace` and `crate::tools::code`.
 
 use regex::Regex;
 use std::sync::LazyLock;
 
-use crate::shared::{Finding, Severity, exit_code, print_findings, run_external};
-use crate::tools::git;
+use crate::shared::{Finding, Severity, exit_code, print_findings};
+use crate::tools::{code, git, workspace};
 
 // ---------------------------------------------------------------------------
 // Commit title validation (CM-01, CM-02, CM-03)
@@ -99,104 +99,20 @@ fn check_commit_pr_consistency() -> Vec<Finding> {
     let commit_type = TYPE_RE
         .captures(&commit_title)
         .map(|c| c.get(1).unwrap().as_str().to_string());
-    if let Some(ct) = commit_type {
-        if ct != pr_type {
-            return vec![Finding::new(
-                "CM-03",
-                Severity::Fail,
-                &format!(
-                    "commit type '{}' != PR #{} type '{}'\n  commit: {}\n  PR: {}",
-                    ct, pr_num, pr_type, commit_title, pr_title
-                ),
-            )];
-        }
+    if let Some(ct) = commit_type
+        && ct != pr_type
+    {
+        return vec![Finding::new(
+            "CM-03",
+            Severity::Fail,
+            &format!(
+                "commit type '{}' != PR #{} type '{}'\n  commit: {}\n  PR: {}",
+                ct, pr_num, pr_type, commit_title, pr_title
+            ),
+        )];
     }
 
     vec![]
-}
-
-// ---------------------------------------------------------------------------
-// Python topic delegation
-// ---------------------------------------------------------------------------
-
-/// Run a Python script under `.githooks/`, parse its stdout for FAIL/RESULT lines,
-/// and convert to Findings.
-pub fn run_python_topic(script_rel: &str) -> Vec<Finding> {
-    let githooks = match git::find_githooks_dir() {
-        Some(d) => d,
-        None => return vec![Finding::new("topic", Severity::Warn, ".githooks not found")],
-    };
-    let script = githooks.join(script_rel);
-    let cwd = githooks.parent().map(|p| p.to_string_lossy().to_string());
-
-    match run_external(&["python3", script.to_str().unwrap_or("")], cwd.as_deref()) {
-        Ok((rc, output)) => parse_topic_output(&output, rc),
-        Err(e) => vec![Finding::new(
-            "topic",
-            Severity::Warn,
-            &format!("{}: {}", script_rel, e),
-        )],
-    }
-}
-
-/// Parse Python script output into Findings: FAIL lines become Fail findings,
-/// RESULT: FAIL becomes a summary, RESULT: ALL PASS or 0 exit → INFO.
-fn parse_topic_output(output: &str, rc: i32) -> Vec<Finding> {
-    let mut findings = Vec::new();
-    for line in output.lines() {
-        let trimmed = line.trim();
-        // Lines like "CM-01  FAIL\tmessage"
-        if let Some(finding) = parse_finding_line(trimmed) {
-            findings.push(finding);
-        }
-    }
-    if findings.is_empty() && rc == 0 {
-        findings.push(Finding::new("topic", Severity::Info, "passed"));
-    } else if findings.is_empty() && rc != 0 {
-        findings.push(Finding::new(
-            "topic",
-            Severity::Warn,
-            &format!("exit {} with no parseable findings", rc),
-        ));
-    }
-    findings
-}
-
-/// Parse a single output line into a Finding if it matches the Finding format.
-fn parse_finding_line(line: &str) -> Option<Finding> {
-    // Format: "{rule_id:<6} {SEVERITY}[\t{msg}]" optionally with " L{line}"
-    // e.g. "CM-01  FAIL\tcommit title not conventional..."
-    let parts: Vec<&str> = line.splitn(2, '\t').collect();
-    if parts.len() != 2 {
-        return None;
-    }
-    let prefix = parts[0].trim();
-    let msg = parts[1];
-    // split_whitespace collapses the double-space from {:<6} padding
-    let tokens: Vec<&str> = prefix.split_whitespace().collect();
-    if tokens.len() < 2 {
-        return None;
-    }
-    let rule_id = tokens[0];
-    let severity = match tokens[1] {
-        "FAIL" => Severity::Fail,
-        "WARN" => Severity::Warn,
-        "INFO" => Severity::Info,
-        _ => return None,
-    };
-    let line_hint = if tokens.len() == 3 {
-        tokens[2]
-            .strip_prefix("L")
-            .and_then(|s| s.parse::<u32>().ok())
-    } else {
-        None
-    };
-    let f = Finding::new(rule_id, severity, msg);
-    if let Some(lh) = line_hint {
-        Some(f.with_line(lh))
-    } else {
-        Some(f)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -239,12 +155,8 @@ pub fn run() -> i32 {
     for topic in &topics {
         eprintln!("--- {} ---", topic);
         let topic_findings = match topic.as_str() {
-            "workspace" => {
-                let mut f = run_python_topic("workspace/tree_hygiene.py");
-                f.extend(run_python_topic("workspace/file_placement.py"));
-                f
-            }
-            "code" => run_python_topic("code/lint.py"),
+            "workspace" => workspace::run_workspace("."),
+            "code" => code::run_code_all("."),
             other => {
                 eprintln!("unknown pre-commit topic: {}", other);
                 vec![]
@@ -296,32 +208,5 @@ mod tests {
         assert!(check_commit_title("fixup!").is_empty());
         assert!(check_commit_title("squash!").is_empty());
         assert!(check_commit_title("").is_empty());
-    }
-
-    #[test]
-    fn parse_finding_line_basic() {
-        let f = parse_finding_line("CM-01  FAIL\tcommit title bad");
-        assert!(f.is_some());
-        let f = f.unwrap();
-        assert_eq!(f.rule_id, "CM-01");
-        assert!(f.severity == Severity::Fail);
-        assert_eq!(f.msg, "commit title bad");
-    }
-
-    #[test]
-    fn parse_finding_line_with_line_hint() {
-        let f = parse_finding_line("WS-02  WARN L42\tsingle-file dir");
-        assert!(f.is_some());
-        let f = f.unwrap();
-        assert_eq!(f.rule_id, "WS-02");
-        assert!(f.severity == Severity::Warn);
-        assert_eq!(f.line_hint, Some(42));
-    }
-
-    #[test]
-    fn parse_finding_line_rejects_garbage() {
-        assert!(parse_finding_line("not a finding").is_none());
-        assert!(parse_finding_line("CM-01 FAIL").is_none()); // no tab
-        assert!(parse_finding_line("CM-01\tBADS\tmsg").is_none()); // bad severity
     }
 }
