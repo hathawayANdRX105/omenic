@@ -54,8 +54,6 @@
 - IS-09 sub 禁 cross-reference（Depends on/Blocks/Related #/Parent PR）— FAIL
 - IS-10 sub 禁 PR 占位符 — FAIL
 - IS-11 parent 禁 Done when — FAIL
-- IS-12 parent 必须有 native sub-issues — FAIL（API/关闭路径）
-- IS-13 Implementation Order 可选 — INFO
 - IS-14 type label + keyword label 建议 — WARN
 - IS-15 关闭时 Done when 全勾（关闭前检查）— FAIL
 - IS-16 标题全角括号、禁词、乱码 — FAIL
@@ -66,12 +64,11 @@
 - PR-02 Conventional Commit 格式 — WARN
 - PR-03 必填 body 段完整性 — FAIL
 - PR-04 heading 英文、What 段中文 — FAIL/WARN
-- PR-05 一个 PR 一个主 issue（Fixes 数量）— WARN/FAIL
+- PR-05 一个 PR 一个主 issue（Fixes 数量）— WARN
 - PR-06 label 存在性 + type label — FAIL
 - PR-07 Construction plan/Checklist 至少 2 个 checkbox — FAIL
 - PR-08 分支前缀合法 — FAIL
-- PR-09 维护者审查存在 — WARN
-- PR-10 关联机制：Part of/Related 纯文本不产生关联（INFO）；Fixes #N 是 parent issue（epic）时提示用 sub-issue 层级链（WARN）— run
+- PR-10 关联机制：Part of/Related 纯文本不产生关联（INFO）；Fixes #N 是 parent issue（epic）时提示用 sub-issue 层级链（WARN）— INFO/WARN
 - PR-11 合并前 PR 内 checkbox 全勾（merge 时检查）— FAIL
 - PR-12 合并留言理由（merge 时必须 --body）— FAIL
 
@@ -88,15 +85,15 @@
 
 部署为 `~/.local/bin/gh`（argv[0]==gh 时拦截）。
 
-- GT-01 issue create 前校验（调 IS-*，FAIL 拒）；支持 `--disable-check` 逃生门 — 触发：gh issue create
-- GT-02 pr create 前校验（调 PR-*，FAIL 拒）— 触发：gh pr create
-- GT-03 sub 自动挂载 parent（addSubIssue POST + verify_mount 重试）— 触发：gh issue create
-- GT-04 issue close 前 Done when 全勾 + 必须 --comment 理由 — 触发：gh issue close
-- GT-04b issue close 前必须有 PR 关联（timeline cross-referenced 检查）— 触发：gh issue close
-- GT-05 pr merge 前 checkbox 全勾 + 关联 Fixes issue checkbox 全勾 + --body 理由 + squash 标题 CM-01/CM-02 — 触发：gh pr merge
-- GT-06 epic close/merge 前所有 sub-issues 已关闭（fail-closed：sub 查询失败也拒绝）— 触发：gh issue close / gh pr merge
-- GT-07 merge 后自动在 PR 留言 + 删除本地 head 分支（安全模式）— 触发：gh pr merge
-- RV-07 有文件改动的 PR merge 前必须 CRG + ocr 审查（失败 FAIL 阻塞）— 触发：gate merge
+- GT-01 issue create 前校验（调 IS-*）；支持 `--disable-check` 逃生门；sub mode 被拒且看起来是 epic 时提示加 `--label epic` — FAIL 拒 — 触发：gh issue create
+- GT-02 pr create 前校验（调 PR-*）— FAIL 拒 — 触发：gh pr create
+- GT-03 sub 自动挂载 parent（addSubIssue POST + verify_mount 重试）— 挂载失败 WARN（issue 已创建不回滚，rc=2）— 触发：gh issue create
+- GT-04 issue close 前只查 Done when 段 checkbox 全勾 + 必须 --comment 理由（Implementation Order 进度格不拦）— FAIL 拒 — 触发：gh issue close
+- GT-04b issue close 前 PR 关联检查：epic 豁免（完成信号是 GT-06 sub 全关）；非 epic 无关联仅提示不阻塞 — WARN — 触发：gh issue close
+- GT-05 pr merge 前 checkbox 全勾 + 关联 Fixes issue Done when 全勾（epic 目标豁免，由 GT-06 保障）+ --body 理由 + squash 标题 CM-01/CM-02 — FAIL 拒 — 触发：gh pr merge
+- GT-06 epic close/merge 前所有 sub-issues 已关闭（fail-closed：sub 查询失败也拒绝）— FAIL 拒 — 触发：gh issue close / gh pr merge
+- GT-07 merge 后自动在 PR 留言 + 删除本地 head 分支（安全模式）— 行为（无拦截）— 触发：gh pr merge
+- RV-07 有文件改动的 PR merge 前必须 CRG + ocr 审查 — FAIL 阻塞 — 触发：gate merge
 
 参数剥离：`gh_args()` 剥 `--parent`/`--repo`/`-R`；`arg_repo()` 提取 `--repo` 值（issue close 从 --repo 或 cwd 取仓库）。
 
@@ -116,12 +113,12 @@
 
 ## 主题四：Code（CD-01 ~ CD-06，Rust code lint dispatcher）
 
-- CD-01 rust：cargo fmt --check（spec/code_rust.yaml）
-- CD-02 go：gofmt -l（spec/code_go.yaml）
-- CD-03 javascript：eslint（spec/code_javascript.yaml）
-- CD-04 typescript：npx tsc --noEmit（spec/code_typescript.yaml）
-- CD-05 python：ruff check --no-cache（spec/code_python.yaml）
-- CD-06 bash：shellcheck（spec/code_bash.yaml）
+- CD-01 rust：cargo fmt --check（spec/code_rust.yaml）— FAIL（工具缺失 → WARN 跳过）
+- CD-02 go：gofmt -l（spec/code_go.yaml）— FAIL（工具缺失 → WARN 跳过）
+- CD-03 javascript：eslint（spec/code_javascript.yaml）— FAIL（工具缺失 → WARN 跳过）
+- CD-04 typescript：npx tsc --noEmit（spec/code_typescript.yaml）— FAIL（工具缺失 → WARN 跳过）
+- CD-05 python：ruff check --no-cache（spec/code_python.yaml）— FAIL（工具缺失 → WARN 跳过）
+- CD-06 bash：shellcheck（spec/code_bash.yaml）— FAIL（工具缺失 → WARN 跳过）
 
 多语言 code YAML 由 `tools/code.rs` 的 `LANGUAGES` 触发；工具缺失 → WARN 跳过（优雅降级：仅 rc==127 或完整 "command not found" 短语视为缺失，防 lint 输出干扰）。公共字段：enabled/command/args/fail_severity/paths_include/paths_exclude。
 

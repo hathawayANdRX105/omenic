@@ -558,13 +558,6 @@ pub fn check_content(
         }
     }
 
-    // PR-09 maintainer review — always WARN (no API in check_content)
-    findings.push(Finding::new(
-        "PR-09",
-        Severity::Warn,
-        "no maintainer review (COMMENTED/APPROVED/CHANGES_REQUESTED) — human required",
-    ));
-
     findings
 }
 
@@ -1119,26 +1112,6 @@ test
         );
         let pr08 = find_rule(&findings, "PR-08");
         assert!(pr08.iter().any(|f| f.severity == Severity::Info));
-    }
-
-    // -----------------------------------------------------------------------
-    // PR-09: maintainer review (always WARN)
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn pr09_always_warns() {
-        let findings = check_content(
-            "feat: x",
-            GOOD_BODY,
-            &["enhancement"],
-            "feat/x",
-            "open",
-            false,
-            None,
-        );
-        let pr09 = find_rule(&findings, "PR-09");
-        assert!(pr09.iter().all(|f| f.severity == Severity::Warn));
-        assert!(pr09.iter().any(|f| f.msg.contains("maintainer review")));
     }
 
     // -----------------------------------------------------------------------
