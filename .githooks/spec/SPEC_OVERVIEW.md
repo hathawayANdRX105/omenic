@@ -50,13 +50,13 @@
 - IS-05 标题中文 — FAIL
 - IS-06 heading 英文 — FAIL
 - IS-07 正文中文 — FAIL
-- IS-08 反引号路径存在性 — WARN
+- IS-08 反引号中的仓库路径存在性 — WARN
 - IS-09 sub 禁 cross-reference（Depends on/Blocks/Related #/Parent PR）— FAIL
 - IS-10 sub 禁 PR 占位符 — FAIL
 - IS-11 parent 禁 Done when — FAIL
-- IS-12 parent 必须有 native sub-issues — FAIL
-- IS-13 Implementation Order 可选且与 native sub-issues 一致 — FAIL/INFO
-- IS-14 label 存在性 + type label — FAIL
+- IS-12 parent 必须有 native sub-issues — FAIL（API/关闭路径）
+- IS-13 Implementation Order 可选 — INFO
+- IS-14 type label + keyword label 建议 — WARN
 - IS-15 关闭时 Done when 全勾（关闭前检查）— FAIL
 - IS-16 标题全角括号、禁词、乱码 — FAIL
 
@@ -71,7 +71,7 @@
 - PR-07 Construction plan/Checklist 至少 2 个 checkbox — FAIL
 - PR-08 分支前缀合法 — FAIL
 - PR-09 维护者审查存在 — WARN
-- PR-10 关联机制：Part of/Related 纯文本不产生关联（INFO）；Fixes #N 是 parent issue（epic）时提示用 sub-issue 层级链（WARN）— check_content + run
+- PR-10 关联机制：Part of/Related 纯文本不产生关联（INFO）；Fixes #N 是 parent issue（epic）时提示用 sub-issue 层级链（WARN）— run
 - PR-11 合并前 PR 内 checkbox 全勾（merge 时检查）— FAIL
 - PR-12 合并留言理由（merge 时必须 --body）— FAIL
 
@@ -123,7 +123,7 @@
 - CD-05 python：ruff check --no-cache（spec/code_python.yaml）
 - CD-06 bash：shellcheck（spec/code_bash.yaml）
 
-工具缺失 → WARN 跳过（优雅降级：仅 rc==127 或完整 "command not found" 短语视为缺失，防 lint 输出干扰）。公共字段：enabled/command/args/fail_severity/paths_include/paths_exclude。
+多语言 code YAML 由 `tools/code.rs` 的 `LANGUAGES` 触发；工具缺失 → WARN 跳过（优雅降级：仅 rc==127 或完整 "command not found" 短语视为缺失，防 lint 输出干扰）。公共字段：enabled/command/args/fail_severity/paths_include/paths_exclude。
 
 ## 主题五：Workspace（WS-01 ~ WS-02，Rust workspace validators）
 
@@ -132,7 +132,7 @@
 
 ## 主题六：Cleanup（CL-01，Rust cleanup validator）
 
-- CL-01 branch_cleanup：merged/orphan/temp 分支清理，dry-run 默认（gate merge 调用）— WARN
+- CL-01 branch_cleanup：merged/orphan/temp 分支清理，dry-run 默认（gate merge 调用）；唯一有效配置为 `spec/cleanup_branch_cleanup.yaml` — WARN
 
 ## 主题七：本地审查（RV-07，gate review）
 
