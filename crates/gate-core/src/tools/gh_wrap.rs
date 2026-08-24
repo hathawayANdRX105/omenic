@@ -44,19 +44,16 @@ pub fn find_real_gh() -> String {
         for dir in env::split_paths(&path) {
             let candidate = dir.join("gh");
             if candidate.is_file() {
-                if let Ok(resolved) = candidate.canonicalize() {
-                    if let Some(s) = &self_resolved {
-                        if resolved == *s {
-                            continue;
-                        }
-                    }
+                if let Ok(resolved) = candidate.canonicalize()
+                    && let Some(s) = &self_resolved
+                    && resolved == *s
+                {
+                    continue;
                 }
                 // gate's install dir — this is the intercept binary, not the
                 // real gh. The real gh lives elsewhere on PATH or in fallbacks.
-                if let Some(gd) = &gate_dir {
-                    if dir == *gd {
-                        continue;
-                    }
+                if gate_dir.as_ref().is_some_and(|gd| dir == *gd) {
+                    continue;
                 }
                 // Sanity: must report a gh version (covers gate-as-gh copies
                 // outside ~/.local/bin, e.g. during tests).
@@ -104,8 +101,17 @@ pub fn passthrough(args: &[String]) -> i32 {
     rc
 }
 
+fn read_body_file(path: &str) -> Result<String, String> {
+    if path == "-" {
+        return Err(
+            "--body-file - is not supported; pass --body or a readable file path".to_string(),
+        );
+    }
+    fs::read_to_string(path).map_err(|e| format!("failed to read --body-file '{path}': {e}"))
+}
+
 /// Extract (title, body, labels, head, parent) from gh args. Mirrors Python `_extract`.
-pub fn extract(args: &[String]) -> (String, String, Vec<String>, String, String) {
+pub fn extract(args: &[String]) -> Result<(String, String, Vec<String>, String, String), String> {
     let mut title = String::new();
     let mut body = String::new();
     let mut head = String::new();
@@ -126,6 +132,12 @@ pub fn extract(args: &[String]) -> (String, String, Vec<String>, String, String)
             "--body" | "-b" => {
                 if let Some(v) = next {
                     body = v.to_string();
+                    i += 1;
+                }
+            }
+            "--body-file" => {
+                if let Some(v) = next {
+                    body = read_body_file(v)?;
                     i += 1;
                 }
             }
@@ -152,6 +164,8 @@ pub fn extract(args: &[String]) -> (String, String, Vec<String>, String, String)
                     title = stripped.to_string();
                 } else if let Some(stripped) = a.strip_prefix("--body=") {
                     body = stripped.to_string();
+                } else if let Some(stripped) = a.strip_prefix("--body-file=") {
+                    body = read_body_file(stripped)?;
                 } else if let Some(stripped) = a.strip_prefix("--label=") {
                     labels.extend(stripped.split(',').map(|s| s.to_string()));
                 } else if let Some(stripped) = a.strip_prefix("--head=") {
@@ -163,7 +177,7 @@ pub fn extract(args: &[String]) -> (String, String, Vec<String>, String, String)
         }
         i += 1;
     }
-    (title, body, labels, head, parent)
+    Ok((title, body, labels, head, parent))
 }
 
 /// Strip gate-only flags (--parent) from args before passing to real gh.
@@ -210,47 +224,20 @@ pub fn log(action: &str, target: &str, result: &str, detail: &str) {
     };
     let dir = home.join(LOG_DIR);
     let file = dir.join(LOG_FILE);
-    if let Ok(()) = fs::create_dir_all(&dir) {
-        if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&file) {
-            let _ = writeln!(
-                f,
-                "{} | {action} | {target} | {result} | {detail}",
-                timestamp()
-            );
-        }
-    }
-}
-
-fn find_githooks() -> Option<PathBuf> {
-    let cwd = env::current_dir().ok()?;
-    let mut dir = cwd;
-    loop {
-        let candidate = dir.join(".githooks");
-        if candidate.is_dir() {
-            return Some(candidate);
-        }
-        if !dir.pop() {
-            return None;
-        }
+    if let Ok(()) = fs::create_dir_all(&dir)
+        && let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&file)
+    {
+        let _ = writeln!(
+            f,
+            "{} | {action} | {target} | {result} | {detail}",
+            timestamp()
+        );
     }
 }
 
 /// Derive repo from `git remote get-url origin`.
 pub fn derive_repo() -> String {
     crate::tools::git::derive_repo().unwrap_or_default()
-}
-
-fn section<'a>(body: &'a str, heading: &str) -> &'a str {
-    let re = Regex::new(&format!(r"(?m)^## {}\s*$", regex::escape(heading))).unwrap();
-    if let Some(m) = re.find(body) {
-        let rest = &body[m.end()..];
-        let next = Regex::new(r"(?m)^## ").unwrap();
-        if let Some(n) = next.find(rest) {
-            return &rest[..n.start()];
-        }
-        return rest;
-    }
-    ""
 }
 
 /// Check all checkboxes in a body are ticked. Returns (all_ticked, unticked_items).
@@ -333,15 +320,8 @@ fn query_open_subs(repo: &str, num: &str) -> Result<Vec<String>, String> {
 
 /// GT-01 + GT-03: issue create
 pub fn intercept_issue_create(args: &[String]) -> i32 {
-    let (title, body, labels, _, parent) = extract(args);
-
     if args.iter().any(|a| a == "--disable-check") {
-        log(
-            "ISSUE_CREATE",
-            crate::shared::truncate_utf8(&title, 40),
-            "BYPASS",
-            "--disable-check",
-        );
+        log("ISSUE_CREATE", "?", "BYPASS", "--disable-check");
         println!("⚠ 闸门: --disable-check 跳过校验（已记入 gate.log；仅本次调用生效）");
         let clean: Vec<String> = args
             .iter()
@@ -353,6 +333,14 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
         return passthrough(&full);
     }
 
+    let (title, body, labels, _, parent) = match extract(args) {
+        Ok(parts) => parts,
+        Err(error) => {
+            println!("闸门: {error}");
+            log("ISSUE_CREATE", "?", "REJECT", &error);
+            return 1;
+        }
+    };
     let repo = derive_repo();
     let mode = if is_epic(&labels) { "parent" } else { "sub" };
     let labels_str: Vec<&str> = labels.iter().map(String::as_str).collect();
@@ -391,15 +379,39 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
     }
 
     let url = out.trim().to_string();
-    if url.starts_with("https://github.com/") && url.contains("/issues/") {
-        if !is_epic(&labels) && !parent.is_empty() && parent != "0" {
-            // IS-09/Linkage gate: body text like "Parent: #N" is already
-            // rejected by check_content above.  Here we verify the REAL
-            // addSubIssue mutation actually mounted the sub-issue.
-            if !auto_link_sub(&url, &repo, &parent) {
-                // Issue is ALREADY created — do not return 1 or the user retries
-                // and duplicates it. Warn loudly and let them fix linkage manually.
-                println!("\n⚠ 闸门: issue 已创建 ({url})，但自动挂载到 parent #{parent} 失败。");
+    if url.starts_with("https://github.com/")
+        && url.contains("/issues/")
+        && !is_epic(&labels)
+        && !parent.is_empty()
+        && parent != "0"
+    {
+        // IS-09/Linkage gate: body text like "Parent: #N" is already
+        // rejected by check_content above.  Here we verify the REAL
+        // addSubIssue mutation actually mounted the sub-issue.
+        if !auto_link_sub(&url, &repo, &parent) {
+            // Issue is ALREADY created — do not return 1 or the user retries
+            // and duplicates it. Warn loudly and let them fix linkage manually.
+            println!("\n⚠ 闸门: issue 已创建 ({url})，但自动挂载到 parent #{parent} 失败。");
+            println!(
+                "  issue 未回滚。请运行: gh api repos/{repo}/issues/{parent}/sub_issues -X POST -F sub_issue_id=<id>"
+            );
+            log(
+                "ISSUE_CREATE",
+                crate::shared::truncate_utf8(&title, 40),
+                "WARN",
+                "created but auto_link failed",
+            );
+            return 2; // 部分成功：issue 已创建但挂载失败，非 0 以区分全成功
+        }
+        if let Some(sub_num) = extract_num(&url, "/issues/")
+            && !verify_mount(&repo, &sub_num, &parent)
+        {
+            // Retry once: GitHub sub_issues list may lag the mutation.
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            if !verify_mount(&repo, &sub_num, &parent) {
+                println!(
+                    "\n⚠ 闸门: issue 已创建 ({url})，但挂载验证失败（eventual consistency 重试后仍未出现）。"
+                );
                 println!(
                     "  issue 未回滚。请运行: gh api repos/{repo}/issues/{parent}/sub_issues -X POST -F sub_issue_id=<id>"
                 );
@@ -407,30 +419,9 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
                     "ISSUE_CREATE",
                     crate::shared::truncate_utf8(&title, 40),
                     "WARN",
-                    "created but auto_link failed",
+                    "created but mount verify failed",
                 );
-                return 2; // 部分成功：issue 已创建但挂载失败，非 0 以区分全成功
-            }
-            if let Some(sub_num) = extract_num(&url, "/issues/") {
-                if !verify_mount(&repo, &sub_num, &parent) {
-                    // Retry once: GitHub sub_issues list may lag the mutation.
-                    std::thread::sleep(std::time::Duration::from_millis(800));
-                    if !verify_mount(&repo, &sub_num, &parent) {
-                        println!(
-                            "\n⚠ 闸门: issue 已创建 ({url})，但挂载验证失败（eventual consistency 重试后仍未出现）。"
-                        );
-                        println!(
-                            "  issue 未回滚。请运行: gh api repos/{repo}/issues/{parent}/sub_issues -X POST -F sub_issue_id=<id>"
-                        );
-                        log(
-                            "ISSUE_CREATE",
-                            crate::shared::truncate_utf8(&title, 40),
-                            "WARN",
-                            "created but mount verify failed",
-                        );
-                        return 2; // 部分成功
-                    }
-                }
+                return 2; // 部分成功
             }
         }
     }
@@ -451,7 +442,7 @@ pub fn intercept_issue_close(args: &[String]) -> i32 {
         .iter()
         .find(|a| a.chars().all(|c| c.is_ascii_digit()))
         .cloned();
-    let repo = arg_repo(args).unwrap_or_else(|| derive_repo());
+    let repo = arg_repo(args).unwrap_or_else(derive_repo);
     if let (Some(num), false) = (&issue_num, repo.is_empty()) {
         let (rc, data, _) = run_gh(
             &[
@@ -491,7 +482,7 @@ pub fn intercept_issue_close(args: &[String]) -> i32 {
             // Fail-closed: a sub_issues query failure also blocks (Err path),
             // and the query is a single jq call (no per-sub N+1).
             if is_epic(&labels) {
-                match query_open_subs(&repo, &num) {
+                match query_open_subs(&repo, num) {
                     Ok(open_subs) => {
                         if let Some(block) = gt06_open_sub_block(&labels, &open_subs) {
                             println!(
@@ -582,8 +573,14 @@ pub fn intercept_issue_close(args: &[String]) -> i32 {
 
 /// GT-02: pr create
 pub fn intercept_pr_create(args: &[String]) -> i32 {
-    let (title, body, labels, head, _) = extract(args);
-    let repo = derive_repo();
+    let (title, body, labels, head, _) = match extract(args) {
+        Ok(parts) => parts,
+        Err(error) => {
+            println!("闸门: {error}");
+            log("PR_CREATE", "?", "REJECT", &error);
+            return 1;
+        }
+    };
     let labels_str: Vec<&str> = labels.iter().map(String::as_str).collect();
 
     let findings =
@@ -620,15 +617,16 @@ pub fn intercept_pr_create(args: &[String]) -> i32 {
         return rc;
     }
     let url = out.trim().to_string();
-    if url.starts_with("https://github.com/") && url.contains("/pull/") {
-        if let Some(num) = extract_num(&url, "/pull/") {
-            log(
-                "PR_CREATE",
-                &format!("PR #{num}"),
-                "CREATED",
-                crate::shared::truncate_utf8(&title, 40),
-            );
-        }
+    if url.starts_with("https://github.com/")
+        && url.contains("/pull/")
+        && let Some(num) = extract_num(&url, "/pull/")
+    {
+        log(
+            "PR_CREATE",
+            &format!("PR #{num}"),
+            "CREATED",
+            crate::shared::truncate_utf8(&title, 40),
+        );
     }
     0
 }
@@ -1020,15 +1018,17 @@ pub fn dispatch(args: &[String]) -> i32 {
         return passthrough(&[]);
     }
     let cmd = &args[0];
-    // args[1] is the subcommand (create/close/merge); the intercept handlers
-    // expect ONLY the subcommand's arguments (they re-prefix "issue <sub>"
-    // themselves when passing through). Forward args[2..].
+    let Some(subcmd) = args.get(1) else {
+        return passthrough(args);
+    };
+    // Intercept handlers expect ONLY the subcommand's arguments (they re-prefix
+    // "issue <sub>" themselves when passing through). Forward args[2..].
     let rest = &args[2..];
-    match (cmd.as_str(), args.get(1).map(|s| s.as_str())) {
-        ("issue", Some("create")) => intercept_issue_create(rest),
-        ("issue", Some("close")) => intercept_issue_close(rest),
-        ("pr", Some("create")) => intercept_pr_create(rest),
-        ("pr", Some("merge")) => intercept_pr_merge(rest),
+    match (cmd.as_str(), subcmd.as_str()) {
+        ("issue", "create") => intercept_issue_create(rest),
+        ("issue", "close") => intercept_issue_close(rest),
+        ("pr", "create") => intercept_pr_create(rest),
+        ("pr", "merge") => intercept_pr_merge(rest),
         _ => passthrough(args),
     }
 }
@@ -1078,7 +1078,7 @@ mod tests {
         // dispatch receives argv after argv[0]; intercept handlers expect the
         // args AFTER the subcommand (they re-prefix "issue <sub>" themselves).
         // This test guards against the "close close <n>" double-subcommand bug.
-        let args = vec![
+        let args = [
             "issue".to_string(),
             "close".to_string(),
             "42".to_string(),
@@ -1094,6 +1094,32 @@ mod tests {
     fn gh_args_strips_repo_eq_and_r() {
         assert_eq!(gh_args(&["5".into(), "--repo=o/r".into()]), vec!["5"]);
         assert_eq!(gh_args(&["5".into(), "-R".into(), "o/r".into()]), vec!["5"]);
+    }
+
+    #[test]
+    fn extract_reads_body_file() {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "gate-body-file-{}-{}.md",
+            std::process::id(),
+            timestamp()
+        ));
+        std::fs::write(&path, "## What\n正文").expect("write body file");
+        let path = path.to_string_lossy().to_string();
+
+        let (_, body, _, _, _) = extract(&["--body-file".into(), path.clone()]).expect("extract");
+        let (_, body_eq, _, _, _) = extract(&[format!("--body-file={path}")]).expect("extract");
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(body, "## What\n正文");
+        assert_eq!(body_eq, "## What\n正文");
+    }
+
+    #[test]
+    fn extract_rejects_missing_body_file() {
+        let err = extract(&["--body-file".into(), "/definitely/missing/body.md".into()])
+            .expect_err("missing body file should fail");
+        assert!(err.contains("failed to read --body-file"));
     }
 
     #[test]
@@ -1264,9 +1290,9 @@ Parent: #205
     #[test]
     fn gt06_is_epic_case_insensitive() {
         // "Epic", "EPIC" must all count as epic.
-        assert!(is_epic(&vec!["EPIC".to_string()]));
-        assert!(is_epic(&vec!["Epic".to_string()]));
-        assert!(!is_epic(&vec!["epic-story".to_string()]));
+        assert!(is_epic(&["EPIC".to_string()]));
+        assert!(is_epic(&["Epic".to_string()]));
+        assert!(!is_epic(&["epic-story".to_string()]));
     }
 
     #[test]

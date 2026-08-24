@@ -1,15 +1,15 @@
 //! merge hook — validate PR, reviews, cleanup before squash-merge.
 //!
 //! Port of `.githooks/hooks/merge`. Uses the already-ported Rust rules
-//! (pull_requests, reviews) for GitHub validation, plus calls the Python
-//! cleanup script.
+//! (pull_requests, reviews) for GitHub validation, plus the Rust cleanup
+//! module for branch cleanup.
 //!
 //! Usage: `gate merge <owner/repo> <pr_number> [--dry-run]`
 
 use crate::shared::{
-    Finding, Severity, exit_code, gh_api, gh_api_paginate, load_yaml, print_findings, run_external,
+    Finding, Severity, exit_code, gh_api, gh_api_paginate, load_yaml, print_findings,
 };
-use crate::tools::git;
+use crate::tools::{cleanup, git};
 
 /// `gate merge <owner/repo> <pr_number> [--dry-run]` — pre-merge validation.
 pub fn run(args: &[String]) -> i32 {
@@ -41,10 +41,7 @@ pub fn run(args: &[String]) -> i32 {
         git::find_githooks_dir().unwrap_or_else(|| std::path::PathBuf::from(".githooks"));
     let spec_dir = githooks.join("spec");
     let dispatch_path = spec_dir.join("dispatch.yaml");
-    let cfg = match load_yaml(dispatch_path.to_str().unwrap_or("")) {
-        Ok(c) => Some(c),
-        Err(_) => None,
-    };
+    let cfg = load_yaml(dispatch_path.to_str().unwrap_or("")).ok();
 
     let mut findings = Vec::new();
 
@@ -76,7 +73,7 @@ pub fn run(args: &[String]) -> i32 {
         match topic.as_str() {
             "github/pull_requests" => findings.extend(run_pr_rules(repo, pr_num)),
             "github/reviews" => findings.extend(run_review_rules(repo, pr_num, &spec_dir)),
-            "cleanup" => findings.extend(run_cleanup(dry_run)),
+            "cleanup" => findings.extend(cleanup::run(dry_run)),
             other => eprintln!("unknown merge topic: {}", other),
         }
     }
@@ -146,12 +143,12 @@ fn run_review_rules(repo: &str, pr_num: u32, spec_dir: &std::path::Path) -> Vec<
             }
         }
     }
-    if let Ok(comments) = gh_api(&format!("repos/{}/issues/{}/comments", repo, pr_num), None) {
-        if let Some(arr) = comments.as_array() {
-            for c in arr {
-                if let Some(body) = c.get("body").and_then(|b| b.as_str()) {
-                    bodies.push(body.to_string());
-                }
+    if let Ok(comments) = gh_api(&format!("repos/{}/issues/{}/comments", repo, pr_num), None)
+        && let Some(arr) = comments.as_array()
+    {
+        for c in arr {
+            if let Some(body) = c.get("body").and_then(|b| b.as_str()) {
+                bodies.push(body.to_string());
             }
         }
     }
@@ -162,38 +159,6 @@ fn run_review_rules(repo: &str, pr_num: u32, spec_dir: &std::path::Path) -> Vec<
             "RV",
             Severity::Warn,
             "github_reviews.yaml not found, review checks skipped",
-        )],
-    }
-}
-
-fn run_cleanup(dry_run: bool) -> Vec<Finding> {
-    let githooks =
-        git::find_githooks_dir().unwrap_or_else(|| std::path::PathBuf::from(".githooks"));
-    let script = githooks.join("cleanup").join("branch_cleanup.py");
-    let cwd = githooks.parent().map(|p| p.to_string_lossy().to_string());
-    let mut cmd_args = vec!["python3", script.to_str().unwrap_or("")];
-    if !dry_run {
-        cmd_args.push("--apply");
-    }
-    match run_external(&cmd_args, cwd.as_deref()) {
-        Ok((rc, output)) => {
-            if rc == 0 {
-                vec![Finding::new("cleanup", Severity::Info, "branch cleanup OK")]
-            } else {
-                vec![Finding::new(
-                    "cleanup",
-                    Severity::Warn,
-                    &format!(
-                        "branch cleanup reported issues:\n{}",
-                        &output[..output.len().min(500)]
-                    ),
-                )]
-            }
-        }
-        Err(e) => vec![Finding::new(
-            "cleanup",
-            Severity::Warn,
-            &format!("branch_cleanup.py: {}", e),
         )],
     }
 }

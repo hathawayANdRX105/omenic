@@ -1,7 +1,7 @@
 # github_issues.yaml — issue / sub-issue 内容格式与创建补充行为契约。
 #
-# 使用方式: .githooks/github/issues.py 读取本文件, 逐条匹配规则。
-# 新增/调整规则时只改本文件, 不改 issues.py, 除非是新的检查流程。
+# 使用方式: gate Rust issue validator 读取本文件, 逐条匹配规则。
+# 新增/调整规则时只改本文件, 除非是新的检查流程。
 #
 # 段名约定: 所有 heading 必须是英文 (Heading 语言契约), 正文中文。
 

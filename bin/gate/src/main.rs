@@ -55,6 +55,8 @@ struct MergeArgs {
 
 #[derive(clap::Args)]
 struct AuditArgs {
+    /// owner/repo (defaults to git remote origin)
+    repo: Option<String>,
     /// Scan issues/PRs created in the last N days
     #[arg(long)]
     recent: Option<u32>,
@@ -135,7 +137,10 @@ fn build_review_args(args: &ReviewArgs) -> Vec<String> {
 
 fn build_audit_args(args: &AuditArgs) -> Vec<String> {
     let mut vec = Vec::new();
-    let repo = gate_core::tools::audit::derive_repo();
+    let repo = args
+        .repo
+        .clone()
+        .unwrap_or_else(gate_core::tools::audit::derive_repo);
     if repo.is_empty() {
         eprintln!("无法确定 repo (git remote get-url origin 失败)");
         return vec![];

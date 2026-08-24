@@ -1,8 +1,8 @@
 # PR 开发工作流指南
 
 本指南指导 agent 开发多步 PR 工作（依赖感知、隔离、委派、验证、审查、清理）。
-检查由 `.githooks/hooks` 强制（pre-commit/pre-push/merge + review.py 本地审查）。
-规则见 `.githooks/SPEC_OVERVIEW.md`。
+检查由 `.githooks/hooks` 强制（pre-commit/pre-push/merge + gate review 本地审查）。
+规则见 `.githooks/spec/SPEC_OVERVIEW.md`。
 
 ## 工作流
 
@@ -54,8 +54,7 @@ gate review --post-inline  # 提交到 PR Files changed
 **无回复的 thread = unresolved，阻塞合并。**
 
 ## 阶段 4 — 创建与等待
-
-- `gh pr create` 自动走拦截门校验（install_gh_gate.py）
+- `gh pr create` 自动走拦截门校验（`gate init` 安装）
 - 记录 PR URL、base/head、commit、label、CI 状态
 - draft PR 合并前需 `gh pr ready`
 
@@ -63,7 +62,7 @@ gate review --post-inline  # 提交到 PR Files changed
 
 ```bash
 # 合并检查：规则校验 + CRG 影响 + ocr 审查
-python .githooks/hooks/merge <owner/repo> <N> --dry-run
+gate merge <owner/repo> <N> --dry-run
 
 # 链式 PR：子 PR 先重设 base
 gh pr edit <child> --base main
@@ -77,8 +76,7 @@ merge 入口自动执行：PR 校验 + reviews + cleanup + CRG 结构分析 + oc
 ## 阶段 6 — 清理
 
 ```bash
-python .githooks/cleanup/branch_cleanup.py --dry-run  # 预览
-python .githooks/cleanup/branch_cleanup.py --apply     # 确认后执行
+gate merge <owner/repo> <N> --dry-run  # 含 branch cleanup 预览
 ```
 
 保护脏的、未合并的、未知的、明确保留的。
@@ -87,6 +85,6 @@ python .githooks/cleanup/branch_cleanup.py --apply     # 确认后执行
 
 - [ ] 无密钥、私密端点、真实配置、用户数据、生成文件、无关格式化
 - [ ] 每个 inline review 线程有回复（修复 commit 或非阻塞说明）
-- [ ] gh 拦截门已安装（install_gh_gate.py --install）
-- [ ] merge 前跑过 `python .githooks/hooks/merge --dry-run`（含 review）
+- [ ] gh 拦截门已安装（`gate init`）
+- [ ] merge 前跑过 `gate merge <owner/repo> <N> --dry-run`（含 review）
 - [ ] 审查/CI/merge/issue/清理声明有当前证据
