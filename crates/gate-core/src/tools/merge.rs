@@ -73,7 +73,11 @@ pub fn run(args: &[String]) -> i32 {
         match topic.as_str() {
             "github/pull_requests" => findings.extend(run_pr_rules(repo, pr_num)),
             "github/reviews" => findings.extend(run_review_rules(repo, pr_num, &spec_dir)),
-            "cleanup" => findings.extend(cleanup::run(dry_run)),
+            "cleanup" => {
+                findings.extend(cleanup::run(dry_run));
+                findings.extend(crate::tools::tests_check::run());
+                findings.extend(crate::tools::docs_hygiene::run());
+            }
             other => eprintln!("unknown merge topic: {}", other),
         }
     }

@@ -1,6 +1,7 @@
 pub mod audit;
 pub mod cleanup;
 pub mod code;
+pub mod docs_hygiene;
 pub mod gh_wrap;
 pub mod git;
 pub mod init;
@@ -8,4 +9,5 @@ pub mod merge;
 pub mod pre_commit;
 pub mod pre_push;
 pub mod review;
+pub mod tests_check;
 pub mod workspace;
