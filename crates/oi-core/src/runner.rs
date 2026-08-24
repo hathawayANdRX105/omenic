@@ -136,16 +136,17 @@ pub fn run(ctx: &Ctx, task_id: &str) -> Result<RunOutcome, RunnerError> {
         RunnerError::Blocked(format!("write prompt {}: {e}", prompt_path.display()))
     })?;
 
-    // Event log: fresh file per run (truncate any prior run's log).
+    // Event log: append-only across runs so re-runs never destroy prior
+    // evidence; a `run_start` record marks each run's boundary (#48).
     let events_path = task_dir.join("events.jsonl");
     let mut events_log = std::fs::OpenOptions::new()
         .create(true)
-        .write(true)
-        .truncate(true)
+        .append(true)
         .open(&events_path)
         .map_err(|e| {
             RunnerError::Blocked(format!("open events log {}: {e}", events_path.display()))
         })?;
+    append_record(&mut events_log, &events_path, &run_start_record(task_id));
 
     let mut worker = Worker::new(ctx.omp_path.to_str().unwrap_or("omp"))
         .map_err(|e| RunnerError::Blocked(format!("worker spawn: {e}")))?;
@@ -178,16 +179,10 @@ pub fn run(ctx: &Ctx, task_id: &str) -> Result<RunOutcome, RunnerError> {
         match worker.read_event() {
             Ok(Some(event)) => {
                 events_seen += 1;
-                // F1: append every event to events.jsonl. Best-effort — a
-                // failing diagnostic log must not fail the run.
-                match serde_json::to_string(&event) {
-                    Ok(line) => {
-                        if let Err(e) = writeln!(events_log, "{line}") {
-                            eprintln!("warning: write {}: {e}", events_path.display());
-                        }
-                    }
-                    Err(e) => eprintln!("warning: serialize event: {e}"),
-                }
+                // F1: append every event to events.jsonl as a bounded
+                // timestamped record (#48). Best-effort — a failing
+                // diagnostic log must not fail the run.
+                append_event(&mut events_log, &events_path, &event);
                 if let WorkerEvent::Message { text } = event {
                     println!("[worker] {text}");
                     if !text.is_empty() {
@@ -295,6 +290,103 @@ fn prep_task_context(ctx: &Ctx, task_id: &str) -> Result<PathBuf, String> {
     let dir = ctx.data_dir.join("tasks").join(task_id);
     std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     Ok(dir)
+}
+
+/// Max serialized bytes for one payload field inside an events.jsonl
+/// record; larger fields degrade to a truncated prefix (#48).
+const EVENT_FIELD_MAX_BYTES: usize = 1024;
+
+/// Longest char-boundary prefix of `s` that fits in `max_bytes` — never
+/// splits a multi-byte character.
+fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// Bounded JSON for a payload field: compact serializations within
+/// `EVENT_FIELD_MAX_BYTES` pass through unchanged; larger ones become a
+/// truncated string prefix and set `truncated`.
+fn bounded_value(v: &serde_json::Value, truncated: &mut bool) -> serde_json::Value {
+    let s = v.to_string();
+    if s.len() <= EVENT_FIELD_MAX_BYTES {
+        v.clone()
+    } else {
+        *truncated = true;
+        serde_json::Value::String(format!("{}…", truncate_utf8(&s, EVENT_FIELD_MAX_BYTES)))
+    }
+}
+
+/// One events.jsonl record: timestamp + event type + bounded summary.
+/// Never stores unbounded raw RPC payloads (#48).
+fn event_record(event: &WorkerEvent) -> serde_json::Value {
+    let mut truncated = false;
+    let mut rec = match event {
+        WorkerEvent::AgentStart => serde_json::json!({ "event": "agent_start" }),
+        WorkerEvent::AgentEnd => serde_json::json!({ "event": "agent_end" }),
+        WorkerEvent::Message { text } => {
+            if text.len() > EVENT_FIELD_MAX_BYTES {
+                truncated = true;
+            }
+            serde_json::json!({ "event": "message", "text": truncate_utf8(text, EVENT_FIELD_MAX_BYTES) })
+        }
+        WorkerEvent::ToolExecution {
+            name,
+            input,
+            result,
+        } => serde_json::json!({
+            "event": "tool_execution",
+            "name": name,
+            "input": bounded_value(input, &mut truncated),
+            "result": match result {
+                Some(v) => bounded_value(v, &mut truncated),
+                None => serde_json::Value::Null,
+            },
+        }),
+        WorkerEvent::Unknown(raw) => {
+            serde_json::json!({ "event": "unknown", "raw": bounded_value(raw, &mut truncated) })
+        }
+    };
+    if truncated {
+        rec["truncated"] = serde_json::json!(true);
+    }
+    rec["ts"] = serde_json::json!(crate::task::now_iso());
+    rec
+}
+
+/// Run-boundary record written when the event log opens, so evidence from
+/// multiple runs stays ordered and separable in one append-only file (#48).
+fn run_start_record(task_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "ts": crate::task::now_iso(),
+        "event": "run_start",
+        "task_id": task_id,
+        "pid": std::process::id(),
+    })
+}
+
+/// Serialize one record and append it as a single line. Best-effort:
+/// failures warn on stderr and never fail the run, so event-log trouble
+/// cannot break result.json consistency (#48).
+fn append_record<W: Write>(log: &mut W, path: &std::path::Path, record: &serde_json::Value) {
+    match serde_json::to_string(record) {
+        Ok(line) => {
+            if let Err(e) = writeln!(log, "{line}") {
+                eprintln!("warning: write {}: {e}", path.display());
+            }
+        }
+        Err(e) => eprintln!("warning: serialize event record: {e}"),
+    }
+}
+
+/// Append one worker event to the log as a bounded timestamped record.
+fn append_event<W: Write>(log: &mut W, path: &std::path::Path, event: &WorkerEvent) {
+    append_record(log, path, &event_record(event));
 }
 
 #[cfg(test)]
@@ -493,5 +585,136 @@ mod tests {
         let map: HashMap<String, Task> = tasks.iter().map(|t| (t.id.clone(), t.clone())).collect();
         assert!(graph::is_ready(&map, "b"));
         assert!(!graph::is_ready(&map, "c"));
+    }
+
+    #[test]
+    fn event_records_carry_timestamp_type_and_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("events.jsonl");
+        let mut log = std::fs::File::create(&path).unwrap();
+        let events = [
+            WorkerEvent::AgentStart,
+            WorkerEvent::Message {
+                text: "hello".into(),
+            },
+            WorkerEvent::ToolExecution {
+                name: "bash".into(),
+                input: serde_json::json!({"command": "ls"}),
+                result: None,
+            },
+            WorkerEvent::AgentEnd,
+        ];
+        for e in &events {
+            append_event(&mut log, &path, e);
+        }
+        drop(log);
+        let lines: Vec<serde_json::Value> = std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let types: Vec<&str> = lines.iter().map(|l| l["event"].as_str().unwrap()).collect();
+        assert_eq!(
+            types,
+            ["agent_start", "message", "tool_execution", "agent_end"]
+        );
+        for line in &lines {
+            // ts = now_iso format YYYY-MM-DDTHH:MM:SSZ
+            let ts = line["ts"].as_str().unwrap();
+            assert_eq!(ts.len(), 20);
+            assert!(ts.ends_with('Z'));
+        }
+        assert_eq!(lines[1]["text"], "hello");
+        assert_eq!(lines[2]["name"], "bash");
+        assert_eq!(lines[2]["input"]["command"], "ls");
+    }
+
+    #[test]
+    fn event_record_special_chars_stay_single_valid_line() {
+        let text = "中文 \"quotes\"\nnewline\ttab \u{1F600} \\backslash";
+        let rec = event_record(&WorkerEvent::Message { text: text.into() });
+        let line = serde_json::to_string(&rec).unwrap();
+        assert!(!line.contains('\n'), "record must be one line");
+        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(parsed["text"], text);
+        assert_eq!(parsed["event"], "message");
+    }
+
+    #[test]
+    fn event_record_truncates_oversized_payload() {
+        let big = "x".repeat(EVENT_FIELD_MAX_BYTES * 8);
+        let rec = event_record(&WorkerEvent::ToolExecution {
+            name: "read".into(),
+            input: serde_json::json!({ "blob": big }),
+            result: None,
+        });
+        assert_eq!(rec["truncated"], true);
+        let line = serde_json::to_string(&rec).unwrap();
+        assert!(
+            line.len() <= EVENT_FIELD_MAX_BYTES + 512,
+            "line must stay bounded, got {}",
+            line.len()
+        );
+
+        // CJK text: truncation must land on a char boundary.
+        let cjk = "中".repeat(EVENT_FIELD_MAX_BYTES); // 3 bytes per char
+        let rec2 = event_record(&WorkerEvent::Message { text: cjk });
+        assert_eq!(rec2["truncated"], true);
+        let t = rec2["text"].as_str().unwrap();
+        assert!(t.len() <= EVENT_FIELD_MAX_BYTES);
+        assert!(t.ends_with('中'), "must not split a multi-byte char");
+        assert!(std::str::from_utf8(t.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn rerun_appends_without_clobbering_prior_evidence() {
+        let task = mk_task("rerun-task", vec![], TaskStatus::Open);
+        let (ctx, _tmp) = ctx_with_tmp(vec![task]);
+        // Both runs fail at worker spawn (/bin/true is not omp), but each
+        // must open the log append-only and leave a run_start boundary.
+        let _ = run(&ctx, "rerun-task");
+        let _ = run(&ctx, "rerun-task");
+        let log =
+            std::fs::read_to_string(ctx.data_dir.join("tasks/rerun-task/events.jsonl")).unwrap();
+        let lines: Vec<serde_json::Value> = log
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 2, "each run leaves exactly run_start");
+        assert!(lines.iter().all(|l| l["event"] == "run_start"));
+        assert_eq!(lines[0]["task_id"], "rerun-task");
+    }
+
+    struct FailWriter;
+    impl std::io::Write for FailWriter {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("disk full"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn event_log_write_failure_warns_without_failing() {
+        // Must not panic: a failing diagnostic log never breaks the run.
+        let mut w = FailWriter;
+        append_event(
+            &mut w,
+            std::path::Path::new("/fake/events.jsonl"),
+            &WorkerEvent::AgentStart,
+        );
+    }
+
+    #[test]
+    fn events_log_open_failure_is_clear_blocked() {
+        let task = mk_task("blocked-log", vec![], TaskStatus::Open);
+        let (ctx, _tmp) = ctx_with_tmp(vec![task]);
+        // events.jsonl exists as a directory → open must fail with a clear
+        // Blocked error before any worker is spawned.
+        let dir = ctx.data_dir.join("tasks/blocked-log");
+        std::fs::create_dir_all(dir.join("events.jsonl")).unwrap();
+        let r = run(&ctx, "blocked-log");
+        assert!(matches!(r, Err(RunnerError::Blocked(s)) if s.contains("open events log")));
     }
 }
