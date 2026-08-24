@@ -5,7 +5,26 @@
 //! a task-oriented interface for agent interaction: send a prompt, read events,
 //! steer the agent, and abort when done.
 //!
-//! ## Lifecycle
+//! ## Lifecycle state map (#46)
+//!
+//! ```text
+//! spawn ──► ready handshake ──► negotiate v2 ──► idle
+//!           (rpc::Client::new)  (set_auto_retry/   │
+//!                                compaction off)   ├─► prompt(msg) ──┐
+//!                                                  │                 ▼
+//!                                                  │            event stream
+//!                                                  │        (read_event / events())
+//!                                                  │                 │
+//!                                                  ├─► steer(msg) ◄──┘ (between events)
+//!                                                  ├─► abort() ──► killed
+//!                                                  └─► Drop     ──► kill process group
+//! ```
+//!
+//! Error paths: spawn/handshake/negotiation failure → `Worker::new` errs;
+//! transport death mid-call → `RpcError::ProcessExited` from prompt/steer/
+//! read_event; `Drop` always kills the child even after errors.
+//!
+//! ## Example
 //! ```ignore
 //! let mut worker = worker::Worker::new("/usr/bin/omp")?;
 //! worker.prompt("Write a design doc for the auth module")?;
