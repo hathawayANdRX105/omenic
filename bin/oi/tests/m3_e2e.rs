@@ -66,7 +66,7 @@ fn task_id_for(data_dir: &Path, title: &str) -> String {
 
 #[test]
 #[ignore = "requires omp binary"]
-fn m3_e2e_end_to_end_run() {
+fn test_m3_e2e_end_to_end_run() {
     // -----------------------------------------------------------------------
     // Acceptance line 1: task add + plan
     // -----------------------------------------------------------------------
