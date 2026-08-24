@@ -13,6 +13,7 @@
 
 use regex::Regex;
 use std::collections::BTreeSet;
+use std::path::Path;
 use std::sync::LazyLock;
 
 use crate::shared::{Finding, Severity};
@@ -125,6 +126,80 @@ fn pr_placeholder_re() -> &'static Regex {
     static RE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(待补\s*PR|TODO.*PR|需\s*PR|PR 关联[：:])").unwrap());
     &RE
+}
+
+fn backtick_path_re() -> &'static Regex {
+    static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`([^`\n]+)`").unwrap());
+    &RE
+}
+
+const REPO_PATH_PREFIXES: &[&str] = &[
+    "./",
+    "../",
+    ".github/",
+    ".githooks/",
+    "bin/",
+    "crates/",
+    "src/",
+    "tests/",
+];
+
+fn looks_like_path_ref(s: &str) -> bool {
+    let s = s.trim();
+    !s.is_empty()
+        && !s.starts_with('/')
+        && !s.starts_with("http://")
+        && !s.starts_with("https://")
+        && !s.starts_with('~')
+        && !s.contains("://")
+        && !s.starts_with('#')
+        && !s.starts_with('-')
+        && !s.contains(char::is_whitespace)
+        && !s.contains(['(', ')', '*'])
+        && !s.contains("::")
+        && (REPO_PATH_PREFIXES
+            .iter()
+            .any(|prefix| s.starts_with(prefix))
+            || [
+                ".rs", ".py", ".sh", ".yaml", ".yml", ".toml", ".json", ".md", ".lock",
+            ]
+            .iter()
+            .any(|suffix| s.ends_with(suffix)))
+}
+
+fn strip_line_suffix(s: &str) -> &str {
+    let Some((path, suffix)) = s.rsplit_once(':') else {
+        return s;
+    };
+    if !path.is_empty() && suffix.chars().all(|c| c.is_ascii_digit() || c == '-') {
+        path
+    } else {
+        s
+    }
+}
+
+fn path_exists_from_cwd_or_repo_root(s: &str) -> bool {
+    let path = Path::new(s);
+    if path.exists() || path.is_absolute() {
+        return path.exists();
+    }
+    let Ok(cwd) = std::env::current_dir() else {
+        return false;
+    };
+    cwd.ancestors().any(|dir| {
+        (dir.join(".git").exists() || dir.join(".githooks").exists()) && dir.join(path).exists()
+    })
+}
+
+fn missing_backtick_paths(body: &str) -> Vec<String> {
+    let mut missing = BTreeSet::new();
+    for cap in backtick_path_re().captures_iter(body) {
+        let candidate = strip_line_suffix(cap[1].trim().trim_end_matches([':', ',', ';', '.']));
+        if looks_like_path_ref(candidate) && !path_exists_from_cwd_or_repo_root(candidate) {
+            missing.insert(candidate.to_string());
+        }
+    }
+    missing.into_iter().collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -396,6 +471,25 @@ pub fn check_content(
         ));
     }
 
+    // IS-08: backtick path references should exist in the repo (WARN only)
+    let missing_paths = missing_backtick_paths(body);
+    if missing_paths.is_empty() {
+        findings.push(Finding::new(
+            "IS-08",
+            Severity::Info,
+            "backtick path references exist or are not repo paths",
+        ));
+    } else {
+        findings.push(Finding::new(
+            "IS-08",
+            Severity::Warn,
+            &format!(
+                "some backtick path references not found in repo: {}",
+                missing_paths.join(" ")
+            ),
+        ));
+    }
+
     // -----------------------------------------------------------------------
     // IS-16: forbidden keywords in body
     // -----------------------------------------------------------------------
@@ -512,7 +606,7 @@ pub fn check_content(
     } else {
         findings.push(Finding::new(
             "IS-14",
-            Severity::Fail,
+            Severity::Warn,
             "no type label (expected one of the type set)",
         ));
     }
@@ -943,6 +1037,65 @@ tests pass.
     }
 
     // -----------------------------------------------------------------------
+    // IS-08: backtick path references
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is08_existing_backtick_path_info() {
+        let body = format!("{GOOD_SUB_BODY}\n`Cargo.toml`\n");
+        let f = check_content("添加功能", &body, &["enhancement"], "sub", "open");
+        assert!(
+            find_rule(&f, "IS-08")
+                .iter()
+                .any(|x| x.severity == Severity::Info)
+        );
+    }
+
+    #[test]
+    fn is08_missing_backtick_path_warns() {
+        let body = format!("{GOOD_SUB_BODY}\n`src/definitely_missing.rs`\n`gh issue create`\n");
+        let f = check_content("添加功能", &body, &["enhancement"], "sub", "open");
+        assert!(
+            find_rule(&f, "IS-08")
+                .iter()
+                .any(|x| x.severity == Severity::Warn && x.msg.contains("definitely_missing"))
+        );
+    }
+
+    #[test]
+    fn is08_ignores_backtick_commands_and_versions() {
+        let body = format!("{GOOD_SUB_BODY}\n`gh issue create`\n`v0.1.0`\n`Vec::new()`\n");
+        let f = check_content("添加功能", &body, &["enhancement"], "sub", "open");
+        assert!(
+            find_rule(&f, "IS-08")
+                .iter()
+                .any(|x| x.severity == Severity::Info)
+        );
+    }
+
+    #[test]
+    fn is08_accepts_existing_path_line_suffix() {
+        let body = format!("{GOOD_SUB_BODY}\n`Cargo.toml:1`\n");
+        let f = check_content("添加功能", &body, &["enhancement"], "sub", "open");
+        assert!(
+            find_rule(&f, "IS-08")
+                .iter()
+                .any(|x| x.severity == Severity::Info)
+        );
+    }
+
+    #[test]
+    fn is08_ignores_owner_repo_strings() {
+        let body = format!("{GOOD_SUB_BODY}\n`hathawayANdRX105/omenic`\n");
+        let f = check_content("添加功能", &body, &["enhancement"], "sub", "open");
+        assert!(
+            find_rule(&f, "IS-08")
+                .iter()
+                .any(|x| x.severity == Severity::Info)
+        );
+    }
+
+    // -----------------------------------------------------------------------
     // IS-09: sub mode forbidden cross-references
     // -----------------------------------------------------------------------
 
@@ -1129,12 +1282,12 @@ tests pass.
     }
 
     #[test]
-    fn is14_no_type_label_fails() {
+    fn is14_no_type_label_warns() {
         let f = check_content("添加功能", GOOD_SUB_BODY, &["question"], "sub", "open");
         assert!(
             find_rule(&f, "IS-14")
                 .iter()
-                .any(|x| x.severity == Severity::Fail && x.msg.contains("no type label"))
+                .any(|x| x.severity == Severity::Warn && x.msg.contains("no type label"))
         );
     }
 

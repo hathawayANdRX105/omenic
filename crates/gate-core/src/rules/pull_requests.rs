@@ -298,14 +298,14 @@ pub fn check_content(
         }
     }
 
-    // PR-03 Construction plan / Checklist ≥2 checkboxes
+    // PR-07 Construction plan / Checklist ≥2 checkboxes
     let cb_re = checkbox_re();
     if body_h.contains("Construction plan") {
         let plan = section(body, "Construction plan");
         let boxes = cb_re.captures_iter(&plan).count();
         if boxes < 2 {
             findings.push(Finding::new(
-                "PR-03",
+                "PR-07",
                 Severity::Fail,
                 &format!("Construction plan 必须至少 2 个 checkbox，当前 {boxes} 个"),
             ));
@@ -316,7 +316,7 @@ pub fn check_content(
         let boxes = cb_re.captures_iter(&checklist).count();
         if boxes < 2 {
             findings.push(Finding::new(
-                "PR-03",
+                "PR-07",
                 Severity::Fail,
                 &format!("Checklist 必须至少 2 个 checkbox，当前 {boxes} 个"),
             ));
@@ -411,7 +411,7 @@ pub fn check_content(
     } else {
         findings.push(Finding::new(
             "PR-05",
-            Severity::Fail,
+            Severity::Warn,
             "one PR should close one primary issue",
         ));
     }
@@ -697,7 +697,7 @@ run the tests
     }
 
     // -----------------------------------------------------------------------
-    // PR-03: body headings + checkbox count
+    // PR-03: body headings
     // -----------------------------------------------------------------------
 
     #[test]
@@ -743,7 +743,7 @@ run the tests
     }
 
     #[test]
-    fn pr03_too_few_checkboxes_fails() {
+    fn pr07_too_few_checkboxes_fails() {
         let bad_body = "\
 ## Issue
 #1
@@ -769,13 +769,13 @@ test
             false,
             None,
         );
-        let pr03 = find_rule(&findings, "PR-03");
+        let pr07 = find_rule(&findings, "PR-07");
         assert!(
-            pr03.iter()
+            pr07.iter()
                 .any(|f| f.severity == Severity::Fail && f.msg.contains("Construction plan"))
         );
         assert!(
-            pr03.iter()
+            pr07.iter()
                 .any(|f| f.severity == Severity::Fail && f.msg.contains("Checklist"))
         );
     }
@@ -908,7 +908,7 @@ test
     }
 
     #[test]
-    fn pr05_multiple_fixes_fails_primary() {
+    fn pr05_multiple_fixes_warns_primary() {
         let body = GOOD_BODY.to_string() + "Fixes #1\nFixes #2\nFixes #3";
         let findings = check_content(
             "feat: x",
@@ -920,10 +920,9 @@ test
             None,
         );
         let pr05 = find_rule(&findings, "PR-05");
-        // >1 Fixes → FAIL "one PR should close one primary issue"
         assert!(
             pr05.iter()
-                .any(|f| f.severity == Severity::Fail && f.msg.contains("primary issue"))
+                .any(|f| f.severity == Severity::Warn && f.msg.contains("primary issue"))
         );
     }
 
@@ -1239,6 +1238,16 @@ cd /tmp/gate-work && cargo test -p gate-core
                 .collect::<Vec<_>>()
         );
 
+        // PR-07 checkbox counts should pass separately from PR-03 heading checks.
+        let pr07 = find_rule(&findings, "PR-07");
+        assert!(
+            !pr07.iter().any(|f| f.severity == Severity::Fail),
+            "smoke: PR-07 should have no FAIL for a complete body, got: {:?}",
+            pr07.iter()
+                .filter(|f| f.severity == Severity::Fail)
+                .map(|f| &f.msg)
+                .collect::<Vec<_>>()
+        );
         // PR-01 should be INFO (English title)
         let pr01 = find_rule(&findings, "PR-01");
         assert!(pr01.iter().any(|f| f.severity == Severity::Info));
