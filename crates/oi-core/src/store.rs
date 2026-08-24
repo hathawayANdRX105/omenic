@@ -240,6 +240,7 @@ mod tests {
             kind: TaskKind::Task,
             priority: 2,
             status: TaskStatus::Open,
+            attempts: 0,
             parent: None,
             deps: vec![],
             description: String::new(),

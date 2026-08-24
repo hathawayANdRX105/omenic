@@ -54,6 +54,12 @@ pub enum RunnerError {
     NotFound(String),
     Blocked(String),
     InvalidStatus(String),
+    /// Attempt budget exhausted (#47); the task stays Failed until the
+    /// counter is reset explicitly.
+    RetryLimit {
+        id: String,
+        attempts: u32,
+    },
 }
 
 impl std::fmt::Display for RunnerError {
@@ -65,6 +71,11 @@ impl std::fmt::Display for RunnerError {
                 "deps not ready for {id}; blocked until predecessors complete"
             ),
             RunnerError::InvalidStatus(msg) => write!(f, "{msg}"),
+            RunnerError::RetryLimit { id, attempts } => write!(
+                f,
+                "retry limit exceeded for {id} ({attempts} failed attempts); \
+                 reset with `oi task update {id} --attempts 0`"
+            ),
         }
     }
 }
@@ -79,6 +90,32 @@ pub struct Ctx {
     /// Per-task TaskContext material root — resolved as
     /// `<data_dir>/tasks/<task-id>/`.
     pub data_dir: PathBuf,
+}
+
+/// Failed-attempt budget per task before `run` refuses further retries
+/// (#47). ponytail: a constant until someone needs per-workspace tuning —
+/// promote to Config then.
+pub const MAX_ATTEMPTS: u32 = 3;
+
+/// True iff `<task_dir>/run.pid` exists and its recorded runner pid is
+/// still alive. An InProgress task without a live runner is an orphan:
+/// the runner crashed or was SIGKILLed before it could flip status (#47).
+///
+/// ponytail: /proc lookup is Linux-only; switch to `libc::kill(pid, 0)`
+/// if another OS ever matters. Pid reuse can fool this check — acceptable
+/// for an MVP liveness hint.
+pub fn runner_alive(task_dir: &std::path::Path) -> bool {
+    let Ok(content) = std::fs::read_to_string(task_dir.join("run.pid")) else {
+        return false;
+    };
+    let Some(pid) = content
+        .split_whitespace()
+        .next()
+        .and_then(|p| p.parse::<u32>().ok())
+    else {
+        return false;
+    };
+    std::path::Path::new("/proc").join(pid.to_string()).exists()
 }
 
 /// Run one task end-to-end through the hardcoded MVP pipeline.
@@ -98,10 +135,18 @@ pub fn run(ctx: &Ctx, task_id: &str) -> Result<RunOutcome, RunnerError> {
             task.status
         )));
     }
-    // Open and InProgress both run: InProgress marks a running/resumed task
-    // on the board while the worker session is live (F3).
+    // Open, InProgress (resume of an orphaned task) and Failed (retry) all
+    // run; only Done is terminal (#47).
     if !graph::is_ready(&ctx.tasks, task_id) {
         return Err(RunnerError::Blocked(task_id.to_string()));
+    }
+    // Retry gate AFTER the deps gate so an exhausted budget can never
+    // bypass the blocked check (#47).
+    if task.attempts >= MAX_ATTEMPTS {
+        return Err(RunnerError::RetryLimit {
+            id: task_id.to_string(),
+            attempts: task.attempts,
+        });
     }
 
     // TaskContext: create `<data_dir>/tasks/<id>/` and stage brief.md before
@@ -400,6 +445,7 @@ mod tests {
             title: format!("task {id}"),
             kind: crate::task::TaskKind::Task,
             status,
+            attempts: 0,
             priority: 2,
             parent: None,
             deps,
@@ -442,6 +488,7 @@ mod tests {
             title: "scaffold".into(),
             kind: crate::task::TaskKind::Task,
             status: TaskStatus::Done,
+            attempts: 0,
             priority: 2,
             parent: None,
             deps: vec![],
@@ -517,6 +564,7 @@ mod tests {
             title: "scaffold".into(),
             kind: crate::task::TaskKind::Task,
             status: TaskStatus::Done,
+            attempts: 0,
             priority: 2,
             parent: None,
             deps: vec![],
@@ -716,5 +764,84 @@ mod tests {
         std::fs::create_dir_all(dir.join("events.jsonl")).unwrap();
         let r = run(&ctx, "blocked-log");
         assert!(matches!(r, Err(RunnerError::Blocked(s)) if s.contains("open events log")));
+    }
+
+    fn mk_task_attempts(id: &str, deps: Vec<String>, status: TaskStatus, attempts: u32) -> Task {
+        Task {
+            attempts,
+            ..mk_task(id, deps, status)
+        }
+    }
+
+    #[test]
+    fn run_rejects_done_task_regardless_of_attempts() {
+        // #47: done is terminal — retry semantics never re-run it.
+        let done = mk_task_attempts("done-t", vec![], TaskStatus::Done, 0);
+        let r = run(&ctx(vec![done], "/bin/true"), "done-t");
+        assert!(matches!(r, Err(RunnerError::InvalidStatus(s)) if s.contains("done")));
+    }
+
+    #[test]
+    fn run_allows_failed_task_within_budget() {
+        // #47: Failed is retryable — proceeds past gates to worker spawn.
+        let t = mk_task_attempts("retry-t", vec![], TaskStatus::Failed, 1);
+        let (ctx, _tmp) = ctx_with_tmp(vec![t]);
+        let r = run(&ctx, "retry-t");
+        assert!(matches!(r, Err(RunnerError::Blocked(s)) if s.contains("worker spawn")));
+    }
+
+    #[test]
+    fn run_rejects_attempts_over_budget() {
+        // #47: budget exhausted → RetryLimit before any worker spawn.
+        let t = mk_task_attempts("exhausted", vec![], TaskStatus::Failed, MAX_ATTEMPTS);
+        let (ctx, _tmp) = ctx_with_tmp(vec![t]);
+        let r = run(&ctx, "exhausted");
+        assert!(matches!(r, Err(RunnerError::RetryLimit { id, attempts })
+                if id == "exhausted" && attempts == MAX_ATTEMPTS));
+    }
+
+    #[test]
+    fn deps_gate_beats_retry_limit() {
+        // #47 done-when 4: unmet deps + exhausted budget → Blocked, never a
+        // bypassed deps gate.
+        let tasks = vec![
+            mk_task("open-dep", vec![], TaskStatus::Open),
+            mk_task_attempts(
+                "combo",
+                vec!["open-dep".into()],
+                TaskStatus::Failed,
+                MAX_ATTEMPTS,
+            ),
+        ];
+        let r = run(&ctx(tasks, "/bin/true"), "combo");
+        assert!(matches!(r, Err(RunnerError::Blocked(s)) if s == "combo"));
+    }
+
+    #[test]
+    fn runner_alive_detects_dead_live_and_missing_pid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+
+        // No run.pid → not alive.
+        assert!(!runner_alive(&dir));
+
+        // Live pid (this process) → alive.
+        std::fs::write(
+            dir.join("run.pid"),
+            format!("{} 999999", std::process::id()),
+        )
+        .unwrap();
+        assert!(runner_alive(&dir));
+
+        // Dead pid (exited child) → not alive: the orphan case (#47).
+        let child = std::process::Command::new("/bin/true").spawn().unwrap();
+        let dead_pid = child.id();
+        child.wait_with_output().unwrap();
+        std::fs::write(dir.join("run.pid"), format!("{dead_pid} 999999")).unwrap();
+        assert!(!runner_alive(&dir));
+
+        // Malformed run.pid → not alive (never panics).
+        std::fs::write(dir.join("run.pid"), "garbage").unwrap();
+        assert!(!runner_alive(&dir));
     }
 }

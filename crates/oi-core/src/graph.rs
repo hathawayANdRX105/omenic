@@ -121,6 +121,7 @@ mod tests {
             title: id.to_string(),
             kind: TaskKind::Task,
             status,
+            attempts: 0,
             priority: 2,
             parent: None,
             deps: deps.iter().map(|s| s.to_string()).collect(),
