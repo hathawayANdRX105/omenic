@@ -32,6 +32,10 @@ fn default_priority() -> u8 {
 pub enum TaskStatus {
     Open,
     InProgress,
+    /// Last run attempt failed; retryable until the attempt budget is
+    /// exhausted (#47). Distinct from InProgress so a crashed runner
+    /// (orphan) can be told apart from a normal failure.
+    Failed,
     Done,
 }
 
@@ -42,6 +46,10 @@ pub struct Task {
     pub title: String,
     pub kind: TaskKind,
     pub status: TaskStatus,
+    /// Failed run attempts so far (#47). Zero for tasks that never ran or
+    /// predate the field; gated against `runner::MAX_ATTEMPTS`.
+    #[serde(default)]
+    pub attempts: u32,
     #[serde(default = "default_priority")]
     pub priority: u8,
     pub parent: Option<String>,
@@ -86,6 +94,7 @@ mod tests {
             title: "My Task".into(),
             kind: TaskKind::Task,
             status: TaskStatus::InProgress,
+            attempts: 0,
             priority: 1,
             parent: None,
             deps: vec![],
@@ -107,6 +116,7 @@ mod tests {
             title: "Round Trip".into(),
             kind: TaskKind::Feature,
             status: TaskStatus::Done,
+            attempts: 0,
             priority: 0,
             parent: Some("parent-task".into()),
             deps: vec!["dep-a".into(), "dep-b".into()],
@@ -158,6 +168,9 @@ mod tests {
 
         let v: Shadow = serde_json::from_str(r#"{"status":"done"}"#).expect("done");
         assert_eq!(v.status, TaskStatus::Done);
+
+        let v: Shadow = serde_json::from_str(r#"{"status":"failed"}"#).expect("failed");
+        assert_eq!(v.status, TaskStatus::Failed);
     }
 
     #[test]
@@ -182,12 +195,21 @@ mod tests {
     }
 
     #[test]
+    fn attempts_defaults_to_zero_when_absent() {
+        // Old JSONL without an attempts field (#47 backward compat).
+        let json = r#"{"id":"old","title":"Old","kind":"task","status":"open","parent":null,"deps":[],"description":"","acceptance":"","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let t: Task = serde_json::from_str(json).expect("deserialize old format");
+        assert_eq!(t.attempts, 0);
+    }
+
+    #[test]
     fn priority_roundtrip() {
         let t = Task {
             id: "p0".into(),
             title: "Urgent".into(),
             kind: TaskKind::Bug,
             status: TaskStatus::Open,
+            attempts: 0,
             priority: 0,
             parent: None,
             deps: vec![],

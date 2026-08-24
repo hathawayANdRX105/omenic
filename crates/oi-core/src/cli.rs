@@ -140,12 +140,15 @@ enum TaskCmd {
         priority: Option<u8>,
         #[arg(long)]
         kind: Option<String>,
+        /// Reset the failed-attempt counter (#47 retry budget)
+        #[arg(long)]
+        attempts: Option<u32>,
     },
     /// Delete an isolated task
     Delete { id: String },
     /// List tasks (optionally filtered)
     List {
-        /// Filter by status (open|in_progress|done, comma-separated)
+        /// Filter by status (open|in_progress|failed|done, comma-separated)
         #[arg(long)]
         status: Option<String>,
         /// Filter by kind (comma-separated)
@@ -250,6 +253,7 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
                     acceptance,
                     priority,
                     kind,
+                    attempts,
                 } => task_update(
                     &store,
                     &id,
@@ -260,6 +264,7 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
                     acceptance,
                     priority,
                     kind,
+                    attempts,
                     json,
                 ),
                 TaskCmd::Delete { id } => task_delete(&store, &id, json),
@@ -401,6 +406,7 @@ fn task_add(
             title: title.clone(),
             kind: kind.clone().unwrap_or(TaskKind::Task),
             status: TaskStatus::Open,
+            attempts: 0,
             priority: priority.unwrap_or(2),
             parent: parent.clone(),
             deps: deps.clone(),
@@ -599,6 +605,7 @@ fn task_update(
     acceptance: Option<String>,
     priority: Option<u8>,
     kind: Option<String>,
+    attempts: Option<u32>,
     json: bool,
 ) -> Result<u8, String> {
     let Some(mut task) = store
@@ -636,6 +643,9 @@ fn task_update(
     }
     if let Some(v) = kind {
         task.kind = parse_kind(&v)?;
+    }
+    if let Some(v) = attempts {
+        task.attempts = v;
     }
 
     // Validate deps exist + no cycle when deps changed.
@@ -820,12 +830,16 @@ fn print_task_detail(task: &Task, all: &[Task]) {
     let status_str = match task.status {
         TaskStatus::Open => "open",
         TaskStatus::InProgress => "in_progress",
+        TaskStatus::Failed => "failed",
         TaskStatus::Done => "done",
     };
     println!("id:          {}", task.id);
     println!("title:       {}", task.title);
     println!("kind:        {kind_str}");
     println!("status:      {status_str}");
+    if task.attempts > 0 {
+        println!("attempts:    {} / {}", task.attempts, runner::MAX_ATTEMPTS);
+    }
     match &task.parent {
         Some(p) => println!("parent:      {p}"),
         None => println!("parent:      -"),
@@ -855,14 +869,15 @@ fn print_task_detail(task: &Task, all: &[Task]) {
     }
 }
 
-/// Parse a status string ("open"|"in_progress"|"done") → TaskStatus.
+/// Parse a status string ("open"|"in_progress"|"failed"|"done") → TaskStatus.
 fn parse_status(s: &str) -> Result<TaskStatus, String> {
     match s {
         "open" => Ok(TaskStatus::Open),
         "in_progress" => Ok(TaskStatus::InProgress),
+        "failed" => Ok(TaskStatus::Failed),
         "done" => Ok(TaskStatus::Done),
         other => Err(format!(
-            "invalid status `{other}` (expected: open|in_progress|done)"
+            "invalid status `{other}` (expected: open|in_progress|failed|done)"
         )),
     }
 }
@@ -903,6 +918,11 @@ fn plan_cmd(dot: bool, json: bool) -> Result<u8, String> {
 }
 
 /// `run` subcommand: spawn a worker for a task and return its outcome.
+///
+/// Resume/retry semantics (#47): an InProgress task with a live runner is
+/// refused (abort it first); an InProgress task without one is an orphan
+/// and gets resumed; a Failed task is retried until the attempt budget
+/// (`runner::MAX_ATTEMPTS`) is exhausted.
 fn run_cmd(id: &str) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
     let store = Store::new(&config.data_dir);
@@ -913,6 +933,25 @@ fn run_cmd(id: &str) -> Result<u8, String> {
         eprintln!("task not found: {id}");
         return Ok(1);
     };
+
+    // #47: live-runner guard — never double-spawn a worker for one task.
+    let task_dir = config.data_dir.join("tasks").join(id);
+    if task.status == TaskStatus::InProgress {
+        if runner::runner_alive(&task_dir) {
+            eprintln!(
+                "task already running: {id} (live runner, see {}); use `oi abort {id}` first",
+                task_dir.display()
+            );
+            return Ok(1);
+        }
+        eprintln!("resuming orphaned task: {id} (in_progress without a live runner)");
+    } else if task.status == TaskStatus::Failed {
+        eprintln!(
+            "retrying failed task: {id} (attempt {}/{})",
+            task.attempts + 1,
+            runner::MAX_ATTEMPTS
+        );
+    }
 
     // Deps gate: refuse blocked task without spawning a worker.
     if !crate::graph::is_ready(
@@ -938,7 +977,7 @@ fn run_cmd(id: &str) -> Result<u8, String> {
         .map_err(|e| format!("store error: {e}"))?;
 
     // Runner takes over from here; its outcome decides the store flip.
-    let outcome = runner::run(
+    let outcome = match runner::run(
         &runner::Ctx {
             omp_path: config.omp_path.clone(),
             data_dir: config.data_dir.clone(),
@@ -950,19 +989,23 @@ fn run_cmd(id: &str) -> Result<u8, String> {
                 .collect(),
         },
         id,
-    )
-    .map_err(|e| format!("runner error: {e}"))?;
-
-    // Flip status and append back to store on Done; keep in_progress on Failed.
-    let mut updated = running.clone();
-    updated.status = match outcome.status {
-        runner::RunStatus::Done => TaskStatus::Done,
-        runner::RunStatus::Failed => TaskStatus::InProgress,
+    ) {
+        Ok(outcome) => outcome,
+        Err(e) => {
+            // #47: pre-run rejection — roll back the InProgress marker so a
+            // task that never actually ran is never stranded as in_progress.
+            store
+                .append(&task)
+                .map_err(|se| format!("store error: {se}"))?;
+            return Err(format!("runner error: {e}"));
+        }
     };
-    updated.updated_at = crate::task::now_iso();
+
+    // #47: flip status, bump the failure counter, and record the attempt as
+    // traceable evidence (attempts.jsonl).
+    let updated = persist_run_outcome(&store, &config.data_dir, &task, &outcome)?;
 
     // Evidence drop per MVP §3.2: result.json in <data_dir>/tasks/<id>/.
-    let task_dir = config.data_dir.join("tasks").join(id);
     if let Err(e) = std::fs::create_dir_all(&task_dir) {
         eprintln!("warning: could not create task context dir: {e}");
     } else {
@@ -989,7 +1032,83 @@ fn run_cmd(id: &str) -> Result<u8, String> {
         Ok(0)
     } else {
         eprintln!("run failed: {}", outcome.summary);
+        if updated.attempts >= runner::MAX_ATTEMPTS {
+            eprintln!(
+                "retry limit reached ({} failed attempts); reset with `oi task update {id} --attempts 0`",
+                updated.attempts
+            );
+        } else {
+            eprintln!(
+                "failed attempts: {}/{}; retry with `oi run {id}`",
+                updated.attempts,
+                runner::MAX_ATTEMPTS
+            );
+        }
         Ok(1)
+    }
+}
+
+/// Persist one finished run attempt (#47): flip status to Done/Failed,
+/// bump `attempts` on failure, and append the attempt (number, outcome,
+/// reason, timestamp) to `<task_dir>/attempts.jsonl`.
+fn persist_run_outcome(
+    store: &Store,
+    data_dir: &std::path::Path,
+    pre: &Task,
+    outcome: &runner::RunOutcome,
+) -> Result<Task, String> {
+    let attempt = pre.attempts + 1;
+    let mut updated = pre.clone();
+    updated.status = match outcome.status {
+        runner::RunStatus::Done => TaskStatus::Done,
+        runner::RunStatus::Failed => {
+            updated.attempts = attempt;
+            TaskStatus::Failed
+        }
+    };
+    updated.updated_at = crate::task::now_iso();
+    record_attempt(data_dir, &pre.id, attempt, outcome);
+    store
+        .append(&updated)
+        .map_err(|e| format!("store error: {e}"))?;
+    Ok(updated)
+}
+
+/// Append one attempt record to `attempts.jsonl` (#47 evidence).
+/// Best-effort like the event log: a failing evidence write warns on stderr
+/// and never breaks the run or the store flip.
+fn record_attempt(
+    data_dir: &std::path::Path,
+    task_id: &str,
+    attempt: u32,
+    outcome: &runner::RunOutcome,
+) {
+    let task_dir = data_dir.join("tasks").join(task_id);
+    if let Err(e) = std::fs::create_dir_all(&task_dir) {
+        eprintln!("warning: could not create task context dir: {e}");
+        return;
+    }
+    let rec = serde_json::json!({
+        "ts": crate::task::now_iso(),
+        "attempt": attempt,
+        "outcome": match outcome.status {
+            runner::RunStatus::Done => "done",
+            runner::RunStatus::Failed => "failed",
+        },
+        "reason": outcome.summary,
+        "events_seen": outcome.events_seen,
+    });
+    let path = task_dir.join("attempts.jsonl");
+    let res = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut f| {
+            use std::io::Write;
+            writeln!(f, "{}", serde_json::to_string(&rec).unwrap_or_default())
+        });
+    if let Err(e) = res {
+        eprintln!("warning: write {}: {e}", path.display());
     }
 }
 
@@ -1238,11 +1357,12 @@ fn blocked_cmd(json: bool) -> Result<u8, String> {
 }
 
 /// cx/bd-style status glyph: `○` open-ready, `●` open-blocked,
-/// `◐` in_progress, `✓` done.
+/// `◐` in_progress, `✗` failed, `✓` done.
 fn status_glyph(t: &Task, map: &std::collections::HashMap<String, Task>) -> &'static str {
     match t.status {
         TaskStatus::Done => "✓",
         TaskStatus::InProgress => "◐",
+        TaskStatus::Failed => "✗",
         TaskStatus::Open => {
             if crate::graph::is_ready(map, &t.id) {
                 "○"
@@ -1266,7 +1386,7 @@ fn task_line(t: &Task, map: &std::collections::HashMap<String, Task>) -> String 
 
 /// Status legend footer, matching bd/cx output conventions.
 fn status_legend() -> &'static str {
-    "Status: ○ open  ◐ in_progress  ● blocked  ✓ done\n"
+    "Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done\n"
 }
 
 /// Render the task tree as an indented plan view (roots first, children
@@ -1415,6 +1535,7 @@ fn render_dot(tasks: &[Task]) -> String {
         match s {
             TaskStatus::Open => "#e8f4fd",
             TaskStatus::InProgress => "#fff3cd",
+            TaskStatus::Failed => "#f8d7da",
             TaskStatus::Done => "#d4edda",
         }
     }
@@ -1470,12 +1591,14 @@ fn board_cmd(json: bool) -> Result<u8, String> {
 
     let mut done: Vec<&Task> = Vec::new();
     let mut in_progress: Vec<&Task> = Vec::new();
+    let mut failed: Vec<&Task> = Vec::new();
     let mut ready: Vec<&Task> = Vec::new();
     let mut blocked: Vec<&Task> = Vec::new();
     for t in &all {
         match t.status {
             TaskStatus::Done => done.push(t),
             TaskStatus::InProgress => in_progress.push(t),
+            TaskStatus::Failed => failed.push(t),
             TaskStatus::Open => {
                 if crate::graph::is_ready(&map, &t.id) {
                     ready.push(t);
@@ -1490,6 +1613,7 @@ fn board_cmd(json: bool) -> Result<u8, String> {
     in_progress.sort_by(by_priority);
     ready.sort_by(by_priority);
     blocked.sort_by(by_priority);
+    failed.sort_by(by_priority);
 
     if json {
         let part = |v: &[&Task]| -> Vec<serde_json::Value> {
@@ -1507,6 +1631,7 @@ fn board_cmd(json: bool) -> Result<u8, String> {
         let obj = serde_json::json!({
             "done": part(&done),
             "in_progress": part(&in_progress),
+            "failed": part(&failed),
             "ready": part(&ready),
             "blocked": part(&blocked),
         });
@@ -1520,9 +1645,10 @@ fn board_cmd(json: bool) -> Result<u8, String> {
             s
         };
         print!(
-            "{}{}{}{}{}",
+            "{}{}{}{}{}{}",
             section("done", &done),
             section("in_progress", &in_progress),
+            section("failed", &failed),
             section("ready", &ready),
             section("blocked", &blocked),
             status_legend(),
@@ -1952,6 +2078,7 @@ mod tests {
             title: id.to_string(),
             kind: TaskKind::Task,
             status,
+            attempts: 0,
             priority: 2,
             parent: parent.map(|p| p.to_string()),
             deps: vec![],
@@ -1977,7 +2104,7 @@ mod tests {
 │  ├─ ○ imp-cli ● P2 imp-cli
 │  └─ ○ imp-rpc ● P2 imp-rpc
 └─ ✓ scheme-workflow-02 ● P2 scheme-workflow-02
-Status: ○ open  ◐ in_progress  ● blocked  ✓ done
+Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
 ";
         assert_eq!(render_plan(&tasks), expected);
     }
@@ -2448,6 +2575,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
             None,
             None,
             None,
+            None,
             false,
         )
         .unwrap();
@@ -2474,6 +2602,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
             &store,
             "t1",
             Some("new title".to_string()),
+            None,
             None,
             None,
             None,
@@ -2510,6 +2639,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
             None,
             None,
             Some("all pass".to_string()),
+            None,
             None,
             None,
             false,
@@ -2555,6 +2685,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
             None,
             None,
             None,
+            None,
             false,
         )
         .unwrap();
@@ -2567,7 +2698,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let store = tmp_store("upd_404");
         let code = task_update(
-            &store, "nope", None, None, None, None, None, None, None, false,
+            &store, "nope", None, None, None, None, None, None, None, None, false,
         )
         .unwrap();
         assert_eq!(code, 1);
@@ -2598,6 +2729,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
             None,
             None,
             None,
+            None,
             false,
         );
         assert!(r.is_err());
@@ -2611,6 +2743,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
         let r = task_update(
             &store,
             "nonexistent",
+            None,
             None,
             None,
             None,
@@ -2648,6 +2781,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
             None,
             None,
             None,
+            None,
             false,
         );
         assert!(r.is_err());
@@ -2676,6 +2810,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
             None,
             None,
             Some("ghost".to_string()),
+            None,
             None,
             None,
             None,
@@ -3015,6 +3150,7 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
             title: title.to_string(),
             kind: TaskKind::Task,
             status: TaskStatus::Open,
+            attempts: 0,
             priority: 2,
             parent: None,
             deps: Vec::new(),
@@ -3473,5 +3609,124 @@ Status: ○ open  ◐ in_progress  ● blocked  ✓ done
         let all = store.load_all().unwrap();
         let ready = suggest_next(&all, "A");
         assert!(ready.contains(&"B".to_string()));
+    }
+
+    #[test]
+    fn parse_status_accepts_failed() {
+        assert_eq!(parse_status("failed"), Ok(TaskStatus::Failed));
+        assert!(parse_status("bogus").is_err());
+    }
+
+    #[test]
+    fn update_resets_attempts() {
+        // #47: the documented escape hatch for an exhausted retry budget.
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store = tmp_store("attempts_reset");
+        store.append(&mk_task_titled("t1", "t1")).unwrap();
+        task_update(
+            &store,
+            "t1",
+            None,
+            None,
+            Some("failed".into()),
+            None,
+            None,
+            None,
+            None,
+            Some(3),
+            false,
+        )
+        .unwrap();
+        let t = store.load_task("t1").unwrap().unwrap();
+        assert_eq!(t.status, TaskStatus::Failed);
+        assert_eq!(t.attempts, 3);
+        task_update(
+            &store,
+            "t1",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(0),
+            false,
+        )
+        .unwrap();
+        assert_eq!(store.load_task("t1").unwrap().unwrap().attempts, 0);
+    }
+
+    #[test]
+    fn persist_failed_attempt_bumps_counter_and_evidence() {
+        // #47: a failed run flips to Failed, counts the attempt and leaves
+        // the reason + timestamp in attempts.jsonl.
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir =
+            std::env::temp_dir().join(format!("omenic-cli-test-persist-f-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = Store::new(&dir);
+        let pre = Task {
+            attempts: 2,
+            ..mk_task_titled("t1", "t1")
+        };
+        store.append(&pre).unwrap();
+
+        let outcome = runner::RunOutcome {
+            status: runner::RunStatus::Failed,
+            summary: "read_event error: 中文 \"boom\" 💥".into(),
+            events_seen: 7,
+        };
+        let updated = persist_run_outcome(&store, &dir, &pre, &outcome).unwrap();
+        assert_eq!(updated.status, TaskStatus::Failed);
+        assert_eq!(updated.attempts, 3);
+
+        let stored = store.load_task("t1").unwrap().unwrap();
+        assert_eq!(stored.attempts, 3);
+
+        let rec: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join("tasks/t1/attempts.jsonl")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(rec["attempt"], 3);
+        assert_eq!(rec["outcome"], "failed");
+        assert_eq!(rec["reason"], "read_event error: 中文 \"boom\" 💥");
+        assert_eq!(rec["events_seen"], 7);
+        assert_eq!(rec["ts"].as_str().unwrap().len(), 20);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn persist_done_attempt_keeps_failure_count() {
+        // #47: success does not count as a failure; the record still lands
+        // in evidence.
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir =
+            std::env::temp_dir().join(format!("omenic-cli-test-persist-d-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = Store::new(&dir);
+        let pre = mk_task_titled("t2", "t2");
+        store.append(&pre).unwrap();
+
+        let outcome = runner::RunOutcome {
+            status: runner::RunStatus::Done,
+            summary: "all good".into(),
+            events_seen: 3,
+        };
+        let updated = persist_run_outcome(&store, &dir, &pre, &outcome).unwrap();
+        assert_eq!(updated.status, TaskStatus::Done);
+        assert_eq!(updated.attempts, 0);
+        assert_eq!(
+            store.load_task("t2").unwrap().unwrap().status,
+            TaskStatus::Done
+        );
+
+        let rec: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join("tasks/t2/attempts.jsonl")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(rec["attempt"], 1);
+        assert_eq!(rec["outcome"], "done");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
