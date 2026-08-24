@@ -240,7 +240,71 @@ impl Client {
             }
         }
 
+        // v2 session negotiation (#51, mvp-design §6.2): pin protocol
+        // semantics across omp default configs and disable background
+        // retry/compaction so the runner owns the session lifecycle.
+        client.negotiate_session()?;
+
         Ok(client)
+    }
+
+    /// Post-handshake negotiation: `negotiate_protocol` v2 →
+    /// `set_auto_retry off` → `set_auto_compaction off`, in order. Any
+    /// failure or non-success response aborts worker creation — a session
+    /// running on silently different semantics must not look healthy (#51).
+    fn negotiate_session(&mut self) -> Result<(), RpcError> {
+        let id = self.next_id_str();
+        let resp = self.send(
+            &Request::new("negotiate_protocol")
+                .with_id(&id)
+                .with_field("protocolVersion", 2)
+                .done(),
+        )?;
+        if !resp
+            .get("success")
+            .and_then(|s| s.as_bool())
+            .unwrap_or(false)
+        {
+            return Err(RpcError::Protocol(format!(
+                "negotiate_protocol v2 rejected: {resp}"
+            )));
+        }
+
+        let id = self.next_id_str();
+        let resp = self.send(
+            &Request::new("set_auto_retry")
+                .with_id(&id)
+                .with_field("enabled", false)
+                .done(),
+        )?;
+        if !resp
+            .get("success")
+            .and_then(|s| s.as_bool())
+            .unwrap_or(false)
+        {
+            return Err(RpcError::Protocol(format!(
+                "set_auto_retry off rejected: {resp}"
+            )));
+        }
+
+        let id = self.next_id_str();
+        let resp = self.send(
+            &Request::new("set_auto_compaction")
+                .with_id(&id)
+                .with_field("enabled", false)
+                .done(),
+        )?;
+        if !resp
+            .get("success")
+            .and_then(|s| s.as_bool())
+            .unwrap_or(false)
+        {
+            return Err(RpcError::Protocol(format!(
+                "set_auto_compaction off rejected: {resp}"
+            )));
+        }
+
+        Ok(())
     }
 
     /// Send a request and wait for the matching response.
@@ -622,5 +686,90 @@ mod tests {
             }
             Err(e) => panic!("send failed: {e}"),
         }
+    }
+
+    /// Pure check of the negotiation response contract: success must be a
+    /// literal `true`; anything else is a rejection (#51).
+    fn negotiation_ok(resp: &serde_json::Value) -> bool {
+        resp.get("success")
+            .and_then(|s| s.as_bool())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn negotiate_request_serialization() {
+        // Wire format of the three negotiation commands.
+        let n = serde_json::to_value(
+            Request::new("negotiate_protocol")
+                .with_id("n1")
+                .with_field("protocolVersion", 2)
+                .done(),
+        )
+        .unwrap();
+        assert_eq!(n["type"], "negotiate_protocol");
+        assert_eq!(n["protocolVersion"], 2);
+
+        let r = serde_json::to_value(
+            Request::new("set_auto_retry")
+                .with_id("n2")
+                .with_field("enabled", false)
+                .done(),
+        )
+        .unwrap();
+        assert_eq!(r["type"], "set_auto_retry");
+        assert_eq!(r["enabled"], false);
+
+        let c = serde_json::to_value(
+            Request::new("set_auto_compaction")
+                .with_id("n3")
+                .with_field("enabled", false)
+                .done(),
+        )
+        .unwrap();
+        assert_eq!(c["type"], "set_auto_compaction");
+        assert_eq!(c["enabled"], false);
+    }
+
+    #[test]
+    fn negotiation_response_contract() {
+        // Real omp shapes (probed against /usr/bin/omp).
+        let ok = serde_json::json!({
+            "id": "n1", "type": "response", "command": "negotiate_protocol",
+            "success": true, "data": {"protocolVersion": 2}
+        });
+        assert!(negotiation_ok(&ok));
+
+        let rejected = serde_json::json!({
+            "id": "x1", "type": "response",
+            "command": "negotiate_protocol",
+            "success": false,
+            "error": "Unsupported RPC protocol version: undefined"
+        });
+        assert!(!negotiation_ok(&rejected));
+
+        let unknown = serde_json::json!({
+            "type": "response", "command": "bogus_command",
+            "success": false, "error": "Unknown command: bogus_command"
+        });
+        assert!(!negotiation_ok(&unknown));
+
+        // Missing/absent success field must not pass.
+        assert!(!negotiation_ok(&serde_json::json!({"type": "response"})));
+        assert!(!negotiation_ok(&serde_json::json!({"success": "yes"})));
+    }
+
+    /// Live smoke: full negotiation sequence against real omp. Run with:
+    /// `cargo test -- --ignored rpc::tests::live_negotiation`.
+    #[test]
+    #[ignore]
+    fn live_negotiation() {
+        // Client::new now negotiates internally — reaching a client at all
+        // proves the v2 sequence succeeded against this omp build.
+        let mut client = Client::new("omp").expect("spawn + ready + negotiation failed");
+        let id = client.next_id_str();
+        let resp = client
+            .send(&Request::new("get_state").with_id(&id).done())
+            .expect("post-negotiation command");
+        println!("session negotiated; get_state → {resp}");
     }
 }
