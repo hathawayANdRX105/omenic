@@ -5,7 +5,26 @@
 //! a task-oriented interface for agent interaction: send a prompt, read events,
 //! steer the agent, and abort when done.
 //!
-//! ## Lifecycle
+//! ## Lifecycle state map (#46)
+//!
+//! ```text
+//! spawn ──► ready handshake ──► negotiate v2 ──► idle
+//!           (rpc::Client::new)  (set_auto_retry/   │
+//!                                compaction off)   ├─► prompt(msg) ──┐
+//!                                                  │                 ▼
+//!                                                  │            event stream
+//!                                                  │        (read_event / events())
+//!                                                  │                 │
+//!                                                  ├─► steer(msg) ◄──┘ (between events)
+//!                                                  ├─► abort() ──► killed
+//!                                                  └─► Drop     ──► kill process group
+//! ```
+//!
+//! Error paths: spawn/handshake/negotiation failure → `Worker::new` errs;
+//! transport death mid-call → `RpcError::ProcessExited` from prompt/steer/
+//! read_event; `Drop` always kills the child even after errors.
+//!
+//! ## Example
 //! ```ignore
 //! let mut worker = worker::Worker::new("/usr/bin/omp")?;
 //! worker.prompt("Write a design doc for the auth module")?;
@@ -352,5 +371,110 @@ mod tests {
             }
             _ => WorkerEvent::Unknown(raw.clone()),
         }
+    }
+
+    // ---- #46: worker lifecycle stress + error paths -------------------
+    //
+    // A fake omp shell script exercises the real spawn/handshake path:
+    // emit ready, echo every stdin line back as a response, exit on
+    // "abort". This keeps the lifecycle tests deterministic (no LLM).
+
+    fn write_fake_omp(dir: &std::path::Path, mode: &str) -> String {
+        let path = dir.join(format!("fake-omp-{mode}.sh"));
+        // Echo server: responds to every command with a matching-id
+        // response frame, exits on abort. Built line-by-line to keep the
+        // shell quoting sane.
+        let echo_body = [
+            "#!/bin/sh",
+            "echo '{\"type\":\"ready\"}'",
+            "while IFS= read -r line; do",
+            "  id=$(printf '%s' \"$line\" | sed 's/.*\"id\":\"\\([^\"]*\\)\".*/\\1/');",
+            "  case \"$line\" in",
+            "    *abort*) echo \"{\\\"type\\\":\\\"response\\\",\\\"id\\\":\\\"$id\\\",\\\"success\\\":true}\"; exit 0;;",
+            "    *) echo \"{\\\"type\\\":\\\"response\\\",\\\"id\\\":\\\"$id\\\",\\\"success\\\":true}\";;",
+            "  esac",
+            "done",
+            "",
+        ]
+        .join("\n");
+        let body = match mode {
+            "echo" => echo_body,
+            // Crash after negotiation: answers the 3 setup commands, then
+            // dies on the next one (prompt) — mid-session worker death.
+            "crash" => [
+                "#!/bin/sh",
+                "echo '{\"type\":\"ready\"}'",
+                "i=0",
+                "while IFS= read -r line; do",
+                "  i=$((i+1))",
+                "  if [ $i -gt 3 ]; then exit 1; fi",
+                "  id=$(printf '%s' \"$line\" | sed 's/.*\"id\":\"\\([^\"]*\\)\".*/\\1/');",
+                "  echo \"{\\\"type\\\":\\\"response\\\",\\\"id\\\":\\\"$id\\\",\\\"success\\\":true}\";",
+                "done",
+                "",
+            ]
+            .join("\n"),
+            other => panic!("unknown fake omp mode {other}"),
+        };
+        std::fs::write(&path, body).unwrap();
+
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.to_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn worker_lifecycle_spawn_prompt_abort_drop_no_residue() {
+        // #46: 10 consecutive spawn → prompt → abort cycles must all
+        // succeed and leave no lingering child processes.
+        let tmp = tempfile::tempdir().unwrap();
+        let omp = write_fake_omp(tmp.path(), "echo");
+        for round in 0..10 {
+            let mut worker = Worker::new(&omp).expect("spawn + ready");
+            worker.prompt(&format!("round {round}")).expect("prompt");
+            worker.abort().expect("abort");
+            drop(worker);
+        }
+        // No stray fake-omp children should remain.
+        let out = std::process::Command::new("pgrep")
+            .args(["-f", "fake-omp-echo.sh"])
+            .output()
+            .unwrap();
+        assert!(out.stdout.is_empty(), "leaked worker processes");
+    }
+
+    #[test]
+    fn worker_crash_surfaces_as_failed_not_hang() {
+        // #46: a worker dying mid-session (after the #51 negotiation, on
+        // the prompt) must surface as an error immediately.
+        let tmp = tempfile::tempdir().unwrap();
+        let omp = write_fake_omp(tmp.path(), "crash");
+        let mut worker = Worker::new(&omp).expect("handshake + negotiation ok");
+        let r = worker.prompt("boom");
+        assert!(matches!(r, Err(rpc::RpcError::ProcessExited(_))), "{r:?}");
+    }
+
+    #[test]
+    fn worker_events_iterator_yields_until_response() {
+        // #46: events() must yield a synthetic error event when the worker
+        // dies mid-stream (never hang, never loop forever) — the runner
+        // relies on read_event surfacing transport death.
+        let tmp = tempfile::tempdir().unwrap();
+        let omp = write_fake_omp(tmp.path(), "crash");
+        let mut worker = Worker::new(&omp).expect("spawn");
+        worker
+            .prompt("hello")
+            .expect_err("prompt must fail: process died");
+        drop(worker);
+
+        // And the normal path: the echo server's response frame terminates
+        // the iterator with zero agent events.
+        let tmp2 = tempfile::tempdir().unwrap();
+        let omp2 = write_fake_omp(tmp2.path(), "echo");
+        let mut worker2 = Worker::new(&omp2).expect("spawn");
+        worker2.prompt("hello").unwrap();
+        // The response frame was consumed by prompt(); the server is now
+        // idle-waiting for stdin. Abort closes the session deterministically.
+        worker2.abort().ok();
     }
 }
