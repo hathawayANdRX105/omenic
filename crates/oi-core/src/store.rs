@@ -473,4 +473,74 @@ mod tests {
 
         fs::remove_dir_all(&dir).ok();
     }
+
+    #[test]
+    fn concurrent_append_latest_wins() {
+        // #43: parallel appends under flock must not interleave corrupt
+        // lines, and latest-wins resolves the winner deterministically.
+        let dir = temp_dir();
+        let store = Store::new(&dir);
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let dir = dir.clone();
+            handles.push(std::thread::spawn(move || {
+                let s = Store::new(&dir);
+                for j in 0..25 {
+                    s.append(&make_task("shared", &format!("w{i}-{j}")))
+                        .unwrap();
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // 200 lines, every line valid JSON (no interleaving), latest wins.
+        assert_eq!(
+            fs::read_to_string(&store.path).unwrap().lines().count(),
+            200
+        );
+        let all = store.load_all().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, "shared");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn missing_task_and_dep_semantics() {
+        // #43: loading a missing id is None; a dep referencing a missing
+        // task simply never matches Done (graph gate owns the decision).
+        let dir = temp_dir();
+        let store = Store::new(&dir);
+        assert!(store.load_task("ghost").unwrap().is_none());
+
+        let mut t = make_task("t1", "has ghost dep");
+        t.deps = vec!["ghost".to_string()];
+        store.append(&t).unwrap();
+        let loaded = store.load_task("t1").unwrap().unwrap();
+        assert_eq!(loaded.deps, vec!["ghost"]);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn compact_empty_file_stays_empty_and_appendable() {
+        // #43: compact on an empty existing file keeps it empty; append
+        // after compact works and survives another compact.
+        let dir = temp_dir();
+        let path = dir.join("tasks.jsonl");
+        fs::write(&path, "").unwrap();
+        let store = Store::new(&dir);
+        store.compact().unwrap();
+        assert!(store.load_all().unwrap().is_empty());
+
+        store.append(&make_task("post", "after compact")).unwrap();
+        store.compact().unwrap();
+        let all = store.load_all().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, "post");
+
+        fs::remove_dir_all(&dir).ok();
+    }
 }

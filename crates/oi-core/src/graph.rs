@@ -262,4 +262,47 @@ mod tests {
         assert!(deps.contains(&"b".to_string()));
         assert!(deps.contains(&"c".to_string()));
     }
+
+    #[test]
+    fn deep_transitive_cycle_five_levels() {
+        // #43: chain a→b→c→d→e; closing e→a must be detected across 4 hops.
+        let tasks = mk_tasks(&[
+            ("a", &["b"]),
+            ("b", &["c"]),
+            ("c", &["d"]),
+            ("d", &["e"]),
+            ("e", &[]),
+        ]);
+        assert!(would_dep_cycle(&tasks, "e", "a"));
+        // The reverse edge a→e is legal: e cannot reach a.
+        assert!(!would_dep_cycle(&tasks, "a", "e"));
+    }
+
+    #[test]
+    fn deep_diamond_closes_cycle() {
+        // #43: diamond a→{b,c}, b,c→e. e already reaches a (via both arms),
+        // so adding e→a closes the cycle — and b→a / c→a would too.
+        let tasks = mk_tasks(&[("a", &["b", "c"]), ("b", &["e"]), ("c", &["e"]), ("e", &[])]);
+        assert!(would_dep_cycle(&tasks, "e", "a"));
+        assert!(would_dep_cycle(&tasks, "b", "a"));
+        // But an unrelated new root stays legal.
+        assert!(!would_dep_cycle(&tasks, "x", "a"));
+    }
+
+    #[test]
+    fn is_ready_missing_dependency() {
+        // #43: dep id absent from the map → never ready.
+        let tasks = mk_tasks_full(&[("a", &["ghost"], TaskStatus::Open)]);
+        assert!(!is_ready(&tasks, "a"));
+    }
+
+    #[test]
+    fn is_ready_failed_dep_not_ready() {
+        // #47 interplay: a Failed dep is not Done → dependents stay gated.
+        let tasks = mk_tasks_full(&[
+            ("a", &[], TaskStatus::Failed),
+            ("b", &["a"], TaskStatus::Open),
+        ]);
+        assert!(!is_ready(&tasks, "b"));
+    }
 }
