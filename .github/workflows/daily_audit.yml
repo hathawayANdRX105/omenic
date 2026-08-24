@@ -30,31 +30,38 @@ jobs:
           fi
       - name: 创建违规记录
         if: steps.audit.outputs.has_fail == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           DATE=$(date +%Y-%m-%d)
+          BODY=$(
+            sed 's/^          //' <<'ISSUE_BODY'
+          ## Goal
+
+          自动审计发现最近一天创建的 issue 或 PR 存在违规，需修复。
+
+          ## Background
+
+          每天自动全量合规检查（gate audit --recent=1），发现问题自动记录。
+
+          ## Done when
+
+          - [ ] 修复下列违规
+
+          ## Suspected areas
+
+          ${{ steps.audit.outputs.OUT }}
+
+          ## Out of scope
+
+          - 无
+
+          ## How to observe success
+
+          重新触发 workflow 或本地跑 `cargo run --locked -p gate -- audit --recent=1` 无 FAIL。
+          ISSUE_BODY
+          )
           gh issue create \
             --title "合规检查发现违规 $DATE" \
-            --body "## Goal
-
-自动审计发现最近一天创建的 issue 或 PR 存在违规，需修复。
-
-## Background
-
-每天自动全量合规检查（gate audit --recent=1），发现问题自动记录。
-
-## Done when
-
-- [ ] 修复下列违规
-
-## Suspected areas
-
-${{ steps.audit.outputs.OUT }}
-
-## Out of scope
-
-- 无
-
-## How to observe success
-
-重新触发 workflow 或本地跑 \`cargo run --locked -p gate -- audit --recent=1\` 无 FAIL。" \
+            --body "$BODY" \
             --label chore
