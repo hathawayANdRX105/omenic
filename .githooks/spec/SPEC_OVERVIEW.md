@@ -14,7 +14,9 @@
 │   ├── github_reviews.yaml   # Review 评论格式（RV-* 检查项）
 │   ├── code_{rust,go,javascript,typescript,python,bash}.yaml  # Rust code lint 参数
 │   ├── workspace_{tree_hygiene,file_placement}.yaml           # Rust workspace 检查参数
-│   └── cleanup_branch_cleanup.yaml                            # Rust cleanup 检查参数
+│   ├── cleanup_branch_cleanup.yaml                            # CL-01 分支清理参数
+│   ├── cleanup_tests_{rust,go,javascript,bash}.yaml          # CL-02 测试代码检查参数
+│   └── cleanup_docs_hygiene.yaml                             # CL-03 文档卫生检查参数
 ├── GITHUB_ISSUE_PR.md         # Issue/PR 创建指南（含关联机制）
 ├── PR_DEV_WORKFLOW.md         # PR 开发工作流指南（含 CRG + ocr 审查流程）
 └── WORKFLOW.md                # 工作隔离规范（.wt/ worktree 分支目录）
@@ -127,9 +129,11 @@
 - WS-01 tree_hygiene：空目录、单文件目录、深度 > max_depth、孤儿目录（spec/workspace_tree_hygiene.yaml）— WARN
 - WS-02 file_placement：forbidden_patterns、expected_locations（spec/workspace_file_placement.yaml）— WARN；`os.walk` 目录剪枝（ignore 含 node_modules/.git/ 等子树时跳过遍历，防大仓库卡死）
 
-## 主题六：Cleanup（CL-01，Rust cleanup validator）
+## 主题六：Cleanup（CL-01 ~ CL-03，Rust cleanup validators）
 
-- CL-01 branch_cleanup：merged/orphan/temp 分支清理，dry-run 默认（gate merge 调用）；唯一有效配置为 `spec/cleanup_branch_cleanup.yaml` — WARN
+- CL-01 branch_cleanup：merged/orphan/temp 分支清理，dry-run 默认（gate merge 调用）；配置 `spec/cleanup_branch_cleanup.yaml` — WARN
+- CL-02 tests_check：四语言测试命名/断言数/必需 helper（配置 `spec/cleanup_tests_{rust,go,javascript,bash}.yaml`，gate merge 调用）— WARN
+- CL-03 docs_hygiene：全角括号/死链/遗留标记（TODO/FIXME/XXX）/空文件/CRLF/尾随空白（配置 `spec/cleanup_docs_hygiene.yaml`，gate merge 调用）— WARN/INFO
 
 ## 主题七：本地审查（RV-07，gate review）
 
@@ -156,7 +160,7 @@
 - gh pr comment → RV-01~06
 - git commit → CM-01、CM-02、CM-03、WS-01、WS-02、CD-01~06
 - git push → WS-01、WS-02、CD-01~06
-- gate merge 手动 → 全量（PR + reviews + cleanup + RV-07）
+- gate merge 手动 → 全量（PR + reviews + cleanup：CL-01~03 + RV-07）
 - CI 每日（daily_audit.yml）→ 最近 1 天创建的 issue/PR 全规则
 
 ## 更新与校验
