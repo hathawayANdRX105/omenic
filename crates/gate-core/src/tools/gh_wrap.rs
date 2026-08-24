@@ -275,6 +275,42 @@ fn gt06_open_sub_block(labels: &[String], open_subs: &[String]) -> Option<Vec<St
     Some(open_subs.to_vec())
 }
 
+/// GT-04 pure decision: only the Done when section gates close — Implementation
+/// Order progress boxes (epic) and other lists must not block. Returns the
+/// unticked items that block, empty when close is allowed.
+fn gt04_unticked_done_when(body: &str) -> Vec<String> {
+    let done = crate::rules::issues::done_when_section(body);
+    let (ok, unticked) = check_all_checkboxes(&done);
+    if ok { Vec::new() } else { unticked }
+}
+
+/// GT-04b pure decision: epics are exempt (their completion signal is GT-06
+/// all-subs-closed; PRs link to sub-issues, not the epic). Non-epic issues
+/// without a linked PR only WARN (demoted from FAIL) — legitimate
+/// non-PR closes (duplicate/obsolete) stay possible.
+fn gt04b_warn_no_link(labels: &[String], has_linked_pr: bool) -> bool {
+    !is_epic(labels) && !has_linked_pr
+}
+
+/// GT-05 pure decision: unticked Done when boxes of a Fixes target that block
+/// merge. Epic targets return empty — IS-11 forbids Done when on epics and
+/// GT-06 already guards epic completion via open sub-issues.
+fn gt05_unticked_issue_boxes(labels: &[String], issue_body: &str) -> Vec<String> {
+    if is_epic(labels) {
+        return Vec::new();
+    }
+    let done = crate::rules::issues::done_when_section(issue_body);
+    let (ok, unticked) = check_all_checkboxes(&done);
+    if ok { Vec::new() } else { unticked }
+}
+
+/// Heuristic for the GT-01 hint: title mentions epic or the body carries an
+/// Implementation Order section → the issue looks like an epic created
+/// without the `epic` label.
+fn looks_like_epic(title: &str, body: &str) -> bool {
+    title.to_lowercase().contains("epic") || body.contains("## Implementation Order")
+}
+
 /// Query the GitHub sub_issues endpoint and return the numbers whose state is
 /// `open`. Returns `Err` on any API failure (so the caller can BLOCK rather
 /// than silently allow — failing closed on an unverifiable epic-close check
@@ -350,9 +386,15 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
         .filter(|f| f.severity == Severity::Fail)
         .collect();
     for f in &findings {
-        println!("{}\t{}", f.severity.as_str(), f.msg);
+        if f.severity <= Severity::Warn {
+            println!("{}\t{}", f.severity.as_str(), f.msg);
+        }
     }
     if !fails.is_empty() {
+        if mode == "sub" && looks_like_epic(&title, &body) {
+            println!("提示: 该 issue 看起来是 epic（标题含 epic 或正文有 Implementation Order）。");
+            println!("  epic 不需要 Done when，请带 --label epic 重新创建。");
+        }
         println!("闸门: 校验 FAIL，拒绝创建。修正后重试。");
         log(
             "ISSUE_CREATE",
@@ -513,11 +555,12 @@ pub fn intercept_issue_close(args: &[String]) -> i32 {
                 }
             }
 
-            // GT-04
-            let (all_ticked, unticked) = check_all_checkboxes(body);
-            if !all_ticked {
+            // GT-04: only Done when checkboxes gate close (Implementation Order
+            // progress boxes and other lists must not block).
+            let unticked = gt04_unticked_done_when(body);
+            if !unticked.is_empty() {
                 println!(
-                    "闸门: #{num} 有 checkbox 未全部勾选，未勾 {} 项：",
+                    "闸门: #{num} Done when 有 checkbox 未全部勾选，未勾 {} 项：",
                     unticked.len()
                 );
                 for item in unticked.iter().take(5) {
@@ -532,20 +575,25 @@ pub fn intercept_issue_close(args: &[String]) -> i32 {
                 return 1;
             }
 
-            // GT-04b
-            let (rc4, tl, _) = run_gh(&[
-                "api".to_string(),
-                format!("repos/{repo}/issues/{num}/timeline"),
-                "--jq".to_string(),
-                "[.[] | select(.event == \"cross-referenced\" and .source.issue.pull_request != null) | .source.issue.number]".to_string(),
-            ], None);
-            if rc4 == 0 {
-                let linked: serde_json::Value =
-                    serde_json::from_str(&tl).unwrap_or(serde_json::Value::Array(vec![]));
-                if linked.as_array().map(|a| a.is_empty()).unwrap_or(true) {
-                    println!("闸门: #{num} 无 PR 关联（无 PR Fixes/Closes 它）。");
-                    log("ISSUE_CLOSE", &format!("#{num}"), "REJECT", "no linked PR");
-                    return 1;
+            // GT-04b: epic exempt (completion signal is GT-06 all-subs-closed);
+            // non-epic without linked PR → WARN only (demoted from FAIL).
+            if !is_epic(&labels) {
+                let (rc4, tl, _) = run_gh(&[
+                    "api".to_string(),
+                    format!("repos/{repo}/issues/{num}/timeline"),
+                    "--jq".to_string(),
+                    "[.[] | select(.event == \"cross-referenced\" and .source.issue.pull_request != null) | .source.issue.number]".to_string(),
+                ], None);
+                if rc4 == 0 {
+                    let linked: serde_json::Value =
+                        serde_json::from_str(&tl).unwrap_or(serde_json::Value::Array(vec![]));
+                    let has_link = linked.as_array().map(|a| !a.is_empty()).unwrap_or(false);
+                    if gt04b_warn_no_link(&labels, has_link) {
+                        println!(
+                            "闸门 WARN: #{num} 无 PR 关联（无 PR Fixes/Closes 它）。不阻塞关闭，请确认是合法关闭（duplicate/废弃/won't do）。"
+                        );
+                        log("ISSUE_CLOSE", &format!("#{num}"), "WARN", "no linked PR");
+                    }
                 }
             }
         }
@@ -590,7 +638,9 @@ pub fn intercept_pr_create(args: &[String]) -> i32 {
         .filter(|f| f.severity == Severity::Fail)
         .collect();
     for f in &findings {
-        println!("{}\t{}", f.severity.as_str(), f.msg);
+        if f.severity <= Severity::Warn {
+            println!("{}\t{}", f.severity.as_str(), f.msg);
+        }
     }
     if !fails.is_empty() {
         println!("闸门: 校验 FAIL，拒绝创建。修正后重试。");
@@ -726,10 +776,13 @@ pub fn intercept_pr_merge(args: &[String]) -> i32 {
                         })
                         .unwrap_or_default();
 
-                    let (all_ticked, unticked) = check_all_checkboxes(issue_body.trim());
-                    if !all_ticked {
+                    // GT-05: epic Fixes targets are exempt from the checkbox
+                    // check — IS-11 forbids Done when on epics, and GT-06
+                    // below guards epic completion via open sub-issues.
+                    let unticked = gt05_unticked_issue_boxes(&labels, issue_body);
+                    if !unticked.is_empty() {
                         println!(
-                            "闸门: PR #{num} 关联 issue #{fn_} 有 checkbox 未全部勾选，未勾 {} 项：",
+                            "闸门: PR #{num} 关联 issue #{fn_} Done when 有 checkbox 未全部勾选，未勾 {} 项：",
                             unticked.len()
                         );
                         log(
@@ -1272,6 +1325,88 @@ Parent: #205
             gt06_open_sub_block(&labels, &open_subs).is_none(),
             "non-epic Fixes target must skip GT-06 sub check"
         );
+    }
+
+    // --- GT-04: only Done when checkboxes gate close ---
+
+    #[test]
+    fn gt04_ignores_impl_order_progress_boxes() {
+        // Epic-style body: Implementation Order progress boxes, no Done when.
+        let body = "## Implementation Order\n- [ ] sub 1\n- [x] sub 2\n";
+        assert!(
+            gt04_unticked_done_when(body).is_empty(),
+            "Implementation Order boxes must not block close"
+        );
+    }
+
+    #[test]
+    fn gt04_blocks_unticked_done_when() {
+        let body = "## Done when\n- [x] a\n- [ ] b\n";
+        let unticked = gt04_unticked_done_when(body);
+        assert_eq!(unticked, vec!["b".to_string()]);
+    }
+
+    #[test]
+    fn gt04_allows_all_ticked_done_when() {
+        let body = "## Done when\n- [x] a\n- [X] b\n";
+        assert!(gt04_unticked_done_when(body).is_empty());
+    }
+
+    // --- GT-04b: epic exempt, non-epic WARN only ---
+
+    #[test]
+    fn gt04b_epic_exempt_from_link_check() {
+        let labels: Vec<String> = vec!["epic".to_string()];
+        assert!(
+            !gt04b_warn_no_link(&labels, false),
+            "epic close must not require a linked PR"
+        );
+    }
+
+    #[test]
+    fn gt04b_non_epic_without_link_warns() {
+        let labels: Vec<String> = vec!["bug".to_string()];
+        assert!(gt04b_warn_no_link(&labels, false));
+    }
+
+    #[test]
+    fn gt04b_non_epic_with_link_silent() {
+        let labels: Vec<String> = vec!["bug".to_string()];
+        assert!(!gt04b_warn_no_link(&labels, true));
+    }
+
+    // --- GT-05: epic Fixes target exempt from checkbox check ---
+
+    #[test]
+    fn gt05_epic_target_skips_checkbox_check() {
+        let labels: Vec<String> = vec!["epic".to_string()];
+        let body = "## Implementation Order\n- [ ] not done\n";
+        assert!(
+            gt05_unticked_issue_boxes(&labels, body).is_empty(),
+            "epic Fixes target must not Done when; GT-06 guards completion"
+        );
+    }
+
+    #[test]
+    fn gt05_non_epic_target_blocks_unticked_done_when() {
+        let labels: Vec<String> = vec!["enhancement".to_string()];
+        let body = "## Done when\n- [ ] not done\n";
+        assert_eq!(
+            gt05_unticked_issue_boxes(&labels, body),
+            vec!["not done".to_string()]
+        );
+    }
+
+    // --- GT-01 hint heuristic ---
+
+    #[test]
+    fn looks_like_epic_by_title_or_impl_order() {
+        assert!(looks_like_epic("EPIC: 数据迁移", "plain body"));
+        assert!(looks_like_epic(
+            "数据迁移",
+            "## Implementation Order\n- [ ] x"
+        ));
+        assert!(!looks_like_epic("修复登录", "## Goal\n内容"));
     }
 
     #[test]

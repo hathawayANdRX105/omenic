@@ -76,6 +76,7 @@ const DEFAULT_KEYWORD_SUGGESTIONS: &[(&str, &str)] = &[
     ("新功能", "enhancement"),
     ("清理", "chore"),
     ("cleanup", "chore"),
+    ("epic", "epic"),
 ];
 
 // ---------------------------------------------------------------------------
@@ -232,6 +233,13 @@ fn section(body: &str, heading: &str) -> String {
         Some(n) => rest[..n.start()].to_string(),
         None => rest.to_string(),
     }
+}
+
+/// Body content of the `Done when` section. Used by the GT-04/GT-05 close
+/// gates: only checkboxes in this section gate closure, never the whole
+/// body (Implementation Order progress boxes must not block).
+pub fn done_when_section(body: &str) -> String {
+    section(body, DEFAULT_DONE_WHEN_HEADING)
 }
 
 /// Return all heading texts (leading `#`s stripped) in line order.
@@ -527,7 +535,7 @@ pub fn check_content(
     }
 
     // -----------------------------------------------------------------------
-    // IS-09 / IS-10 (sub mode)  |  IS-11 / IS-13 (parent mode)
+    // IS-09 / IS-10 (sub mode)  |  IS-11 (parent mode)
     // -----------------------------------------------------------------------
     if mode == "sub" {
         let cross: Vec<String> = cross_ref_re()
@@ -576,20 +584,6 @@ pub fn check_content(
                 "IS-11",
                 Severity::Info,
                 "parent has no Done when",
-            ));
-        }
-        // IS-13: Implementation Order optional (INFO either way)
-        if body.contains("## Implementation Order") {
-            findings.push(Finding::new(
-                "IS-13",
-                Severity::Info,
-                "Implementation Order present (optional)",
-            ));
-        } else {
-            findings.push(Finding::new(
-                "IS-13",
-                Severity::Info,
-                "no Implementation Order section (optional)",
             ));
         }
     }
@@ -1253,18 +1247,6 @@ tests pass.
                 .iter()
                 .any(|x| x.severity == Severity::Fail)
         );
-    }
-
-    // -----------------------------------------------------------------------
-    // IS-13: Implementation Order optional (parent mode INFO)
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn is13_parent_impl_order_info() {
-        let f = check_content("epic 跟踪", GOOD_PARENT_BODY, &["epic"], "parent", "open");
-        let r = find_rule(&f, "IS-13");
-        assert!(!r.is_empty());
-        assert!(r.iter().all(|x| x.severity == Severity::Info));
     }
 
     // -----------------------------------------------------------------------
