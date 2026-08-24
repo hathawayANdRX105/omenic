@@ -59,6 +59,7 @@ keyword_label_suggestions:
   "新功能": "enhancement"
   "清理": "chore"
   "cleanup": "chore"
+  "epic": "epic"
 
 # 标题禁用前缀 (默认: 父/issue:/sub: 等，关系用 label 表达)
 title_forbidden_prefixes:
