@@ -116,6 +116,12 @@ impl ContextLog {
         ContextLog { path: path.into() }
     }
 
+    /// Public append for callers that add messages outside the loop
+    /// (e.g. the user prompt before calling run_agent).
+    pub fn append_message(&self, message: &Message) -> Result<(), LogError> {
+        self.append(message)
+    }
+
     /// Append one message line. Lock held during write + fsync.
     fn append(&self, message: &Message) -> Result<(), LogError> {
         use fs2::FileExt;
@@ -245,19 +251,20 @@ fn record(context: &mut Context, log: Option<&ContextLog>, msg: Message) {
     context.messages.push(msg);
 }
 
-pub fn run_agent(
+/// Run the agent loop, forwarding every event to `emit` as it happens
+/// (live text deltas, tool calls/results). Returns when the turn ends.
+pub fn run_agent_streaming(
     backend: &dyn LlmBackend,
     model: &Model,
     context: &mut Context,
     tools: &[Box<dyn Tool>],
     signal: &AtomicBool,
     context_log: Option<&ContextLog>,
-) -> Vec<AgentEvent> {
+    emit: &mut dyn FnMut(AgentEvent),
+) {
     let tool_defs: Vec<ToolDef> = tools.iter().map(|t| def(t.as_ref())).collect();
     // ponytail: linear name lookup — four builtin tools; index if the registry grows.
     let find_tool = |name: &str| tools.iter().find(|t| t.name() == name);
-
-    let mut events = Vec::new();
 
     loop {
         // 0. Compact oversized contexts before the next call.
@@ -272,10 +279,10 @@ pub fn run_agent(
             match ev {
                 StreamEvent::TextDelta(delta) => {
                     text.push_str(&delta);
-                    events.push(AgentEvent::AssistantText { delta });
+                    emit(AgentEvent::AssistantText { delta });
                 }
                 StreamEvent::ToolCall(tc) => {
-                    events.push(AgentEvent::ToolCall(tc.clone()));
+                    emit(AgentEvent::ToolCall(tc.clone()));
                     tool_calls.push(tc);
                 }
                 StreamEvent::Done { stop_reason: r } => stop_reason = r,
@@ -283,11 +290,11 @@ pub fn run_agent(
                     // Invariant 3 analog: record assistant text without dangling calls.
                     let msg = Message::assistant(text, &[]);
                     record(context, context_log, msg);
-                    events.push(AgentEvent::TurnEnd {
+                    emit(AgentEvent::TurnEnd {
                         stop_reason: TurnStop::Error,
                     });
                     let _ = e;
-                    return events;
+                    return;
                 }
             }
         }
@@ -298,10 +305,10 @@ pub fn run_agent(
         if stop_reason == StopReason::Aborted {
             let msg = Message::assistant(text, &[]);
             record(context, context_log, msg);
-            events.push(AgentEvent::TurnEnd {
+            emit(AgentEvent::TurnEnd {
                 stop_reason: TurnStop::Aborted,
             });
-            return events;
+            return;
         }
 
         // 2. Backfill the assistant reply.
@@ -323,7 +330,7 @@ pub fn run_agent(
                 })
                 .collect();
             for ((id, content), tc) in results.iter().zip(&tool_calls) {
-                events.push(AgentEvent::ToolResult {
+                emit(AgentEvent::ToolResult {
                     id: id.clone(),
                     name: tc.name.clone(),
                     result: content.clone(),
@@ -337,10 +344,10 @@ pub fn run_agent(
         // 5. No tool calls → done. A tool_use stop without call deltas is malformed;
         // treat it as a clean end of turn like llm.ts does.
         if tool_calls.is_empty() {
-            events.push(AgentEvent::TurnEnd {
+            emit(AgentEvent::TurnEnd {
                 stop_reason: turn_stop(stop_reason),
             });
-            return events;
+            return;
         }
 
         // 6. Execute serially; unknown tools and panics-free errors become error strings.
@@ -360,7 +367,7 @@ pub fn run_agent(
                 Ok(s) => s,
                 Err(e) => format!("error: {e}"),
             };
-            events.push(AgentEvent::ToolResult {
+            emit(AgentEvent::ToolResult {
                 id: tc.id.clone(),
                 name: tc.name.clone(),
                 result: content.clone(),
@@ -370,7 +377,7 @@ pub fn run_agent(
 
         // 7. Invariant 1: every remaining tool_call still gets its tool_result.
         for tc in &tool_calls[results.len()..] {
-            events.push(AgentEvent::ToolResult {
+            emit(AgentEvent::ToolResult {
                 id: tc.id.clone(),
                 name: tc.name.clone(),
                 result: "error: aborted".into(),
@@ -381,6 +388,31 @@ pub fn run_agent(
         let msg = Message::tool_results(&results);
         record(context, context_log, msg);
     }
+}
+
+/// Run the agent loop and collect all events. Convenience wrapper over
+/// [`run_agent_streaming`] for callers without a live consumer.
+pub fn run_agent(
+    backend: &dyn LlmBackend,
+    model: &Model,
+    context: &mut Context,
+    tools: &[Box<dyn Tool>],
+    signal: &AtomicBool,
+    context_log: Option<&ContextLog>,
+) -> Vec<AgentEvent> {
+    let mut events = Vec::new();
+    run_agent_streaming(
+        backend,
+        model,
+        context,
+        tools,
+        signal,
+        context_log,
+        &mut |e| {
+            events.push(e);
+        },
+    );
+    events
 }
 
 #[cfg(test)]

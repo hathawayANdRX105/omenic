@@ -17,3 +17,5 @@ ureq = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+anyhow = { workspace = true }
+ctrlc = { workspace = true }
