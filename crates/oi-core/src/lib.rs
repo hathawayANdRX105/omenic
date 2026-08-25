@@ -15,6 +15,7 @@
 pub mod cli;
 pub mod config;
 pub mod graph;
+pub mod harness;
 pub mod rpc;
 pub mod runner;
 pub mod spec;
