@@ -5,7 +5,7 @@
 use std::io::{Read, Write};
 use std::sync::atomic::AtomicBool;
 
-use oi_core::harness::llm::{Context, Model, StopReason, StreamEvent, stream};
+use oi_core::runtime::llm::{Context, Model, StopReason, StreamEvent, stream};
 
 fn serve_once(body_chunks: Vec<String>) -> (u16, std::thread::JoinHandle<Vec<u8>>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -86,7 +86,7 @@ fn http_stream_end_to_end() {
         vec![
             StreamEvent::TextDelta("hel".into()),
             StreamEvent::TextDelta("lo".into()),
-            StreamEvent::ToolCall(oi_core::harness::llm::ToolCallSpec {
+            StreamEvent::ToolCall(oi_core::runtime::llm::ToolCallSpec {
                 id: "c1".into(),
                 name: "read_file".into(),
                 args: serde_json::json!({"path": "/x"}),

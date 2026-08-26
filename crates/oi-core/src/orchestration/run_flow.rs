@@ -24,9 +24,9 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::graph;
+use crate::agent_process::{Worker, WorkerEvent};
+use crate::task::graph;
 use crate::task::{Task, TaskStatus};
-use crate::worker::{Worker, WorkerEvent};
 
 /// Terminal outcome of one `run`.
 #[derive(Debug, PartialEq)]
@@ -437,7 +437,7 @@ fn append_event<W: Write>(log: &mut W, path: &std::path::Path, event: &WorkerEve
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph;
+    use crate::task::graph;
 
     fn mk_task(id: &str, deps: Vec<String>, status: TaskStatus) -> Task {
         Task {

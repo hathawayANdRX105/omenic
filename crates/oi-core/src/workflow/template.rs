@@ -26,7 +26,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::store::Store;
+use crate::task::store::Store;
 use crate::task::{Task, TaskKind, TaskStatus};
 
 /// Template kind: phase (topic → phase → steps) or step (single task).
