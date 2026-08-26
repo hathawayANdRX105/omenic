@@ -13,9 +13,9 @@ use std::io::{BufRead, Write};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use oi_core::harness::agent::{AgentEvent, ContextLog, HttpLlm, TurnStop, run_agent_streaming};
-use oi_core::harness::llm::Model;
-use oi_core::harness::tools::builtin_tools;
+use oi_core::runtime::agent::{AgentEvent, ContextLog, HttpLlm, TurnStop, run_agent_streaming};
+use oi_core::runtime::llm::Model;
+use oi_core::runtime::tools::builtin_tools;
 
 fn main() -> anyhow::Result<()> {
     let mut base_url = String::new();
@@ -36,7 +36,7 @@ fn main() -> anyhow::Result<()> {
 
     let backend = HttpLlm;
     let tools = builtin_tools();
-    let mut context = oi_core::harness::llm::Context {
+    let mut context = oi_core::runtime::llm::Context {
         system_prompt: Some(
             "你是运行在用户机器上的编码助手。可以用 read_file/write_file/edit/run_bash 工具读写文件、执行命令。回答用中文，简洁。".to_string(),
         ),
@@ -63,7 +63,7 @@ fn main() -> anyhow::Result<()> {
         if prompt.is_empty() {
             break;
         }
-        let msg = oi_core::harness::llm::Message::user_text(prompt);
+        let msg = oi_core::runtime::llm::Message::user_text(prompt);
         log.append_message(&msg).ok(); // best-effort evidence
         context.messages.push(msg);
 
