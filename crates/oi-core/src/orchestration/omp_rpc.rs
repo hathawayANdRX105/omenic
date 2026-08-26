@@ -18,8 +18,8 @@
 //!
 //! ## Lifecycle
 //! ```ignore
-//! let mut client = rpc::Client::new("/usr/bin/omp")?;
-//! let resp = client.send(&rpc::Request::new("ping").done())?;
+//! let mut client = omp_rpc::Client::new("/usr/bin/omp")?;
+//! let resp = client.send(&omp_rpc::Request::new("ping").done())?;
 //! ```
 
 use std::collections::HashMap;
@@ -670,7 +670,7 @@ mod tests {
     }
 
     /// Live smoke against a real omp binary. Run with:
-    /// `cargo test -- --ignored rpc::tests::live_handshake`.
+    /// `cargo test -- --ignored omp_rpc::tests::live_handshake`.
     /// Requires `omp` on PATH.
     #[test]
     #[ignore]
@@ -759,7 +759,7 @@ mod tests {
     }
 
     /// Live smoke: full negotiation sequence against real omp. Run with:
-    /// `cargo test -- --ignored rpc::tests::live_negotiation`.
+    /// `cargo test -- --ignored omp_rpc::tests::live_negotiation`.
     #[test]
     #[ignore]
     fn live_negotiation() {

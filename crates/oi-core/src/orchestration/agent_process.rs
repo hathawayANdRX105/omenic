@@ -1,7 +1,7 @@
 #![allow(dead_code)] // consumed by runner in M3
 //! Worker lifecycle: spawn / steer / abort / event stream.
 //!
-//! A Worker wraps an `rpc::Client` connected to `omp --mode rpc` and provides
+//! A Worker wraps an `omp_rpc::Client` connected to `omp --mode rpc` and provides
 //! a task-oriented interface for agent interaction: send a prompt, read events,
 //! steer the agent, and abort when done.
 //!
@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! spawn ──► ready handshake ──► negotiate v2 ──► idle
-//!           (rpc::Client::new)  (set_auto_retry/   │
+//!           (omp_rpc::Client::new)  (set_auto_retry/   │
 //!                                compaction off)   ├─► prompt(msg) ──┐
 //!                                                  │                 ▼
 //!                                                  │            event stream
@@ -41,7 +41,7 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::rpc;
+use crate::omp_rpc;
 
 /// Events emitted by the worker during agent execution.
 #[derive(Debug, Serialize)]
@@ -65,15 +65,15 @@ pub enum WorkerEvent {
 
 /// A worker session connected to an omp agent.
 pub struct Worker {
-    client: rpc::Client,
+    client: omp_rpc::Client,
 }
 
 impl Worker {
     /// Spawn a new worker process (`omp --mode rpc`).
     ///
     /// Blocks until the initial `ready` handshake completes.
-    pub fn new(omp_path: &str) -> Result<Self, rpc::RpcError> {
-        let client = rpc::Client::new(omp_path)?;
+    pub fn new(omp_path: &str) -> Result<Self, omp_rpc::RpcError> {
+        let client = omp_rpc::Client::new(omp_path)?;
         Ok(Worker { client })
     }
 
@@ -81,9 +81,9 @@ impl Worker {
     ///
     /// Returns the response data.  The agent will subsequently emit events
     /// that can be read via `read_event()`.
-    pub fn prompt(&mut self, message: &str) -> Result<Value, rpc::RpcError> {
+    pub fn prompt(&mut self, message: &str) -> Result<Value, omp_rpc::RpcError> {
         let id = self.client.next_id_str();
-        let req = rpc::Request::new("prompt")
+        let req = omp_rpc::Request::new("prompt")
             .with_id(&id)
             .with_field("message", message)
             .done();
@@ -91,9 +91,9 @@ impl Worker {
     }
 
     /// Steer the running agent with an instruction.
-    pub fn steer(&mut self, message: &str) -> Result<Value, rpc::RpcError> {
+    pub fn steer(&mut self, message: &str) -> Result<Value, omp_rpc::RpcError> {
         let id = self.client.next_id_str();
-        let req = rpc::Request::new("steer")
+        let req = omp_rpc::Request::new("steer")
             .with_id(&id)
             .with_field("message", message)
             .done();
@@ -101,9 +101,9 @@ impl Worker {
     }
 
     /// Abort the current agent session.
-    pub fn abort(&mut self) -> Result<Value, rpc::RpcError> {
+    pub fn abort(&mut self) -> Result<Value, omp_rpc::RpcError> {
         let id = self.client.next_id_str();
-        let req = rpc::Request::new("abort").with_id(&id).done();
+        let req = omp_rpc::Request::new("abort").with_id(&id).done();
         self.client.send(&req)
     }
 
@@ -118,7 +118,7 @@ impl Worker {
     /// idle (i.e. a `prompt` or `steer` response was received without
     /// subsequent agent events).  Callers should loop until `None` and then
     /// decide whether to prompt again or abort.
-    pub fn read_event(&mut self) -> Result<Option<WorkerEvent>, rpc::RpcError> {
+    pub fn read_event(&mut self) -> Result<Option<WorkerEvent>, omp_rpc::RpcError> {
         let raw = self.client.next_frame_raw()?;
         let ty = raw.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -284,7 +284,7 @@ mod tests {
     #[test]
     fn worker_abort_command_format() {
         // Simulate serialization of the abort command
-        let req = rpc::Request::new("abort").with_id("test-1").done();
+        let req = omp_rpc::Request::new("abort").with_id("test-1").done();
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["type"], "abort");
         assert_eq!(json["id"], "test-1");
@@ -451,7 +451,10 @@ mod tests {
         let omp = write_fake_omp(tmp.path(), "crash");
         let mut worker = Worker::new(&omp).expect("handshake + negotiation ok");
         let r = worker.prompt("boom");
-        assert!(matches!(r, Err(rpc::RpcError::ProcessExited(_))), "{r:?}");
+        assert!(
+            matches!(r, Err(omp_rpc::RpcError::ProcessExited(_))),
+            "{r:?}"
+        );
     }
 
     #[test]

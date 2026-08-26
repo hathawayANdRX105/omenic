@@ -47,7 +47,7 @@ pub struct Task {
     pub kind: TaskKind,
     pub status: TaskStatus,
     /// Failed run attempts so far (#47). Zero for tasks that never ran or
-    /// predate the field; gated against `runner::MAX_ATTEMPTS`.
+    /// predate the field; gated against `run_flow::MAX_ATTEMPTS`.
     #[serde(default)]
     pub attempts: u32,
     #[serde(default = "default_priority")]
@@ -224,3 +224,8 @@ mod tests {
         assert_eq!(t, back);
     }
 }
+
+/// Dependency graph: cycle guard, readiness, relations.
+pub mod graph;
+/// Task persistence (JSONL append-only, fcntl-locked).
+pub mod store;

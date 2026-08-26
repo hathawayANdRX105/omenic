@@ -98,7 +98,7 @@ impl std::error::Error for LogError {}
 /// Append-only JSONL log of context messages (one serialized Message per
 /// line), mirroring the task store's fcntl-lock append pattern.
 ///
-/// Deliberately NOT the runner.rs events.jsonl shape (#48): that evidence
+/// Deliberately NOT the run_flow.rs events.jsonl shape (#48): that evidence
 /// log bounds fields at 1KB and degrades silently. A context log must
 /// round-trip losslessly — a truncated message cannot be replayed into
 /// the API — so records are unbounded and every write fsyncs.
@@ -418,7 +418,7 @@ pub fn run_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harness::llm::{Content, Role};
+    use crate::runtime::llm::{Content, Role};
     use serde_json::json;
 
     fn model() -> Model {
@@ -458,7 +458,7 @@ mod tests {
             &self,
             _args: &serde_json::Value,
             signal: &AtomicBool,
-        ) -> Result<String, crate::harness::tools::ToolError> {
+        ) -> Result<String, crate::runtime::tools::ToolError> {
             if signal.load(Ordering::Relaxed) {
                 return Ok("aborted".into());
             }
@@ -635,7 +635,7 @@ mod tests {
                 &self,
                 _args: &serde_json::Value,
                 _signal: &AtomicBool,
-            ) -> Result<String, crate::harness::tools::ToolError> {
+            ) -> Result<String, crate::runtime::tools::ToolError> {
                 let _ = self.1.get();
                 self.0.store(true, Ordering::Relaxed);
                 Ok("echo!".into())
