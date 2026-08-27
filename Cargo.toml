@@ -1,5 +1,10 @@
 [workspace]
-members = ["bin/oi", "bin/gate", "crates/oi-core", "crates/gate-core", "crates/tui-chat"]
+members = [
+  "bin/cli", "bin/gate",
+  "crates/adaptor", "crates/orbit", "crates/tools", "crates/rpc",
+  "crates/task", "crates/spec",
+  "bin/tui",
+]
 resolver = "2"
 
 [workspace.dependencies]

@@ -1,0 +1,12 @@
+[package]
+name = "adaptor"
+version = "0.1.0"
+edition = "2024"
+description = "OpenAI-compatible LLM stream adaptor: SSE parsing, context/model types"
+license = "MIT"
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+ureq = { workspace = true }

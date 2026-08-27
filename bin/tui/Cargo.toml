@@ -1,0 +1,18 @@
+[package]
+name = "tui"
+version = "0.1.0"
+edition = "2024"
+description = "Terminal chat UI with streaming LLM responses"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "tui"
+path = "src/main.rs"
+
+[dependencies]
+adaptor = { path = "../../crates/adaptor" }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+pulldown-cmark = { workspace = true }
+serde_json = { workspace = true }
