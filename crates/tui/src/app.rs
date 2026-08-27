@@ -84,7 +84,7 @@ impl App {
         let abort = self.abort.clone();
 
         thread::spawn(move || {
-            let events = adaptor::stream(&model, &context, &[], &abort);
+            let events = adaptor::openai::stream(&model, &context, &[], &abort);
             for ev in events {
                 let _ = tx.send(ev);
             }

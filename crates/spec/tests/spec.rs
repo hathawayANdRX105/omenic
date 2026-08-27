@@ -1,3 +1,8 @@
+use spec::check::CheckFinding;
+use spec::check::check;
+use spec::init::*;
+use spec::parse::*;
+use spec::render::*;
 use spec::*;
 use tempfile::tempdir;
 

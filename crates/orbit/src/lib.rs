@@ -44,7 +44,7 @@ impl LlmBackend for HttpLlm {
         tools: &[ToolDef],
         signal: &AtomicBool,
     ) -> Vec<StreamEvent> {
-        adaptor::stream(model, context, tools, signal)
+        adaptor::openai::stream(model, context, tools, signal)
     }
 }
 
