@@ -1,7 +1,7 @@
 //! Task model, store, dependency graph, run flow.
 
 pub mod graph;
-pub mod run_flow;
+pub mod runner;
 pub mod store;
 pub mod template;
 
@@ -50,7 +50,7 @@ pub struct Task {
     pub kind: TaskKind,
     pub status: TaskStatus,
     /// Failed run attempts so far (#47). Zero for tasks that never ran or
-    /// predate the field; gated against `run_flow::MAX_ATTEMPTS`.
+    /// predate the field; gated against `runner::MAX_ATTEMPTS`.
     #[serde(default)]
     pub attempts: u32,
     #[serde(default = "default_priority")]
