@@ -75,23 +75,23 @@ fn request_body(model: &Model, context: &Context, tools: &[ToolDef]) -> Value {
 
 // ===== streaming call =====
 
-/// Call the chat-completions API with streaming and collect unified events.
+/// Call the chat-completions API with streaming, invoking `emit` for each event.
 ///
-/// Blocking (no async runtime in this crate); abort is polled between lines
-/// via `signal`. The final event is always `Done` or `Error`.
-///
-// ponytail: collects instead of yielding deltas live — adaptor has no UI yet;
-// switch to a callback/iterator when a TUI consumes it.
-pub fn stream(
+/// Blocking (no async runtime); abort is polled between lines via `signal`.
+/// The final event is always `Done` or `Error`. Returns immediately after
+/// the terminal event is emitted.
+pub fn stream_cb(
     model: &Model,
     context: &Context,
     tools: &[ToolDef],
     signal: &AtomicBool,
-) -> Vec<StreamEvent> {
+    emit: &mut dyn FnMut(&StreamEvent),
+) {
     if signal.load(Ordering::Relaxed) {
-        return vec![StreamEvent::Done {
+        emit(&StreamEvent::Done {
             stop_reason: StopReason::Aborted,
-        }];
+        });
+        return;
     }
 
     let base = model
@@ -109,21 +109,23 @@ pub fn stream(
             let text = resp
                 .into_string()
                 .unwrap_or_else(|_| "unknown error".into());
-            return vec![StreamEvent::Error(format!("API {status}: {text}"))];
+            emit(&StreamEvent::Error(format!("API {status}: {text}")));
+            return;
         }
         Err(e) => {
             if signal.load(Ordering::Relaxed) {
-                return vec![StreamEvent::Done {
+                emit(&StreamEvent::Done {
                     stop_reason: StopReason::Aborted,
-                }];
+                });
+            } else {
+                emit(&StreamEvent::Error(e.to_string()));
             }
-            return vec![StreamEvent::Error(e.to_string())];
+            return;
         }
     };
 
     let reader = BufReader::new(response.into_reader());
     let mut parser = SseParser::new();
-    let mut events = Vec::new();
     let mut stop_reason = StopReason::EndTurn;
 
     for line in reader.lines() {
@@ -132,7 +134,8 @@ pub fn stream(
             break;
         }
         let Ok(line) = line else {
-            return vec![StreamEvent::Error("stream read failed".into())];
+            emit(&StreamEvent::Error("stream read failed".into()));
+            return;
         };
         let line = line.trim();
         if !line.starts_with("data: ") {
@@ -144,7 +147,7 @@ pub fn stream(
         }
         let out = parser.handle_data(data);
         if let Some(delta) = out.text_delta {
-            events.push(StreamEvent::TextDelta(delta));
+            emit(&StreamEvent::TextDelta(delta));
         }
         if let Some(reason) = out.stop_reason {
             stop_reason = reason;
@@ -152,8 +155,22 @@ pub fn stream(
     }
 
     for tc in parser.flush() {
-        events.push(StreamEvent::ToolCall(tc));
+        emit(&StreamEvent::ToolCall(tc));
     }
-    events.push(StreamEvent::Done { stop_reason });
+    emit(&StreamEvent::Done { stop_reason });
+}
+
+/// Collecting wrapper: calls `stream_cb` and gathers all events into a Vec.
+/// Use `stream_cb` directly when you need live per-event processing.
+pub fn stream(
+    model: &Model,
+    context: &Context,
+    tools: &[ToolDef],
+    signal: &AtomicBool,
+) -> Vec<StreamEvent> {
+    let mut events = Vec::new();
+    stream_cb(model, context, tools, signal, &mut |ev| {
+        events.push(ev.clone());
+    });
     events
 }
