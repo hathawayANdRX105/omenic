@@ -22,7 +22,7 @@ use tempfile::TempDir;
 /// Run the `omenic` test binary (built into target/debug) inside an isolated
 /// data directory. Returns (stdout, stderr, exit_success).
 fn omenic(data_dir: &Path, args: &[&str]) -> (String, String, bool) {
-    let exe = env!("CARGO_BIN_EXE_oi");
+    let exe = env!("CARGO_BIN_EXE_cli");
     let mut cmd = Command::new(exe);
     cmd.args(args)
         .env("OMENIC_DATA_DIR", data_dir)

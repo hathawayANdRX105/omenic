@@ -244,6 +244,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
+name = "cli"
+version = "0.1.0"
+dependencies = [
+ "adaptor",
+ "clap",
+ "orbit",
+ "rpc",
+ "serde",
+ "serde_json",
+ "spec",
+ "task",
+ "tempfile",
+ "toml",
+ "tools",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1057,23 +1074,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c7398b9c8b70908f6371f47ed36737907c87c52af34c268fed0bf0ceb92ead9"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "oi"
-version = "0.1.0"
-dependencies = [
- "adaptor",
- "clap",
- "orbit",
- "rpc",
- "serde",
- "serde_json",
- "spec",
- "task",
- "tempfile",
- "toml",
- "tools",
 ]
 
 [[package]]
