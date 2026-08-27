@@ -26,8 +26,8 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use task::store::Store;
-use task::{Task, TaskKind, TaskStatus};
+use crate::store::Store;
+use crate::{Task, TaskKind, TaskStatus};
 
 /// Template kind: phase (topic → phase → steps) or step (single task).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -724,7 +724,7 @@ pub fn apply(
     let exists = all.iter().any(|t| t.id == topic);
     let mut created = Vec::new();
     if !exists {
-        let now = task::now_iso();
+        let now = crate::now_iso();
         let topic_task = Task {
             id: topic.to_string(),
             title: topic.to_string(),
@@ -767,7 +767,7 @@ pub fn apply(
             Some(p) => format!("{p}-{}", t.key),
             None => format!("{topic}-{}", t.key),
         };
-        let now = task::now_iso();
+        let now = crate::now_iso();
         let task = Task {
             id: id.clone(),
             title: t.title.clone(),
@@ -794,7 +794,7 @@ pub fn apply(
     if let Some(pid) = &phase_id
         && !all.iter().any(|t| t.id == *pid)
     {
-        let now = task::now_iso();
+        let now = crate::now_iso();
         let phase_task = Task {
             id: pid.clone(),
             title: format!("{name}: {topic}"),

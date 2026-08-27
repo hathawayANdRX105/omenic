@@ -15,7 +15,7 @@ orbit = { path = "../../crates/orbit" }
 tools = { path = "../../crates/tools" }
 rpc = { path = "../../crates/rpc" }
 task = { path = "../../crates/task" }
-workflow = { path = "../../crates/workflow" }
+spec = { path = "../../crates/spec" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 clap = { workspace = true }

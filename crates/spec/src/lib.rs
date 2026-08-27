@@ -1,5 +1,7 @@
-//! Spec tables (规范表): markdown skeletons for GitHub artifacts.
+//! Spec tables: markdown skeletons for GitHub artifacts.
 //!
+//! Four kinds: issue, epic, pr, review.
+
 //! Four kinds, stored as editable markdown template files under
 //! `<data_dir>/specs/` (`.oi/specs/` in the default `.oi` layout):
 //!

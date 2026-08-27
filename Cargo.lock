@@ -1069,11 +1069,11 @@ dependencies = [
  "rpc",
  "serde",
  "serde_json",
+ "spec",
  "task",
  "tempfile",
  "toml",
  "tools",
- "workflow",
 ]
 
 [[package]]
@@ -1738,6 +1738,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
+name = "spec"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1834,8 +1844,8 @@ dependencies = [
  "rpc",
  "serde",
  "serde_json",
+ "serde_yaml",
  "tempfile",
- "toml",
 ]
 
 [[package]]
@@ -2461,17 +2471,6 @@ name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
-
-[[package]]
-name = "workflow"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "serde_yaml",
- "task",
- "tempfile",
-]
 
 [[package]]
 name = "writeable"

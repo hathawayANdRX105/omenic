@@ -1,8 +1,8 @@
 [package]
-name = "workflow"
+name = "spec"
 version = "0.1.0"
 edition = "2024"
-description = "Spec tables and task templates"
+description = "Spec tables: markdown skeletons for GitHub artifacts"
 license = "MIT"
 publish = false
 
@@ -10,7 +10,6 @@ publish = false
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-task = { path = "../task" }
 
 [dev-dependencies]
 tempfile = { workspace = true }
