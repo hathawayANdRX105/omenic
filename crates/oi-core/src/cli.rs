@@ -9,7 +9,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use crate::config::Config;
-use crate::run_flow;
+use crate::orchestration::run_flow;
 use crate::task::store::Store;
 use crate::task::{Task, TaskKind, TaskStatus};
 
@@ -841,7 +841,7 @@ fn print_task_detail(task: &Task, all: &[Task]) {
         println!(
             "attempts:    {} / {}",
             task.attempts,
-            run_flow::MAX_ATTEMPTS
+            crate::orchestration::run_flow::MAX_ATTEMPTS
         );
     }
     match &task.parent {
@@ -926,7 +926,7 @@ fn plan_cmd(dot: bool, json: bool) -> Result<u8, String> {
 /// Resume/retry semantics (#47): an InProgress task with a live runner is
 /// refused (abort it first); an InProgress task without one is an orphan
 /// and gets resumed; a Failed task is retried until the attempt budget
-/// (`run_flow::MAX_ATTEMPTS`) is exhausted.
+/// (`crate::orchestration::run_flow::MAX_ATTEMPTS`) is exhausted.
 fn run_cmd(id: &str) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
     let store = Store::new(&config.data_dir);
@@ -941,7 +941,7 @@ fn run_cmd(id: &str) -> Result<u8, String> {
     // #47: live-runner guard — never double-spawn a worker for one task.
     let task_dir = config.data_dir.join("tasks").join(id);
     if task.status == TaskStatus::InProgress {
-        if run_flow::runner_alive(&task_dir) {
+        if crate::orchestration::run_flow::runner_alive(&task_dir) {
             eprintln!(
                 "task already running: {id} (live runner, see {}); use `oi abort {id}` first",
                 task_dir.display()
@@ -953,7 +953,7 @@ fn run_cmd(id: &str) -> Result<u8, String> {
         eprintln!(
             "retrying failed task: {id} (attempt {}/{})",
             task.attempts + 1,
-            run_flow::MAX_ATTEMPTS
+            crate::orchestration::run_flow::MAX_ATTEMPTS
         );
     }
 
@@ -981,8 +981,8 @@ fn run_cmd(id: &str) -> Result<u8, String> {
         .map_err(|e| format!("store error: {e}"))?;
 
     // Runner takes over from here; its outcome decides the store flip.
-    let outcome = match run_flow::run(
-        &run_flow::Ctx {
+    let outcome = match crate::orchestration::run_flow::run(
+        &crate::orchestration::run_flow::Ctx {
             omp_path: config.omp_path.clone(),
             data_dir: config.data_dir.clone(),
             tasks: store
@@ -1015,8 +1015,8 @@ fn run_cmd(id: &str) -> Result<u8, String> {
     } else {
         let result_payload = serde_json::json!({
             "status": match outcome.status {
-                run_flow::RunStatus::Done => "done",
-                run_flow::RunStatus::Failed => "failed",
+                crate::orchestration::run_flow::RunStatus::Done => "done",
+                crate::orchestration::run_flow::RunStatus::Failed => "failed",
             },
             "summary": outcome.summary,
             "events_seen": outcome.events_seen,
@@ -1031,12 +1031,12 @@ fn run_cmd(id: &str) -> Result<u8, String> {
         }
     }
 
-    if outcome.status == run_flow::RunStatus::Done {
+    if outcome.status == crate::orchestration::run_flow::RunStatus::Done {
         println!("done {id}");
         Ok(0)
     } else {
         eprintln!("run failed: {}", outcome.summary);
-        if updated.attempts >= run_flow::MAX_ATTEMPTS {
+        if updated.attempts >= crate::orchestration::run_flow::MAX_ATTEMPTS {
             eprintln!(
                 "retry limit reached ({} failed attempts); reset with `oi task update {id} --attempts 0`",
                 updated.attempts
@@ -1045,7 +1045,7 @@ fn run_cmd(id: &str) -> Result<u8, String> {
             eprintln!(
                 "failed attempts: {}/{}; retry with `oi run {id}`",
                 updated.attempts,
-                run_flow::MAX_ATTEMPTS
+                crate::orchestration::run_flow::MAX_ATTEMPTS
             );
         }
         Ok(1)
@@ -1059,13 +1059,13 @@ fn persist_run_outcome(
     store: &Store,
     data_dir: &std::path::Path,
     pre: &Task,
-    outcome: &run_flow::RunOutcome,
+    outcome: &crate::orchestration::run_flow::RunOutcome,
 ) -> Result<Task, String> {
     let attempt = pre.attempts + 1;
     let mut updated = pre.clone();
     updated.status = match outcome.status {
-        run_flow::RunStatus::Done => TaskStatus::Done,
-        run_flow::RunStatus::Failed => {
+        crate::orchestration::run_flow::RunStatus::Done => TaskStatus::Done,
+        crate::orchestration::run_flow::RunStatus::Failed => {
             updated.attempts = attempt;
             TaskStatus::Failed
         }
@@ -1085,7 +1085,7 @@ fn record_attempt(
     data_dir: &std::path::Path,
     task_id: &str,
     attempt: u32,
-    outcome: &run_flow::RunOutcome,
+    outcome: &crate::orchestration::run_flow::RunOutcome,
 ) {
     let task_dir = data_dir.join("tasks").join(task_id);
     if let Err(e) = std::fs::create_dir_all(&task_dir) {
@@ -1096,8 +1096,8 @@ fn record_attempt(
         "ts": crate::task::now_iso(),
         "attempt": attempt,
         "outcome": match outcome.status {
-            run_flow::RunStatus::Done => "done",
-            run_flow::RunStatus::Failed => "failed",
+            crate::orchestration::run_flow::RunStatus::Done => "done",
+            crate::orchestration::run_flow::RunStatus::Failed => "failed",
         },
         "reason": outcome.summary,
         "events_seen": outcome.events_seen,
@@ -3677,8 +3677,8 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
         };
         store.append(&pre).unwrap();
 
-        let outcome = run_flow::RunOutcome {
-            status: run_flow::RunStatus::Failed,
+        let outcome = crate::orchestration::run_flow::RunOutcome {
+            status: crate::orchestration::run_flow::RunStatus::Failed,
             summary: "read_event error: 中文 \"boom\" 💥".into(),
             events_seen: 7,
         };
@@ -3713,8 +3713,8 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
         let pre = mk_task_titled("t2", "t2");
         store.append(&pre).unwrap();
 
-        let outcome = run_flow::RunOutcome {
-            status: run_flow::RunStatus::Done,
+        let outcome = crate::orchestration::run_flow::RunOutcome {
+            status: crate::orchestration::run_flow::RunStatus::Done,
             summary: "all good".into(),
             events_seen: 3,
         };
