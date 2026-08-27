@@ -598,15 +598,8 @@ dependencies = [
 name = "gate"
 version = "0.1.0"
 dependencies = [
- "clap",
- "gate-core",
-]
-
-[[package]]
-name = "gate-core"
-version = "0.1.0"
-dependencies = [
  "anyhow",
+ "clap",
  "regex",
  "serde",
  "serde_json",
