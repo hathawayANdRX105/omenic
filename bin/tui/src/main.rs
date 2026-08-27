@@ -80,10 +80,9 @@ fn test_mode(model: adaptor::Model) -> io::Result<()> {
     let ctx_clone = ctx.clone();
 
     thread::spawn(move || {
-        let events = adaptor::openai::stream(&model_clone, &ctx_clone, &[], &abort);
-        for ev in events {
-            let _ = tx.send(ev);
-        }
+        adaptor::openai::stream_cb(&model_clone, &ctx_clone, &[], &abort, &mut |ev| {
+            let _ = tx.send(ev.clone());
+        });
     });
 
     println!("=== test_mode: sending message ===");

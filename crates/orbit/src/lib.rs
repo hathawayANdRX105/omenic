@@ -24,19 +24,17 @@ const KEEP_RECENT: usize = 20;
 /// LLM backend abstraction: the only seam between loop and network,
 /// so invariants are testable offline with scripted streams.
 pub trait LlmBackend {
-    fn stream(
+    /// Live streaming: invoke `emit` for each event as it arrives.
+    fn stream_cb(
         &self,
         model: &Model,
         context: &Context,
         tools: &[ToolDef],
         signal: &AtomicBool,
-    ) -> Vec<StreamEvent>;
-}
+        emit: &mut dyn FnMut(&StreamEvent),
+    );
 
-/// Production backend: real OpenAI-compatible HTTP streaming.
-pub struct HttpLlm;
-
-impl LlmBackend for HttpLlm {
+    /// Collecting wrapper: default impl gathers all events into a Vec.
     fn stream(
         &self,
         model: &Model,
@@ -44,7 +42,27 @@ impl LlmBackend for HttpLlm {
         tools: &[ToolDef],
         signal: &AtomicBool,
     ) -> Vec<StreamEvent> {
-        adaptor::openai::stream(model, context, tools, signal)
+        let mut events = Vec::new();
+        self.stream_cb(model, context, tools, signal, &mut |ev| {
+            events.push(ev.clone());
+        });
+        events
+    }
+}
+
+/// Production backend: real OpenAI-compatible HTTP streaming.
+pub struct HttpLlm;
+
+impl LlmBackend for HttpLlm {
+    fn stream_cb(
+        &self,
+        model: &Model,
+        context: &Context,
+        tools: &[ToolDef],
+        signal: &AtomicBool,
+        emit: &mut dyn FnMut(&StreamEvent),
+    ) {
+        adaptor::openai::stream_cb(model, context, tools, signal, emit)
     }
 }
 
@@ -469,13 +487,14 @@ mod tests {
     /// Trait takes `&self`; tests mutate through RefCell.
     struct Shared(std::cell::RefCell<Scripted>);
     impl LlmBackend for Shared {
-        fn stream(
+        fn stream_cb(
             &self,
             _model: &Model,
             context: &Context,
             _tools: &[ToolDef],
             _signal: &AtomicBool,
-        ) -> Vec<StreamEvent> {
+            emit: &mut dyn FnMut(&StreamEvent),
+        ) {
             let s = &mut *self.0.borrow_mut();
             s.seen_contexts.push(context.clone());
             let t = match s.turns.get(s.calls_made) {
@@ -486,7 +505,9 @@ mod tests {
                 }],
             };
             s.calls_made += 1;
-            t
+            for ev in &t {
+                emit(ev);
+            }
         }
     }
 
