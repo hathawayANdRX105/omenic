@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use fs2::FileExt;
 
-use crate::model::Task;
+use crate::Task;
 
 /// Errors from store operations.
 #[derive(Debug)]
@@ -229,7 +229,7 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{TaskKind, TaskStatus};
+    use crate::{TaskKind, TaskStatus};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
