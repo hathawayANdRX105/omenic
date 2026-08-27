@@ -17,7 +17,7 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-pub fn main() -> io::Result<()> {
+fn main() -> io::Result<()> {
     let api_key = std::env::var("AGNES_API_KEY").unwrap_or_else(|_| {
         eprintln!("AGNES_API_KEY not set");
         std::process::exit(1);
@@ -63,7 +63,7 @@ pub fn main() -> io::Result<()> {
 }
 
 /// Non-interactive test: send one message, print streaming response, exit.
-pub fn test_mode(model: adaptor::Model) -> io::Result<()> {
+fn test_mode(model: adaptor::Model) -> io::Result<()> {
     use std::sync::atomic::AtomicBool;
     use std::sync::mpsc;
     use std::thread;
@@ -114,7 +114,7 @@ pub fn test_mode(model: adaptor::Model) -> io::Result<()> {
     }
 }
 
-pub fn run(
+fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut app::App,
 ) -> io::Result<()> {
