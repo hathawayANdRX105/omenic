@@ -80,7 +80,7 @@ fn request_body(model: &Model, context: &Context, tools: &[ToolDef]) -> Value {
 /// Blocking (no async runtime in this crate); abort is polled between lines
 /// via `signal`. The final event is always `Done` or `Error`.
 ///
-// ponytail: collects instead of yielding deltas live — oi-core has no UI yet;
+// ponytail: collects instead of yielding deltas live — adaptor has no UI yet;
 // switch to a callback/iterator when a TUI consumes it.
 pub fn stream(
     model: &Model,

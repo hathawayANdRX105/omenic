@@ -9,7 +9,6 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use crate::config::Config;
-use task::runner;
 use task::store::Store;
 use task::{Task, TaskKind, TaskStatus};
 

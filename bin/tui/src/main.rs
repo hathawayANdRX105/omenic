@@ -1,6 +1,6 @@
 //! tui-chat: terminal chat with streaming LLM responses.
 //!
-//! Uses oi-core's LLM stream for OpenAI-compatible APIs.
+//! Uses adaptor's LLM stream for OpenAI-compatible APIs.
 //! ratatui for rendering, crossterm for terminal IO.
 
 mod app;
