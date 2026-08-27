@@ -620,7 +620,7 @@ mod tests {
     fn invariant_1_abort_mid_execution_still_backfills_every_result() {
         /// First execute succeeds and flips the shared signal, so the loop
         /// breaks before reaching t2 — t2 must still get a result.
-        struct FlipOnSecond<'a>(&'a AtomicBool, std::cell::Cell<bool>);
+        struct FlipOnSecond<'a>(&'a AtomicBool, AtomicBool);
         impl Tool for FlipOnSecond<'_> {
             fn name(&self) -> &'static str {
                 "echo_tool"
@@ -636,7 +636,7 @@ mod tests {
                 _args: &serde_json::Value,
                 _signal: &AtomicBool,
             ) -> Result<String, tools::ToolError> {
-                let _ = self.1.get();
+                let _ = self.1.load(Ordering::Relaxed);
                 self.0.store(true, Ordering::Relaxed);
                 Ok("echo!".into())
             }
@@ -652,7 +652,7 @@ mod tests {
         // Leak so the tool satisfies Box<dyn Tool>'s 'static bound.
         let signal: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
         let tools: Vec<Box<dyn Tool>> =
-            vec![Box::new(FlipOnSecond(signal, std::cell::Cell::new(false)))];
+            vec![Box::new(FlipOnSecond(signal, AtomicBool::new(false)))];
         let mut ctx = Context::default();
         let events = run_agent(&backend, &model(), &mut ctx, &tools, &signal, None);
 
