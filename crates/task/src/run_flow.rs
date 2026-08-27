@@ -26,7 +26,7 @@ use std::path::PathBuf;
 
 use crate::graph;
 use crate::{Task, TaskStatus};
-use rpc::agent_process::{Worker, WorkerEvent};
+use rpc::worker::{Worker, WorkerEvent};
 
 /// Terminal outcome of one `run`.
 #[derive(Debug, PartialEq)]

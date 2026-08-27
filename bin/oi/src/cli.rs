@@ -8,7 +8,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-use task::config::Config;
+use crate::config::Config;
 use task::run_flow;
 use task::store::Store;
 use task::{Task, TaskKind, TaskStatus};
@@ -1264,10 +1264,9 @@ fn init_cmd_at(dir: &std::path::Path, json: bool) -> Result<u8, String> {
             .map_err(|e| format!("could not create .oi/config.toml: {e}"))?;
     }
     // Spec templates (never overwrite user edits).
-    workflow::spec::write_default_specs(&oi_dir).map_err(|e| format!("spec templates: {e}"))?;
+    spec::write_default_specs(&oi_dir).map_err(|e| format!("spec templates: {e}"))?;
     // Task templates (never overwrite user edits).
-    workflow::template::write_default_templates(&oi_dir)
-        .map_err(|e| format!("task templates: {e}"))?;
+    task::template::write_default_templates(&oi_dir).map_err(|e| format!("task templates: {e}"))?;
     let msg = match (dir_existed, config_existed) {
         (true, true) => "workspace already initialized",
         (false, false) => "initialized: .oi/, .oi/config.toml, .oi/specs/",
@@ -1665,7 +1664,7 @@ fn board_cmd(json: bool) -> Result<u8, String> {
 /// `<data>/templates/{phases,steps}/`.
 fn template_list_cmd(json: bool) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let templates = workflow::template::load_all_templates(&config.data_dir)
+    let templates = task::template::load_all_templates(&config.data_dir)
         .map_err(|e| format!("template error: {e}"))?;
     if templates.is_empty() {
         eprintln!(
@@ -1681,8 +1680,8 @@ fn template_list_cmd(json: bool) -> Result<u8, String> {
                 serde_json::json!({
                     "name": t.name,
                     "kind": match t.kind {
-                        workflow::template::TemplateKind::Phase => "phase",
-                        workflow::template::TemplateKind::Step => "step",
+                        task::template::TemplateKind::Phase => "phase",
+                        task::template::TemplateKind::Step => "step",
                     },
                     "tasks": t.tasks.iter().map(|x| x.key.clone()).collect::<Vec<_>>(),
                 })
@@ -1692,8 +1691,8 @@ fn template_list_cmd(json: bool) -> Result<u8, String> {
     } else {
         for t in &templates {
             let kind = match t.kind {
-                workflow::template::TemplateKind::Phase => "phase",
-                workflow::template::TemplateKind::Step => "step",
+                task::template::TemplateKind::Phase => "phase",
+                task::template::TemplateKind::Step => "step",
             };
             println!(
                 "{kind}: {} — {}",
@@ -1717,7 +1716,7 @@ fn template_apply_cmd(
     json: bool,
 ) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let ids = workflow::template::apply(store, &config.data_dir, name, topic, parent)
+    let ids = task::template::apply(store, &config.data_dir, name, topic, parent)
         .map_err(|e| format!("template error: {e} — try `oi template list` or `oi init`"))?;
     if json {
         let obj = serde_json::json!({ "created": ids });
@@ -1733,8 +1732,7 @@ fn template_apply_cmd(
 /// `spec list` subcommand: list spec tables loaded from `<data>/specs/`.
 fn spec_list_cmd(json: bool) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let specs =
-        workflow::spec::load_all_specs(&config.data_dir).map_err(|e| format!("spec error: {e}"))?;
+    let specs = spec::load_all_specs(&config.data_dir).map_err(|e| format!("spec error: {e}"))?;
     if specs.is_empty() {
         eprintln!(
             "no spec templates in {} (run `oi init` first)",
@@ -1781,9 +1779,9 @@ fn spec_new_cmd(
     json: bool,
 ) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let spec = workflow::spec::load_spec(&config.data_dir, kind)
+    let spec = spec::load_spec(&config.data_dir, kind)
         .map_err(|e| format!("spec error: {e} — try `oi spec list` or `oi init`"))?;
-    let doc = workflow::spec::render_skeleton(&spec, title.as_deref().unwrap_or(""));
+    let doc = spec::render_skeleton(&spec, title.as_deref().unwrap_or(""));
     match output {
         Some(path) => {
             std::fs::write(&path, &doc).map_err(|e| format!("write {}: {e}", path))?;
@@ -1806,9 +1804,9 @@ fn spec_new_cmd(
 /// `spec check` subcommand: validate a filled document against the kind's rules.
 fn spec_check_cmd(kind: &str, file: &str, json: bool) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let spec = workflow::spec::load_spec(&config.data_dir, kind)
+    let spec = spec::load_spec(&config.data_dir, kind)
         .map_err(|e| format!("spec error: {e} — try `oi spec list` or `oi init`"))?;
-    let findings = workflow::spec::check_file(&spec, std::path::Path::new(file))?;
+    let findings = spec::check_file(&spec, std::path::Path::new(file))?;
     let fails: Vec<_> = findings.iter().filter(|f| f.fail).collect();
     if json {
         let obj = serde_json::json!({
