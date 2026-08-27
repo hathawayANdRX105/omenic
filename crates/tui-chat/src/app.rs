@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
 
+use adaptor::{Context, Message, Model, StreamEvent};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use oi_core::runtime::llm::{Context, Message, Model, StreamEvent};
 
 /// One chat message displayed in the UI.
 #[derive(Clone)]
@@ -84,7 +84,7 @@ impl App {
         let abort = self.abort.clone();
 
         thread::spawn(move || {
-            let events = oi_core::runtime::llm::stream(&model, &context, &[], &abort);
+            let events = adaptor::stream(&model, &context, &[], &abort);
             for ev in events {
                 let _ = tx.send(ev);
             }

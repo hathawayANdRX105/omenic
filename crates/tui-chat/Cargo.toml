@@ -7,7 +7,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
-oi-core = { path = "../oi-core" }
+adaptor = { path = "../adaptor" }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 pulldown-cmark = { workspace = true }

@@ -10,8 +10,16 @@ name = "oi"
 path = "src/main.rs"
 
 [dependencies]
-oi-core = { path = "../../crates/oi-core" }
-
+adaptor = { path = "../../crates/adaptor" }
+cycle = { path = "../../crates/cycle" }
+tools = { path = "../../crates/tools" }
+rpc = { path = "../../crates/rpc" }
+task = { path = "../../crates/task" }
+workflow = { path = "../../crates/workflow" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+toml = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 serde_json = { workspace = true }

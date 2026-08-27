@@ -41,7 +41,7 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::orchestration::omp_rpc;
+use crate::omp_rpc;
 
 /// Events emitted by the worker during agent execution.
 #[derive(Debug, Serialize)]

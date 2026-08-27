@@ -5,7 +5,7 @@
 //!
 //! M1.5/M1.6: would_dep_cycle, ready.
 
-use crate::task::{Task, TaskStatus};
+use crate::model::{Task, TaskStatus};
 use std::collections::{HashMap, HashSet};
 
 /// Returns true if adding a dependency edge `task` → `depends_on` would create a cycle.
@@ -105,7 +105,7 @@ pub fn dependents(tasks: &[Task], dep_id: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::{Task, TaskKind, TaskStatus};
+    use crate::model::{Task, TaskKind, TaskStatus};
     use std::collections::HashMap;
 
     fn mk_tasks(pairs: &[(&str, &[&str])]) -> HashMap<String, Vec<String>> {

@@ -1,0 +1,16 @@
+[package]
+name = "workflow"
+version = "0.1.0"
+edition = "2024"
+description = "Spec tables and task templates"
+license = "MIT"
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+task = { path = "../task" }
+
+[dev-dependencies]
+tempfile = { workspace = true }

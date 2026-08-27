@@ -62,7 +62,7 @@ pub struct Task {
 
 /// ISO-8601-ish UTC timestamp (seconds precision). Shared by CLI and
 /// template layers so task timestamps use one implementation.
-pub(crate) fn now_iso() -> String {
+pub fn now_iso() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -224,8 +224,3 @@ mod tests {
         assert_eq!(t, back);
     }
 }
-
-/// Dependency graph: cycle guard, readiness, relations.
-pub mod graph;
-/// Task persistence (JSONL append-only, fcntl-locked).
-pub mod store;

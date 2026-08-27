@@ -23,7 +23,7 @@ fn main() -> io::Result<()> {
         std::process::exit(1);
     });
 
-    let model = oi_core::runtime::llm::Model {
+    let model = adaptor::Model {
         api_key,
         model: std::env::var("CHAT_MODEL").unwrap_or_else(|_| "agnes-2.5-flash".into()),
         base_url: std::env::var("AGNES_BASE_URL")
@@ -63,26 +63,24 @@ fn main() -> io::Result<()> {
 }
 
 /// Non-interactive test: send one message, print streaming response, exit.
-fn test_mode(model: oi_core::runtime::llm::Model) -> io::Result<()> {
+fn test_mode(model: adaptor::Model) -> io::Result<()> {
     use std::sync::atomic::AtomicBool;
     use std::sync::mpsc;
     use std::thread;
     use std::time::Duration;
 
-    let ctx = oi_core::runtime::llm::Context {
+    let ctx = adaptor::Context {
         system_prompt: Some("你是对话助手。简短中文回复，代码用 markdown 代码块。".into()),
-        messages: vec![oi_core::runtime::llm::Message::user_text(
-            "写一行 Rust hello world",
-        )],
+        messages: vec![adaptor::Message::user_text("写一行 Rust hello world")],
     };
 
     let abort = AtomicBool::new(false);
-    let (tx, rx) = mpsc::channel::<oi_core::runtime::llm::StreamEvent>();
+    let (tx, rx) = mpsc::channel::<adaptor::StreamEvent>();
     let model_clone = model.clone();
     let ctx_clone = ctx.clone();
 
     thread::spawn(move || {
-        let events = oi_core::runtime::llm::stream(&model_clone, &ctx_clone, &[], &abort);
+        let events = adaptor::stream(&model_clone, &ctx_clone, &[], &abort);
         for ev in events {
             let _ = tx.send(ev);
         }
@@ -92,13 +90,13 @@ fn test_mode(model: oi_core::runtime::llm::Model) -> io::Result<()> {
     let mut full = String::new();
     loop {
         match rx.recv_timeout(Duration::from_secs(30)) {
-            Ok(oi_core::runtime::llm::StreamEvent::TextDelta(delta)) => {
+            Ok(adaptor::StreamEvent::TextDelta(delta)) => {
                 print!("{}", delta);
                 use std::io::Write;
                 std::io::stdout().flush().ok();
                 full.push_str(&delta);
             }
-            Ok(oi_core::runtime::llm::StreamEvent::Done { stop_reason }) => {
+            Ok(adaptor::StreamEvent::Done { stop_reason }) => {
                 println!("\n=== DONE: {:?} ===", stop_reason);
                 println!("=== Markdown render test ===");
                 let lines = crate::markdown::render(&full);
@@ -107,7 +105,7 @@ fn test_mode(model: oi_core::runtime::llm::Model) -> io::Result<()> {
                 }
                 return Ok(());
             }
-            Ok(oi_core::runtime::llm::StreamEvent::Error(e)) => {
+            Ok(adaptor::StreamEvent::Error(e)) => {
                 eprintln!("\n=== ERROR: {} ===", e);
                 std::process::exit(1);
             }

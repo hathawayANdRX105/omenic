@@ -1,0 +1,17 @@
+[package]
+name = "task"
+version = "0.1.0"
+edition = "2024"
+description = "Task model, store, dependency graph, run flow orchestration"
+license = "MIT"
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+fs2 = { workspace = true }
+toml = { workspace = true }
+rpc = { path = "../rpc" }
+
+[dev-dependencies]
+tempfile = { workspace = true }

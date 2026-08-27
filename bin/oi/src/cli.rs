@@ -8,10 +8,10 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-use crate::config::Config;
-use crate::orchestration::run_flow;
-use crate::task::store::Store;
-use crate::task::{Task, TaskKind, TaskStatus};
+use task::config::Config;
+use task::model::{Task, TaskKind, TaskStatus};
+use task::run_flow;
+use task::store::Store;
 
 // ---------------------------------------------------------------------------
 // clap CLI definition
@@ -389,7 +389,7 @@ fn task_add(
                 // Simulate adding edge title -> dep and check for cycles.
                 let mut sim = id_map.clone();
                 sim.entry(title.clone()).or_default().push(dep.clone());
-                if crate::task::graph::would_dep_cycle(&sim, title, dep) {
+                if task::graph::would_dep_cycle(&sim, title, dep) {
                     return Err(format!(
                         "adding dependency `{title}` -> `{dep}` would create a cycle"
                     ));
@@ -400,7 +400,7 @@ fn task_add(
 
     let mut created_ids = Vec::new();
     for title in titles {
-        let now = crate::task::now_iso();
+        let now = task::model::now_iso();
         let task = Task {
             id: title.clone(),
             title: title.clone(),
@@ -447,7 +447,7 @@ fn task_done(store: &Store, id: &str, json: bool) -> Result<u8, String> {
         return Ok(1);
     }
     task.status = TaskStatus::Done;
-    task.updated_at = crate::task::now_iso();
+    task.updated_at = task::model::now_iso();
     store
         .append(&task)
         .map_err(|e| format!("store error: {e}"))?;
@@ -544,7 +544,7 @@ fn dep_add(store: &Store, task_id: &str, dep_id: &str, json: bool) -> Result<u8,
     sim.entry(task_id.to_string())
         .or_default()
         .push(dep_id.to_string());
-    if crate::task::graph::would_dep_cycle(&sim, task_id, dep_id) {
+    if task::graph::would_dep_cycle(&sim, task_id, dep_id) {
         return Err(format!(
             "adding dependency `{task_id}` -> `{dep_id}` would create a cycle"
         ));
@@ -552,7 +552,7 @@ fn dep_add(store: &Store, task_id: &str, dep_id: &str, json: bool) -> Result<u8,
 
     task.deps.push(dep_id.to_string());
     task.deps.sort();
-    task.updated_at = crate::task::now_iso();
+    task.updated_at = task::model::now_iso();
     store
         .append(&task)
         .map_err(|e| format!("store error: {e}"))?;
@@ -580,7 +580,7 @@ fn dep_remove(store: &Store, task_id: &str, dep_id: &str, json: bool) -> Result<
     }
 
     task.deps.retain(|d| d != dep_id);
-    task.updated_at = crate::task::now_iso();
+    task.updated_at = task::model::now_iso();
     store
         .append(&task)
         .map_err(|e| format!("store error: {e}"))?;
@@ -666,7 +666,7 @@ fn task_update(
         // Replace this task's deps with the new set for the cycle check.
         sim.insert(id.to_string(), task.deps.clone());
         for dep in &task.deps {
-            if crate::task::graph::would_dep_cycle(&sim, id, dep) {
+            if task::graph::would_dep_cycle(&sim, id, dep) {
                 return Err(format!(
                     "adding dependency `{id}` -> `{dep}` would create a cycle"
                 ));
@@ -674,7 +674,7 @@ fn task_update(
         }
     }
 
-    task.updated_at = crate::task::now_iso();
+    task.updated_at = task::model::now_iso();
     store
         .append(&task)
         .map_err(|e| format!("store error: {e}"))?;
@@ -694,8 +694,8 @@ fn task_delete(store: &Store, id: &str, json: bool) -> Result<u8, String> {
         eprintln!("task not found: {id}");
         return Ok(1);
     }
-    let children = crate::task::graph::children_of(&all, id);
-    let dependents = crate::task::graph::dependents(&all, id);
+    let children = task::graph::children_of(&all, id);
+    let dependents = task::graph::dependents(&all, id);
     if !children.is_empty() || !dependents.is_empty() {
         let mut reasons = Vec::new();
         if !children.is_empty() {
@@ -795,8 +795,8 @@ fn task_show(store: &Store, id: &str, json: bool) -> Result<u8, String> {
         return Ok(1);
     };
     if json {
-        let children = crate::task::graph::children_of(&all, &task.id);
-        let dependents = crate::task::graph::dependents(&all, &task.id);
+        let children = task::graph::children_of(&all, &task.id);
+        let dependents = task::graph::dependents(&all, &task.id);
         print_json(&serde_json::json!({
             "task": task,
             "children": children,
@@ -841,7 +841,7 @@ fn print_task_detail(task: &Task, all: &[Task]) {
         println!(
             "attempts:    {} / {}",
             task.attempts,
-            crate::orchestration::run_flow::MAX_ATTEMPTS
+            task::run_flow::MAX_ATTEMPTS
         );
     }
     match &task.parent {
@@ -858,8 +858,8 @@ fn print_task_detail(task: &Task, all: &[Task]) {
     println!("created_at:  {}", task.created_at);
     println!("updated_at:  {}", task.updated_at);
 
-    let children = crate::task::graph::children_of(all, &task.id);
-    let dependents = crate::task::graph::dependents(all, &task.id);
+    let children = task::graph::children_of(all, &task.id);
+    let dependents = task::graph::dependents(all, &task.id);
 
     if children.is_empty() {
         println!("children:    -");
@@ -926,7 +926,7 @@ fn plan_cmd(dot: bool, json: bool) -> Result<u8, String> {
 /// Resume/retry semantics (#47): an InProgress task with a live runner is
 /// refused (abort it first); an InProgress task without one is an orphan
 /// and gets resumed; a Failed task is retried until the attempt budget
-/// (`crate::orchestration::run_flow::MAX_ATTEMPTS`) is exhausted.
+/// (`task::run_flow::MAX_ATTEMPTS`) is exhausted.
 fn run_cmd(id: &str) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
     let store = Store::new(&config.data_dir);
@@ -941,7 +941,7 @@ fn run_cmd(id: &str) -> Result<u8, String> {
     // #47: live-runner guard — never double-spawn a worker for one task.
     let task_dir = config.data_dir.join("tasks").join(id);
     if task.status == TaskStatus::InProgress {
-        if crate::orchestration::run_flow::runner_alive(&task_dir) {
+        if task::run_flow::runner_alive(&task_dir) {
             eprintln!(
                 "task already running: {id} (live runner, see {}); use `oi abort {id}` first",
                 task_dir.display()
@@ -953,12 +953,12 @@ fn run_cmd(id: &str) -> Result<u8, String> {
         eprintln!(
             "retrying failed task: {id} (attempt {}/{})",
             task.attempts + 1,
-            crate::orchestration::run_flow::MAX_ATTEMPTS
+            task::run_flow::MAX_ATTEMPTS
         );
     }
 
     // Deps gate: refuse blocked task without spawning a worker.
-    if !crate::task::graph::is_ready(
+    if !task::graph::is_ready(
         &store
             .load_all()
             .map_err(|e| format!("store error: {e}"))?
@@ -975,14 +975,14 @@ fn run_cmd(id: &str) -> Result<u8, String> {
     // board shows it live; the runner outcome flips it to Done/Failed.
     let mut running = task.clone();
     running.status = TaskStatus::InProgress;
-    running.updated_at = crate::task::now_iso();
+    running.updated_at = task::model::now_iso();
     store
         .append(&running)
         .map_err(|e| format!("store error: {e}"))?;
 
     // Runner takes over from here; its outcome decides the store flip.
-    let outcome = match crate::orchestration::run_flow::run(
-        &crate::orchestration::run_flow::Ctx {
+    let outcome = match task::run_flow::run(
+        &task::run_flow::Ctx {
             omp_path: config.omp_path.clone(),
             data_dir: config.data_dir.clone(),
             tasks: store
@@ -1015,8 +1015,8 @@ fn run_cmd(id: &str) -> Result<u8, String> {
     } else {
         let result_payload = serde_json::json!({
             "status": match outcome.status {
-                crate::orchestration::run_flow::RunStatus::Done => "done",
-                crate::orchestration::run_flow::RunStatus::Failed => "failed",
+                task::run_flow::RunStatus::Done => "done",
+                task::run_flow::RunStatus::Failed => "failed",
             },
             "summary": outcome.summary,
             "events_seen": outcome.events_seen,
@@ -1031,12 +1031,12 @@ fn run_cmd(id: &str) -> Result<u8, String> {
         }
     }
 
-    if outcome.status == crate::orchestration::run_flow::RunStatus::Done {
+    if outcome.status == task::run_flow::RunStatus::Done {
         println!("done {id}");
         Ok(0)
     } else {
         eprintln!("run failed: {}", outcome.summary);
-        if updated.attempts >= crate::orchestration::run_flow::MAX_ATTEMPTS {
+        if updated.attempts >= task::run_flow::MAX_ATTEMPTS {
             eprintln!(
                 "retry limit reached ({} failed attempts); reset with `oi task update {id} --attempts 0`",
                 updated.attempts
@@ -1045,7 +1045,7 @@ fn run_cmd(id: &str) -> Result<u8, String> {
             eprintln!(
                 "failed attempts: {}/{}; retry with `oi run {id}`",
                 updated.attempts,
-                crate::orchestration::run_flow::MAX_ATTEMPTS
+                task::run_flow::MAX_ATTEMPTS
             );
         }
         Ok(1)
@@ -1059,18 +1059,18 @@ fn persist_run_outcome(
     store: &Store,
     data_dir: &std::path::Path,
     pre: &Task,
-    outcome: &crate::orchestration::run_flow::RunOutcome,
+    outcome: &task::run_flow::RunOutcome,
 ) -> Result<Task, String> {
     let attempt = pre.attempts + 1;
     let mut updated = pre.clone();
     updated.status = match outcome.status {
-        crate::orchestration::run_flow::RunStatus::Done => TaskStatus::Done,
-        crate::orchestration::run_flow::RunStatus::Failed => {
+        task::run_flow::RunStatus::Done => TaskStatus::Done,
+        task::run_flow::RunStatus::Failed => {
             updated.attempts = attempt;
             TaskStatus::Failed
         }
     };
-    updated.updated_at = crate::task::now_iso();
+    updated.updated_at = task::model::now_iso();
     record_attempt(data_dir, &pre.id, attempt, outcome);
     store
         .append(&updated)
@@ -1085,7 +1085,7 @@ fn record_attempt(
     data_dir: &std::path::Path,
     task_id: &str,
     attempt: u32,
-    outcome: &crate::orchestration::run_flow::RunOutcome,
+    outcome: &task::run_flow::RunOutcome,
 ) {
     let task_dir = data_dir.join("tasks").join(task_id);
     if let Err(e) = std::fs::create_dir_all(&task_dir) {
@@ -1093,11 +1093,11 @@ fn record_attempt(
         return;
     }
     let rec = serde_json::json!({
-        "ts": crate::task::now_iso(),
+        "ts": task::model::now_iso(),
         "attempt": attempt,
         "outcome": match outcome.status {
-            crate::orchestration::run_flow::RunStatus::Done => "done",
-            crate::orchestration::run_flow::RunStatus::Failed => "failed",
+            task::run_flow::RunStatus::Done => "done",
+            task::run_flow::RunStatus::Failed => "failed",
         },
         "reason": outcome.summary,
         "events_seen": outcome.events_seen,
@@ -1201,7 +1201,7 @@ fn abort_cmd(id: &str, json: bool) -> Result<u8, String> {
             msg = format!("no live run for {id}; reset to open");
         }
         task.status = TaskStatus::Open;
-        task.updated_at = crate::task::now_iso();
+        task.updated_at = task::model::now_iso();
         store
             .append(&task)
             .map_err(|e| format!("store error: {e}"))?;
@@ -1264,10 +1264,9 @@ fn init_cmd_at(dir: &std::path::Path, json: bool) -> Result<u8, String> {
             .map_err(|e| format!("could not create .oi/config.toml: {e}"))?;
     }
     // Spec templates (never overwrite user edits).
-    crate::workflow::spec::write_default_specs(&oi_dir)
-        .map_err(|e| format!("spec templates: {e}"))?;
+    workflow::spec::write_default_specs(&oi_dir).map_err(|e| format!("spec templates: {e}"))?;
     // Task templates (never overwrite user edits).
-    crate::workflow::template::write_default_templates(&oi_dir)
+    workflow::template::write_default_templates(&oi_dir)
         .map_err(|e| format!("task templates: {e}"))?;
     let msg = match (dir_existed, config_existed) {
         (true, true) => "workspace already initialized",
@@ -1293,7 +1292,7 @@ fn ready_cmd(json: bool) -> Result<u8, String> {
 
     let mut ready: Vec<&Task> = all
         .iter()
-        .filter(|t| t.status == TaskStatus::Open && crate::task::graph::is_ready(&map, &t.id))
+        .filter(|t| t.status == TaskStatus::Open && task::graph::is_ready(&map, &t.id))
         .collect();
     ready.sort_by(|a, b| a.priority.cmp(&b.priority).then(a.id.cmp(&b.id)));
 
@@ -1369,7 +1368,7 @@ fn status_glyph(t: &Task, map: &std::collections::HashMap<String, Task>) -> &'st
         TaskStatus::InProgress => "◐",
         TaskStatus::Failed => "✗",
         TaskStatus::Open => {
-            if crate::task::graph::is_ready(map, &t.id) {
+            if task::graph::is_ready(map, &t.id) {
                 "○"
             } else {
                 "●"
@@ -1521,7 +1520,7 @@ fn suggest_next(tasks: &[Task], done_id: &str) -> Vec<String> {
         .filter(|t| {
             t.status == TaskStatus::Open
                 && t.deps.iter().any(|d| d == done_id)
-                && crate::task::graph::is_ready(&map, &t.id)
+                && task::graph::is_ready(&map, &t.id)
         })
         .map(|t| t.id.clone())
         .collect()
@@ -1605,7 +1604,7 @@ fn board_cmd(json: bool) -> Result<u8, String> {
             TaskStatus::InProgress => in_progress.push(t),
             TaskStatus::Failed => failed.push(t),
             TaskStatus::Open => {
-                if crate::task::graph::is_ready(&map, &t.id) {
+                if task::graph::is_ready(&map, &t.id) {
                     ready.push(t);
                 } else {
                     blocked.push(t);
@@ -1666,7 +1665,7 @@ fn board_cmd(json: bool) -> Result<u8, String> {
 /// `<data>/templates/{phases,steps}/`.
 fn template_list_cmd(json: bool) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let templates = crate::workflow::template::load_all_templates(&config.data_dir)
+    let templates = workflow::template::load_all_templates(&config.data_dir)
         .map_err(|e| format!("template error: {e}"))?;
     if templates.is_empty() {
         eprintln!(
@@ -1682,8 +1681,8 @@ fn template_list_cmd(json: bool) -> Result<u8, String> {
                 serde_json::json!({
                     "name": t.name,
                     "kind": match t.kind {
-                        crate::workflow::template::TemplateKind::Phase => "phase",
-                        crate::workflow::template::TemplateKind::Step => "step",
+                        workflow::template::TemplateKind::Phase => "phase",
+                        workflow::template::TemplateKind::Step => "step",
                     },
                     "tasks": t.tasks.iter().map(|x| x.key.clone()).collect::<Vec<_>>(),
                 })
@@ -1693,8 +1692,8 @@ fn template_list_cmd(json: bool) -> Result<u8, String> {
     } else {
         for t in &templates {
             let kind = match t.kind {
-                crate::workflow::template::TemplateKind::Phase => "phase",
-                crate::workflow::template::TemplateKind::Step => "step",
+                workflow::template::TemplateKind::Phase => "phase",
+                workflow::template::TemplateKind::Step => "step",
             };
             println!(
                 "{kind}: {} — {}",
@@ -1718,7 +1717,7 @@ fn template_apply_cmd(
     json: bool,
 ) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let ids = crate::workflow::template::apply(store, &config.data_dir, name, topic, parent)
+    let ids = workflow::template::apply(store, &config.data_dir, name, topic, parent)
         .map_err(|e| format!("template error: {e} — try `oi template list` or `oi init`"))?;
     if json {
         let obj = serde_json::json!({ "created": ids });
@@ -1734,8 +1733,8 @@ fn template_apply_cmd(
 /// `spec list` subcommand: list spec tables loaded from `<data>/specs/`.
 fn spec_list_cmd(json: bool) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let specs = crate::workflow::spec::load_all_specs(&config.data_dir)
-        .map_err(|e| format!("spec error: {e}"))?;
+    let specs =
+        workflow::spec::load_all_specs(&config.data_dir).map_err(|e| format!("spec error: {e}"))?;
     if specs.is_empty() {
         eprintln!(
             "no spec templates in {} (run `oi init` first)",
@@ -1782,9 +1781,9 @@ fn spec_new_cmd(
     json: bool,
 ) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let spec = crate::workflow::spec::load_spec(&config.data_dir, kind)
+    let spec = workflow::spec::load_spec(&config.data_dir, kind)
         .map_err(|e| format!("spec error: {e} — try `oi spec list` or `oi init`"))?;
-    let doc = crate::workflow::spec::render_skeleton(&spec, title.as_deref().unwrap_or(""));
+    let doc = workflow::spec::render_skeleton(&spec, title.as_deref().unwrap_or(""));
     match output {
         Some(path) => {
             std::fs::write(&path, &doc).map_err(|e| format!("write {}: {e}", path))?;
@@ -1807,9 +1806,9 @@ fn spec_new_cmd(
 /// `spec check` subcommand: validate a filled document against the kind's rules.
 fn spec_check_cmd(kind: &str, file: &str, json: bool) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let spec = crate::workflow::spec::load_spec(&config.data_dir, kind)
+    let spec = workflow::spec::load_spec(&config.data_dir, kind)
         .map_err(|e| format!("spec error: {e} — try `oi spec list` or `oi init`"))?;
-    let findings = crate::workflow::spec::check_file(&spec, std::path::Path::new(file))?;
+    let findings = workflow::spec::check_file(&spec, std::path::Path::new(file))?;
     let fails: Vec<_> = findings.iter().filter(|f| f.fail).collect();
     if json {
         let obj = serde_json::json!({
@@ -2071,7 +2070,7 @@ mod tests {
 
     #[test]
     fn now_iso_format() {
-        let s = crate::task::now_iso();
+        let s = task::model::now_iso();
         assert_eq!(s.len(), 20); // 2026-08-10T12:34:56Z
         assert!(s.ends_with('Z'));
         assert!(s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' && s.as_bytes()[10] == b'T');
@@ -3102,8 +3101,8 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
         let r = task_show(&store, "a", false);
         assert!(r.is_ok());
         let all = store.load_all().unwrap();
-        let children = crate::task::graph::children_of(&all, "a");
-        let dependents = crate::task::graph::dependents(&all, "a");
+        let children = task::graph::children_of(&all, "a");
+        let dependents = task::graph::dependents(&all, "a");
         assert_eq!(children, vec!["child"]);
         assert_eq!(dependents, vec!["b"]);
     }
@@ -3149,7 +3148,7 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
     }
 
     fn mk_task_titled(id: &str, title: &str) -> Task {
-        let now = crate::task::now_iso();
+        let now = task::model::now_iso();
         Task {
             id: id.to_string(),
             title: title.to_string(),
@@ -3367,7 +3366,7 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
             all.iter().map(|t| (t.id.clone(), t.clone())).collect();
         let ready: Vec<&str> = all
             .iter()
-            .filter(|t| t.status == TaskStatus::Open && crate::task::graph::is_ready(&map, &t.id))
+            .filter(|t| t.status == TaskStatus::Open && task::graph::is_ready(&map, &t.id))
             .map(|t| t.id.as_str())
             .collect();
         assert_eq!(ready, vec!["A"]);
@@ -3386,7 +3385,7 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
             all.iter().map(|t| (t.id.clone(), t.clone())).collect();
         let mut ready: Vec<&str> = all
             .iter()
-            .filter(|t| t.status == TaskStatus::Open && crate::task::graph::is_ready(&map, &t.id))
+            .filter(|t| t.status == TaskStatus::Open && task::graph::is_ready(&map, &t.id))
             .map(|t| t.id.as_str())
             .collect();
         ready.sort();
@@ -3402,7 +3401,7 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
             all.iter().map(|t| (t.id.clone(), t.clone())).collect();
         let ready: Vec<&Task> = all
             .iter()
-            .filter(|t| t.status == TaskStatus::Open && crate::task::graph::is_ready(&map, &t.id))
+            .filter(|t| t.status == TaskStatus::Open && task::graph::is_ready(&map, &t.id))
             .collect();
         assert!(ready.is_empty());
         // The command prints "(no ready tasks)" when empty.
@@ -3478,7 +3477,7 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
             all.iter().map(|t| (t.id.clone(), t.clone())).collect();
         let mut ready: Vec<&Task> = all
             .iter()
-            .filter(|t| t.status == TaskStatus::Open && crate::task::graph::is_ready(&map, &t.id))
+            .filter(|t| t.status == TaskStatus::Open && task::graph::is_ready(&map, &t.id))
             .collect();
         ready.sort_by(|a, b| a.priority.cmp(&b.priority).then(a.id.cmp(&b.id)));
         let ids: Vec<&str> = ready.iter().map(|t| t.id.as_str()).collect();
@@ -3677,8 +3676,8 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
         };
         store.append(&pre).unwrap();
 
-        let outcome = crate::orchestration::run_flow::RunOutcome {
-            status: crate::orchestration::run_flow::RunStatus::Failed,
+        let outcome = task::run_flow::RunOutcome {
+            status: task::run_flow::RunStatus::Failed,
             summary: "read_event error: 中文 \"boom\" 💥".into(),
             events_seen: 7,
         };
@@ -3713,8 +3712,8 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
         let pre = mk_task_titled("t2", "t2");
         store.append(&pre).unwrap();
 
-        let outcome = crate::orchestration::run_flow::RunOutcome {
-            status: crate::orchestration::run_flow::RunStatus::Done,
+        let outcome = task::run_flow::RunOutcome {
+            status: task::run_flow::RunStatus::Done,
             summary: "all good".into(),
             events_seen: 3,
         };

@@ -1,0 +1,17 @@
+[package]
+name = "cycle"
+version = "0.1.0"
+edition = "2024"
+description = "Agent invariant loop: stream → tool_calls → execute → backfill → repeat"
+license = "MIT"
+publish = false
+
+[dependencies]
+adaptor = { path = "../adaptor" }
+tools = { path = "../tools" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+fs2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
