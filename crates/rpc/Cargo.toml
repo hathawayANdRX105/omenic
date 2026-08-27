@@ -1,15 +1,15 @@
 [package]
-name = "gate"
+name = "rpc"
 version = "0.1.0"
 edition = "2024"
+description = "omp --mode rpc stdio JSONL client"
+license = "MIT"
+publish = false
 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml = { workspace = true }
-regex = "1"
-anyhow = { workspace = true }
-clap = { workspace = true }
+base64 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
