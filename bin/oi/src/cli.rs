@@ -9,9 +9,9 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use task::config::Config;
-use task::model::{Task, TaskKind, TaskStatus};
 use task::run_flow;
 use task::store::Store;
+use task::{Task, TaskKind, TaskStatus};
 
 // ---------------------------------------------------------------------------
 // clap CLI definition
@@ -400,7 +400,7 @@ fn task_add(
 
     let mut created_ids = Vec::new();
     for title in titles {
-        let now = task::model::now_iso();
+        let now = task::now_iso();
         let task = Task {
             id: title.clone(),
             title: title.clone(),
@@ -447,7 +447,7 @@ fn task_done(store: &Store, id: &str, json: bool) -> Result<u8, String> {
         return Ok(1);
     }
     task.status = TaskStatus::Done;
-    task.updated_at = task::model::now_iso();
+    task.updated_at = task::now_iso();
     store
         .append(&task)
         .map_err(|e| format!("store error: {e}"))?;
@@ -552,7 +552,7 @@ fn dep_add(store: &Store, task_id: &str, dep_id: &str, json: bool) -> Result<u8,
 
     task.deps.push(dep_id.to_string());
     task.deps.sort();
-    task.updated_at = task::model::now_iso();
+    task.updated_at = task::now_iso();
     store
         .append(&task)
         .map_err(|e| format!("store error: {e}"))?;
@@ -580,7 +580,7 @@ fn dep_remove(store: &Store, task_id: &str, dep_id: &str, json: bool) -> Result<
     }
 
     task.deps.retain(|d| d != dep_id);
-    task.updated_at = task::model::now_iso();
+    task.updated_at = task::now_iso();
     store
         .append(&task)
         .map_err(|e| format!("store error: {e}"))?;
@@ -674,7 +674,7 @@ fn task_update(
         }
     }
 
-    task.updated_at = task::model::now_iso();
+    task.updated_at = task::now_iso();
     store
         .append(&task)
         .map_err(|e| format!("store error: {e}"))?;
@@ -975,7 +975,7 @@ fn run_cmd(id: &str) -> Result<u8, String> {
     // board shows it live; the runner outcome flips it to Done/Failed.
     let mut running = task.clone();
     running.status = TaskStatus::InProgress;
-    running.updated_at = task::model::now_iso();
+    running.updated_at = task::now_iso();
     store
         .append(&running)
         .map_err(|e| format!("store error: {e}"))?;
@@ -1070,7 +1070,7 @@ fn persist_run_outcome(
             TaskStatus::Failed
         }
     };
-    updated.updated_at = task::model::now_iso();
+    updated.updated_at = task::now_iso();
     record_attempt(data_dir, &pre.id, attempt, outcome);
     store
         .append(&updated)
@@ -1093,7 +1093,7 @@ fn record_attempt(
         return;
     }
     let rec = serde_json::json!({
-        "ts": task::model::now_iso(),
+        "ts": task::now_iso(),
         "attempt": attempt,
         "outcome": match outcome.status {
             task::run_flow::RunStatus::Done => "done",
@@ -1201,7 +1201,7 @@ fn abort_cmd(id: &str, json: bool) -> Result<u8, String> {
             msg = format!("no live run for {id}; reset to open");
         }
         task.status = TaskStatus::Open;
-        task.updated_at = task::model::now_iso();
+        task.updated_at = task::now_iso();
         store
             .append(&task)
             .map_err(|e| format!("store error: {e}"))?;
@@ -2070,7 +2070,7 @@ mod tests {
 
     #[test]
     fn now_iso_format() {
-        let s = task::model::now_iso();
+        let s = task::now_iso();
         assert_eq!(s.len(), 20); // 2026-08-10T12:34:56Z
         assert!(s.ends_with('Z'));
         assert!(s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' && s.as_bytes()[10] == b'T');
@@ -3148,7 +3148,7 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
     }
 
     fn mk_task_titled(id: &str, title: &str) -> Task {
-        let now = task::model::now_iso();
+        let now = task::now_iso();
         Task {
             id: id.to_string(),
             title: title.to_string(),

@@ -25,7 +25,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use crate::graph;
-use crate::model::{Task, TaskStatus};
+use crate::{Task, TaskStatus};
 use rpc::agent_process::{Worker, WorkerEvent};
 
 /// Terminal outcome of one `run`.
@@ -400,7 +400,7 @@ fn event_record(event: &WorkerEvent) -> serde_json::Value {
     if truncated {
         rec["truncated"] = serde_json::json!(true);
     }
-    rec["ts"] = serde_json::json!(crate::model::now_iso());
+    rec["ts"] = serde_json::json!(crate::now_iso());
     rec
 }
 
@@ -408,7 +408,7 @@ fn event_record(event: &WorkerEvent) -> serde_json::Value {
 /// multiple runs stays ordered and separable in one append-only file (#48).
 fn run_start_record(task_id: &str) -> serde_json::Value {
     serde_json::json!({
-        "ts": crate::model::now_iso(),
+        "ts": crate::now_iso(),
         "event": "run_start",
         "task_id": task_id,
         "pid": std::process::id(),
@@ -443,7 +443,7 @@ mod tests {
         Task {
             id: id.to_string(),
             title: format!("task {id}"),
-            kind: crate::model::TaskKind::Task,
+            kind: crate::TaskKind::Task,
             status,
             attempts: 0,
             priority: 2,
@@ -486,7 +486,7 @@ mod tests {
         let dep = Task {
             id: "dep-1".into(),
             title: "scaffold".into(),
-            kind: crate::model::TaskKind::Task,
+            kind: crate::TaskKind::Task,
             status: TaskStatus::Done,
             attempts: 0,
             priority: 2,
@@ -562,7 +562,7 @@ mod tests {
         let dep = Task {
             id: "dep-1".into(),
             title: "scaffold".into(),
-            kind: crate::model::TaskKind::Task,
+            kind: crate::TaskKind::Task,
             status: TaskStatus::Done,
             attempts: 0,
             priority: 2,
