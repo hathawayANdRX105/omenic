@@ -98,7 +98,7 @@ impl std::error::Error for LogError {}
 /// Append-only JSONL log of context messages (one serialized Message per
 /// line), mirroring the task store's fcntl-lock append pattern.
 ///
-/// Deliberately NOT the run_flow.rs events.jsonl shape (#48): that evidence
+/// Deliberately NOT the runner.rs events.jsonl shape (#48): that evidence
 /// log bounds fields at 1KB and degrades silently. A context log must
 /// round-trip losslessly — a truncated message cannot be replayed into
 /// the API — so records are unbounded and every write fsyncs.
