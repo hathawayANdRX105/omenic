@@ -1264,7 +1264,7 @@ fn init_cmd_at(dir: &std::path::Path, json: bool) -> Result<u8, String> {
             .map_err(|e| format!("could not create .oi/config.toml: {e}"))?;
     }
     // Spec templates (never overwrite user edits).
-    spec::write_default_specs(&oi_dir).map_err(|e| format!("spec templates: {e}"))?;
+    spec::init::write_default_specs(&oi_dir).map_err(|e| format!("spec templates: {e}"))?;
     // Task templates (never overwrite user edits).
     task::template::write_default_templates(&oi_dir).map_err(|e| format!("task templates: {e}"))?;
     let msg = match (dir_existed, config_existed) {
@@ -1732,7 +1732,8 @@ fn template_apply_cmd(
 /// `spec list` subcommand: list spec tables loaded from `<data>/specs/`.
 fn spec_list_cmd(json: bool) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let specs = spec::load_all_specs(&config.data_dir).map_err(|e| format!("spec error: {e}"))?;
+    let specs =
+        spec::parse::load_all_specs(&config.data_dir).map_err(|e| format!("spec error: {e}"))?;
     if specs.is_empty() {
         eprintln!(
             "no spec templates in {} (run `oi init` first)",
@@ -1779,9 +1780,9 @@ fn spec_new_cmd(
     json: bool,
 ) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let spec = spec::load_spec(&config.data_dir, kind)
+    let spec = spec::parse::load_spec(&config.data_dir, kind)
         .map_err(|e| format!("spec error: {e} — try `oi spec list` or `oi init`"))?;
-    let doc = spec::render_skeleton(&spec, title.as_deref().unwrap_or(""));
+    let doc = spec::render::render_skeleton(&spec, title.as_deref().unwrap_or(""));
     match output {
         Some(path) => {
             std::fs::write(&path, &doc).map_err(|e| format!("write {}: {e}", path))?;
@@ -1804,9 +1805,9 @@ fn spec_new_cmd(
 /// `spec check` subcommand: validate a filled document against the kind's rules.
 fn spec_check_cmd(kind: &str, file: &str, json: bool) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let spec = spec::load_spec(&config.data_dir, kind)
+    let spec = spec::parse::load_spec(&config.data_dir, kind)
         .map_err(|e| format!("spec error: {e} — try `oi spec list` or `oi init`"))?;
-    let findings = spec::check_file(&spec, std::path::Path::new(file))?;
+    let findings = spec::check::check_file(&spec, std::path::Path::new(file))?;
     let fails: Vec<_> = findings.iter().filter(|f| f.fail).collect();
     if json {
         let obj = serde_json::json!({

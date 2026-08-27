@@ -5,7 +5,8 @@
 use std::io::{Read, Write};
 use std::sync::atomic::AtomicBool;
 
-use adaptor::{Context, Model, StopReason, StreamEvent, stream};
+use adaptor::openai::stream;
+use adaptor::{Context, Model, StopReason, StreamEvent};
 
 fn serve_once(body_chunks: Vec<String>) -> (u16, std::thread::JoinHandle<Vec<u8>>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
