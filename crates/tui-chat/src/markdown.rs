@@ -43,13 +43,10 @@ pub fn render(text: &str) -> Vec<Line<'static>> {
 
             // ===== Inline code: Event::Code, not a Tag =====
             Event::Code(c) => {
-                let s = style_stack.last().copied().unwrap_or_default();
                 current_spans.push(Span::styled(
-                    format!("`{c}`"),
+                    c.to_string(),
                     Style::default().fg(Color::Green),
                 ));
-                // suppress unused warning
-                let _ = s;
             }
 
             // ===== Headings =====
@@ -146,6 +143,16 @@ pub fn render(text: &str) -> Vec<Line<'static>> {
 
     if !current_spans.is_empty() {
         lines.push(Line::from(current_spans));
+    }
+
+    // Flush unclosed code block (LLM forgot closing fence)
+    if in_code_block {
+        for cl in code_block_lines {
+            lines.push(Line::from(vec![Span::styled(
+                cl,
+                Style::default().fg(Color::Cyan),
+            )]));
+        }
     }
 
     if lines.is_empty() {

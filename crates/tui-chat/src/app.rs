@@ -94,24 +94,41 @@ impl App {
     /// Drain streaming events from the background thread.
     pub fn drain_stream(&mut self) {
         let Some(rx) = &self.stream_rx else {
+            self.cursor_tick = self.cursor_tick.wrapping_add(1);
             return;
         };
         let mut accumulated = String::new();
         let mut done = false;
-        while let Ok(ev) = rx.try_recv() {
-            match ev {
-                StreamEvent::TextDelta(delta) => accumulated.push_str(&delta),
-                StreamEvent::Error(e) => {
-                    // ponytail: show error inline as assistant message
+        let mut was_error = false;
+
+        loop {
+            match rx.try_recv() {
+                Ok(StreamEvent::TextDelta(delta)) => accumulated.push_str(&delta),
+                Ok(StreamEvent::Error(e)) => {
+                    // Append error to partial text, don't overwrite
                     if let Some(last) = self.messages.last_mut() {
-                        last.text = format!("[Error: {e}]");
+                        last.text.push_str(&format!("\n[Error: {e}]"));
                     }
+                    was_error = true;
                     done = true;
                 }
-                StreamEvent::Done { .. } => {
+                Ok(StreamEvent::Done { .. }) => {
                     done = true;
                 }
-                _ => {}
+                Ok(_) => {}
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    // Thread died without terminal event — recover
+                    if !done {
+                        if let Some(last) = self.messages.last_mut() {
+                            if last.text.is_empty() {
+                                last.text = "[stream disconnected]".into();
+                            }
+                        }
+                        done = true;
+                    }
+                    break;
+                }
             }
         }
 
@@ -122,12 +139,14 @@ impl App {
         }
 
         if done {
-            // Sync accumulated assistant text into context
-            if let Some(last) = self.messages.last() {
-                if last.role == Role::Assistant && !last.text.is_empty() {
-                    self.context
-                        .messages
-                        .push(Message::assistant_text(last.text.clone()));
+            // Sync assistant text into context, but not on error
+            if !was_error {
+                if let Some(last) = self.messages.last() {
+                    if last.role == Role::Assistant && !last.text.is_empty() {
+                        self.context
+                            .messages
+                            .push(Message::assistant_text(last.text.clone()));
+                    }
                 }
             }
             self.streaming = false;
