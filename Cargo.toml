@@ -1,5 +1,5 @@
 [workspace]
-members = ["bin/oi", "bin/gate", "crates/oi-core", "crates/gate-core"]
+members = ["bin/oi", "bin/gate", "crates/oi-core", "crates/gate-core", "crates/tui-chat"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -13,6 +13,9 @@ base64 = "0.22"
 tempfile = "3"
 ureq = { version = "2", features = ["json"] }
 anyhow = "1"
+ratatui = "0.30"
+crossterm = "0.29"
+pulldown-cmark = "0.13"
 ctrlc = "3"
 
 [profile.release]

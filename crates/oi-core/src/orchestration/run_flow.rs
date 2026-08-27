@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::agent_process::{Worker, WorkerEvent};
+use crate::orchestration::agent_process::{Worker, WorkerEvent};
 use crate::task::graph;
 use crate::task::{Task, TaskStatus};
 
