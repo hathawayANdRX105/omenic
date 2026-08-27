@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 adaptor = { path = "../../crates/adaptor" }
-cycle = { path = "../../crates/cycle" }
+orbit = { path = "../../crates/orbit" }
 tools = { path = "../../crates/tools" }
 rpc = { path = "../../crates/rpc" }
 task = { path = "../../crates/task" }
