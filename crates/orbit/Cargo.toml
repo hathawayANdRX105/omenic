@@ -1,5 +1,5 @@
 [package]
-name = "cycle"
+name = "orbit"
 version = "0.1.0"
 edition = "2024"
 description = "Agent invariant loop: stream → tool_calls → execute → backfill → repeat"

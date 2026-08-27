@@ -1,9 +1,9 @@
 [workspace]
 members = [
   "bin/oi", "bin/gate",
-  "crates/adaptor", "crates/cycle", "crates/tools", "crates/rpc",
+  "crates/adaptor", "crates/orbit", "crates/tools", "crates/rpc",
   "crates/task", "crates/workflow",
-  "crates/tui-chat",
+  "crates/tui",
 ]
 resolver = "2"
 
