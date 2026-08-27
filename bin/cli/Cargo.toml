@@ -1,12 +1,12 @@
 [package]
-name = "oi"
+name = "cli"
 version = "0.1.0"
 edition = "2024"
 description = "Task-driven agent orchestrator CLI"
 license = "MIT"
 
 [[bin]]
-name = "oi"
+name = "cli"
 path = "src/main.rs"
 
 [dependencies]

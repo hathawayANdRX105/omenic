@@ -18,7 +18,7 @@ use task::{Task, TaskKind, TaskStatus};
 // ---------------------------------------------------------------------------
 
 #[derive(Parser)]
-#[command(name = "oi", about = "Task-driven agent orchestrator")]
+#[command(name = "cli", about = "Task-driven agent orchestrator")]
 struct Cli {
     /// Output JSON instead of human-readable text
     #[arg(long, global = true)]
@@ -83,14 +83,14 @@ enum Command {
     },
 }
 
-/// Sub-views of `oi pr`.
+/// Sub-views of `cli pr`.
 #[derive(Subcommand)]
 enum PrCmd {
     /// Render a task subtree as Construction plan checkboxes
     Render { id: String },
 }
 
-/// Sub-views of `oi plan`.
+/// Sub-views of `cli plan`.
 #[derive(Subcommand)]
 enum PlanSub {
     /// Partitioned board view (ready / blocked / in_progress / done)
@@ -943,7 +943,7 @@ fn run_cmd(id: &str) -> Result<u8, String> {
     if task.status == TaskStatus::InProgress {
         if task::run_flow::runner_alive(&task_dir) {
             eprintln!(
-                "task already running: {id} (live runner, see {}); use `oi abort {id}` first",
+                "task already running: {id} (live runner, see {}); use `cli abort {id}` first",
                 task_dir.display()
             );
             return Ok(1);
@@ -1038,12 +1038,12 @@ fn run_cmd(id: &str) -> Result<u8, String> {
         eprintln!("run failed: {}", outcome.summary);
         if updated.attempts >= task::run_flow::MAX_ATTEMPTS {
             eprintln!(
-                "retry limit reached ({} failed attempts); reset with `oi task update {id} --attempts 0`",
+                "retry limit reached ({} failed attempts); reset with `cli task update {id} --attempts 0`",
                 updated.attempts
             );
         } else {
             eprintln!(
-                "failed attempts: {}/{}; retry with `oi run {id}`",
+                "failed attempts: {}/{}; retry with `cli run {id}`",
                 updated.attempts,
                 task::run_flow::MAX_ATTEMPTS
             );
@@ -1121,7 +1121,7 @@ fn record_attempt(
 /// to the worker. Non-running tasks get a stored note instead.
 fn steer_cmd(id: &str, message: &[String], json: bool) -> Result<u8, String> {
     if message.is_empty() {
-        return Err(format!("usage: oi steer {id} <message>"));
+        return Err(format!("usage: cli steer {id} <message>"));
     }
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
     let store = Store::new(&config.data_dir);
@@ -1668,7 +1668,7 @@ fn template_list_cmd(json: bool) -> Result<u8, String> {
         .map_err(|e| format!("template error: {e}"))?;
     if templates.is_empty() {
         eprintln!(
-            "no templates in {} (run `oi init` first)",
+            "no templates in {} (run `cli init` first)",
             config.data_dir.join("templates").display()
         );
         return Ok(1);
@@ -1717,7 +1717,7 @@ fn template_apply_cmd(
 ) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
     let ids = task::template::apply(store, &config.data_dir, name, topic, parent)
-        .map_err(|e| format!("template error: {e} — try `oi template list` or `oi init`"))?;
+        .map_err(|e| format!("template error: {e} — try `cli template list` or `cli init`"))?;
     if json {
         let obj = serde_json::json!({ "created": ids });
         print_json(&obj);
@@ -1736,7 +1736,7 @@ fn spec_list_cmd(json: bool) -> Result<u8, String> {
         spec::parse::load_all_specs(&config.data_dir).map_err(|e| format!("spec error: {e}"))?;
     if specs.is_empty() {
         eprintln!(
-            "no spec templates in {} (run `oi init` first)",
+            "no spec templates in {} (run `cli init` first)",
             config.data_dir.join("specs").display()
         );
         return Ok(1);
@@ -1781,7 +1781,7 @@ fn spec_new_cmd(
 ) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
     let spec = spec::parse::load_spec(&config.data_dir, kind)
-        .map_err(|e| format!("spec error: {e} — try `oi spec list` or `oi init`"))?;
+        .map_err(|e| format!("spec error: {e} — try `cli spec list` or `cli init`"))?;
     let doc = spec::render::render_skeleton(&spec, title.as_deref().unwrap_or(""));
     match output {
         Some(path) => {
@@ -1806,7 +1806,7 @@ fn spec_new_cmd(
 fn spec_check_cmd(kind: &str, file: &str, json: bool) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
     let spec = spec::parse::load_spec(&config.data_dir, kind)
-        .map_err(|e| format!("spec error: {e} — try `oi spec list` or `oi init`"))?;
+        .map_err(|e| format!("spec error: {e} — try `cli spec list` or `cli init`"))?;
     let findings = spec::check::check_file(&spec, std::path::Path::new(file))?;
     let fails: Vec<_> = findings.iter().filter(|f| f.fail).collect();
     if json {
@@ -2063,7 +2063,7 @@ mod tests {
     #[test]
     fn unknown_subcommand_errors() {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let r = Cli::try_parse_from(["oi", "task", "bogus"]);
+        let r = Cli::try_parse_from(["cli", "task", "bogus"]);
         assert!(r.is_err());
     }
 
@@ -2156,7 +2156,7 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
 
     #[test]
     fn run_command_parse_errors_on_missing_id() {
-        let r = Cli::try_parse_from(["oi", "run"]).is_err();
+        let r = Cli::try_parse_from(["cli", "run"]).is_err();
         assert!(r); // needs <task-id>
     }
 
@@ -2164,29 +2164,29 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
     fn steer_command_parse_and_note() {
         // non-empty message required after id; bare steer errors
         // steer with no message: clap allows it (empty vec), but steer_cmd should error
-        let r = Cli::try_parse_from(["oi", "steer", "t-1"]);
+        let r = Cli::try_parse_from(["cli", "steer", "t-1"]);
         assert!(r.is_ok()); // parsing succeeds; steer_cmd handles empty message
         // with msg should hit the handle (but not fail dispatch parse)
-        let r = Cli::try_parse_from(["oi", "steer", "t-1", "keep chipping"]);
+        let r = Cli::try_parse_from(["cli", "steer", "t-1", "keep chipping"]);
         assert!(r.is_ok());
     }
 
     #[test]
     fn abort_command_parse_needs_id() {
-        let r = Cli::try_parse_from(["oi", "abort"]).is_err();
+        let r = Cli::try_parse_from(["cli", "abort"]).is_err();
         assert!(r);
     }
 
     // --- #50: unknown flags rejected, not swallowed as title ---
     #[test]
     fn add_unknown_flag_rejected() {
-        let r = Cli::try_parse_from(["oi", "task", "add", "-t", "foo"]);
+        let r = Cli::try_parse_from(["cli", "task", "add", "-t", "foo"]);
         assert!(r.is_err(), "unknown flag -t must be rejected");
     }
 
     #[test]
     fn add_unknown_long_flag_rejected() {
-        let r = Cli::try_parse_from(["oi", "task", "add", "--bogus", "x"]);
+        let r = Cli::try_parse_from(["cli", "task", "add", "--bogus", "x"]);
         assert!(r.is_err());
     }
 
@@ -2529,25 +2529,25 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
 
     #[test]
     fn dep_cmd_unknown_sub_rejected() {
-        let r = Cli::try_parse_from(["oi", "dep", "bogus"]);
+        let r = Cli::try_parse_from(["cli", "dep", "bogus"]);
         assert!(r.is_err());
     }
 
     #[test]
     fn dep_cmd_no_sub_rejected() {
-        let r = Cli::try_parse_from(["oi", "dep"]);
+        let r = Cli::try_parse_from(["cli", "dep"]);
         assert!(r.is_err());
     }
 
     #[test]
     fn dep_add_wrong_arg_count_rejected() {
-        let r = Cli::try_parse_from(["oi", "dep", "add", "t1"]);
+        let r = Cli::try_parse_from(["cli", "dep", "add", "t1"]);
         assert!(r.is_err());
     }
 
     #[test]
     fn dep_remove_wrong_arg_count_rejected() {
-        let r = Cli::try_parse_from(["oi", "dep", "remove", "t1"]);
+        let r = Cli::try_parse_from(["cli", "dep", "remove", "t1"]);
         assert!(r.is_err());
     }
 
@@ -3116,7 +3116,7 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
     #[test]
     fn show_cmd_top_level_no_arg_errors() {
         // No arg → usage error before Config::load is reached.
-        let r = Cli::try_parse_from(["oi", "show"]);
+        let r = Cli::try_parse_from(["cli", "show"]);
         assert!(r.is_err());
     }
 
@@ -3273,7 +3273,7 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
         assert_eq!(child.acceptance, "all tests green");
     }
 
-    // --- #183: oi init ---
+    // --- #183: cli init ---
 
     #[test]
     fn init_creates_data_dir_and_config() {
@@ -3327,7 +3327,7 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    // --- #181: oi ready / oi blocked ---
+    // --- #181: cli ready / cli blocked ---
 
     /// Helper: build a store with tasks from a spec of (id, priority, deps).
     fn make_ready_store(tag: &str, specs: &[(&str, u8, &[&str])]) -> Store {

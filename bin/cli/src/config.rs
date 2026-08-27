@@ -77,7 +77,7 @@ impl Config {
     ///
     /// Config lives in the `.oi/` directory (`.oi/config.toml`); the legacy
     /// root `omenic.toml` is still read when present so pre-.oi workspaces
-    /// keep working (migrate with `oi init`).
+    /// keep working (migrate with `cli init`).
     pub fn load() -> Result<Config, ConfigError> {
         // Start with defaults (data lives inside the `.oi/` config dir).
         let mut config = Config {

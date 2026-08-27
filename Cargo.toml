@@ -1,6 +1,6 @@
 [workspace]
 members = [
-  "bin/oi", "bin/gate",
+  "bin/cli", "bin/gate",
   "crates/adaptor", "crates/orbit", "crates/tools", "crates/rpc",
   "crates/task", "crates/spec",
   "bin/tui",
