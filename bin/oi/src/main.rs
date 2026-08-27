@@ -4,6 +4,8 @@
 
 use std::process::ExitCode;
 
+mod cli;
+
 fn main() -> ExitCode {
-    oi_core::cli::run()
+    cli::run()
 }

@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use super::llm::ToolDef;
+use adaptor::ToolDef;
 
 /// Tool output truncation limit (lines); tail is kept — errors live at the end.
 pub const MAX_OUTPUT_LINES: usize = 200;

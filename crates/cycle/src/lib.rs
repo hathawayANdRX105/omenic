@@ -13,8 +13,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
-use super::llm::{Context, Message, Model, StopReason, StreamEvent, ToolCallSpec, ToolDef};
-use super::tools::{Tool, def};
+use adaptor::{Context, Message, Model, StopReason, StreamEvent, ToolCallSpec, ToolDef};
+use tools::{Tool, def};
 
 /// Compaction triggers when message count exceeds this.
 const COMPACT_THRESHOLD: usize = 50;
@@ -44,7 +44,7 @@ impl LlmBackend for HttpLlm {
         tools: &[ToolDef],
         signal: &AtomicBool,
     ) -> Vec<StreamEvent> {
-        super::llm::stream(model, context, tools, signal)
+        adaptor::stream(model, context, tools, signal)
     }
 }
 
@@ -185,7 +185,7 @@ fn compact_context(
                 "{:?}: {}",
                 m.role,
                 match &m.content {
-                    super::llm::Content::Text(s) => s.clone(),
+                    adaptor::Content::Text(s) => s.clone(),
                     blocks => serde_json::to_string(blocks).unwrap_or_default(),
                 }
             )
@@ -357,7 +357,7 @@ pub fn run_agent_streaming(
                 break;
             }
             let result = match find_tool(&tc.name) {
-                None => Err(super::tools::ToolError::Message(format!(
+                None => Err(tools::ToolError::Message(format!(
                     "tool \"{}\" not found",
                     tc.name
                 ))),
@@ -418,7 +418,7 @@ pub fn run_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::llm::{Content, Role};
+    use adaptor::{Content, Role};
     use serde_json::json;
 
     fn model() -> Model {
@@ -458,7 +458,7 @@ mod tests {
             &self,
             _args: &serde_json::Value,
             signal: &AtomicBool,
-        ) -> Result<String, crate::runtime::tools::ToolError> {
+        ) -> Result<String, tools::ToolError> {
             if signal.load(Ordering::Relaxed) {
                 return Ok("aborted".into());
             }
@@ -635,7 +635,7 @@ mod tests {
                 &self,
                 _args: &serde_json::Value,
                 _signal: &AtomicBool,
-            ) -> Result<String, crate::runtime::tools::ToolError> {
+            ) -> Result<String, tools::ToolError> {
                 let _ = self.1.get();
                 self.0.store(true, Ordering::Relaxed);
                 Ok("echo!".into())
