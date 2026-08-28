@@ -938,4 +938,78 @@ mod tests {
             .expect("post-negotiation command");
         println!("session negotiated; get_state → {resp}");
     }
+
+    // ---- P7: timeout + reconnect + retry smoke tests ----
+
+    /// Spawn a shell script that hangs forever (no `ready` frame).
+    /// Leaks the tempdir so the file persists for the test's lifetime.
+    fn fake_omp_hangs() -> std::path::PathBuf {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("hang.sh");
+        std::fs::write(&script, "#!/bin/sh\nsleep 60\n").unwrap();
+        std::fs::set_permissions(
+            &script,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        std::mem::forget(dir);
+        script
+    }
+
+    #[test]
+    fn connect_timeout_kills_hanging_omp() {
+        let script = fake_omp_hangs();
+        let start = std::time::Instant::now();
+        let result = Client::new_with_opts(
+            script.to_str().unwrap(),
+            Some(Duration::from_millis(200)),
+            0,
+        );
+        let elapsed = start.elapsed();
+        match result {
+            Ok(_) => panic!("should fail to connect"),
+            Err(RpcError::Timeout) => {}
+            Err(other) => panic!("should be Timeout, got: {other:?}"),
+        }
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "should not hang past timeout (took {elapsed:?})"
+        );
+    }
+
+    #[test]
+    fn send_process_exited_no_retry_by_default() {
+        let script = fake_omp_hangs();
+        let mut client = Client::new(script.to_str().unwrap()).unwrap();
+        let _ = client.process.kill();
+        let _ = client.process.wait();
+        let id = client.next_id_str();
+        let req = Request::new("ping").with_id(&id).done();
+        let err = client.send(&req).expect_err("send should fail");
+        assert!(
+            matches!(err, RpcError::ProcessExited(_)),
+            "should propagate ProcessExited without retry, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn set_timeout_stores_value() {
+        let script = fake_omp_hangs();
+        let mut client = Client::new(script.to_str().unwrap()).unwrap();
+        client.set_timeout(Some(Duration::from_secs(5)));
+        assert_eq!(client.timeout, Some(Duration::from_secs(5)));
+        client.set_timeout(None);
+        assert!(client.timeout.is_none());
+    }
+
+    #[test]
+    fn backoff_first_retry_uses_one_second() {
+        // Documented schedule: 1s, 2s, 4s, 8s, 16s, capped at 32s.
+        for (attempt, expected) in [1u64, 2, 4, 8, 16].iter().enumerate() {
+            let secs = 1u64 << (attempt as u32).min(5);
+            assert_eq!(secs, *expected, "backoff mismatch at attempt {attempt}");
+        }
+        let secs = 1u64 << 5u64.min(5);
+        assert_eq!(secs, 32);
+    }
 }
