@@ -36,18 +36,27 @@ impl Tool for DeleteFile {
             return Err(ToolError::Message(format!("{path} does not exist")));
         }
 
-        // Try gio trash first (FreeDesktop trash, recoverable)
+        // Try gio trash first (FreeDesktop trash, recoverable).
+        // Only fall back to rm when gio binary is not found — never when gio
+        // runs but fails (e.g. permission denied), to avoid unrecoverable delete.
         let gio_result = Command::new("gio").arg("trash").arg(path).output();
 
         match gio_result {
             Ok(output) if output.status.success() => Ok(format!("moved {path} to trash")),
-            _ => {
-                // Fallback: rm if gio is unavailable
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(ToolError::Message(format!(
+                    "gio trash failed: {}",
+                    stderr.trim()
+                )))
+            }
+            Err(_) => {
+                // gio binary not available — fall back to rm
                 let rm_result = Command::new("rm").arg(path).output();
                 match rm_result {
-                    Ok(output) if output.status.success() => Ok(format!("deleted {path}")),
-                    Ok(output) => {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
+                    Ok(o) if o.status.success() => Ok(format!("deleted {path}")),
+                    Ok(o) => {
+                        let stderr = String::from_utf8_lossy(&o.stderr);
                         Err(ToolError::Message(format!(
                             "delete failed: {}",
                             stderr.trim()
