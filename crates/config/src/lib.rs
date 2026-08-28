@@ -18,6 +18,16 @@ pub struct Config {
     pub data_dir: PathBuf,
     /// Model name to use.
     pub model: String,
+    /// Direct LLM API key (TUI chat / adaptor). Optional; call sites may
+    /// fall back to legacy `AGNES_API_KEY` env.
+    pub llm_api_key: Option<String>,
+    /// Direct LLM base URL, no `/v1` suffix (call site appends it).
+    pub llm_base_url: Option<String>,
+    /// Direct LLM model name (e.g. `agnes-2.5-flash`). Distinct from `model`,
+    /// which is the omp model profile selector.
+    pub llm_model: Option<String>,
+    /// Direct LLM max tokens.
+    pub llm_max_tokens: Option<u32>,
 }
 
 /// Errors that can occur during config loading.
@@ -84,6 +94,10 @@ impl Config {
             omp_path: PathBuf::from("omp"),
             data_dir: PathBuf::from("./.oi"),
             model: String::from("default"),
+            llm_api_key: None,
+            llm_base_url: None,
+            llm_model: None,
+            llm_max_tokens: None,
         };
 
         // Load from TOML file (.oi/config.toml, legacy fallback omenic.toml);
@@ -109,6 +123,18 @@ impl Config {
         }
         if let Ok(v) = env::var("OMENIC_MODEL") {
             config.model = v;
+        }
+        if let Ok(v) = env::var("OMENIC_LLM_API_KEY") {
+            config.llm_api_key = Some(v);
+        }
+        if let Ok(v) = env::var("OMENIC_LLM_BASE_URL") {
+            config.llm_base_url = Some(v);
+        }
+        if let Ok(v) = env::var("OMENIC_LLM_MODEL") {
+            config.llm_model = Some(v);
+        }
+        if let Ok(v) = env::var("OMENIC_LLM_MAX_TOKENS") {
+            config.llm_max_tokens = v.parse().ok();
         }
         config.validate()?;
         Ok(config)
@@ -174,6 +200,17 @@ struct TomlConfig {
     omp_path: Option<String>,
     data_dir: Option<String>,
     model: Option<String>,
+    #[serde(default)]
+    llm: LlmToml,
+}
+
+/// `[llm]` TOML section for direct LLM credentials.
+#[derive(Debug, Default, serde::Deserialize)]
+struct LlmToml {
+    api_key: Option<String>,
+    base_url: Option<String>,
+    model: Option<String>,
+    max_tokens: Option<u32>,
 }
 
 impl TomlConfig {
@@ -186,6 +223,18 @@ impl TomlConfig {
         }
         if let Some(v) = self.model {
             base.model = v;
+        }
+        if let Some(v) = self.llm.api_key {
+            base.llm_api_key = Some(v);
+        }
+        if let Some(v) = self.llm.base_url {
+            base.llm_base_url = Some(v);
+        }
+        if let Some(v) = self.llm.model {
+            base.llm_model = Some(v);
+        }
+        if let Some(v) = self.llm.max_tokens {
+            base.llm_max_tokens = Some(v);
         }
         base
     }
