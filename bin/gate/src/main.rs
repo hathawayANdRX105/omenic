@@ -2,10 +2,6 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-mod rules;
-mod shared;
-mod tools;
-
 #[derive(Parser)]
 #[command(name = "gate", version, about = "omenic gate CLI")]
 struct Cli {
@@ -84,39 +80,39 @@ fn main() -> ExitCode {
             .unwrap_or_default();
         if base == "gh" || base == "gh.exe" {
             let args: Vec<String> = std::env::args().skip(1).collect();
-            let rc = crate::tools::gh_wrap::dispatch(&args);
+            let rc = gate::tools::gh_wrap::dispatch(&args);
             return ExitCode::from(rc as u8);
         }
     }
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Init => match crate::tools::init::install() {
+        Commands::Init => match gate::tools::init::install() {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("gate init 失败: {e}");
                 ExitCode::FAILURE
             }
         },
-        Commands::PreCommit => ExitCode::from(crate::tools::pre_commit::run() as u8),
-        Commands::PrePush => ExitCode::from(crate::tools::pre_push::run() as u8),
+        Commands::PreCommit => ExitCode::from(gate::tools::pre_commit::run() as u8),
+        Commands::PrePush => ExitCode::from(gate::tools::pre_push::run() as u8),
         Commands::Merge(args) => {
             let mut arg_vec = vec![args.repo, args.pr.to_string()];
             if args.dry_run {
                 arg_vec.push("--dry-run".to_string());
             }
-            ExitCode::from(crate::tools::merge::run(&arg_vec) as u8)
+            ExitCode::from(gate::tools::merge::run(&arg_vec) as u8)
         }
-        Commands::Issue => ExitCode::from(crate::tools::gh_wrap::intercept_issue_create(&[]) as u8),
-        Commands::Pr => ExitCode::from(crate::tools::gh_wrap::intercept_pr_create(&[]) as u8),
+        Commands::Issue => ExitCode::from(gate::tools::gh_wrap::intercept_issue_create(&[]) as u8),
+        Commands::Pr => ExitCode::from(gate::tools::gh_wrap::intercept_pr_create(&[]) as u8),
         Commands::Review(args) => {
             let args_vec: Vec<String> = build_review_args(&args);
-            let rc = crate::tools::review::run(&args_vec);
+            let rc = gate::tools::review::run(&args_vec);
             ExitCode::from(rc as u8)
         }
         Commands::Audit(args) => {
             let args_vec: Vec<String> = build_audit_args(&args);
-            let rc = crate::tools::audit::run(&args_vec);
+            let rc = gate::tools::audit::run(&args_vec);
             ExitCode::from(rc as u8)
         }
     }
@@ -142,7 +138,7 @@ fn build_audit_args(args: &AuditArgs) -> Vec<String> {
     let repo = args
         .repo
         .clone()
-        .unwrap_or_else(crate::tools::audit::derive_repo);
+        .unwrap_or_else(gate::tools::audit::derive_repo);
     if repo.is_empty() {
         eprintln!("无法确定 repo (git remote get-url origin 失败)");
         return vec![];
@@ -165,7 +161,7 @@ fn build_audit_args(args: &AuditArgs) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::shared::load_yaml;
+    use gate::shared::load_yaml;
 
     #[test]
     fn loads_real_spec_and_counts_required_headings() {

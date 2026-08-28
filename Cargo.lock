@@ -614,12 +614,19 @@ name = "gate"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
  "regex",
  "serde",
  "serde_json",
  "serde_yaml",
  "tempfile",
+]
+
+[[package]]
+name = "gate-bin"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "gate",
 ]
 
 [[package]]
