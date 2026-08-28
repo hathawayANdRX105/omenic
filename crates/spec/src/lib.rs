@@ -2,10 +2,12 @@
 //!
 //! Two layers:
 //! - `template`: spec table generation, parsing, rendering, validation.
-//! - `gate`: GitHub artifact compliance (rules, tools, shared API helpers).
+//! - `shared` / `rules` / `tools`: GitHub artifact compliance checks.
 
-pub mod gate;
+pub mod rules;
+pub mod shared;
 pub mod template;
+pub mod tools;
 
-// Re-export core types for backward compatibility (cli uses `spec::Spec`).
+// Re-export core types for backward compat (cli uses `spec::Spec`).
 pub use template::{Spec, SpecField};

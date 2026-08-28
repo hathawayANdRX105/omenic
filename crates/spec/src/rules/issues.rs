@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::LazyLock;
 
-use crate::gate::shared::{Finding, Severity};
+use crate::shared::{Finding, Severity};
 
 // ---------------------------------------------------------------------------
 // Default config values (mirror github_issues.yaml so we work without a file)
@@ -689,7 +689,7 @@ pub fn check_content(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gate::shared::Severity;
+    use crate::shared::Severity;
 
     /// A realistic sub-issue body that satisfies every IS-* structural rule:
     /// all required headings present, Done when has checkboxes (no table),

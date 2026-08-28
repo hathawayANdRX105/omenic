@@ -6,10 +6,10 @@
 //!
 //! Usage: `gate merge <owner/repo> <pr_number> [--dry-run]`
 
-use crate::gate::shared::{
+use crate::shared::{
     Finding, Severity, exit_code, gh_api, gh_api_paginate, load_yaml, print_findings,
 };
-use crate::gate::tools::{cleanup, git};
+use crate::tools::{cleanup, git};
 
 /// `gate merge <owner/repo> <pr_number> [--dry-run]` — pre-merge validation.
 pub fn run(args: &[String]) -> i32 {
@@ -75,8 +75,8 @@ pub fn run(args: &[String]) -> i32 {
             "github/reviews" => findings.extend(run_review_rules(repo, pr_num, &spec_dir)),
             "cleanup" => {
                 findings.extend(cleanup::run(dry_run));
-                findings.extend(crate::gate::tools::tests_check::run());
-                findings.extend(crate::gate::tools::docs_hygiene::run());
+                findings.extend(crate::tools::tests_check::run());
+                findings.extend(crate::tools::docs_hygiene::run());
             }
             other => eprintln!("unknown merge topic: {}", other),
         }
@@ -113,7 +113,7 @@ pub fn run(args: &[String]) -> i32 {
 
 fn run_pr_rules(repo: &str, pr_num: u32) -> Vec<Finding> {
     match gh_api(&format!("repos/{}/pulls/{}", repo, pr_num), None) {
-        Ok(pr) => crate::gate::rules::pull_requests::check_content(
+        Ok(pr) => crate::rules::pull_requests::check_content(
             pr.get("title").and_then(|t| t.as_str()).unwrap_or(""),
             pr.get("body").and_then(|b| b.as_str()).unwrap_or(""),
             &labels_from(&pr),
@@ -158,7 +158,7 @@ fn run_review_rules(repo: &str, pr_num: u32, spec_dir: &std::path::Path) -> Vec<
     }
 
     match &review_cfg {
-        Some(cfg) => crate::gate::rules::reviews::run(&bodies, cfg),
+        Some(cfg) => crate::rules::reviews::run(&bodies, cfg),
         None => vec![Finding::new(
             "RV",
             Severity::Warn,
@@ -198,11 +198,11 @@ fn check_pr_review(repo: &str, pr_num: u32) -> Vec<Finding> {
     // Uses review.rs runners which surface timeouts/errors as "[CRG] …" /
     // "[ocr] …" markers; rv07_decide classifies those into FAIL.
     println!("（CRG + ocr 运行中，LLM 需几分钟...）");
-    let crg_out = crate::gate::tools::review::run_crg();
-    println!("{}", crate::gate::shared::truncate_utf8(&crg_out, 1200));
+    let crg_out = crate::tools::review::run_crg();
+    println!("{}", crate::shared::truncate_utf8(&crg_out, 1200));
 
-    let ocr_out = crate::gate::tools::review::run_ocr();
-    println!("{}", crate::gate::shared::truncate_utf8(&ocr_out, 1500));
+    let ocr_out = crate::tools::review::run_ocr();
+    println!("{}", crate::shared::truncate_utf8(&ocr_out, 1500));
 
     vec![rv07_decide(file_count, &crg_out, &ocr_out)]
 }
@@ -234,10 +234,7 @@ fn rv07_decide(file_count: usize, crg_out: &str, ocr_out: &str) -> Finding {
         if s.len() > TRUNC_MAX {
             format!(
                 "{ELLIPSIS}{}",
-                crate::gate::shared::truncate_utf8(
-                    s,
-                    TRUNC_MAX.saturating_sub(TRUNC_ELLIPSIS_BYTES)
-                )
+                crate::shared::truncate_utf8(s, TRUNC_MAX.saturating_sub(TRUNC_ELLIPSIS_BYTES))
             )
         } else {
             s.to_string()
@@ -292,7 +289,7 @@ fn labels_from(pr: &serde_json::Value) -> Vec<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gate::shared::Severity;
+    use crate::shared::Severity;
 
     #[test]
     fn ocr_timeout_is_fail() {

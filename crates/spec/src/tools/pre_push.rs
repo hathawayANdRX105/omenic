@@ -3,8 +3,8 @@
 //! Port of `.githooks/hooks/pre-push`. Runs the topics listed in
 //! `dispatch.yaml` under `pre-push`. Uses native Rust validators.
 
-use crate::gate::shared::{exit_code, print_findings};
-use crate::gate::tools::{code, git, workspace};
+use crate::shared::{exit_code, print_findings};
+use crate::tools::{code, git, workspace};
 
 /// `gate pre-push` — runs dispatched workspace + code topics.
 pub fn run() -> i32 {
@@ -12,7 +12,7 @@ pub fn run() -> i32 {
         git::find_githooks_dir().unwrap_or_else(|| std::path::PathBuf::from(".githooks"));
     let spec_dir = githooks_root.join("spec");
     let dispatch_path = spec_dir.join("dispatch.yaml");
-    let cfg = crate::gate::shared::load_yaml(dispatch_path.to_str().unwrap_or("")).ok();
+    let cfg = crate::shared::load_yaml(dispatch_path.to_str().unwrap_or("")).ok();
 
     let topics: Vec<String> = match &cfg {
         Some(c) => c
