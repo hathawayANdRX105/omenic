@@ -1,6 +1,6 @@
 //! Render blank skeleton from a loaded spec.
 
-use crate::Spec;
+use super::Spec;
 
 pub fn render_skeleton(spec: &Spec, title: &str) -> String {
     let mut out = String::new();

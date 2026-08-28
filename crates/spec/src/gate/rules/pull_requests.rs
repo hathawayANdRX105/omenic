@@ -7,7 +7,7 @@ use regex::Regex;
 use serde_yaml::Value as YamlValue;
 use std::collections::HashSet;
 
-use crate::shared::{Finding, Severity};
+use crate::gate::shared::{Finding, Severity};
 
 // ---------------------------------------------------------------------------
 // Default config values (mirror the YAML so the function works without a file)
@@ -568,7 +568,7 @@ pub fn check_content(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::Severity;
+    use crate::gate::shared::Severity;
 
     // A realistic, complete PR body that satisfies all PR-03 requirements.
     const GOOD_BODY: &str = "\

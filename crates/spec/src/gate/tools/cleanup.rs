@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crate::shared::{Finding, Severity, load_yaml, run_external};
+use crate::gate::shared::{Finding, Severity, load_yaml, run_external};
 
 #[derive(Debug, Clone)]
 struct CleanupConfig {
@@ -143,7 +143,7 @@ fn default_branch() -> String {
 }
 
 pub fn run(dry_run: bool) -> Vec<Finding> {
-    let githooks = crate::tools::git::find_githooks_dir()
+    let githooks = crate::gate::tools::git::find_githooks_dir()
         .unwrap_or_else(|| Path::new(".githooks").to_path_buf());
     let spec_path = githooks.join("spec/cleanup_branch_cleanup.yaml");
     let yaml = match load_yaml(spec_path.to_str().unwrap_or("")) {

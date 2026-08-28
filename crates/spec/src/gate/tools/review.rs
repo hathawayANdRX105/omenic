@@ -9,8 +9,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use crate::shared::{gh_api, run_external};
-use crate::tools::git;
+use crate::gate::shared::{gh_api, run_external};
+use crate::gate::tools::git;
 
 // ---------------------------------------------------------------------------
 // OcrComment struct
@@ -74,7 +74,7 @@ pub fn run(args: &[String]) -> i32 {
     if crg_out.is_empty() {
         println!("（无 CRG 输出）");
     } else if crg_out.len() > 2000 {
-        println!("{}", crate::shared::truncate_utf8(&crg_out, 2000));
+        println!("{}", crate::gate::shared::truncate_utf8(&crg_out, 2000));
     } else {
         println!("{crg_out}");
     }
@@ -128,7 +128,7 @@ pub fn run(args: &[String]) -> i32 {
 fn review_report_body(crg_out: &str, ocr_text: &str) -> String {
     format!(
         "## 审查报告\n\n### CRG 变更影响\n\n```\n{}\n```\n\n### ocr 审查发现\n\n{}",
-        crate::shared::truncate_utf8(crg_out, 1200),
+        crate::gate::shared::truncate_utf8(crg_out, 1200),
         ocr_text
     )
 }
