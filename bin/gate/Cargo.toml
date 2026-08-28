@@ -8,5 +8,5 @@ name = "gate"
 path = "src/main.rs"
 
 [dependencies]
-gate = { path = "../../crates/gate" }
+spec = { path = "../../crates/spec" }
 clap = { workspace = true }

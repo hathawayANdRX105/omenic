@@ -610,23 +610,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "gate"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "regex",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
-]
-
-[[package]]
 name = "gate-bin"
 version = "0.1.0"
 dependencies = [
  "clap",
- "gate",
+ "spec",
 ]
 
 [[package]]
@@ -1758,6 +1746,8 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 name = "spec"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "regex",
  "serde",
  "serde_json",
  "serde_yaml",
