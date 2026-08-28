@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use regex::Regex;
 use serde_yaml::Value as YamlValue;
 
-use crate::gate::shared::{Finding, Severity, load_yaml};
-use crate::gate::tools::git;
+use crate::shared::{Finding, Severity, load_yaml};
+use crate::tools::git;
 
 fn repo_root() -> PathBuf {
     git::git_root().unwrap_or_else(|| {

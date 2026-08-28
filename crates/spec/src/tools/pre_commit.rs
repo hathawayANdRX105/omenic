@@ -5,13 +5,13 @@
 //! the Python hook does unconditionally.
 //!
 //! CM-* checks are native Rust. Topic validators (workspace, code) are
-//! native Rust functions in `crate::gate::tools::workspace` and `crate::gate::tools::code`.
+//! native Rust functions in `crate::tools::workspace` and `crate::tools::code`.
 
 use regex::Regex;
 use std::sync::LazyLock;
 
-use crate::gate::shared::{Finding, Severity, exit_code, print_findings};
-use crate::gate::tools::{code, git, workspace};
+use crate::shared::{Finding, Severity, exit_code, print_findings};
+use crate::tools::{code, git, workspace};
 
 // ---------------------------------------------------------------------------
 // Commit title validation (CM-01, CM-02, CM-03)
@@ -79,7 +79,7 @@ fn check_commit_pr_consistency() -> Vec<Finding> {
     };
 
     let path = format!("repos/{}/pulls/{}", repo, pr_num);
-    let pr_json = match crate::gate::shared::gh_api(&path, None) {
+    let pr_json = match crate::shared::gh_api(&path, None) {
         Ok(j) => j,
         Err(_) => return vec![],
     };
@@ -125,7 +125,7 @@ pub fn run() -> i32 {
         git::find_githooks_dir().unwrap_or_else(|| std::path::PathBuf::from(".githooks"));
     let spec_dir = githooks_root.join("spec");
     let dispatch_path = spec_dir.join("dispatch.yaml");
-    let cfg = crate::gate::shared::load_yaml(dispatch_path.to_str().unwrap_or("")).ok();
+    let cfg = crate::shared::load_yaml(dispatch_path.to_str().unwrap_or("")).ok();
 
     let mut findings = Vec::new();
 
