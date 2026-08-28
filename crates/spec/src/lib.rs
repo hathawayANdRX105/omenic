@@ -1,11 +1,15 @@
-//! Spec tables: markdown skeletons for GitHub artifacts.
+//! Spec tables: markdown skeletons for GitHub artifacts + gate validation.
 //!
-//! Types here, operations in submodules: `init`, `parse`, `render`, `check`.
+//! Two layers: template generation (init/parse/render/check) and
+//! GitHub artifact compliance (rules/tools/shared).
 
 pub mod check;
 pub mod init;
 pub mod parse;
 pub mod render;
+pub mod rules;
+pub mod shared;
+pub mod tools;
 
 use std::path::Path;
 
