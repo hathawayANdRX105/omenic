@@ -13,8 +13,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use regex::Regex;
 
-use crate::rules::{issues, pull_requests};
-use crate::shared::{Finding, Severity};
+use crate::gate::rules::{issues, pull_requests};
+use crate::gate::shared::{Finding, Severity};
 
 const LOG_DIR: &str = ".local/share/gh-gate";
 const LOG_FILE: &str = "gate.log";
@@ -237,7 +237,7 @@ pub fn log(action: &str, target: &str, result: &str, detail: &str) {
 
 /// Derive repo from `git remote get-url origin`.
 pub fn derive_repo() -> String {
-    crate::tools::git::derive_repo().unwrap_or_default()
+    crate::gate::tools::git::derive_repo().unwrap_or_default()
 }
 
 /// Check all checkboxes in a body are ticked. Returns (all_ticked, unticked_items).
@@ -279,7 +279,7 @@ fn gt06_open_sub_block(labels: &[String], open_subs: &[String]) -> Option<Vec<St
 /// Order progress boxes (epic) and other lists must not block. Returns the
 /// unticked items that block, empty when close is allowed.
 fn gt04_unticked_done_when(body: &str) -> Vec<String> {
-    let done = crate::rules::issues::done_when_section(body);
+    let done = crate::gate::rules::issues::done_when_section(body);
     let (ok, unticked) = check_all_checkboxes(&done);
     if ok { Vec::new() } else { unticked }
 }
@@ -299,7 +299,7 @@ fn gt05_unticked_issue_boxes(labels: &[String], issue_body: &str) -> Vec<String>
     if is_epic(labels) {
         return Vec::new();
     }
-    let done = crate::rules::issues::done_when_section(issue_body);
+    let done = crate::gate::rules::issues::done_when_section(issue_body);
     let (ok, unticked) = check_all_checkboxes(&done);
     if ok { Vec::new() } else { unticked }
 }
@@ -342,7 +342,7 @@ fn query_open_subs(repo: &str, num: &str) -> Result<Vec<String>, String> {
         match sn.parse::<u32>() {
             Ok(_) => open.push(sn.to_string()),
             Err(_) => {
-                let shown = crate::shared::truncate_utf8(sn, 20);
+                let shown = crate::gate::shared::truncate_utf8(sn, 20);
                 return Err(format!("sub_issues 响应含非法编号: '{shown}'"));
             }
         }
@@ -398,7 +398,7 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
         println!("闸门: 校验 FAIL，拒绝创建。修正后重试。");
         log(
             "ISSUE_CREATE",
-            crate::shared::truncate_utf8(&title, 40),
+            crate::gate::shared::truncate_utf8(&title, 40),
             "REJECT",
             &format!("FAIL={}", fails.len()),
         );
@@ -439,7 +439,7 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
             );
             log(
                 "ISSUE_CREATE",
-                crate::shared::truncate_utf8(&title, 40),
+                crate::gate::shared::truncate_utf8(&title, 40),
                 "WARN",
                 "created but auto_link failed",
             );
@@ -459,7 +459,7 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
                 );
                 log(
                     "ISSUE_CREATE",
-                    crate::shared::truncate_utf8(&title, 40),
+                    crate::gate::shared::truncate_utf8(&title, 40),
                     "WARN",
                     "created but mount verify failed",
                 );
@@ -646,7 +646,7 @@ pub fn intercept_pr_create(args: &[String]) -> i32 {
         println!("闸门: 校验 FAIL，拒绝创建。修正后重试。");
         log(
             "PR_CREATE",
-            crate::shared::truncate_utf8(&title, 40),
+            crate::gate::shared::truncate_utf8(&title, 40),
             "REJECT",
             &format!("FAIL={}", fails.len()),
         );
@@ -675,7 +675,7 @@ pub fn intercept_pr_create(args: &[String]) -> i32 {
             "PR_CREATE",
             &format!("PR #{num}"),
             "CREATED",
-            crate::shared::truncate_utf8(&title, 40),
+            crate::gate::shared::truncate_utf8(&title, 40),
         );
     }
     0
@@ -1273,10 +1273,10 @@ mod tests {
 Parent: #205
 ";
         let findings =
-            crate::rules::issues::check_content("添加功能", body, &labels, "sub", "open");
+            crate::gate::rules::issues::check_content("添加功能", body, &labels, "sub", "open");
         assert!(
             findings.iter().any(|f| f.rule_id == "IS-09"
-                && f.severity == crate::shared::Severity::Fail
+                && f.severity == crate::gate::shared::Severity::Fail
                 && f.msg.contains("forbidden cross-references")),
             "IS-09 must catch 'Parent: #205' body text"
         );

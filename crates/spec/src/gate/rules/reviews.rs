@@ -9,7 +9,7 @@
 use regex::Regex;
 use serde_yaml::Value as YamlValue;
 
-use crate::shared::{Finding, Severity};
+use crate::gate::shared::{Finding, Severity};
 
 // ---------------------------------------------------------------------------
 // helpers

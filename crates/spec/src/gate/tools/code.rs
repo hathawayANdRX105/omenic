@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use serde_yaml::Value as YamlValue;
 
-use crate::shared::{Finding, Severity, load_yaml, run_external};
-use crate::tools::git;
+use crate::gate::shared::{Finding, Severity, load_yaml, run_external};
+use crate::gate::tools::git;
 
 const LANGUAGES: &[&str] = &["rust", "go", "javascript", "typescript", "python", "bash"];
 

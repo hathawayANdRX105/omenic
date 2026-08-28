@@ -7,10 +7,10 @@ use std::path::{Path, PathBuf};
 
 use regex::Regex;
 
-use crate::shared::{Finding, Severity, load_yaml};
+use crate::gate::shared::{Finding, Severity, load_yaml};
 
 fn repo_root() -> PathBuf {
-    crate::tools::git::git_root()
+    crate::gate::tools::git::git_root()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
 }
 

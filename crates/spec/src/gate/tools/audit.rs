@@ -9,9 +9,9 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde_json::Value as JsonValue;
 
-use crate::shared::gh_api;
-use crate::shared::{Finding, Severity};
-use crate::tools::git;
+use crate::gate::shared::gh_api;
+use crate::gate::shared::{Finding, Severity};
+use crate::gate::tools::git;
 
 // ---------------------------------------------------------------------------
 // Regex helpers
@@ -121,11 +121,11 @@ pub fn run(args: &[String]) -> i32 {
                 .get("draft")
                 .and_then(|d| d.as_bool())
                 .unwrap_or(false);
-            crate::rules::pull_requests::check_content(
+            crate::gate::rules::pull_requests::check_content(
                 title, body, &labels, head, state, draft, None,
             )
         } else {
-            crate::rules::issues::check_content(title, body, &labels, "sub", state)
+            crate::gate::rules::issues::check_content(title, body, &labels, "sub", state)
         };
 
         let fails: Vec<&Finding> = findings
@@ -231,11 +231,11 @@ pub fn scan_recent(repo: &str, days: u32, limit: u32, workers: u32) -> i32 {
                 .get("draft")
                 .and_then(|d| d.as_bool())
                 .unwrap_or(false);
-            crate::rules::pull_requests::check_content(
+            crate::gate::rules::pull_requests::check_content(
                 title, body, &labels, head, state, draft, None,
             )
         } else {
-            crate::rules::issues::check_content(title, body, &labels, "sub", state)
+            crate::gate::rules::issues::check_content(title, body, &labels, "sub", state)
         };
 
         let fails: Vec<&Finding> = findings
