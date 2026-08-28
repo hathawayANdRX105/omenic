@@ -11,8 +11,8 @@ name = "tui"
 path = "src/lib.rs"
 
 [dependencies]
-adaptor = { path = "../../crates/adaptor" }
-config = { path = "../../crates/config" }
+adaptor = { path = "../adaptor" }
+config = { path = "../config" }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 pulldown-cmark = { workspace = true }
