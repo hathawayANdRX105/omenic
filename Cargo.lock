@@ -249,6 +249,7 @@ version = "0.1.0"
 dependencies = [
  "adaptor",
  "clap",
+ "config",
  "orbit",
  "rpc",
  "serde",
@@ -256,8 +257,8 @@ dependencies = [
  "spec",
  "task",
  "tempfile",
- "toml",
  "tools",
+ "tui",
 ]
 
 [[package]]
@@ -278,6 +279,15 @@ dependencies = [
  "rustversion",
  "ryu",
  "static_assertions",
+]
+
+[[package]]
+name = "config"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]
@@ -2063,10 +2073,14 @@ name = "tui"
 version = "0.1.0"
 dependencies = [
  "adaptor",
+ "config",
  "crossterm",
+ "fs2",
  "pulldown-cmark",
  "ratatui",
+ "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

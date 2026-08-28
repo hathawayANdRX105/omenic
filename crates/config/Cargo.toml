@@ -1,0 +1,13 @@
+[package]
+name = "config"
+version = "0.1.0"
+edition = "2024"
+description = "Shared omenic configuration: omp path, data dir, model, LLM credentials"
+license = "MIT"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+toml = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

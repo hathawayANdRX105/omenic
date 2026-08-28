@@ -1,4 +1,4 @@
-//! UI rendering: layout, message list, input box.
+//! UI rendering: sidebar session list + message area + input box.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -6,28 +6,99 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 
-use crate::app::{App, Role};
+use crate::app::{App, Focus, Role};
 use crate::markdown;
 
 pub fn draw(f: &mut Frame, app: &App) {
-    let chunks = Layout::default()
+    // Outer horizontal split: sidebar | chat area
+    let outer = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(22), // sidebar
+            Constraint::Min(1),     // chat area
+        ])
+        .split(f.area());
+
+    draw_sidebar(f, app, outer[0]);
+
+    // Chat area: vertical split messages | input | status
+    let chat = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(3),    // messages
             Constraint::Length(3), // input
             Constraint::Length(1), // status bar
         ])
-        .split(f.area());
+        .split(outer[1]);
 
-    draw_messages(f, app, chunks[0]);
-    draw_input(f, app, chunks[1]);
-    draw_status(f, app, chunks[2]);
+    draw_messages(f, app, chat[0]);
+    draw_input(f, app, chat[1]);
+    draw_status(f, app, chat[2]);
+}
+
+fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
+    let mut items: Vec<ListItem> = Vec::new();
+
+    for (i, session) in app.sessions.iter().enumerate() {
+        let is_active = i == app.active;
+        let is_selected = i == app.session_scroll as usize && app.focus == Focus::Sessions;
+
+        let prefix = if is_active { "▶ " } else { "  " };
+        let title_text = format!("{prefix}{}", session.title);
+
+        let style = if is_selected {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else if is_active {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+
+        items.push(ListItem::new(Line::from(vec![Span::styled(
+            title_text, style,
+        )])));
+    }
+
+    let border_color = if app.focus == Focus::Sessions {
+        Color::Cyan
+    } else {
+        Color::DarkGray
+    };
+
+    let title = format!(" sessions ({}) ", app.sessions.len());
+    let list = List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(Style::default().fg(border_color)),
+    );
+
+    f.render_widget(list, area);
+
+    // Hint footer at bottom of sidebar
+    let hints = " n:new  d:del  ↵:open ";
+    let hint_area = Rect {
+        x: area.x,
+        y: area.bottom().saturating_sub(1),
+        width: area.width,
+        height: 1,
+    };
+    f.render_widget(
+        Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
+        hint_area,
+    );
 }
 
 fn draw_messages(f: &mut Frame, app: &App, area: Rect) {
     let mut items: Vec<ListItem> = Vec::new();
+    let messages = &app.active_session().messages;
 
-    for msg in &app.messages {
+    for msg in messages {
         let role_label = match msg.role {
             Role::User => Span::styled(
                 " You",
@@ -68,7 +139,7 @@ fn draw_messages(f: &mut Frame, app: &App, area: Rect) {
     // Show a placeholder if no messages
     if items.is_empty() {
         items.push(ListItem::new(Line::from(vec![Span::styled(
-            " 开始输入消息，按 Enter 发送。Ctrl+C 或 Esc 退出。",
+            " 开始输入消息，按 Enter 发送。Tab 切换会话列表。",
             Style::default().fg(Color::DarkGray),
         )])));
     }
@@ -86,7 +157,7 @@ fn draw_messages(f: &mut Frame, app: &App, area: Rect) {
         )])));
     }
 
-    let title = format!(" tui-chat — {} messages ", app.messages.len());
+    let title = format!(" chat — {} messages ", messages.len());
     let list = List::new(items)
         .block(
             Block::default()
@@ -109,17 +180,21 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
     let title = if app.streaming {
         " waiting for response... (Ctrl+C to abort) "
     } else {
-        " input (Enter to send) "
+        " input (Enter to send, Tab for sessions) "
+    };
+
+    let border_color = if app.streaming {
+        Color::Yellow
+    } else if app.focus == Focus::Input {
+        Color::Cyan
+    } else {
+        Color::DarkGray
     };
 
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(if app.streaming {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        });
+        .border_style(Style::default().fg(border_color));
 
     // Show cursor
     let display = if app.streaming {
@@ -163,7 +238,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(model_info, Style::default().fg(Color::DarkGray)),
         Span::raw("  │  "),
         Span::styled(
-            "Ctrl+C quit · Esc quit/abort · ↑↓ scroll",
+            "Tab:switch  Ctrl+C:quit  Esc:abort/quit  ↑↓:scroll",
             Style::default().fg(Color::DarkGray),
         ),
     ]);
