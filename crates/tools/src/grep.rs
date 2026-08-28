@@ -124,6 +124,9 @@ impl Tool for Grep {
                     .unwrap_or("(non-utf8)")
                     .trim_end_matches('\n');
                 results.push(format!("{path_text}:{line_num}: {line_text}"));
+                if results.len() >= MAX_MATCHES {
+                    break;
+                }
             }
         }
 
