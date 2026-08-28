@@ -4,7 +4,10 @@
 //! registers itself via `register()`.
 
 pub mod bash;
+pub mod delete;
 pub mod edit;
+pub mod glob;
+pub mod grep;
 pub mod read;
 pub mod write;
 
@@ -94,5 +97,8 @@ pub fn builtin_tools() -> Vec<Box<dyn Tool>> {
         Box::new(write::WriteFile),
         Box::new(edit::EditFile),
         Box::new(bash::RunBash),
+        Box::new(grep::Grep),
+        Box::new(glob::Glob),
+        Box::new(delete::DeleteFile),
     ]
 }

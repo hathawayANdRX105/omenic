@@ -113,7 +113,18 @@ fn missing_args_rejected() {
 fn defs_expose_schema_and_names() {
     let tools = builtin_tools();
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    assert_eq!(names, ["read_file", "write_file", "edit", "run_bash"]);
+    assert_eq!(
+        names,
+        [
+            "read_file",
+            "write_file",
+            "edit",
+            "run_bash",
+            "grep",
+            "glob",
+            "delete_file"
+        ]
+    );
     for t in &tools {
         let d = def(t.as_ref());
         assert!(!d.description.is_empty());

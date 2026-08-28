@@ -55,15 +55,15 @@ crates/
 - 按命令拆模块：task.rs / dep.rs / run.rs / steer.rs / abort.rs / spec.rs / template.rs / init.rs
 - main.rs 做路由，每个命令文件 100-300 行
 
-### P4: tools — 加 grep/glob/delete
+### P4: tools — 加 grep/glob/delete ✅
 
 **问题**：当前只有 read/write/edit/bash，缺搜索和删除。
 
 **方案**：
-- grep.rs：正则搜索文件内容
-- glob.rs：按 pattern 列文件
-- delete.rs：删文件（gio trash 或 rm）
-- 各自注册到 lib.rs::builtin_tools()
+- grep.rs：正则搜索文件内容 ✅ (rg --json subprocess, NDJSON parse, abort/timeout)
+- glob.rs：按 pattern 列文件 ✅ (rg --files --glob --sort=modified)
+- delete.rs：删文件 ✅ (gio trash, rm fallback)
+- 各自注册到 lib.rs::builtin_tools() ✅
 
 ### P5: task — runner 多流程
 
