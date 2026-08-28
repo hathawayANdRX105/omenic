@@ -11,7 +11,8 @@ pub mod grep;
 pub mod read;
 pub mod write;
 
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use adaptor::ToolDef;
 use serde_json::Value;
@@ -21,6 +22,60 @@ pub const MAX_OUTPUT_LINES: usize = 200;
 
 /// Where full truncated outputs are spilled.
 pub const SPILL_DIR: &str = "/tmp";
+
+/// Subprocess timeout and abort poll interval shared by rg-based tools.
+pub const RG_TIMEOUT: Duration = Duration::from_secs(30);
+pub const POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Run a `Command` as a subprocess with timeout + abort support.
+/// Spawns the command, reads stdout in a background thread (avoids
+/// deadlock when the child's stderr pipe fills), and polls for
+/// completion / abort / timeout.
+///
+/// Returns the complete stdout bytes on success, or a `ToolError` on
+/// abort / timeout / spawn failure.
+pub fn run_subprocess(
+    mut cmd: std::process::Command,
+    signal: &AtomicBool,
+) -> Result<Vec<u8>, ToolError> {
+    use std::process::Stdio;
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| ToolError::Message(format!("failed to spawn subprocess: {e}")))?;
+
+    let mut stdout = child.stdout.take().unwrap();
+    let deadline = Instant::now() + RG_TIMEOUT;
+
+    let reader = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        stdout.read_to_end(&mut buf).unwrap_or(0);
+        buf
+    });
+
+    loop {
+        if signal.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(ToolError::Message("aborted".into()));
+        }
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {}
+            Err(_) => break,
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(ToolError::Message("subprocess timed out".into()));
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+
+    Ok(reader.join().unwrap_or_default())
+}
 
 /// Errors returned by tool execution.
 #[derive(Debug)]

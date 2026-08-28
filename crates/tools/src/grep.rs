@@ -4,16 +4,12 @@
 //! records, and returns `path:line: content` lines. Respects gitignore by
 //! default; abort is polled via the signal flag.
 
-use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::process::Command;
 
 use serde_json::{Value, json};
 
-use crate::{Tool, ToolError, arg_str, truncate_output};
+use crate::{Tool, ToolError, arg_str, run_subprocess, truncate_output};
 
-const RG_TIMEOUT: Duration = Duration::from_secs(30);
-const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_MATCHES: usize = 200;
 
 pub struct Grep;
@@ -39,7 +35,11 @@ impl Tool for Grep {
         })
     }
 
-    fn execute(&self, args: &Value, signal: &AtomicBool) -> Result<String, ToolError> {
+    fn execute(
+        &self,
+        args: &Value,
+        signal: &std::sync::atomic::AtomicBool,
+    ) -> Result<String, ToolError> {
         let pattern = arg_str(args, "pattern")?;
         let path = args.get("path").and_then(Value::as_str).unwrap_or(".");
         let include = args.get("include").and_then(Value::as_str);
@@ -56,45 +56,8 @@ impl Tool for Grep {
         }
 
         cmd.arg("--").arg(pattern).arg(path);
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| ToolError::Message(format!("failed to spawn rg: {e}")))?;
-
-        let output = child.stdout.take().unwrap();
-        let deadline = Instant::now() + RG_TIMEOUT;
-
-        // Read stdout in a separate thread to avoid deadlock
-        let reader = std::thread::spawn(move || {
-            use std::io::Read;
-            let mut buf = Vec::new();
-            let mut reader = std::io::BufReader::new(output);
-            reader.read_to_end(&mut buf).unwrap_or(0);
-            buf
-        });
-
-        // Poll for timeout / abort
-        loop {
-            if signal.load(Ordering::Relaxed) {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(ToolError::Message("aborted".into()));
-            }
-            match child.try_wait() {
-                Ok(Some(_)) => break,
-                Ok(None) => {}
-                Err(_) => break,
-            }
-            if Instant::now() > deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(ToolError::Message("rg timed out".into()));
-            }
-            std::thread::sleep(POLL_INTERVAL);
-        }
-
-        let raw = reader.join().unwrap_or_default();
+        let raw = run_subprocess(cmd, signal)?;
         let stdout = String::from_utf8_lossy(&raw);
 
         // Parse NDJSON: only "match" records

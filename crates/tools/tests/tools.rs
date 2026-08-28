@@ -4,7 +4,10 @@ use std::sync::atomic::AtomicBool;
 
 use serde_json::{Value, json};
 use tools::bash::RunBash;
+use tools::delete::DeleteFile;
 use tools::edit::EditFile;
+use tools::glob::Glob;
+use tools::grep::Grep;
 use tools::write::WriteFile;
 use tools::{Tool, builtin_tools, def};
 
@@ -130,4 +133,97 @@ fn defs_expose_schema_and_names() {
         assert!(!d.description.is_empty());
         assert_eq!(d.parameters["type"], "object");
     }
+}
+
+#[test]
+fn grep_finds_pattern_in_temp_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.txt");
+    std::fs::write(&path, "hello world\nfoo bar\nhello again\n").unwrap();
+    let s = sig();
+    let out = Grep
+        .execute(
+            &json!({"pattern": "hello", "path": path.to_str().unwrap()}),
+            &s,
+        )
+        .unwrap();
+    assert!(out.contains("hello world"), "should match line 1");
+    assert!(out.contains("hello again"), "should match line 3");
+    assert!(
+        !out.contains("foo bar"),
+        "should not match non-pattern line"
+    );
+}
+
+#[test]
+fn grep_no_matches_returns_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("empty.txt");
+    std::fs::write(&path, "nothing here\n").unwrap();
+    let s = sig();
+    let out = Grep
+        .execute(
+            &json!({"pattern": "nonexistent", "path": path.to_str().unwrap()}),
+            &s,
+        )
+        .unwrap();
+    assert_eq!(out, "no matches found");
+}
+
+#[test]
+fn glob_lists_matching_files() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "").unwrap();
+    std::fs::write(dir.path().join("b.rs"), "").unwrap();
+    std::fs::write(dir.path().join("c.txt"), "").unwrap();
+    let s = sig();
+    let out = Glob
+        .execute(
+            &json!({"pattern": "*.rs", "path": dir.path().to_str().unwrap()}),
+            &s,
+        )
+        .unwrap();
+    assert!(out.contains("a.rs"), "should list a.rs");
+    assert!(out.contains("b.rs"), "should list b.rs");
+    assert!(!out.contains("c.txt"), "should not list c.txt");
+}
+
+#[test]
+fn glob_no_matches_returns_message() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "").unwrap();
+    let s = sig();
+    let out = Glob
+        .execute(
+            &json!({"pattern": "*.nonexistent", "path": dir.path().to_str().unwrap()}),
+            &s,
+        )
+        .unwrap();
+    assert_eq!(out, "no files matched");
+}
+
+#[test]
+fn delete_file_removes_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("to_delete.txt");
+    std::fs::write(&path, "bye").unwrap();
+    assert!(path.exists());
+    let s = sig();
+    let out = DeleteFile
+        .execute(&json!({"path": path.to_str().unwrap()}), &s)
+        .unwrap();
+    assert!(
+        out.contains("trash") || out.contains("deleted"),
+        "should report removal"
+    );
+    assert!(!path.exists(), "file should be gone");
+}
+
+#[test]
+fn delete_nonexistent_file_errors() {
+    let s = sig();
+    let err = DeleteFile
+        .execute(&json!({"path": "/tmp/oi-nonexistent-12345.txt"}), &s)
+        .unwrap_err();
+    assert!(err.to_string().contains("does not exist"));
 }

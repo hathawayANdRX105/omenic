@@ -44,27 +44,29 @@ impl Tool for DeleteFile {
         match gio_result {
             Ok(output) if output.status.success() => Ok(format!("moved {path} to trash")),
             Ok(output) => {
+                // gio ran but failed (e.g. tmpfs / system internal mount).
+                // Fall back to rm rather than leaving the user unable to delete.
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                Err(ToolError::Message(format!(
-                    "gio trash failed: {}",
-                    stderr.trim()
-                )))
+                eprintln!("gio trash failed, falling back to rm: {}", stderr.trim());
+                fall_back_rm(path)
             }
-            Err(_) => {
-                // gio binary not available — fall back to rm
-                let rm_result = Command::new("rm").arg(path).output();
-                match rm_result {
-                    Ok(o) if o.status.success() => Ok(format!("deleted {path}")),
-                    Ok(o) => {
-                        let stderr = String::from_utf8_lossy(&o.stderr);
-                        Err(ToolError::Message(format!(
-                            "delete failed: {}",
-                            stderr.trim()
-                        )))
-                    }
-                    Err(e) => Err(ToolError::Message(format!("failed to run rm: {e}"))),
-                }
-            }
+            Err(_) => fall_back_rm(path),
         }
+    }
+}
+
+/// Fall back to `rm` when gio is unavailable or fails (e.g. tmpfs mount).
+fn fall_back_rm(path: &str) -> Result<String, ToolError> {
+    let rm_result = Command::new("rm").arg(path).output();
+    match rm_result {
+        Ok(o) if o.status.success() => Ok(format!("deleted {path}")),
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            Err(ToolError::Message(format!(
+                "delete failed: {}",
+                stderr.trim()
+            )))
+        }
+        Err(rm_err) => Err(ToolError::Message(format!("failed to run rm: {rm_err}"))),
     }
 }
