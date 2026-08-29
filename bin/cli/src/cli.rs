@@ -7,12 +7,11 @@
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use tools::Tool;
 
 use crate::config::Config;
 use task::store::Store;
 use task::{Task, TaskKind, TaskStatus};
-
-// ---------------------------------------------------------------------------
 // clap CLI definition
 // ---------------------------------------------------------------------------
 
@@ -79,6 +78,25 @@ enum Command {
     Pr {
         #[command(subcommand)]
         sub: PrCmd,
+    },
+    /// Read-only parallel subagent exploration (opt-in)
+    Subagent {
+        #[command(subcommand)]
+        sub: SubagentCmd,
+    },
+}
+
+/// Sub-views of `cli subagent`.
+#[derive(Subcommand)]
+enum SubagentCmd {
+    /// Run one or more read-only subagents in parallel
+    Run {
+        /// One or more prompts; each spawns its own subagent.
+        #[arg(long = "prompt", value_name = "PROMPT")]
+        prompts: Vec<String>,
+        /// Per-subagent loop turn cap (default 10).
+        #[arg(long, default_value_t = subagent::config::MAX_TURNS_DEFAULT as u32)]
+        max_turns: u32,
     },
 }
 
@@ -321,11 +339,33 @@ fn dispatch(cli: Cli) -> Result<u8, String> {
         Command::Pr { sub } => match sub {
             PrCmd::Render { id } => pr_render_cmd(&id, json),
         },
+        Command::Subagent { sub } => match sub {
+            SubagentCmd::Run { prompts, max_turns } => {
+                subagent_run_cmd(&prompts, max_turns as usize)
+            }
+        },
     }
 }
 
-// --- JSON helpers ----------------------------------------------------------
-
+/// `subagent run` — drive one or more prompts through the `TaskTool`. Single
+/// prompt runs inline; multiple prompts run in parallel via std::thread::scope
+/// inside the tool, with a 5-min wall clock cap. Result is printed to stdout.
+fn subagent_run_cmd(prompts: &[String], max_turns: usize) -> Result<u8, String> {
+    use std::sync::atomic::AtomicBool;
+    if prompts.is_empty() {
+        return Err("at least one --prompt is required".into());
+    }
+    let args = serde_json::json!({
+        "prompts": prompts,
+        "max_turns": max_turns,
+    });
+    let tool = subagent::TaskTool;
+    let out = tool
+        .execute(&args, &AtomicBool::new(false))
+        .map_err(|e| format!("subagent: {e}"))?;
+    print!("{out}");
+    Ok(0)
+}
 /// Print a JSON value to stdout.
 fn print_json<T: ?Sized + serde::Serialize>(value: &T) {
     println!(

@@ -6,7 +6,7 @@ description = "Task-driven agent orchestrator CLI"
 license = "MIT"
 
 [[bin]]
-name = "cli"
+name = "oi"
 path = "src/main.rs"
 
 [dependencies]
@@ -16,9 +16,11 @@ tools = { path = "../../crates/tools" }
 rpc = { path = "../../crates/rpc" }
 task = { path = "../../crates/task" }
 spec = { path = "../../crates/spec" }
+config = { path = "../../crates/config" }
+tui = { path = "../../crates/tui" }
+subagent = { path = "../../crates/subagent" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 clap = { workspace = true }
-toml = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }

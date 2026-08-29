@@ -1,0 +1,17 @@
+[package]
+name = "subagent"
+version = "0.1.0"
+edition = "2024"
+description = "Read-only subagent task tool for parallel exploration"
+license = "MIT"
+publish = false
+
+[dependencies]
+adaptor = { path = "../adaptor" }
+tools = { path = "../tools" }
+orbit = { path = "../orbit" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
