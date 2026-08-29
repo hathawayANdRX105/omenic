@@ -254,6 +254,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spec",
+ "subagent",
  "task",
  "tempfile",
  "toml",
@@ -1784,6 +1785,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "subagent"
+version = "0.1.0"
+dependencies = [
+ "adaptor",
+ "orbit",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tools",
 ]
 
 [[package]]
