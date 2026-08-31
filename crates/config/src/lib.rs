@@ -28,6 +28,24 @@ pub struct Config {
     pub llm_model: Option<String>,
     /// Direct LLM max tokens.
     pub llm_max_tokens: Option<u32>,
+    /// External MCP servers to spawn for extra tools. Empty by default —
+    /// MCP is opt-in and nothing is spawned unless the user lists a server.
+    pub mcp_servers: Vec<McpServerConfig>,
+}
+
+/// One external MCP server: a child process spoken to over stdio.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct McpServerConfig {
+    /// Short handle used to namespace this server's tool names.
+    pub name: String,
+    /// Executable to spawn.
+    pub command: String,
+    /// Arguments passed to `command`.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Extra environment variables for the child.
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
 }
 
 /// Errors that can occur during config loading.
@@ -98,6 +116,7 @@ impl Config {
             llm_base_url: None,
             llm_model: None,
             llm_max_tokens: None,
+            mcp_servers: Vec::new(),
         };
 
         // Load from TOML file (.oi/config.toml, legacy fallback omenic.toml);
@@ -190,6 +209,23 @@ impl Config {
             // root with overlayfs etc. OS will give a clear error at write time.
         }
 
+        // mcp servers: a listed server must be startable — an entry with no
+        // name or no command can only fail later at spawn time.
+        for s in &self.mcp_servers {
+            if s.name.trim().is_empty() {
+                return Err(ConfigError::Invalid {
+                    field: "mcp.servers.name",
+                    message: "must not be empty".to_string(),
+                });
+            }
+            if s.command.trim().is_empty() {
+                return Err(ConfigError::Invalid {
+                    field: "mcp.servers.command",
+                    message: format!("server '{}' has no command", s.name),
+                });
+            }
+        }
+
         Ok(())
     }
 }
@@ -202,6 +238,8 @@ struct TomlConfig {
     model: Option<String>,
     #[serde(default)]
     llm: LlmToml,
+    #[serde(default)]
+    mcp: McpToml,
 }
 
 /// `[llm]` TOML section for direct LLM credentials.
@@ -211,6 +249,13 @@ struct LlmToml {
     base_url: Option<String>,
     model: Option<String>,
     max_tokens: Option<u32>,
+}
+
+/// `[mcp]` TOML section. `servers` is a list of `[[mcp.servers]]` tables.
+#[derive(Debug, Default, serde::Deserialize)]
+struct McpToml {
+    #[serde(default)]
+    servers: Vec<McpServerConfig>,
 }
 
 impl TomlConfig {
@@ -235,6 +280,9 @@ impl TomlConfig {
         }
         if let Some(v) = self.llm.max_tokens {
             base.llm_max_tokens = Some(v);
+        }
+        if !self.mcp.servers.is_empty() {
+            base.mcp_servers = self.mcp.servers;
         }
         base
     }
@@ -463,5 +511,70 @@ mod tests {
         set_env(None, Some("./new-data-dir"), None);
         let config = Config::load().unwrap();
         assert_eq!(config.data_dir, PathBuf::from("./new-data-dir"));
+    }
+
+    // --- #266: MCP servers (default off) ---
+
+    #[test]
+    fn mcp_defaults_to_no_servers() {
+        let _g = lock();
+        let _d = tmp_dir("mcp-default");
+        assert!(Config::load().unwrap().mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn mcp_servers_parsed_from_toml() {
+        let _g = lock();
+        let _d = tmp_dir("mcp-parse");
+        fs::write(
+            "./omenic.toml",
+            "[[mcp.servers]]\n\
+             name = \"files\"\n\
+             command = \"mcp-server-filesystem\"\n\
+             args = [\"/tmp\"]\n\
+             env = { TOKEN = \"x\" }\n\
+             \n\
+             [[mcp.servers]]\n\
+             name = \"git\"\n\
+             command = \"mcp-server-git\"\n",
+        )
+        .unwrap();
+        let servers = Config::load().unwrap().mcp_servers;
+        assert_eq!(servers.len(), 2);
+        assert_eq!(servers[0].name, "files");
+        assert_eq!(servers[0].command, "mcp-server-filesystem");
+        assert_eq!(servers[0].args, ["/tmp"]);
+        assert_eq!(servers[0].env.get("TOKEN").map(String::as_str), Some("x"));
+        // args/env are optional per server.
+        assert!(servers[1].args.is_empty());
+        assert!(servers[1].env.is_empty());
+    }
+
+    #[test]
+    fn mcp_server_without_name_rejected() {
+        let _g = lock();
+        let _d = tmp_dir("mcp-noname");
+        fs::write(
+            "./omenic.toml",
+            "[[mcp.servers]]\nname = \"\"\ncommand = \"x\"\n",
+        )
+        .unwrap();
+        let r = Config::load();
+        assert!(r.is_err());
+        assert!(format!("{}", r.unwrap_err()).contains("mcp.servers.name"));
+    }
+
+    #[test]
+    fn mcp_server_without_command_rejected() {
+        let _g = lock();
+        let _d = tmp_dir("mcp-nocmd");
+        fs::write(
+            "./omenic.toml",
+            "[[mcp.servers]]\nname = \"files\"\ncommand = \"  \"\n",
+        )
+        .unwrap();
+        let r = Config::load();
+        assert!(r.is_err());
+        assert!(format!("{}", r.unwrap_err()).contains("mcp.servers.command"));
     }
 }
