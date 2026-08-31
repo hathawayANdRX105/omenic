@@ -15,7 +15,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use adaptor::ToolDef;
-use serde_json::Value;
+use memory::{Memory, MemoryEntry, MemoryError};
+use serde_json::{Value, json};
 
 /// Tool output truncation limit (lines); tail is kept — errors live at the end.
 pub const MAX_OUTPUT_LINES: usize = 200;
@@ -156,4 +157,209 @@ pub fn builtin_tools() -> Vec<Box<dyn Tool>> {
         Box::new(glob::Glob),
         Box::new(delete::DeleteFile),
     ]
+}
+
+/// Memory-backed tools: `memory_append` / `memory_list` / `memory_search`.
+///
+/// Registered separately from [`builtin_tools`] so the default tool set stays
+/// unchanged. A [`Memory::disabled`] handle still yields all three tools —
+/// they answer with a clear "memory disabled" error instead of vanishing, so
+/// the model learns why the call failed rather than hallucinating the tool.
+pub fn external_tools_from_memory(memory: Memory) -> Vec<Box<dyn Tool>> {
+    vec![
+        Box::new(MemoryAppend {
+            memory: memory.clone(),
+        }),
+        Box::new(MemoryList {
+            memory: memory.clone(),
+        }),
+        Box::new(MemorySearch { memory }),
+    ]
+}
+
+const MEMORY_DISABLED: &str =
+    "memory disabled: set `enabled = true` under `[memory]` in .oi/config.toml to use it";
+
+fn check_enabled(memory: &Memory) -> Result<(), ToolError> {
+    if memory.enabled() {
+        Ok(())
+    } else {
+        Err(ToolError::Message(MEMORY_DISABLED.into()))
+    }
+}
+
+fn render(entries: &[MemoryEntry]) -> Result<String, ToolError> {
+    if entries.is_empty() {
+        return Ok("no memory entries".into());
+    }
+    let body: Vec<String> = entries
+        .iter()
+        .map(|e| format!("#{} {} {}", e.id, e.ts, e.text))
+        .collect();
+    Ok(truncate_output(&body.join("\n"), 0)?)
+}
+
+pub struct MemoryAppend {
+    memory: Memory,
+}
+
+impl Tool for MemoryAppend {
+    fn name(&self) -> &'static str {
+        "memory_append"
+    }
+
+    fn description(&self) -> String {
+        "记一条长期记忆。参数：text（要记住的内容）。".into()
+    }
+
+    fn parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+            "required": ["text"],
+        })
+    }
+
+    fn execute(&self, args: &Value, _signal: &AtomicBool) -> Result<String, ToolError> {
+        check_enabled(&self.memory)?;
+        let text = arg_str(args, "text")?;
+        if text.trim().is_empty() {
+            return Err(ToolError::Message("text must not be empty".into()));
+        }
+        // ponytail: `Memory` is just a path — id assignment and the write happen
+        // under its own file lock, so a clone is a handle, not a second copy of
+        // state. Cheaper than wrapping every tool in a Mutex that guards nothing.
+        let mut memory = self.memory.clone();
+        memory.append(MemoryEntry::new(text))?;
+        Ok("remembered".into())
+    }
+}
+
+pub struct MemoryList {
+    memory: Memory,
+}
+
+impl Tool for MemoryList {
+    fn name(&self) -> &'static str {
+        "memory_list"
+    }
+
+    fn description(&self) -> String {
+        "列出全部长期记忆（按 id 升序）。无参数。".into()
+    }
+
+    fn parameters(&self) -> Value {
+        json!({"type": "object", "properties": {}})
+    }
+
+    fn execute(&self, _args: &Value, _signal: &AtomicBool) -> Result<String, ToolError> {
+        check_enabled(&self.memory)?;
+        render(&self.memory.list()?)
+    }
+}
+
+pub struct MemorySearch {
+    memory: Memory,
+}
+
+impl Tool for MemorySearch {
+    fn name(&self) -> &'static str {
+        "memory_search"
+    }
+
+    fn description(&self) -> String {
+        "在长期记忆里按子串搜索（忽略大小写）。参数：query（子串，非正则）。".into()
+    }
+
+    fn parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        })
+    }
+
+    fn execute(&self, args: &Value, _signal: &AtomicBool) -> Result<String, ToolError> {
+        check_enabled(&self.memory)?;
+        let query = arg_str(args, "query")?;
+        render(&self.memory.search(query)?)
+    }
+}
+
+impl From<MemoryError> for ToolError {
+    fn from(e: MemoryError) -> ToolError {
+        ToolError::Message(format!("memory: {e}"))
+    }
+}
+
+#[cfg(test)]
+mod memory_tool_tests {
+    use super::*;
+
+    fn run(tools: &[Box<dyn Tool>], name: &str, args: Value) -> Result<String, ToolError> {
+        let tool = tools
+            .iter()
+            .find(|t| t.name() == name)
+            .unwrap_or_else(|| panic!("tool {name} not registered"));
+        tool.execute(&args, &AtomicBool::new(false))
+    }
+
+    #[test]
+    fn builtin_tools_have_no_memory_tools() {
+        let names: Vec<&str> = builtin_tools().iter().map(|t| t.name()).collect();
+        assert_eq!(names.len(), 7);
+        assert!(!names.iter().any(|n| n.starts_with("memory_")));
+    }
+
+    #[test]
+    fn disabled_memory_still_registers_and_explains() {
+        let tools = external_tools_from_memory(Memory::disabled());
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+        assert_eq!(names, vec!["memory_append", "memory_list", "memory_search"]);
+
+        for (name, args) in [
+            ("memory_append", json!({"text": "x"})),
+            ("memory_list", json!({})),
+            ("memory_search", json!({"query": "x"})),
+        ] {
+            let err = run(&tools, name, args).expect_err("disabled memory must error");
+            assert!(
+                err.to_string().contains("memory disabled"),
+                "{name}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn enabled_memory_append_list_search() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tools = external_tools_from_memory(Memory::open(tmp.path()).unwrap());
+
+        assert_eq!(run(&tools, "memory_list", json!({})).unwrap(), "no memory entries");
+        run(&tools, "memory_append", json!({"text": "prefers ripgrep"})).unwrap();
+        run(&tools, "memory_append", json!({"text": "deploys on fly.io"})).unwrap();
+
+        let listed = run(&tools, "memory_list", json!({})).unwrap();
+        assert!(listed.contains("#1 "), "{listed}");
+        assert!(listed.contains("prefers ripgrep"), "{listed}");
+        assert!(listed.contains("deploys on fly.io"), "{listed}");
+
+        let found = run(&tools, "memory_search", json!({"query": "RIPGREP"})).unwrap();
+        assert!(found.contains("prefers ripgrep"), "{found}");
+        assert!(!found.contains("fly.io"), "{found}");
+        assert_eq!(
+            run(&tools, "memory_search", json!({"query": "nope"})).unwrap(),
+            "no memory entries"
+        );
+    }
+
+    #[test]
+    fn append_rejects_blank_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tools = external_tools_from_memory(Memory::open(tmp.path()).unwrap());
+        let err = run(&tools, "memory_append", json!({"text": "   "})).expect_err("blank");
+        assert!(err.to_string().contains("must not be empty"), "{err}");
+        let err = run(&tools, "memory_append", json!({})).expect_err("missing arg");
+        assert!(err.to_string().contains("text"), "{err}");
+    }
 }

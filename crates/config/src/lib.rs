@@ -28,6 +28,11 @@ pub struct Config {
     pub llm_model: Option<String>,
     /// Direct LLM max tokens.
     pub llm_max_tokens: Option<u32>,
+    /// Persistent local memory. Off by default: nothing is written to disk
+    /// until the user opts in via `[memory] enabled = true`.
+    pub memory_enabled: bool,
+    /// Override for the memory directory; `None` = `data_dir/memory`.
+    pub memory_dir: Option<PathBuf>,
 }
 
 /// Errors that can occur during config loading.
@@ -98,6 +103,8 @@ impl Config {
             llm_base_url: None,
             llm_model: None,
             llm_max_tokens: None,
+            memory_enabled: false,
+            memory_dir: None,
         };
 
         // Load from TOML file (.oi/config.toml, legacy fallback omenic.toml);
@@ -136,6 +143,11 @@ impl Config {
         if let Ok(v) = env::var("OMENIC_LLM_MAX_TOKENS") {
             config.llm_max_tokens = v.parse().ok();
         }
+        // `[memory] dir` defaults under data_dir, resolved once here so no
+        // consumer has to re-derive it.
+        if config.memory_dir.is_none() {
+            config.memory_dir = Some(config.data_dir.join("memory"));
+        }
         config.validate()?;
         Ok(config)
     }
@@ -146,6 +158,8 @@ impl Config {
     /// - `omp_path`: if it contains a path separator, must exist and be executable;
     ///   bare command names are allowed (resolved via PATH at runtime).
     /// - `data_dir`: if it exists, must be a directory; if not, parent must exist.
+    /// - `memory_dir`: only checked when memory is enabled — a stale path must
+    ///   not break the default-off config.
     fn validate(&self) -> Result<(), ConfigError> {
         // model: non-empty (don't echo the value back — could be sensitive).
         if self.model.trim().is_empty() {
@@ -190,6 +204,19 @@ impl Config {
             // root with overlayfs etc. OS will give a clear error at write time.
         }
 
+        // memory_dir: `create_dir_all` builds missing levels, so only the
+        // nearest existing ancestor has to actually be a directory.
+        if self.memory_enabled
+            && let Some(dir) = self.memory_dir.as_deref()
+            && let Some(p) = dir.ancestors().find(|a| a.exists())
+            && !p.is_dir()
+        {
+            return Err(ConfigError::Invalid {
+                field: "memory_dir",
+                message: format!("'{}' exists but is not a directory", p.display()),
+            });
+        }
+
         Ok(())
     }
 }
@@ -202,6 +229,8 @@ struct TomlConfig {
     model: Option<String>,
     #[serde(default)]
     llm: LlmToml,
+    #[serde(default)]
+    memory: MemoryToml,
 }
 
 /// `[llm]` TOML section for direct LLM credentials.
@@ -211,6 +240,13 @@ struct LlmToml {
     base_url: Option<String>,
     model: Option<String>,
     max_tokens: Option<u32>,
+}
+
+/// `[memory]` TOML section. Absent section = memory off.
+#[derive(Debug, Default, serde::Deserialize)]
+struct MemoryToml {
+    enabled: Option<bool>,
+    dir: Option<String>,
 }
 
 impl TomlConfig {
@@ -235,6 +271,12 @@ impl TomlConfig {
         }
         if let Some(v) = self.llm.max_tokens {
             base.llm_max_tokens = Some(v);
+        }
+        if let Some(v) = self.memory.enabled {
+            base.memory_enabled = v;
+        }
+        if let Some(v) = self.memory.dir {
+            base.memory_dir = Some(PathBuf::from(v));
         }
         base
     }
@@ -463,5 +505,67 @@ mod tests {
         set_env(None, Some("./new-data-dir"), None);
         let config = Config::load().unwrap();
         assert_eq!(config.data_dir, PathBuf::from("./new-data-dir"));
+    }
+
+    // --- #267: default-off persistent memory ---
+
+    #[test]
+    fn memory_off_by_default() {
+        let _g = lock();
+        let _d = tmp_dir("mem-default");
+        let config = Config::load().unwrap();
+        assert!(!config.memory_enabled);
+        // dir is resolved even when disabled, so callers never re-derive it.
+        assert_eq!(config.memory_dir, Some(PathBuf::from("./.oi/memory")));
+    }
+
+    #[test]
+    fn memory_section_opts_in() {
+        let _g = lock();
+        let _d = tmp_dir("mem-on");
+        fs::write("./omenic.toml", "[memory]\nenabled = true\n").unwrap();
+        let config = Config::load().unwrap();
+        assert!(config.memory_enabled);
+        assert_eq!(config.memory_dir, Some(PathBuf::from("./.oi/memory")));
+    }
+
+    #[test]
+    fn memory_dir_override_wins() {
+        let _g = lock();
+        let _d = tmp_dir("mem-dir");
+        fs::write(
+            "./omenic.toml",
+            "[memory]\nenabled = true\ndir = \"./mem-store\"\n",
+        )
+        .unwrap();
+        let config = Config::load().unwrap();
+        assert_eq!(config.memory_dir, Some(PathBuf::from("./mem-store")));
+    }
+
+    #[test]
+    fn memory_dir_not_a_directory_rejected() {
+        let _g = lock();
+        let _d = tmp_dir("mem-bad");
+        fs::write("./mem-not-a-dir", "x").unwrap();
+        fs::write(
+            "./omenic.toml",
+            "[memory]\nenabled = true\ndir = \"./mem-not-a-dir\"\n",
+        )
+        .unwrap();
+        let r = Config::load();
+        assert!(r.is_err());
+        assert!(format!("{}", r.unwrap_err()).contains("memory_dir"));
+        let _ = fs::remove_file("./mem-not-a-dir");
+    }
+
+    #[test]
+    fn bad_memory_dir_ignored_while_disabled() {
+        let _g = lock();
+        let _d = tmp_dir("mem-bad-off");
+        fs::write("./mem-off-not-a-dir", "x").unwrap();
+        fs::write("./omenic.toml", "[memory]\ndir = \"./mem-off-not-a-dir\"\n").unwrap();
+        let config = Config::load().unwrap();
+        assert!(!config.memory_enabled);
+        let _ = fs::remove_file("./mem-off-not-a-dir");
     }
 }
