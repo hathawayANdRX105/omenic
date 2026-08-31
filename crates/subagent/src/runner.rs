@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
 use adaptor::{Context, Message, StopReason};
-use orbit::{run_agent_streaming, AgentEvent, LlmBackend, TurnStop};
+use orbit::{AgentEvent, LlmBackend, TurnStop, run_agent_streaming};
 use serde_json::Value;
 use tools::Tool;
 

@@ -12,11 +12,11 @@ use std::time::{Duration, Instant};
 
 use adaptor::Model;
 use orbit::HttpLlm;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tools::{Tool, ToolError};
 
 use crate::config::{MAX_TURNS_DEFAULT, SUBAGENT_TIMEOUT_SECS};
-use crate::runner::{run_subagent, SubagentError};
+use crate::runner::{SubagentError, run_subagent};
 
 /// The `task` tool, registered opt-in by callers that want parallel
 /// read-only exploration. NOT part of `tools::builtin_tools()`.

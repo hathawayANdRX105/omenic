@@ -21,20 +21,20 @@ pub mod config;
 pub mod runner;
 pub mod task_tool;
 
-pub use runner::{run_subagent, SubagentError, SubagentEvent};
+pub use runner::{SubagentError, SubagentEvent, run_subagent};
 pub use task_tool::TaskTool;
 
 #[cfg(test)]
 mod tests {
-    use crate::runner::{run_subagent, SubagentError, SubagentEvent};
+    use crate::runner::{SubagentError, SubagentEvent, run_subagent};
     use crate::task_tool::TaskTool;
     use adaptor::{Context, Model, StopReason, StreamEvent, ToolCallSpec};
     use orbit::LlmBackend;
     use serde_json::json;
     use std::cell::RefCell;
+    use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use std::sync::mpsc;
-    use std::sync::Arc;
     use std::time::Duration;
     use tools::Tool;
 
