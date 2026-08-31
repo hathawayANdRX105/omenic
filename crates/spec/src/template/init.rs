@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crate::Spec;
+use super::Spec;
 
 pub const DEFAULT_TEMPLATES: &[(&str, &str)] = &[
     (

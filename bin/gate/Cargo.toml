@@ -1,15 +1,12 @@
 [package]
-name = "gate"
+name = "gate-bin"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-serde = { workspace = true }
-serde_json = { workspace = true }
-serde_yaml = { workspace = true }
-regex = "1"
-anyhow = { workspace = true }
-clap = { workspace = true }
+[[bin]]
+name = "gate"
+path = "src/main.rs"
 
-[dev-dependencies]
-tempfile = { workspace = true }
+[dependencies]
+spec = { path = "../../crates/spec" }
+clap = { workspace = true }

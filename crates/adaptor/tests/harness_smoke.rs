@@ -154,6 +154,8 @@ fn stream_cb_emits_events_in_order() {
         },
     );
 
+    _server.join().unwrap();
+
     assert_eq!(received.len(), 4, "expected 4 events (3 deltas + Done)");
     assert_eq!(received[0], StreamEvent::TextDelta("alpha".into()));
     assert_eq!(received[1], StreamEvent::TextDelta("beta".into()));

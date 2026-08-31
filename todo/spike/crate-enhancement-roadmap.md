@@ -30,34 +30,40 @@ crates/
 - 或返回 channel/iterator，调用方按需消费
 - 保留原 `stream()` 作为 `stream_cb` 的 collect 包装，兼容现有调用方
 
-**影响**：tui 逐字显示、orbit 实时事件处理
+**影响**：tui 逐字显示 ✅、orbit 实时事件处理（orbit 仍用 `stream()` 收集包装，未接 `stream_cb`）
 
-### P2: bin/tui — 流式接入 + 会话持久化
+### P2: bin/tui — 流式接入 + 会话持久化 ✅
 
 **问题**：当前等全部返回后一次性显示，无历史记录。
 
 **方案**：
-- 接入 adaptor 流式迭代器，逐 delta 追加到消息列表
-- 会话历史存 JSONL（复用 task store 模式）
-- 多会话切换（左侧列表）
+- 接入 adaptor 流式迭代器，逐 delta 追加到消息列表 ✅ (TUI 已接 stream_cb; orbit 待迁移)
+- 会话历史存 JSONL（复用 task store 模式）✅ session.rs, fcntl lock, append-only
+- 多会话切换（左侧列表）✅ Tab 切焦点, n/d/Enter 键位, 三栏布局
+
+**额外完成**：
+- config 抽成 crates/config (shared by cli + tui)
+- [llm] TOML section + OMENIC_LLM_* env (api_key/base_url/model/max_tokens)
+- TUI 转 lib, cli 无参默认启 TUI, --test 走 smoke test
+- 旧 env fallback 兼容 (AGNES_API_KEY/CHAT_MODEL/AGNES_BASE_URL)
 
 ### P3: bin/cli — 拆 cli.rs
 
-**问题**：cli.rs 3737 行，所有命令在一个文件。
+**问题**：cli.rs 3753 行，所有命令在一个文件。
 
 **方案**：
 - 按命令拆模块：task.rs / dep.rs / run.rs / steer.rs / abort.rs / spec.rs / template.rs / init.rs
 - main.rs 做路由，每个命令文件 100-300 行
 
-### P4: tools — 加 grep/glob/delete
+### P4: tools — 加 grep/glob/delete ✅
 
 **问题**：当前只有 read/write/edit/bash，缺搜索和删除。
 
 **方案**：
-- grep.rs：正则搜索文件内容
-- glob.rs：按 pattern 列文件
-- delete.rs：删文件（gio trash 或 rm）
-- 各自注册到 lib.rs::builtin_tools()
+- grep.rs：正则搜索文件内容 ✅ (rg --json subprocess, NDJSON parse, abort/timeout)
+- glob.rs：按 pattern 列文件 ✅ (rg --files --glob --sort=modified)
+- delete.rs：删文件 ✅ (gio trash, rm fallback)
+- 各自注册到 lib.rs::builtin_tools() ✅
 
 ### P5: task — runner 多流程
 

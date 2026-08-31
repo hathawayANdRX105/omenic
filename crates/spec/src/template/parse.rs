@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crate::{Spec, SpecField};
+use super::{Spec, SpecField};
 
 pub fn parse_spec(content: &str) -> Result<Spec, String> {
     let mut name = String::new();

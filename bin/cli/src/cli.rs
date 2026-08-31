@@ -9,21 +9,25 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use tools::Tool;
 
-use crate::config::Config;
+use config::Config;
 use task::store::Store;
 use task::{Task, TaskKind, TaskStatus};
 // clap CLI definition
 // ---------------------------------------------------------------------------
 
 #[derive(Parser)]
-#[command(name = "cli", about = "Task-driven agent orchestrator")]
+#[command(name = "oi", about = "Task-driven agent orchestrator")]
 struct Cli {
     /// Output JSON instead of human-readable text
     #[arg(long, global = true)]
     json: bool,
 
+    /// Run non-interactive TUI smoke test (no subcommand mode only)
+    #[arg(long)]
+    test: bool,
+
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -241,10 +245,29 @@ pub fn run() -> ExitCode {
     }
 }
 
-/// Dispatch a parsed `Cli` to the matching implementation function.
 fn dispatch(cli: Cli) -> Result<u8, String> {
     let json = cli.json;
     match cli.command {
+        // No subcommand: launch interactive TUI (or smoke test).
+        None => {
+            let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+            if cli.test {
+                tui::test_mode(&config)
+                    .map(|_| 0)
+                    .map_err(|e| format!("tui error: {e}"))
+            } else {
+                tui::run(&config)
+                    .map(|_| 0)
+                    .map_err(|e| format!("tui error: {e}"))
+            }
+        }
+        Some(command) => dispatch_sub(command, json),
+    }
+}
+
+/// Dispatch a subcommand to the matching implementation function.
+fn dispatch_sub(command: Command, json: bool) -> Result<u8, String> {
+    match command {
         Command::Task { sub } => {
             let config = Config::load().map_err(|e| format!("config error: {e}"))?;
             let store = Store::new(&config.data_dir);
@@ -1303,7 +1326,8 @@ fn init_cmd_at(dir: &std::path::Path, json: bool) -> Result<u8, String> {
             .map_err(|e| format!("could not create .oi/config.toml: {e}"))?;
     }
     // Spec templates (never overwrite user edits).
-    spec::init::write_default_specs(&oi_dir).map_err(|e| format!("spec templates: {e}"))?;
+    spec::template::init::write_default_specs(&oi_dir)
+        .map_err(|e| format!("spec templates: {e}"))?;
     // Task templates (never overwrite user edits).
     task::template::write_default_templates(&oi_dir).map_err(|e| format!("task templates: {e}"))?;
     let msg = match (dir_existed, config_existed) {
@@ -1771,8 +1795,8 @@ fn template_apply_cmd(
 /// `spec list` subcommand: list spec tables loaded from `<data>/specs/`.
 fn spec_list_cmd(json: bool) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let specs =
-        spec::parse::load_all_specs(&config.data_dir).map_err(|e| format!("spec error: {e}"))?;
+    let specs = spec::template::parse::load_all_specs(&config.data_dir)
+        .map_err(|e| format!("spec error: {e}"))?;
     if specs.is_empty() {
         eprintln!(
             "no spec templates in {} (run `cli init` first)",
@@ -1819,9 +1843,9 @@ fn spec_new_cmd(
     json: bool,
 ) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let spec = spec::parse::load_spec(&config.data_dir, kind)
+    let spec = spec::template::parse::load_spec(&config.data_dir, kind)
         .map_err(|e| format!("spec error: {e} — try `cli spec list` or `cli init`"))?;
-    let doc = spec::render::render_skeleton(&spec, title.as_deref().unwrap_or(""));
+    let doc = spec::template::render::render_skeleton(&spec, title.as_deref().unwrap_or(""));
     match output {
         Some(path) => {
             std::fs::write(&path, &doc).map_err(|e| format!("write {}: {e}", path))?;
@@ -1844,9 +1868,9 @@ fn spec_new_cmd(
 /// `spec check` subcommand: validate a filled document against the kind's rules.
 fn spec_check_cmd(kind: &str, file: &str, json: bool) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let spec = spec::parse::load_spec(&config.data_dir, kind)
+    let spec = spec::template::parse::load_spec(&config.data_dir, kind)
         .map_err(|e| format!("spec error: {e} — try `cli spec list` or `cli init`"))?;
-    let findings = spec::check::check_file(&spec, std::path::Path::new(file))?;
+    let findings = spec::template::check::check_file(&spec, std::path::Path::new(file))?;
     let fails: Vec<_> = findings.iter().filter(|f| f.fail).collect();
     if json {
         let obj = serde_json::json!({
@@ -2102,7 +2126,7 @@ mod tests {
     #[test]
     fn unknown_subcommand_errors() {
         let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let r = Cli::try_parse_from(["cli", "task", "bogus"]);
+        let r = Cli::try_parse_from(["oi", "task", "bogus"]);
         assert!(r.is_err());
     }
 
@@ -2195,7 +2219,7 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
 
     #[test]
     fn run_command_parse_errors_on_missing_id() {
-        let r = Cli::try_parse_from(["cli", "run"]).is_err();
+        let r = Cli::try_parse_from(["oi", "run"]).is_err();
         assert!(r); // needs <task-id>
     }
 
@@ -2203,29 +2227,29 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
     fn steer_command_parse_and_note() {
         // non-empty message required after id; bare steer errors
         // steer with no message: clap allows it (empty vec), but steer_cmd should error
-        let r = Cli::try_parse_from(["cli", "steer", "t-1"]);
+        let r = Cli::try_parse_from(["oi", "steer", "t-1"]);
         assert!(r.is_ok()); // parsing succeeds; steer_cmd handles empty message
         // with msg should hit the handle (but not fail dispatch parse)
-        let r = Cli::try_parse_from(["cli", "steer", "t-1", "keep chipping"]);
+        let r = Cli::try_parse_from(["oi", "steer", "t-1", "keep chipping"]);
         assert!(r.is_ok());
     }
 
     #[test]
     fn abort_command_parse_needs_id() {
-        let r = Cli::try_parse_from(["cli", "abort"]).is_err();
+        let r = Cli::try_parse_from(["oi", "abort"]).is_err();
         assert!(r);
     }
 
     // --- #50: unknown flags rejected, not swallowed as title ---
     #[test]
     fn add_unknown_flag_rejected() {
-        let r = Cli::try_parse_from(["cli", "task", "add", "-t", "foo"]);
+        let r = Cli::try_parse_from(["oi", "task", "add", "-t", "foo"]);
         assert!(r.is_err(), "unknown flag -t must be rejected");
     }
 
     #[test]
     fn add_unknown_long_flag_rejected() {
-        let r = Cli::try_parse_from(["cli", "task", "add", "--bogus", "x"]);
+        let r = Cli::try_parse_from(["oi", "task", "add", "--bogus", "x"]);
         assert!(r.is_err());
     }
 
@@ -2568,25 +2592,25 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
 
     #[test]
     fn dep_cmd_unknown_sub_rejected() {
-        let r = Cli::try_parse_from(["cli", "dep", "bogus"]);
+        let r = Cli::try_parse_from(["oi", "dep", "bogus"]);
         assert!(r.is_err());
     }
 
     #[test]
     fn dep_cmd_no_sub_rejected() {
-        let r = Cli::try_parse_from(["cli", "dep"]);
+        let r = Cli::try_parse_from(["oi", "dep"]);
         assert!(r.is_err());
     }
 
     #[test]
     fn dep_add_wrong_arg_count_rejected() {
-        let r = Cli::try_parse_from(["cli", "dep", "add", "t1"]);
+        let r = Cli::try_parse_from(["oi", "dep", "add", "t1"]);
         assert!(r.is_err());
     }
 
     #[test]
     fn dep_remove_wrong_arg_count_rejected() {
-        let r = Cli::try_parse_from(["cli", "dep", "remove", "t1"]);
+        let r = Cli::try_parse_from(["oi", "dep", "remove", "t1"]);
         assert!(r.is_err());
     }
 
@@ -3155,7 +3179,7 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
     #[test]
     fn show_cmd_top_level_no_arg_errors() {
         // No arg → usage error before Config::load is reached.
-        let r = Cli::try_parse_from(["cli", "show"]);
+        let r = Cli::try_parse_from(["oi", "show"]);
         assert!(r.is_err());
     }
 
