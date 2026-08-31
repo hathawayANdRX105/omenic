@@ -52,7 +52,6 @@ impl Tool for McpTool {
     }
 
     fn execute(&self, args: &Value, signal: &AtomicBool) -> Result<String, ToolError> {
-        call_tool(self.transport.as_ref(), &self.meta.remote, args, signal)
-            .map_err(ToolError::from)
+        call_tool(self.transport.as_ref(), &self.meta.remote, args, signal).map_err(ToolError::from)
     }
 }

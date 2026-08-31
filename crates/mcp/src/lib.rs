@@ -430,7 +430,10 @@ impl Mcp {
 /// `builtin_tools()` stays exactly as it was. A server that fails to start,
 /// handshake, or list contributes zero tools and is skipped — one broken entry
 /// in the user's config must not take down the agent.
-pub fn external_tools_from_mcp(servers: &[McpServerConfig], signal: &AtomicBool) -> Vec<Box<dyn Tool>> {
+pub fn external_tools_from_mcp(
+    servers: &[McpServerConfig],
+    signal: &AtomicBool,
+) -> Vec<Box<dyn Tool>> {
     let mut out = Vec::new();
     for cfg in servers {
         match Mcp::spawn(cfg, signal) {
@@ -520,7 +523,8 @@ mod tests {
         {"name":"echo","description":"echo it","inputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}},
         {"name":"noargs"}
     ]}}"#;
-    const INIT_OK: &str = r#"{"jsonrpc":"2.0","result":{"protocolVersion":"2025-06-18","capabilities":{}}}"#;
+    const INIT_OK: &str =
+        r#"{"jsonrpc":"2.0","result":{"protocolVersion":"2025-06-18","capabilities":{}}}"#;
 
     #[test]
     fn request_line_is_jsonrpc_2_0() {
@@ -565,8 +569,7 @@ mod tests {
 
     #[test]
     fn parse_response_rejects_id_mismatch_and_garbage() {
-        let mismatch =
-            parse_response(r#"{"jsonrpc":"2.0","id":9,"result":{}}"#, 1).unwrap_err();
+        let mismatch = parse_response(r#"{"jsonrpc":"2.0","id":9,"result":{}}"#, 1).unwrap_err();
         assert!(matches!(mismatch, McpError::Protocol(_)));
         assert!(matches!(
             parse_response("not json at all", 1).unwrap_err(),
@@ -651,7 +654,10 @@ mod tests {
         ]);
         let mcp = Mcp::connect(&cfg("files", "unused"), t.clone(), &sig()).unwrap();
         assert_eq!(
-            mcp.list_tools().iter().map(|d| d.name.clone()).collect::<Vec<_>>(),
+            mcp.list_tools()
+                .iter()
+                .map(|d| d.name.clone())
+                .collect::<Vec<_>>(),
             ["mcp__files__echo", "mcp__files__noargs"]
         );
 
