@@ -12,5 +12,5 @@ harness:
   args:
     - "-c"
     - "cat | claude --model haiku --print --output-format json '检查 Rust 文件: (1) 超过 1500 行 → 输出 {id:OS-01, severity:WARN, line:0, message:\"<N> lines exceeds 1500\"}; (2) 文件内 pub 函数 > 30 → {id:OS-02, severity:WARN, line:0, message:\"<N> pub functions, consider split\"}. 都没有输出 []. 不要其他输出.'"
-  optional: true
+optional: true
 timeout: 60

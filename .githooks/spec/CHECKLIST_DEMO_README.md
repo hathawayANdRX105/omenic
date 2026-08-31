@@ -21,9 +21,8 @@ harness:
   args:
     - "-c"
     - "cat | claude --model haiku --print --output-format json '<你的 prompt 模板>'"
-  optional: true       # harness 不在 → WARN 跳过
-  timeout: 30          # 秒
-```
+optional: true           # harness 不在 → WARN 跳过
+timeout: 30              # 秒
 
 `prompt` 里**必须**告诉模型：
 - 看的是 git diff（`mode: diff`）还是单个文件（`mode: file`）

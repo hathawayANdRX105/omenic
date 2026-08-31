@@ -9,7 +9,7 @@
 use crate::shared::{
     Finding, Severity, exit_code, gh_api, gh_api_paginate, load_yaml, print_findings,
 };
-use crate::tools::{cleanup, git};
+use crate::tools::{checklist, cleanup, git};
 
 /// `gate merge <owner/repo> <pr_number> [--dry-run]` — pre-merge validation.
 pub fn run(args: &[String]) -> i32 {
@@ -78,6 +78,7 @@ pub fn run(args: &[String]) -> i32 {
                 findings.extend(crate::tools::tests_check::run());
                 findings.extend(crate::tools::docs_hygiene::run());
             }
+            "checklist" => findings.extend(checklist::run_all(checklist::HookScope::Merge)),
             other => eprintln!("unknown merge topic: {}", other),
         }
     }

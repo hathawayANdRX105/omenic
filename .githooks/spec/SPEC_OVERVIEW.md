@@ -152,16 +152,19 @@
 
 - `.github/workflows/daily_audit.yml`：每天 UTC 0:30 自动跑 `gate audit --recent=1`
 
-## 主题九：Checklist（CK-01，gate checklist）
+## 主题九：Checklist（CK-01，gate checklist，**已实现**）
 
 - `.githooks/spec/checklist_*.yaml`：项目级 LLM 检查清单；glob 自动发现，按字典序跑
 - `mode: diff`（默认）传 `git diff <scope>` 给 harness；`mode: file` 每个变更文件单独传全文
 - harness = 任意可执行文件，stdout 必须是 finding JSON 数组（与 code/ocr/CRG 同协议）
 - 严重度合并：harness 报的与 yaml `fail_severity` **就高取大**（harness FAIL 永远阻断）
 - `optional: true`（默认）harness 缺失 → WARN 跳过；`false` → FAIL
+- 实现：`crates/spec/src/tools/checklist.rs`（CK-01 dispatcher） + `gate pre-commit/pre-push/merge` 调度
 - 详见 [CHECKLIST_SPEC.md](./CHECKLIST_SPEC.md) 与 [CHECKLIST_DEMO_README.md](./CHECKLIST_DEMO_README.md)
 
 - CK-01 yaml 字段：`enabled` / `hooks` / `match.{paths_include,paths_exclude}` / `mode` / `harness.{command,args}` / `timeout` / `optional` / `fail_severity` — FAIL/WARN/INFO
+- CK-02 diff 范围：pre-commit=`git diff --cached`，pre-push=`git diff HEAD`，merge=`git diff origin/main...HEAD`（unified=3）
+- CK-03 finding 兼容：单 object / 数组 / "text + [...JSON...]" 末尾数组三种都能解析
 
 
 ## 触发式（lazy）规则映射

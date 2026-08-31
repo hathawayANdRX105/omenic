@@ -12,5 +12,5 @@ harness:
   args:
     - "-c"
     - "cat | claude --model haiku --print --output-format json '检查 git diff 中新增的 println!/dbg!/eprintln! 调用。命中时输出 JSON 数组: [{id:DBG-01, severity:FAIL, path:\"<从diff提取>\", line:<新行号>, message:\"<调用文本> 不应留在生产代码\"}]. 没有命中输出 []. 不要其他输出.'"
-  optional: true
+optional: true
 timeout: 30
