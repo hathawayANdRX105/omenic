@@ -35,10 +35,11 @@ match:
   paths_include: ["**/*.rs"]   # git diff 中变更文件命中才跑
   paths_exclude: ["target/", ".wt/", "node_modules/"]
 
-# 模式：diff（快，省 token）/ file（深，全文）
-#  - diff: 传 git diff 给 harness（pre-commit 默认 staged，pre-push/merge 默认 HEAD..merge-base）
-#  - file: 每个变更文件单独传一次（harness 拿全文件推理）
-mode: diff                     # diff | file，默认 diff
+# 模式:diff(快,省 token)/ file(深,全文)/ grep(静态检查,零 LLM)
+#  - diff: 传 git diff 给 harness
+#  - file: 每个变更文件单独传一次
+#  - grep: harness 收空 stdin,自己跑 grep/find/ripgrep,findings 自带 path/line
+mode: diff                     # diff | file | grep,默认 diff
 
 # Harness：任意可执行文件（推荐 sh 包装 LLM CLI）
 # stdin/argv 输入见「协议」一节，stdout 必须输出 finding JSON 数组
@@ -67,7 +68,7 @@ fail_severity: FAIL            # FAIL | WARN | INFO，默认 WARN
 | `hooks` | string[] | all | 触发钩子白名单 |
 | `match.paths_include` | string[] | [] | git diff 中变更文件须匹配至少一条；空 = 不过滤 |
 | `match.paths_exclude` | string[] | [] | 命中排除列表则跳过 |
-| `mode` | string | diff | `diff` \| `file` |
+| `mode` | string | diff | `diff` \| `file` \| `grep` |
 | `harness.command` | string | — | 必须；harness 入口 |
 | `harness.args` | string[] | [] |  |
 | `timeout` | int | 60 | 秒 |
@@ -85,10 +86,18 @@ gate 根据 `mode` 给 harness 三种输入之一：
 - argv = `[..., "--checklist", "<name>", "--scope", "<pre-commit|pre-push|merge>"]`
 - 适用：行号级别检查、增量评审、风格校验
 
-**`mode: file`**（每个变更文件一次）
+**`mode: file`**(每个变更文件一次)
 - stdin = 该文件完整内容
 - argv = `[..., "--checklist", "<name>", "--path", "<repo-relative-path>", "--scope", "..."]`
-- 适用：架构放置、模块分层、API 设计一致性（需要全局上下文）
+- 适用:架构放置、模块分层、API 设计一致性(需要全局上下文)
+
+**`mode: grep`**(v2 新增,零 LLM)
+- stdin = 空 (harness 自己跑 grep/find,无需 gate 喂数据)
+- argv = 同上
+- 适用:铁律类规则(禁路径/禁模式/必放位置) — 不需要 LLM 推理,直接 grep 即可
+  - harness 内联 sh:`sh -c 'grep -rn "use mock::" crates/page/*/src/ | jq -R ...'`
+  - 或调用 ripgrep / 自定义 Python 脚本
+- 严重度:与 harness-reported 取 max;无 finding 即 PASS
 
 ### stdout 输出（强制）
 

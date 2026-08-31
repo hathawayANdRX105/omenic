@@ -87,6 +87,10 @@ struct ChecklistSpec {
 enum Mode {
     Diff,
     File,
+    /// Static check: harness receives empty stdin and runs whatever
+    /// grep/find/ripgrep/etc. it wants. Findings carry their own
+    /// path/line via the JSON output.
+    Grep,
 }
 
 #[derive(Debug, Deserialize)]
@@ -145,6 +149,7 @@ fn load_spec(path: &std::path::Path) -> Option<ChecklistSpec> {
     let enabled = raw.enabled.unwrap_or(true);
     let mode = match raw.mode.as_deref().unwrap_or("diff") {
         "file" => Mode::File,
+        "grep" => Mode::Grep,
         _ => Mode::Diff,
     };
     let base_severity = raw
@@ -271,10 +276,7 @@ fn has_match(spec: &ChecklistSpec, scope: HookScope) -> bool {
 // Harness invocation
 // ---------------------------------------------------------------------------
 
-fn run_harness(
-    spec: &ChecklistSpec,
-    stdin_payload: &[u8],
-) -> (i32, String) {
+fn run_harness(spec: &ChecklistSpec, stdin_payload: &[u8]) -> (i32, String) {
     let mut cmd = Command::new(&spec.command);
     cmd.args(&spec.args)
         .stdin(Stdio::piped())
@@ -396,7 +398,7 @@ fn run_one(spec: &ChecklistSpec, scope: HookScope) -> Vec<Finding> {
     if !spec.hooks.iter().any(|h| scope.matches_yaml(h)) {
         return vec![]; // not in this hook's scope — silent skip
     }
-    if !has_match(spec, scope) {
+    if spec.mode != Mode::Grep && !has_match(spec, scope) {
         return vec![Finding::new(
             &format!("checklist.{}", spec.name),
             Severity::Info,
@@ -423,9 +425,10 @@ fn run_one(spec: &ChecklistSpec, scope: HookScope) -> Vec<Finding> {
             }
             buf.into_bytes()
         }
+        Mode::Grep => Vec::new(), // harness runs static checks itself
     };
 
-    if stdin_payload.is_empty() {
+    if stdin_payload.is_empty() && spec.mode != Mode::Grep {
         return vec![Finding::new(
             &format!("checklist.{}", spec.name),
             Severity::Info,
@@ -503,11 +506,20 @@ mod tests {
     #[test]
     fn merge_severity_takes_worse() {
         // base WARN, reported FAIL → FAIL
-        assert_eq!(merge_severity(Severity::Warn, Severity::Fail), Severity::Fail);
+        assert_eq!(
+            merge_severity(Severity::Warn, Severity::Fail),
+            Severity::Fail
+        );
         // base FAIL, reported INFO → FAIL (cannot downgrade)
-        assert_eq!(merge_severity(Severity::Fail, Severity::Info), Severity::Fail);
+        assert_eq!(
+            merge_severity(Severity::Fail, Severity::Info),
+            Severity::Fail
+        );
         // base INFO, reported WARN → WARN
-        assert_eq!(merge_severity(Severity::Info, Severity::Warn), Severity::Warn);
+        assert_eq!(
+            merge_severity(Severity::Info, Severity::Warn),
+            Severity::Warn
+        );
     }
 
     #[test]
@@ -585,10 +597,7 @@ mod tests {
             optional: true,
             base_severity: Severity::Info,
         };
-        let out = findings_from_stdout(
-            &spec,
-            r#"[{"id":"A-1","severity":"WARN","message":"hi"}]"#,
-        );
+        let out = findings_from_stdout(&spec, r#"[{"id":"A-1","severity":"WARN","message":"hi"}]"#);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].msg, "hi");
     }
@@ -695,5 +704,70 @@ match:
         assert!(!truncate("中文abc", 3).is_empty());
         // No panic on empty
         assert_eq!(truncate("", 5), "");
+    }
+
+    #[test]
+    fn load_spec_parses_grep_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("checklist_static.yaml");
+        std::fs::write(
+            &path,
+            r#"
+enabled: true
+mode: grep
+harness:
+  command: "sh"
+  args: ["-c", "echo '[]'"]
+optional: true
+"#,
+        )
+        .unwrap();
+        let spec = load_spec(&path).expect("load ok");
+        assert_eq!(spec.mode, Mode::Grep);
+    }
+
+    #[test]
+    fn load_spec_defaults_to_diff_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("checklist_default.yaml");
+        std::fs::write(
+            &path,
+            r#"
+enabled: true
+harness:
+  command: "true"
+"#,
+        )
+        .unwrap();
+        let spec = load_spec(&path).expect("load ok");
+        assert_eq!(spec.mode, Mode::Diff);
+    }
+
+    #[test]
+    fn grep_mode_does_not_short_circuit_on_empty_stdin() {
+        // Mode::Grep always has empty stdin, but the harness runs
+        // static checks itself. The dispatcher must NOT return
+        // "empty diff; nothing to check" for grep mode.
+        // We can't easily exercise run_one() here, but we can at
+        // least verify the behavior at the spec level by reading
+        // mode parsing for grep.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("checklist_grep_no_stdin.yaml");
+        std::fs::write(
+            &path,
+            r#"
+mode: grep
+harness:
+  command: "echo"
+  args: ["[{\"id\":\"G-01\",\"severity\":\"WARN\",\"line\":1,\"message\":\"from grep\"}]"]
+"#,
+        )
+        .unwrap();
+        let spec = load_spec(&path).expect("load ok");
+        assert_eq!(spec.mode, Mode::Grep);
+        // The structural condition (don't skip on empty stdin
+        // when mode == Grep) is exercised in run_one; the test
+        // here just guards against regressing the Mode::Grep
+        // recognition path.
     }
 }

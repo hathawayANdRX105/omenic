@@ -163,8 +163,9 @@
 - 详见 [CHECKLIST_SPEC.md](./CHECKLIST_SPEC.md) 与 [CHECKLIST_DEMO_README.md](./CHECKLIST_DEMO_README.md)
 
 - CK-01 yaml 字段：`enabled` / `hooks` / `match.{paths_include,paths_exclude}` / `mode` / `harness.{command,args}` / `timeout` / `optional` / `fail_severity` — FAIL/WARN/INFO
-- CK-02 diff 范围：pre-commit=`git diff --cached`，pre-push=`git diff HEAD`，merge=`git diff origin/main...HEAD`（unified=3）
-- CK-03 finding 兼容：单 object / 数组 / "text + [...JSON...]" 末尾数组三种都能解析
+- CK-02 diff 范围:pre-commit=`git diff --cached`,pre-push=`git diff HEAD`,merge=`git diff origin/main...HEAD`(unified=3)
+- CK-03 finding 兼容:单 object / 数组 / "text + [...JSON...]" 末尾数组三种都能解析
+- CK-04 `mode: grep`:harness 收空 stdin,跑任意静态检查(grep/find/自定义脚本),finding 自身带 path/line. 适合铁律类规则(禁路径模式、必放位置) — 零 LLM token,毫秒级
 
 
 ## 触发式（lazy）规则映射
