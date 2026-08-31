@@ -73,15 +73,16 @@ impl From<McpError> for ToolError {
         ToolError::Message(e.to_string())
     }
 }
-
 /// One request/response channel to an MCP server.
 ///
 /// Implementations must serialize concurrent callers: `roundtrip` is called
 /// from tool executions on arbitrary threads.
 pub trait McpTransport: Send + Sync {
-    /// Send one framed JSON-RPC request and return the reply line.
+    /// Send one framed JSON-RPC request and return the reply line for `id`.
+    /// Lines without a matching id (server notifications, or a response from
+    /// a previous roundtrip) must be consumed silently and never returned.
     /// Must poll `signal` and give up after [`MCP_TIMEOUT`].
-    fn roundtrip(&self, line: &str, signal: &AtomicBool) -> Result<String, McpError>;
+    fn roundtrip(&self, id: u64, line: &str, signal: &AtomicBool) -> Result<String, McpError>;
     /// Send a notification (no `id`, no reply expected).
     fn notify(&self, line: &str) -> Result<(), McpError>;
     /// Next monotonic request id.
@@ -134,7 +135,7 @@ pub fn request(
     signal: &AtomicBool,
 ) -> Result<Value, McpError> {
     let id = transport.next_id();
-    let line = transport.roundtrip(&request_line(id, method, params), signal)?;
+    let line = transport.roundtrip(id, &request_line(id, method, params), signal)?;
     parse_response(&line, id)
 }
 
@@ -149,28 +150,36 @@ pub fn initialize(transport: &dyn McpTransport, signal: &AtomicBool) -> Result<V
     transport.notify(&notification_line("notifications/initialized", &json!({})))?;
     Ok(result)
 }
-
 /// `tools/list` → tool metadata. Entries without a usable `name` are skipped
 /// rather than failing the whole server.
+///
+/// Follows `nextCursor` until the server returns null, so paginated servers
+/// don't silently drop everything past page one.
 pub fn list_tools(
     transport: &dyn McpTransport,
     server: &str,
     signal: &AtomicBool,
 ) -> Result<Vec<ToolMeta>, McpError> {
-    let result = request(transport, "tools/list", &json!({}), signal)?;
-    let items = result
-        .get("tools")
-        .and_then(Value::as_array)
-        .ok_or_else(|| McpError::Protocol("tools/list result has no `tools` array".into()))?;
-
-    Ok(items
-        .iter()
-        .filter_map(|t| {
-            let remote = t.get("name").and_then(Value::as_str)?;
+    let mut out = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let params = match &cursor {
+            Some(c) => json!({ "cursor": c }),
+            None => json!({}),
+        };
+        let result = request(transport, "tools/list", &params, signal)?;
+        let items = result
+            .get("tools")
+            .and_then(Value::as_array)
+            .ok_or_else(|| McpError::Protocol("tools/list result has no `tools` array".into()))?;
+        for t in items {
+            let Some(remote) = t.get("name").and_then(Value::as_str) else {
+                continue;
+            };
             if remote.is_empty() {
-                return None;
+                continue;
             }
-            Some(ToolMeta {
+            out.push(ToolMeta {
                 name: format!("mcp__{server}__{remote}"),
                 remote: remote.to_string(),
                 description: t
@@ -183,11 +192,18 @@ pub fn list_tools(
                     .get("inputSchema")
                     .cloned()
                     .unwrap_or_else(|| json!({"type": "object", "properties": {}})),
-            })
-        })
-        .collect())
+            });
+        }
+        cursor = match result.get("nextCursor") {
+            Some(Value::Null) | None => break,
+            Some(v) => match v.as_str() {
+                Some("") | None => break,
+                Some(s) => Some(s.to_string()),
+            },
+        };
+    }
+    Ok(out)
 }
-
 /// `tools/call` → flattened text content.
 ///
 /// Per spec the result carries a `content` array of typed parts plus an
@@ -325,7 +341,7 @@ impl McpTransport for StdioTransport {
         write_line(&mut io.stdin, line)
     }
 
-    fn roundtrip(&self, line: &str, signal: &AtomicBool) -> Result<String, McpError> {
+    fn roundtrip(&self, id: u64, line: &str, signal: &AtomicBool) -> Result<String, McpError> {
         let mut io = lock(&self.io);
         write_line(&mut io.stdin, line)?;
 
@@ -334,8 +350,31 @@ impl McpTransport for StdioTransport {
             if signal.load(Ordering::Relaxed) {
                 return Err(McpError::Aborted);
             }
+            if Instant::now() >= deadline {
+                return Err(McpError::Timeout);
+            }
             match io.replies.recv_timeout(POLL_INTERVAL) {
-                Ok(reply) => return Ok(reply),
+                Ok(reply) => match serde_json::from_str::<Value>(&reply) {
+                    Ok(v) => match v.get("id").and_then(Value::as_u64) {
+                        Some(got) if got == id => return Ok(reply),
+                        // A leftover reply to an earlier request that timed
+                        // out: its response arrived after we gave up and is
+                        // still queued. Erroring here would desync the channel
+                        // permanently — one stale line would poison every
+                        // later call — so drop it and keep waiting.
+                        Some(got) => {
+                            eprintln!("mcp: dropping stale response id {got} (awaiting {id})")
+                        }
+                        // No id: a server-pushed notification.
+                        None => eprintln!(
+                            "mcp: dropping server notification: {}",
+                            v.get("method")
+                                .and_then(Value::as_str)
+                                .unwrap_or("<no method>")
+                        ),
+                    },
+                    Err(_) => eprintln!("mcp: dropping non-JSON line from server"),
+                },
                 Err(RecvTimeoutError::Timeout) => {
                     if Instant::now() >= deadline {
                         return Err(McpError::Timeout);
@@ -486,15 +525,11 @@ mod tests {
             lock(&self.notes).push(line.to_string());
             Ok(())
         }
-        fn roundtrip(&self, line: &str, signal: &AtomicBool) -> Result<String, McpError> {
+        fn roundtrip(&self, id: u64, line: &str, signal: &AtomicBool) -> Result<String, McpError> {
             if signal.load(Ordering::Relaxed) {
                 return Err(McpError::Aborted);
             }
             lock(&self.sent).push(line.to_string());
-            let id = serde_json::from_str::<Value>(line)
-                .ok()
-                .and_then(|v| v.get("id").and_then(Value::as_u64))
-                .unwrap_or(0);
             let reply = lock(&self.replies)
                 .pop_front()
                 .ok_or_else(|| McpError::Transport("no scripted reply".into()))?;
@@ -615,6 +650,23 @@ mod tests {
     }
 
     #[test]
+    fn tool_list_follows_next_cursor_until_null() {
+        // Page 1 has one tool and a non-null cursor; page 2 has another and
+        // omits the cursor. Page 1 must be re-issued with the cursor echoed
+        // back so paginated servers don't silently drop past page one.
+        let t = FakeTransport::new(&[
+            r#"{"jsonrpc":"2.0","result":{"tools":[{"name":"a"}],"nextCursor":"c1"}}"#,
+            r#"{"jsonrpc":"2.0","result":{"tools":[{"name":"b"}],"nextCursor":null}}"#,
+        ]);
+        let metas = list_tools(t.as_ref(), "s", &sig()).unwrap();
+        assert_eq!(metas.len(), 2);
+        assert_eq!(metas[0].remote, "a");
+        assert_eq!(metas[1].remote, "b");
+        let page2 = t.sent_json(1);
+        assert_eq!(page2["params"]["cursor"], "c1");
+    }
+
+    #[test]
     fn call_tool_sends_name_and_args_and_joins_text() {
         let t = FakeTransport::new(&[
             r#"{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"hi"},{"type":"text","text":"there"}]}}"#,
@@ -715,7 +767,7 @@ mod tests {
     fn stdio_transport_spawns_and_reports_closed_stdout() {
         let t = StdioTransport::spawn(&cfg("t", "true")).expect("`true` should spawn");
         // `true` exits immediately: stdout closes, reader thread ends.
-        match t.roundtrip(&request_line(1, "initialize", &json!({})), &sig()) {
+        match t.roundtrip(1, &request_line(1, "initialize", &json!({})), &sig()) {
             Err(McpError::Transport(_)) | Err(McpError::Timeout) => {}
             other => panic!("expected transport/timeout error, got {other:?}"),
         }
@@ -733,5 +785,30 @@ mod tests {
         let t = StdioTransport::spawn(&c).unwrap();
         let out = call_tool(&t, "echo", &json!({}), &sig()).unwrap();
         assert_eq!(out, "ok");
+    }
+
+    /// A reply left over from a timed-out earlier request must be skipped, not
+    /// turned into a protocol error that desyncs the channel for good.
+    #[test]
+    fn stdio_transport_skips_stale_reply_and_notification() {
+        let mut c = cfg("shell", "sh");
+        c.args = vec![
+            "-c".into(),
+            // Queued ahead of the real answer: a response to request id 1
+            // (which we pretend timed out) and an id-less notification.
+            r#"read -r line
+printf '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"stale"}]}}\n'
+printf '{"jsonrpc":"2.0","method":"notifications/message","params":{}}\n'
+printf '{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"fresh"}]}}\n'"#
+                .into(),
+        ];
+        let t = StdioTransport::spawn(&c).unwrap();
+        let line = t
+            .roundtrip(2, &request_line(2, "tools/call", &json!({})), &sig())
+            .expect("stale reply must not fail the live request");
+        assert_eq!(
+            parse_response(&line, 2).unwrap()["content"][0]["text"],
+            "fresh"
+        );
     }
 }
