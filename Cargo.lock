@@ -249,6 +249,7 @@ version = "0.1.0"
 dependencies = [
  "adaptor",
  "clap",
+ "config",
  "orbit",
  "rpc",
  "serde",
@@ -257,8 +258,8 @@ dependencies = [
  "subagent",
  "task",
  "tempfile",
- "toml",
  "tools",
+ "tui",
 ]
 
 [[package]]
@@ -279,6 +280,15 @@ dependencies = [
  "rustversion",
  "ryu",
  "static_assertions",
+]
+
+[[package]]
+name = "config"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]
@@ -601,16 +611,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "gate"
+name = "gate-bin"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "clap",
- "regex",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
+ "spec",
 ]
 
 [[package]]
@@ -1515,6 +1520,7 @@ name = "rpc"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",
@@ -1742,6 +1748,8 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 name = "spec"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "regex",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2076,10 +2084,14 @@ name = "tui"
 version = "0.1.0"
 dependencies = [
  "adaptor",
+ "config",
  "crossterm",
+ "fs2",
  "pulldown-cmark",
  "ratatui",
+ "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

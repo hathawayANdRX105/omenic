@@ -6,13 +6,19 @@ description = "Terminal chat UI with streaming LLM responses"
 license = "MIT"
 publish = false
 
-[[bin]]
+[lib]
 name = "tui"
-path = "src/main.rs"
+path = "src/lib.rs"
 
 [dependencies]
-adaptor = { path = "../../crates/adaptor" }
+adaptor = { path = "../adaptor" }
+config = { path = "../config" }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 pulldown-cmark = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+fs2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

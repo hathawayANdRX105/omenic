@@ -77,6 +77,29 @@ impl Worker {
         Ok(Worker { client })
     }
 
+    /// Spawn with a connect timeout and auto-reconnect retry count.
+    pub fn new_with_opts(
+        omp_path: &str,
+        connect_timeout: Option<std::time::Duration>,
+        max_retries: u32,
+    ) -> Result<Self, crate::client::RpcError> {
+        let client = crate::client::Client::new_with_opts(omp_path, connect_timeout, max_retries)?;
+        Ok(Worker { client })
+    }
+
+    /// Reconnect the underlying client (kill + respawn + renegotiate).
+    pub fn reconnect(&mut self) -> Result<(), crate::client::RpcError> {
+        self.client.reconnect()
+    }
+
+    /// Send a ping to check liveness. Returns Ok if the process responds.
+    pub fn ping(&mut self) -> Result<(), crate::client::RpcError> {
+        let id = self.client.next_id_str();
+        let req = crate::client::Request::new("ping").with_id(&id).done();
+        self.client.send(&req)?;
+        Ok(())
+    }
+
     /// Send a prompt to the agent (initial task brief or follow-up).
     ///
     /// Returns the response data.  The agent will subsequently emit events

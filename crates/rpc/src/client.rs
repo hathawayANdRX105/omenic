@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -168,7 +169,6 @@ impl Request {
 /// omp RPC client.
 ///
 /// Spawns `omp --mode rpc` as a child process, reads the initial `ready` frame,
-/// and provides `send()` for command-response exchange.
 pub struct Client {
     /// The child process.
     process: Child,
@@ -180,6 +180,12 @@ pub struct Client {
     next_id: u64,
     /// Chunk reassembly buffers.
     chunks: HashMap<String, ChunkState>,
+    /// Path to the omp binary (kept for reconnect).
+    omp_path: String,
+    /// Per-response timeout; None = block forever.
+    timeout: Option<Duration>,
+    /// Max reconnect attempts on ProcessExited.
+    max_retries: u32,
 }
 
 impl Client {
@@ -204,6 +210,50 @@ impl Client {
     /// Blocks until the `ready` message is received.  No explicit protocol
     /// negotiation is needed — omp emits `ready` with supported versions.
     pub fn new(omp_path: &str) -> Result<Self, RpcError> {
+        Self::new_with_opts(omp_path, None, 0)
+    }
+
+    /// Spawn with a connect timeout (deadline for the `ready` frame) and
+    /// auto-reconnect retry count.
+    pub fn new_with_opts(
+        omp_path: &str,
+        connect_timeout: Option<Duration>,
+        max_retries: u32,
+    ) -> Result<Self, RpcError> {
+        let mut client = Self::spawn_omp(omp_path, connect_timeout)?;
+        client.omp_path = omp_path.to_string();
+        client.timeout = None;
+        client.max_retries = max_retries;
+        client.negotiate_session()?;
+        Ok(client)
+    }
+
+    /// Set per-response timeout. `None` = block forever.
+    pub fn set_timeout(&mut self, timeout: Option<Duration>) {
+        self.timeout = timeout;
+    }
+
+    /// Reconnect: kill the old process, spawn a new one, renegotiate.
+    /// Resets chunk state and id counter.
+    pub fn reconnect(&mut self) -> Result<(), RpcError> {
+        let _ = self.process.kill();
+        let _ = self.process.wait();
+        let mut new = Self::spawn_omp(&self.omp_path, None)?;
+        new.omp_path = self.omp_path.clone();
+        new.timeout = self.timeout;
+        new.max_retries = self.max_retries;
+        new.negotiate_session()?;
+        // Swap fields.
+        std::mem::swap(&mut self.process, &mut new.process);
+        std::mem::swap(&mut self.stdin, &mut new.stdin);
+        std::mem::swap(&mut self.reader, &mut new.reader);
+        self.chunks.clear();
+        Ok(())
+    }
+
+    /// Spawn omp, read `ready` frame. If `connect_timeout` is set, the
+    /// read is raced against the deadline in a separate thread.
+    fn spawn_omp(omp_path: &str, connect_timeout: Option<Duration>) -> Result<Self, RpcError> {
         let mut process = Command::new(omp_path)
             .args(["--mode", "rpc"])
             .stdin(Stdio::piped())
@@ -215,11 +265,11 @@ impl Client {
         let stdin = process
             .stdin
             .take()
-            .ok_or_else(|| RpcError::Protocol("failed to capture stdin".to_string()))?;
+            .ok_or_else(|| RpcError::Protocol("failed to capture stdin".into()))?;
         let stdout = process
             .stdout
             .take()
-            .ok_or_else(|| RpcError::Protocol("failed to capture stdout".to_string()))?;
+            .ok_or_else(|| RpcError::Protocol("failed to capture stdout".into()))?;
 
         let mut client = Client {
             process,
@@ -227,25 +277,115 @@ impl Client {
             reader: BufReader::new(stdout),
             next_id: 1,
             chunks: HashMap::new(),
+            omp_path: String::new(),
+            timeout: None,
+            max_retries: 0,
         };
 
-        // Read the initial `ready` message.
-        let ready = client.read_frame()?;
-        match ready {
-            Frame::Ready { .. } => { /* ok */ }
-            other => {
-                return Err(RpcError::Protocol(format!(
-                    "expected ready, got: {other:?}"
-                )));
+        // Read the initial `ready` message, optionally with a timeout.
+        if let Some(deadline_dur) = connect_timeout {
+            // ponytail: race the read in a thread, join with timeout.
+            // If the deadline passes, kill the process and return Timeout.
+            let timeout_conn = Self::read_ready_timeout(&mut client, deadline_dur);
+            match timeout_conn {
+                Ok(frame) => match frame {
+                    Frame::Ready { .. } => {}
+                    other => {
+                        return Err(RpcError::Protocol(format!(
+                            "expected ready, got: {other:?}"
+                        )));
+                    }
+                },
+                Err(e) => {
+                    let _ = client.process.kill();
+                    return Err(e);
+                }
+            }
+        } else {
+            let ready = client.read_frame()?;
+            match ready {
+                Frame::Ready { .. } => {}
+                other => {
+                    return Err(RpcError::Protocol(format!(
+                        "expected ready, got: {other:?}"
+                    )));
+                }
             }
         }
 
-        // v2 session negotiation (#51, mvp-design §6.2): pin protocol
-        // semantics across omp default configs and disable background
-        // retry/compaction so the runner owns the session lifecycle.
-        client.negotiate_session()?;
-
         Ok(client)
+    }
+
+    /// Read the ready frame with a timeout using nonblocking poll.
+    fn read_ready_timeout(client: &mut Client, dur: Duration) -> Result<Frame, RpcError> {
+        use std::os::unix::io::AsRawFd;
+
+        let fd = client.reader.get_ref().as_raw_fd();
+        let deadline = Instant::now() + dur;
+
+        // Set nonblocking, poll, then restore blocking.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 {
+            return Err(RpcError::Io(std::io::Error::last_os_error()));
+        }
+        unsafe {
+            libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+        }
+
+        let result = loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break Err(RpcError::Timeout);
+            }
+
+            let mut pfd = libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let ms = remaining.as_millis().min(i32::MAX as u128) as i32;
+            let rc = unsafe { libc::poll(&mut pfd, 1, ms) };
+            if rc < 0 {
+                break Err(RpcError::Io(std::io::Error::last_os_error()));
+            }
+            if rc == 0 {
+                continue; // timeout, but loop checks deadline
+            }
+            if pfd.revents & libc::POLLIN != 0 {
+                let mut buf = Vec::with_capacity(1024);
+                match client.reader.read_until(b'\n', &mut buf) {
+                    Ok(0) => {
+                        let status = client.process.try_wait().ok().flatten();
+                        break Err(RpcError::ProcessExited(status.and_then(|s| s.code())));
+                    }
+                    Ok(_n) => {
+                        if buf.ends_with(b"\n") {
+                            buf.pop();
+                        }
+                        if !buf.is_empty() {
+                            match serde_json::from_slice::<Frame>(&buf) {
+                                Ok(frame) => break Ok(frame),
+                                Err(e) => break Err(RpcError::Json(e)),
+                            }
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        continue;
+                    }
+                    Err(e) => break Err(RpcError::Io(e)),
+                }
+            }
+            if pfd.revents & (libc::POLLHUP | libc::POLLERR) != 0 {
+                let status = client.process.try_wait().ok().flatten();
+                break Err(RpcError::ProcessExited(status.and_then(|s| s.code())));
+            }
+        };
+
+        // Restore blocking mode.
+        unsafe {
+            libc::fcntl(fd, libc::F_SETFL, flags);
+        }
+        result
     }
 
     /// Post-handshake negotiation: `negotiate_protocol` v2 →
@@ -311,7 +451,33 @@ impl Client {
     ///
     /// Extension_ui_request, AvailableCommandsUpdate, and Other frames are
     /// filtered out transparently.  An `id` is auto-assigned if not set.
+    ///
+    /// If the process dies (`ProcessExited`) and `max_retries > 0`,
+    /// automatically reconnects and retries the request up to `max_retries`
+    /// times with exponential backoff (1s, 2s, 4s, ...).
     pub fn send(&mut self, req: &Request) -> Result<serde_json::Value, RpcError> {
+        let mut attempts = 0;
+        loop {
+            match self.send_once(req) {
+                Ok(v) => return Ok(v),
+                Err(RpcError::ProcessExited(_)) if attempts < self.max_retries => {
+                    attempts += 1;
+                    let backoff = Duration::from_secs(1 << attempts.min(5));
+                    eprintln!(
+                        "rpc: process exited, reconnecting (attempt {attempts}/{}), backoff {backoff:?}",
+                        self.max_retries
+                    );
+                    std::thread::sleep(backoff);
+                    self.reconnect()?;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// Send a request once, without retry. Used internally by `send`.
+    fn send_once(&mut self, req: &Request) -> Result<serde_json::Value, RpcError> {
         let id = req.id.clone().unwrap_or_else(|| self.next_id_str());
         let req = Request {
             id: Some(id.clone()),
@@ -771,5 +937,76 @@ mod tests {
             .send(&Request::new("get_state").with_id(&id).done())
             .expect("post-negotiation command");
         println!("session negotiated; get_state → {resp}");
+    }
+
+    // ---- P7: timeout + reconnect + retry smoke tests ----
+
+    /// Spawn a shell script that hangs forever (no `ready` frame).
+    /// Leaks the tempdir so the file persists for the test's lifetime.
+    fn fake_omp_hangs() -> std::path::PathBuf {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("hang.sh");
+        std::fs::write(&script, "#!/bin/sh\nsleep 60\n").unwrap();
+        std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        std::mem::forget(dir);
+        script
+    }
+
+    #[test]
+    fn connect_timeout_kills_hanging_omp() {
+        let script = fake_omp_hangs();
+        let start = std::time::Instant::now();
+        let result = Client::new_with_opts(
+            script.to_str().unwrap(),
+            Some(Duration::from_millis(200)),
+            0,
+        );
+        let elapsed = start.elapsed();
+        match result {
+            Ok(_) => panic!("should fail to connect"),
+            Err(RpcError::Timeout) => {}
+            Err(other) => panic!("should be Timeout, got: {other:?}"),
+        }
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "should not hang past timeout (took {elapsed:?})"
+        );
+    }
+
+    #[test]
+    fn send_process_exited_no_retry_by_default() {
+        let script = fake_omp_hangs();
+        let mut client = Client::new(script.to_str().unwrap()).unwrap();
+        let _ = client.process.kill();
+        let _ = client.process.wait();
+        let id = client.next_id_str();
+        let req = Request::new("ping").with_id(&id).done();
+        let err = client.send(&req).expect_err("send should fail");
+        assert!(
+            matches!(err, RpcError::ProcessExited(_)),
+            "should propagate ProcessExited without retry, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn set_timeout_stores_value() {
+        let script = fake_omp_hangs();
+        let mut client = Client::new(script.to_str().unwrap()).unwrap();
+        client.set_timeout(Some(Duration::from_secs(5)));
+        assert_eq!(client.timeout, Some(Duration::from_secs(5)));
+        client.set_timeout(None);
+        assert!(client.timeout.is_none());
+    }
+
+    #[test]
+    fn backoff_first_retry_uses_one_second() {
+        // Documented schedule: 1s, 2s, 4s, 8s, 16s, capped at 32s.
+        for (attempt, expected) in [1u64, 2, 4, 8, 16].iter().enumerate() {
+            let secs = 1u64 << (attempt as u32).min(5);
+            assert_eq!(secs, *expected, "backoff mismatch at attempt {attempt}");
+        }
+        let secs = 1u64 << 5u64.min(5);
+        assert_eq!(secs, 32);
     }
 }

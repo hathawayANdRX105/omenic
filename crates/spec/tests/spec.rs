@@ -1,8 +1,8 @@
-use spec::check::CheckFinding;
-use spec::check::check;
-use spec::init::*;
-use spec::parse::*;
-use spec::render::*;
+use spec::template::check::CheckFinding;
+use spec::template::check::check;
+use spec::template::init::*;
+use spec::template::parse::*;
+use spec::template::render::*;
 use spec::*;
 use tempfile::tempdir;
 
