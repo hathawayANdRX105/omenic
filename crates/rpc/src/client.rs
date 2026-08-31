@@ -520,11 +520,22 @@ impl Client {
         id
     }
 
-    /// Write a JSON request to omp's stdin.
     fn send_frame(&mut self, req: &Request) -> Result<(), RpcError> {
+        if let Some(status) = self.process.try_wait()? {
+            return Err(RpcError::ProcessExited(status.code()));
+        }
         let mut line = serde_json::to_vec(req)?;
         line.push(b'\n');
-        self.stdin.write_all(&line)?;
+        if let Err(err) = self.stdin.write_all(&line) {
+            if matches!(
+                err.kind(),
+                std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+            ) {
+                let status = self.process.try_wait().ok().flatten();
+                return Err(RpcError::ProcessExited(status.and_then(|s| s.code())));
+            }
+            return Err(RpcError::Io(err));
+        }
         self.stdin.flush()?;
         Ok(())
     }
@@ -953,6 +964,27 @@ mod tests {
         script
     }
 
+    /// Spawn a tiny RPC peer: ready, ack negotiation commands, then wait.
+    fn fake_omp_ready() -> std::path::PathBuf {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("ready.py");
+        std::fs::write(
+            &script,
+            r#"#!/usr/bin/env python3
+import json, sys
+print(json.dumps({"type":"ready","protocolVersion":2}), flush=True)
+for line in sys.stdin:
+    req = json.loads(line)
+    print(json.dumps({"type":"response","id":req.get("id"),"command":req.get("type"),"success":True}), flush=True)
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        std::mem::forget(dir);
+        script
+    }
+
     #[test]
     fn connect_timeout_kills_hanging_omp() {
         let script = fake_omp_hangs();
@@ -976,7 +1008,7 @@ mod tests {
 
     #[test]
     fn send_process_exited_no_retry_by_default() {
-        let script = fake_omp_hangs();
+        let script = fake_omp_ready();
         let mut client = Client::new(script.to_str().unwrap()).unwrap();
         let _ = client.process.kill();
         let _ = client.process.wait();
@@ -991,7 +1023,7 @@ mod tests {
 
     #[test]
     fn set_timeout_stores_value() {
-        let script = fake_omp_hangs();
+        let script = fake_omp_ready();
         let mut client = Client::new(script.to_str().unwrap()).unwrap();
         client.set_timeout(Some(Duration::from_secs(5)));
         assert_eq!(client.timeout, Some(Duration::from_secs(5)));

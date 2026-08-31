@@ -41,8 +41,6 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::client;
-
 /// Events emitted by the worker during agent execution.
 #[derive(Debug, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
@@ -441,7 +439,14 @@ mod tests {
             .join("\n"),
             other => panic!("unknown fake omp mode {other}"),
         };
-        std::fs::write(&path, body).unwrap();
+        let tmp = path.with_extension("tmp");
+        {
+            let mut file = std::fs::File::create(&tmp).unwrap();
+            use std::io::Write;
+            file.write_all(body.as_bytes()).unwrap();
+            file.sync_all().unwrap();
+        }
+        std::fs::rename(&tmp, &path).unwrap();
 
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
