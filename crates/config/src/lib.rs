@@ -148,11 +148,9 @@ impl Config {
         if let Ok(v) = env::var("OMENIC_DATA_DIR") {
             config.data_dir = PathBuf::from(v);
         }
-        if let Some(dir) = config.memory_dir.as_deref() {
-            // memory_dir validated below; here only resolve relative paths.
-        } else {
-            config.memory_dir = Some(config.data_dir.join("memory"));
-        }
+        config
+            .memory_dir
+            .get_or_insert_with(|| config.data_dir.join("memory"));
         if let Ok(v) = env::var("OMENIC_MODEL") {
             config.model = v;
         }
