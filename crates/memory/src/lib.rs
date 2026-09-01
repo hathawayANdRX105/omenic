@@ -105,8 +105,9 @@ impl Memory {
         self.path.is_some()
     }
 
-    /// Append one entry. Exclusive lock held across id assignment, write and
-    /// fsync, so concurrent writers cannot collide on an id.
+    /// Append one entry. Exclusive lock held across id assignment, torn-line
+    /// repair, write and fsync, so concurrent writers cannot collide on an id
+    /// nor glue a new entry onto a half-written one.
     pub fn append(&mut self, mut entry: MemoryEntry) -> Result<(), MemoryError> {
         let Some(path) = self.path.clone() else {
             return Ok(());
@@ -121,9 +122,21 @@ impl Memory {
             .open(&path)?;
         file.lock()?;
 
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-        entry.id = max_id(&content) + 1;
+        // Bytes, not `read_to_string`: a torn write can split a multi-byte
+        // char, and lossy decoding keeps that recoverable instead of failing
+        // the whole append with InvalidData.
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf)?;
+
+        // Heal a torn trailing line under this same lock, so the new entry is
+        // never appended onto a partial one.
+        if buf.last().is_some_and(|&b| b != b'\n') {
+            let pos = buf.iter().rposition(|&b| b == b'\n').map_or(0, |p| p + 1);
+            file.set_len(pos as u64)?;
+            buf.truncate(pos);
+        }
+
+        entry.id = max_id(&String::from_utf8_lossy(&buf)) + 1;
 
         let mut line = serde_json::to_string(&entry)?;
         line.push('\n');
@@ -148,9 +161,11 @@ impl Memory {
 
         let mut file = File::open(path)?;
         file.lock_shared()?;
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf)?;
         drop(file);
+        // Lossy: a torn multi-byte char must not fail the whole read.
+        let content = String::from_utf8_lossy(&buf);
 
         let lines: Vec<&str> = content.lines().collect();
         let mut map: BTreeMap<u64, MemoryEntry> = BTreeMap::new();
@@ -205,11 +220,14 @@ fn trim_trailing_line(path: &Path) -> Result<(), MemoryError> {
 
     let mut buf = Vec::new();
     file.read_to_end(&mut buf)?;
-    let content = String::from_utf8_lossy(&buf);
 
-    // Start of the final line, whether or not the file ends in a newline.
-    let body = content.trim_end_matches('\n');
-    let pos = body.rfind('\n').map(|p| p + 1).unwrap_or(0);
+    // Byte offsets, not offsets into a lossy string: each invalid byte
+    // widens to U+FFFD, which would shift `pos` and truncate mid-line.
+    let end = buf.iter().rposition(|&b| b != b'\n').map_or(0, |p| p + 1);
+    let pos = buf[..end]
+        .iter()
+        .rposition(|&b| b == b'\n')
+        .map_or(0, |p| p + 1);
     file.set_len(pos as u64)?;
     file.sync_all()?;
     Ok(())
@@ -333,6 +351,49 @@ mod tests {
         assert_eq!(raw.lines().count(), 1, "trailing garbage left: {raw:?}");
         assert!(!raw.contains("\"id\":2"), "trailing garbage left: {raw:?}");
         mem.append(MemoryEntry::new("after")).unwrap();
+        assert_eq!(mem.list().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn append_repairs_torn_line_before_writing() {
+        let (mut mem, tmp) = store();
+        mem.append(MemoryEntry::new("good")).unwrap();
+        let path = tmp.path().join("memory.jsonl");
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"{\"")
+            .unwrap();
+
+        mem.append(MemoryEntry::new("fresh")).unwrap();
+        // A second append without a list must remain clean too.
+        mem.append(MemoryEntry::new("later")).unwrap();
+
+        let all = mem.list().unwrap();
+        assert_eq!(
+            all.iter()
+                .map(|entry| entry.text.as_str())
+                .collect::<Vec<_>>(),
+            ["good", "fresh", "later"]
+        );
+        assert_eq!(std::fs::read_to_string(path).unwrap().lines().count(), 3);
+    }
+
+    #[test]
+    fn torn_multibyte_utf8_does_not_block_recovery() {
+        let (mut mem, tmp) = store();
+        mem.append(MemoryEntry::new("good")).unwrap();
+        let path = tmp.path().join("memory.jsonl");
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"{\"id\":2,\"text\":\"caf\xc3")
+            .unwrap();
+
+        assert!(mem.list().is_ok());
+        assert!(mem.append(MemoryEntry::new("after")).is_ok());
         assert_eq!(mem.list().unwrap().len(), 2);
     }
 
