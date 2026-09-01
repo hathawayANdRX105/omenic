@@ -1,0 +1,38 @@
+# 泛用: 函数内部不许定义 struct — 拉出去当模块级类型
+# grep 模式, 零 LLM
+# 检测: 在 fn 作用域内出现 `struct <Name>` 声明
+# 排除: #[cfg(test)] 里的临时 struct 允许
+enabled: true
+hooks: [pre-commit, pre-push, merge]
+fail_severity: WARN   # 磨合期先 WARN
+match:
+  paths_include: ["**/*.rs"]
+  paths_exclude: ["target/", ".wt/"]
+mode: grep
+harness:
+  command: "sh"
+  args:
+    - "-c"
+    - |
+      ROOT=$(git rev-parse --show-toplevel)
+      # 简单近似: 找所有 struct 声明,排除 mod tests 段附近 (取 200 行窗口)
+      # 真正的"函数内部"判断需要 Rust parser,这里用 grep 当启发式
+      matches=$(awk '
+        /^#\[cfg\(test\)\]/ { in_test=1 }
+        /^fn [a-zA-Z_]/ { if (in_test==0) in_fn=1; brace=0 }
+        /{/ { brace++ }
+        /}/ { brace--; if (brace==0) { in_fn=0; in_test=0 } }
+        in_fn && /struct [A-Z]/ { print FILENAME ":" FNR ":" $0 }
+      ' "$ROOT"/crates/*/src/**/*.rs "$ROOT"/crates/*/src/*.rs 2>/dev/null | head -20)
+      if [ -z "$matches" ]; then
+        echo '[]'
+      else
+        printf '%s' "$matches" | jq -R -s '
+          split("\n")
+          | map(select(length > 0))
+          | map(capture("^(?<path>.+):(?<line>[0-9]+):(?<rest>.*)$"))
+          | map({id: "FN-STRUCT", severity: "WARN", path: .path, line: (.line|tonumber), message: ("函数内不许定义 struct, 拉到模块级: " + .rest)})
+        '
+      fi
+optional: true
+timeout: 15

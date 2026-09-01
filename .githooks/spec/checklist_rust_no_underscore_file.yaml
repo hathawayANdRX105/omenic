@@ -1,0 +1,28 @@
+# 泛用: 文件命名约定 — 模块文件不许用下划线开头
+# 检测: src/ 下出现 _<name>.rs (用 underscore 前缀绕过 lint 的习惯)
+# grep 模式, 零 LLM
+enabled: true
+hooks: [pre-commit, pre-push, merge]
+fail_severity: WARN
+match:
+  paths_include: ["crates/**/src/*.rs"]
+  paths_exclude: ["target/", ".wt/"]
+mode: grep
+harness:
+  command: "sh"
+  args:
+    - "-c"
+    - |
+      ROOT=$(git rev-parse --show-toplevel)
+      hits=$(find "$ROOT/crates" -path '*/src/_*.rs' 2>/dev/null | head -20)
+      if [ -z "$hits" ]; then
+        echo '[]'
+      else
+        printf '%s\n' "$hits" | jq -R -s '
+          split("\n")
+          | map(select(length > 0))
+          | map({id: "UNDERSCORE-FILE", severity: "WARN", path: ., line: 0, message: "模块文件不许用下划线前缀; 拉出去或加 #[allow(dead_code)]"})
+        '
+      fi
+optional: true
+timeout: 10
