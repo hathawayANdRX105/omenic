@@ -16,10 +16,15 @@ use serde::{Deserialize, Serialize};
 use adaptor::{Context, Message, Model, StopReason, StreamEvent, ToolCallSpec, ToolDef};
 use tools::{Tool, def};
 
-/// Compaction triggers when message count exceeds this.
-const COMPACT_THRESHOLD: usize = 50;
-/// Recent messages kept verbatim during compaction.
-const KEEP_RECENT: usize = 20;
+/// Compaction triggers when the estimated context size exceeds this many
+/// characters (~4 chars/token, so roughly 30k tokens).
+/// ponytail: fixed budget — `Model` carries no context-window field; derive
+/// it from provider metadata once one exists.
+const COMPACT_CHAR_BUDGET: usize = 120_000;
+/// Characters of the newest messages kept verbatim during compaction.
+const KEEP_RECENT_CHARS: usize = 30_000;
+/// Newest messages always kept verbatim, even when oversized on their own.
+const KEEP_RECENT_MIN: usize = 2;
 
 /// LLM backend abstraction: the only seam between loop and network,
 /// so invariants are testable offline with scripted streams.
@@ -180,6 +185,62 @@ impl ContextLog {
 
 // ===== compaction =====
 
+/// Estimated size of one message in characters: text measured directly,
+/// block content through its JSON encoding (what the wire actually carries).
+/// ponytail: role/framing overhead uncounted — a rounding error next to
+/// message bodies.
+fn message_chars(m: &Message) -> usize {
+    match &m.content {
+        adaptor::Content::Text(s) => s.len(),
+        blocks => serde_json::to_string(blocks).unwrap_or_default().len(),
+    }
+}
+
+/// Estimated size of the whole context, system prompt included.
+fn context_chars(context: &Context) -> usize {
+    context.system_prompt.as_ref().map_or(0, |s| s.len())
+        + context.messages.iter().map(message_chars).sum::<usize>()
+}
+
+/// A user message carrying only tool results. Keeping it without the
+/// assistant `tool_use` that precedes it would break invariant 1.
+fn is_tool_result_only(m: &Message) -> bool {
+    match &m.content {
+        adaptor::Content::Blocks(bs) => {
+            !bs.is_empty()
+                && bs
+                    .iter()
+                    .all(|b| matches!(b, adaptor::Block::ToolResult { .. }))
+        }
+        _ => false,
+    }
+}
+
+/// First index to keep verbatim: walks newest → oldest spending `budget`
+/// characters, always keeping at least [`KEEP_RECENT_MIN`] messages. `0`
+/// means the whole context fits the recent window — nothing to compact.
+fn select_compaction_cut(messages: &[Message], budget: usize) -> usize {
+    let mut used = 0usize;
+    let mut cut = messages.len();
+    for (i, m) in messages.iter().enumerate().rev() {
+        let size = message_chars(m);
+        if used + size > budget && messages.len() - i > KEEP_RECENT_MIN {
+            break;
+        }
+        used += size;
+        cut = i;
+    }
+    if cut == 0 {
+        return 0;
+    }
+    // Invariant 1: the kept window must not start on orphan tool_results
+    // whose tool_use blocks are being summarized away.
+    while cut < messages.len() && is_tool_result_only(&messages[cut]) {
+        cut += 1;
+    }
+    cut
+}
+
 /// Summarize old messages when the context grows too large.
 /// Invariant 4: on any failure the context is left untouched.
 fn compact_context(
@@ -188,11 +249,22 @@ fn compact_context(
     context: &mut Context,
     signal: &AtomicBool,
 ) {
-    if signal.load(Ordering::Relaxed) || context.messages.len() < COMPACT_THRESHOLD {
+    if signal.load(Ordering::Relaxed) || context_chars(context) < COMPACT_CHAR_BUDGET {
         return;
     }
 
-    let keep_at = context.messages.len() - KEEP_RECENT;
+    let keep_at = select_compaction_cut(&context.messages, KEEP_RECENT_CHARS);
+    if keep_at == 0 {
+        return; // nothing older than the recent window — leave the context alone
+    }
+    // The newest KEEP_RECENT_MIN messages are kept whatever their size. When
+    // they alone blow the budget, summarizing the prefix cannot get under it:
+    // shipping a summary here would just re-summarize the previous summary
+    // every turn. Leave the context intact instead.
+    let kept_chars: usize = context.messages[keep_at..].iter().map(message_chars).sum();
+    if kept_chars >= COMPACT_CHAR_BUDGET {
+        return;
+    }
     let old = &context.messages[..keep_at];
     let recent: Vec<Message> = context.messages[keep_at..].to_vec();
 
@@ -436,7 +508,7 @@ pub fn run_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use adaptor::{Content, Role};
+    use adaptor::Content;
     use serde_json::json;
 
     fn model() -> Model {
@@ -687,6 +759,82 @@ mod tests {
         assert_eq!(results, [("t1", "echo!"), ("t2", "error: aborted")]);
     }
 
+    /// A user message of exactly 1000 chars, tagged by index so a retained
+    /// window is identifiable. 1000 divides the char budgets evenly, which
+    /// makes every cut in these tests exact rather than approximate.
+    fn filler(tag: usize) -> Message {
+        Message::user_text(format!("{tag:04}{}", "x".repeat(996)))
+    }
+
+    fn bulk(n: usize) -> Vec<Message> {
+        (0..n).map(filler).collect()
+    }
+
+    #[test]
+    fn compaction_cut_spends_the_recent_char_budget() {
+        let msgs = bulk(200);
+        // 1000 chars per message: a 30_000-char window is the newest 30.
+        assert_eq!(select_compaction_cut(&msgs, 30_000), 170);
+        // 2_500 buys two whole messages; the third would overflow.
+        assert_eq!(select_compaction_cut(&msgs, 2_500), 198);
+        // Whole context fits the window → nothing eligible to compact.
+        assert_eq!(select_compaction_cut(&msgs, 1_000_000), 0);
+        // Newest messages larger than the budget still keep the floor.
+        assert_eq!(
+            select_compaction_cut(&msgs, 0),
+            msgs.len() - KEEP_RECENT_MIN
+        );
+        // Degenerate inputs stay no-ops instead of panicking.
+        assert_eq!(select_compaction_cut(&[], 30_000), 0);
+        assert_eq!(select_compaction_cut(&msgs[..1], 0), 0);
+    }
+
+    #[test]
+    fn compaction_cut_skips_orphan_tool_results() {
+        // Invariant 1: a kept window may not start on tool_results whose
+        // tool_use blocks are about to be summarized away.
+        let calls = [ToolCallSpec {
+            id: "t1".into(),
+            name: "echo_tool".into(),
+            args: json!({}),
+        }];
+        let msgs = vec![
+            filler(0),
+            Message::assistant("thinking".into(), &calls),
+            Message::tool_results(&[("t1".into(), "done".into())]),
+            filler(3),
+            filler(4),
+        ];
+        // Budget buys the two fillers plus exactly the tool_results message,
+        // so the raw cut lands on index 2 and must advance to 3.
+        let budget = 2_000 + message_chars(&msgs[2]);
+        assert_eq!(select_compaction_cut(&msgs, budget), 3);
+    }
+
+    #[test]
+    fn compaction_skipped_below_char_threshold() {
+        let backend = Shared(std::cell::RefCell::new(Scripted::new(vec![vec![
+            StreamEvent::TextDelta("hi".into()),
+            StreamEvent::Done {
+                stop_reason: StopReason::EndTurn,
+            },
+        ]])));
+        // 100 messages = 100_000 chars: far past the old 50-message trigger,
+        // still under the char budget → no summary call at all.
+        let mut ctx = Context {
+            system_prompt: None,
+            messages: bulk(100),
+        };
+        let before = ctx.messages.clone();
+        let _ = run_agent(&backend, &model(), &mut ctx, &[], &sig(), None);
+
+        let seen = backend.0.borrow();
+        assert_eq!(seen.seen_contexts.len(), 1, "summary stream was issued");
+        assert!(seen.seen_contexts[0].system_prompt.is_none());
+        assert_eq!(ctx.messages.len(), before.len() + 1);
+        assert!(ctx.messages.iter().take(before.len()).eq(before.iter()));
+    }
+
     #[test]
     fn invariant_4_compaction_failure_keeps_context() {
         // First call = oversized context triggers compaction which errors;
@@ -702,21 +850,48 @@ mod tests {
         ];
         let backend = Shared(std::cell::RefCell::new(Scripted::new(turns)));
 
-        // Build a context above the threshold.
-        let mut ctx = Context::default();
-        for i in 0..60 {
-            ctx.messages.push(Message::user_text(format!("msg{i}")));
-        }
+        // 200_000 chars: above the char budget.
+        let mut ctx = Context {
+            system_prompt: None,
+            messages: bulk(200),
+        };
         let before = ctx.clone();
         let _ = run_agent(&backend, &model(), &mut ctx, &[], &sig(), None);
 
         // Compaction failed → no summary message injected; originals intact.
         assert_eq!(ctx.messages.len(), before.messages.len() + 1); // + final assistant msg
-        assert!(ctx.messages.iter().take(60).eq(before.messages.iter()));
+        assert!(ctx.messages.iter().take(200).eq(before.messages.iter()));
     }
 
     #[test]
-    fn compaction_replaces_old_messages_on_success() {
+    fn compaction_broken_summary_leaves_context_identical() {
+        // Error, abort, and empty-summary paths are each a pure no-op.
+        let failures = vec![
+            vec![StreamEvent::Error("backend down".into())],
+            vec![
+                StreamEvent::TextDelta("partial".into()),
+                StreamEvent::Done {
+                    stop_reason: StopReason::Aborted,
+                },
+            ],
+            vec![StreamEvent::Done {
+                stop_reason: StopReason::EndTurn,
+            }],
+        ];
+        for turn in failures {
+            let backend = Shared(std::cell::RefCell::new(Scripted::new(vec![turn])));
+            let mut ctx = Context {
+                system_prompt: Some("sys".into()),
+                messages: bulk(200),
+            };
+            let before = ctx.clone();
+            compact_context(&backend, &model(), &mut ctx, &sig());
+            assert_eq!(ctx, before);
+        }
+    }
+
+    #[test]
+    fn compaction_keeps_newest_window_on_success() {
         let turns = vec![
             vec![
                 StreamEvent::TextDelta("the gist".into()),
@@ -730,19 +905,70 @@ mod tests {
         ];
         let backend = Shared(std::cell::RefCell::new(Scripted::new(turns)));
 
-        let mut ctx = Context::default();
-        for i in 0..60 {
-            ctx.messages.push(Message::user_text(format!("msg{i}")));
-        }
+        let mut ctx = Context {
+            system_prompt: None,
+            messages: bulk(200),
+        };
+        let before = ctx.messages.clone();
         let _ = run_agent(&backend, &model(), &mut ctx, &[], &sig(), None);
 
-        // [summary user msg] + last 20 originals + final assistant.
-        assert_eq!(ctx.messages.len(), 1 + 20 + 1);
+        // [summary] + newest window + final assistant msg.
+        let kept = KEEP_RECENT_CHARS / 1000;
+        assert_eq!(ctx.messages.len(), 1 + kept + 1);
         assert_eq!(
             ctx.messages[0],
             Message::user_text("[context summary]\nthe gist")
         );
-        assert_eq!(ctx.messages[1], Message::user_text("msg40"));
+        assert!(
+            ctx.messages[1..=kept]
+                .iter()
+                .eq(before[200 - kept..].iter())
+        );
+
+        // The summary request carried the old prefix and none of the window.
+        let seen = backend.0.borrow();
+        let sent = match &seen.seen_contexts[0].messages[0].content {
+            Content::Text(s) => s.as_str(),
+            other => panic!("summary request should be plain text: {other:?}"),
+        };
+        assert!(sent.contains("0169"), "oldest prefix must be summarized");
+        assert!(!sent.contains("0170"), "kept window must not be summarized");
+    }
+
+    #[test]
+    fn compaction_skipped_when_kept_window_alone_exceeds_budget() {
+        // Two newest messages of 200_000 chars each: KEEP_RECENT_MIN pins them
+        // in place, so no prefix summary can bring the context under budget.
+        // Compacting anyway would summarize the previous summary every turn.
+        let backend = Shared(std::cell::RefCell::new(Scripted::new(vec![vec![
+            StreamEvent::TextDelta("ok".into()),
+            StreamEvent::Done {
+                stop_reason: StopReason::EndTurn,
+            },
+        ]])));
+        let mut msgs = bulk(5);
+        msgs.push(Message::user_text("A".repeat(200_000)));
+        msgs.push(Message::user_text("B".repeat(200_000)));
+        // The cut is nonzero — the guard, not `keep_at == 0`, must stop this.
+        assert_eq!(
+            select_compaction_cut(&msgs, KEEP_RECENT_CHARS),
+            msgs.len() - KEEP_RECENT_MIN
+        );
+
+        let mut ctx = Context {
+            system_prompt: None,
+            messages: msgs,
+        };
+        let before = ctx.messages.clone();
+        let _ = run_agent(&backend, &model(), &mut ctx, &[], &sig(), None);
+
+        // Exactly one backend call: the regular turn, never a summary request.
+        let seen = backend.0.borrow();
+        assert_eq!(seen.seen_contexts.len(), 1, "summary stream was issued");
+        assert_eq!(seen.seen_contexts[0].messages, before);
+        // Originals untouched; only the final assistant reply was appended.
+        assert_eq!(ctx.messages.len(), before.len() + 1);
+        assert!(ctx.messages.iter().take(before.len()).eq(before.iter()));
     }
 
     /// Scripted backend replays canned event lists per call.
