@@ -89,16 +89,24 @@ pub fn run_gh(args: &[String], _input: Option<&str>) -> (i32, String, String) {
     }
 }
 
-/// Pass through all args to the real gh, writing output to our stdout/stderr.
+/// Final pass-through: spawn the real gh with inherited stdio and wait.
+///
+/// 之前用 Command::output() 捕获 stdout/stderr,交互命令(gh auth login 的 device-flow
+/// 等码、browse、任何 TUI)会因 stdin 被 PIPE 吞掉而挂死/静默——实测 auth login 卡 30s
+/// 无输出。放行路径必须原样继承终端。
 pub fn passthrough(args: &[String]) -> i32 {
-    let (rc, out, err) = run_gh(args, None);
-    if !out.is_empty() {
-        print!("{out}");
+    let gh = find_real_gh();
+    match Command::new(&gh)
+        .args(args)
+        .spawn()
+        .and_then(|mut c| c.wait())
+    {
+        Ok(status) => status.code().unwrap_or(1),
+        Err(e) => {
+            eprintln!("failed to run gh: {e}");
+            1
+        }
     }
-    if !err.is_empty() {
-        eprint!("{err}");
-    }
-    rc
 }
 
 fn read_body_file(path: &str) -> Result<String, String> {
