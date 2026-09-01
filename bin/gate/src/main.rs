@@ -162,11 +162,20 @@ fn build_audit_args(args: &AuditArgs) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use spec::shared::load_yaml;
+    use std::path::Path;
 
     #[test]
     fn loads_real_spec_and_counts_required_headings() {
-        let path = "/home/hathaway/projects/omenic/.githooks/spec/github_issues.yaml";
-        let v = load_yaml(path).expect("spec yaml must parse");
+        // ponytail: crate lives at <repo>/bin/gate, so the repo root is two ancestors up.
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .expect("gate crate must sit at <repo>/bin/gate")
+            .join(".githooks")
+            .join("spec")
+            .join("github_issues.yaml");
+        let v =
+            load_yaml(path.to_str().expect("spec path is utf-8")).expect("spec yaml must parse");
         let headings = v
             .get("required_headings")
             .expect("required_headings key present")
