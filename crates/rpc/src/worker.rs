@@ -98,6 +98,30 @@ impl Worker {
         Ok(())
     }
 
+    /// Register tool definitions that omp may invoke through this client.
+    pub fn register_external_tools(
+        &mut self,
+        defs: Vec<adaptor::ToolDef>,
+    ) -> Result<(), crate::client::RpcError> {
+        let id = self.client.next_id_str();
+        let req = crate::client::Request::new("register_external_tools")
+            .with_id(&id)
+            .with_field("tools", defs)
+            .done();
+        let response = self.client.send(&req)?;
+        if response.get("success").and_then(Value::as_bool) == Some(true) {
+            Ok(())
+        } else {
+            Err(crate::client::RpcError::Protocol(
+                response
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("register_external_tools failed")
+                    .to_string(),
+            ))
+        }
+    }
+
     /// Send a prompt to the agent (initial task brief or follow-up).
     ///
     /// Returns the response data.  The agent will subsequently emit events
@@ -484,6 +508,53 @@ mod tests {
         assert!(
             matches!(r, Err(crate::client::RpcError::ProcessExited(_))),
             "{r:?}"
+        );
+    }
+    #[test]
+    fn register_external_tools_success() {
+        use adaptor::ToolDef;
+        use serde_json::json;
+        let tmp = tempfile::tempdir().unwrap();
+        let omp = write_fake_omp(tmp.path(), "echo");
+        let mut worker = Worker::new(&omp).expect("spawn");
+        let result = worker.register_external_tools(vec![ToolDef {
+            name: "test".to_string(),
+            description: "test tool".to_string(),
+            parameters: json!({}),
+        }]);
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn register_external_tools_fail() {
+        use adaptor::ToolDef;
+        use serde_json::json;
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let fail_script = tmp.path().join("fake-omp-fail.sh");
+        let script_body = [
+            "#!/bin/sh",
+            "echo '{\"type\":\"ready\"}'",
+            "while IFS= read -r line; do",
+            "  id=$(printf '%s' \"$line\" | sed 's/.*\"id\":\"\\([^\"]*\\)\".*/\\1/');",
+            "  case \"$line\" in",
+            "    *register_external_tools*) echo \"{\\\"type\\\":\\\"response\\\",\\\"id\\\":\\\"$id\\\",\\\"success\\\":false,\\\"error\\\":\\\"unsupported\\\"}\"; exit 0;;",
+            "    *) echo \"{\\\"type\\\":\\\"response\\\",\\\"id\\\":\\\"$id\\\",\\\"success\\\":true}\";;",
+            "  esac",
+            "done",
+        ]
+        .join("\n");
+        std::fs::write(&fail_script, script_body).unwrap();
+        std::fs::set_permissions(&fail_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut worker = Worker::new(fail_script.to_str().unwrap()).expect("spawn");
+        let result = worker.register_external_tools(vec![ToolDef {
+            name: "test".to_string(),
+            description: "test tool".to_string(),
+            parameters: json!({}),
+        }]);
+        assert!(
+            matches!(&result, Err(crate::client::RpcError::Protocol(s)) if s.contains("unsupported")),
+            "{result:?}"
         );
     }
 

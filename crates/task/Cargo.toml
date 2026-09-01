@@ -12,6 +12,10 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 fs2 = { workspace = true }
 rpc = { path = "../rpc" }
+adaptor = { path = "../adaptor" }
+mcp = { path = "../mcp" }
+tools = { path = "../tools" }
+config = { path = "../config" }
 
 [dev-dependencies]
 tempfile = { workspace = true }

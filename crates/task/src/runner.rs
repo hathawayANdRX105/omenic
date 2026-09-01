@@ -20,9 +20,11 @@
 //! 7. Drop worker; kill via Drop guard.
 //! 8. Return RunOutcome { Done|Failed, summary, events_seen }.
 
+use adaptor;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 
 use crate::graph;
 use crate::{Task, TaskStatus};
@@ -90,6 +92,8 @@ pub struct Ctx {
     /// Per-task TaskContext material root — resolved as
     /// `<data_dir>/tasks/<task-id>/`.
     pub data_dir: PathBuf,
+    /// External MCP servers that supply additional tool definitions.
+    pub mcp_servers: Vec<config::McpServerConfig>,
 }
 
 /// Failed-attempt budget per task before `run` refuses further retries
@@ -195,6 +199,21 @@ pub fn run(ctx: &Ctx, task_id: &str) -> Result<RunOutcome, RunnerError> {
 
     let mut worker = Worker::new(ctx.omp_path.to_str().unwrap_or("omp"))
         .map_err(|e| RunnerError::Blocked(format!("worker spawn: {e}")))?;
+    let abort_signal = AtomicBool::new(false);
+    let tool_boxes = tools::builtin_tools()
+        .into_iter()
+        .chain(mcp::external_tools_from_mcp(
+            &ctx.mcp_servers,
+            &abort_signal,
+        ))
+        .collect::<Vec<_>>();
+    let defs: Vec<adaptor::ToolDef> = tool_boxes
+        .iter()
+        .map(|tool_box| tools::def(&**tool_box))
+        .collect();
+    if let Err(e) = worker.register_external_tools(defs) {
+        eprintln!("warning: omp rejected external tools: {e}");
+    }
 
     // F3 liveness marker for `oi abort`: `<run-pid> <omp-pid>`. Both are
     // signalled so the worker tree dies even without job control grouping
@@ -516,6 +535,7 @@ mod tests {
             omp_path: omp_path.into(),
             tasks: tasks.into_iter().map(|t| (t.id.clone(), t)).collect(),
             data_dir: "/tmp/omenic-test".into(),
+            mcp_servers: vec![],
         }
     }
 
@@ -542,6 +562,7 @@ mod tests {
             omp_path: "/bin/true".into(),
             tasks: tasks.into_iter().map(|t| (t.id.clone(), t)).collect(),
             data_dir: tmp.path().to_path_buf(),
+            mcp_servers: vec![],
         };
         (ctx, tmp)
     }
