@@ -1,14 +1,13 @@
 [package]
-name = "tools"
+name = "memory"
 version = "0.1.0"
 edition = "2024"
-description = "Built-in agent tools: read_file / write_file / edit / run_bash"
+description = "Persistent local memory: append-only JSONL store, default-off"
 license = "MIT"
 publish = false
 
 [dependencies]
-adaptor = { path = "../adaptor" }
-memory = { path = "../memory" }
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]

@@ -115,7 +115,7 @@ fn missing_args_rejected() {
 #[test]
 fn defs_expose_schema_and_names() {
     let tools = builtin_tools();
-    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+    let names: Vec<String> = tools.iter().map(|t| t.name().to_string()).collect();
     assert_eq!(
         names,
         [
@@ -302,11 +302,14 @@ fn permission_default_governs_unmatched_invocations() {
     assert_eq!(Policy::deny_all().default, Decision::Deny);
 
     // registry keeps identical names and order under any policy
-    let guarded: Vec<&str> = builtin_tools_with_policy(Policy::deny_all())
+    let guarded: Vec<String> = builtin_tools_with_policy(Policy::deny_all())
         .iter()
-        .map(|t| t.name())
+        .map(|t| t.name().to_string())
         .collect();
-    let unrestricted: Vec<&str> = builtin_tools().iter().map(|t| t.name()).collect();
+    let unrestricted: Vec<String> = builtin_tools()
+        .iter()
+        .map(|t| t.name().to_string())
+        .collect();
     assert_eq!(guarded, unrestricted);
 }
 

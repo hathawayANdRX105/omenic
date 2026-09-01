@@ -31,6 +31,12 @@ pub struct Config {
     /// External MCP servers to spawn for extra tools. Empty by default —
     /// MCP is opt-in and nothing is spawned unless the user lists a server.
     pub mcp_servers: Vec<McpServerConfig>,
+
+    /// Persistent local memory. Off by default: nothing is written to disk
+    /// until the user opts in via `[memory] enabled = true`.
+    pub memory_enabled: bool,
+    /// Override for the memory directory; `None` = `data_dir/memory`.
+    pub memory_dir: Option<PathBuf>,
 }
 
 /// One external MCP server: a child process spoken to over stdio.
@@ -117,6 +123,8 @@ impl Config {
             llm_model: None,
             llm_max_tokens: None,
             mcp_servers: Vec::new(),
+            memory_enabled: false,
+            memory_dir: None,
         };
 
         // Load from TOML file (.oi/config.toml, legacy fallback omenic.toml);
@@ -139,6 +147,11 @@ impl Config {
         }
         if let Ok(v) = env::var("OMENIC_DATA_DIR") {
             config.data_dir = PathBuf::from(v);
+        }
+        if let Some(dir) = config.memory_dir.as_deref() {
+            // memory_dir validated below; here only resolve relative paths.
+        } else {
+            config.memory_dir = Some(config.data_dir.join("memory"));
         }
         if let Ok(v) = env::var("OMENIC_MODEL") {
             config.model = v;
@@ -209,6 +222,19 @@ impl Config {
             // root with overlayfs etc. OS will give a clear error at write time.
         }
 
+        // memory_dir: when enabled, the nearest existing ancestor must be a directory.
+        // (When disabled, a stale path is allowed.)
+        if self.memory_enabled
+            && let Some(dir) = self.memory_dir.as_deref()
+            && let Some(p) = dir.ancestors().find(|a| a.exists())
+            && !p.is_dir()
+        {
+            return Err(ConfigError::Invalid {
+                field: "memory_dir",
+                message: format!("'{}' exists but is not a directory", p.display()),
+            });
+        }
+
         // mcp servers: a listed server must be startable — an entry with no
         // name or no command can only fail later at spawn time.
         for s in &self.mcp_servers {
@@ -240,6 +266,14 @@ struct TomlConfig {
     llm: LlmToml,
     #[serde(default)]
     mcp: McpToml,
+    #[serde(default)]
+    memory: MemoryToml,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct MemoryToml {
+    enabled: Option<bool>,
+    dir: Option<String>,
 }
 
 /// `[llm]` TOML section for direct LLM credentials.
@@ -283,6 +317,12 @@ impl TomlConfig {
         }
         if !self.mcp.servers.is_empty() {
             base.mcp_servers = self.mcp.servers;
+        }
+        if let Some(v) = self.memory.enabled {
+            base.memory_enabled = v;
+        }
+        if let Some(v) = self.memory.dir {
+            base.memory_dir = Some(PathBuf::from(v));
         }
         base
     }
