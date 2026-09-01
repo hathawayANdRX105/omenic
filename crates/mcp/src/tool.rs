@@ -52,6 +52,10 @@ impl Tool for McpTool {
     }
 
     fn execute(&self, args: &Value, signal: &AtomicBool) -> Result<String, ToolError> {
-        call_tool(self.transport.as_ref(), &self.meta.remote, args, signal).map_err(ToolError::from)
+        let text = call_tool(self.transport.as_ref(), &self.meta.remote, args, signal)
+            .map_err(ToolError::from)?;
+        // Same line cap the built-in tools use: a chatty server must not blow
+        // the context window. Overflow spills to a temp file.
+        Ok(tools::truncate_output(&text, 0)?)
     }
 }

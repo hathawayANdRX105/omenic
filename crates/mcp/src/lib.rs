@@ -12,6 +12,7 @@
 pub mod tool;
 
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::process::CommandExt;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
@@ -32,6 +33,16 @@ pub const PROTOCOL_VERSION: &str = "2025-06-18";
 /// subprocess timeout so a hung server can't wedge the agent loop.
 pub const MCP_TIMEOUT: Duration = Duration::from_secs(30);
 pub const POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Bound `tools/list` pagination: a server that keeps handing back a fresh
+/// cursor must not spin the agent forever.
+const MAX_TOOL_LIST_PAGES: usize = 64;
+
+// SIGKILL a whole process group. Declared here rather than pulling in `libc`,
+// which mcp does not depend on directly; the symbol comes from libc via std.
+unsafe extern "C" {
+    fn killpg(pgrp: i32, sig: i32) -> i32;
+}
 
 /// Everything that can go wrong talking to an MCP server.
 #[derive(Debug)]
@@ -150,11 +161,9 @@ pub fn initialize(transport: &dyn McpTransport, signal: &AtomicBool) -> Result<V
     transport.notify(&notification_line("notifications/initialized", &json!({})))?;
     Ok(result)
 }
-/// `tools/list` → tool metadata. Entries without a usable `name` are skipped
-/// rather than failing the whole server.
-///
-/// Follows `nextCursor` until the server returns null, so paginated servers
-/// don't silently drop everything past page one.
+/// Follows `nextCursor` until it is absent, empty, repeated, or reaches the
+/// bounded page count, so paginated servers don't silently drop everything
+/// past page one or spin forever on malformed cursors.
 pub fn list_tools(
     transport: &dyn McpTransport,
     server: &str,
@@ -162,12 +171,14 @@ pub fn list_tools(
 ) -> Result<Vec<ToolMeta>, McpError> {
     let mut out = Vec::new();
     let mut cursor: Option<String> = None;
+    let mut attempts = 0usize;
     loop {
         let params = match &cursor {
             Some(c) => json!({ "cursor": c }),
             None => json!({}),
         };
         let result = request(transport, "tools/list", &params, signal)?;
+        attempts += 1;
         let items = result
             .get("tools")
             .and_then(Value::as_array)
@@ -179,8 +190,15 @@ pub fn list_tools(
             if remote.is_empty() {
                 continue;
             }
+            // Namespaced name goes on the wire, where OpenAI enforces
+            // `^[a-zA-Z0-9_-]{1,64}$`; a server is free to advertise anything.
+            let name = sanitize_tool_name(&format!("mcp__{server}__{remote}"));
+            if name.is_empty() {
+                eprintln!("mcp: skipping tool `{remote}`: name empty after sanitizing");
+                continue;
+            }
             out.push(ToolMeta {
-                name: format!("mcp__{server}__{remote}"),
+                name,
                 remote: remote.to_string(),
                 description: t
                     .get("description")
@@ -194,15 +212,36 @@ pub fn list_tools(
                     .unwrap_or_else(|| json!({"type": "object", "properties": {}})),
             });
         }
-        cursor = match result.get("nextCursor") {
+        let next = match result.get("nextCursor") {
             Some(Value::Null) | None => break,
             Some(v) => match v.as_str() {
                 Some("") | None => break,
-                Some(s) => Some(s.to_string()),
+                Some(s) => s,
             },
         };
+        // A repeated cursor or a runaway page count means the server is broken.
+        if cursor.as_deref() == Some(next) || attempts >= MAX_TOOL_LIST_PAGES {
+            eprintln!("mcp: stopping tools/list pagination after {attempts} page(s)");
+            break;
+        }
+        cursor = Some(next.to_string());
     }
     Ok(out)
+}
+
+/// Coerce a tool name into `[a-zA-Z0-9_-]`, capped at 64 characters (all ASCII
+/// after substitution, so also 64 bytes).
+fn sanitize_tool_name(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(64)
+        .collect()
 }
 /// `tools/call` → flattened text content.
 ///
@@ -296,7 +335,9 @@ impl StdioTransport {
             .envs(&cfg.env)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
+            .stderr(Stdio::inherit())
+            // Own process group: Drop can then reap the server's children too.
+            .process_group(0);
 
         let mut child = cmd
             .spawn()
@@ -392,9 +433,17 @@ impl McpTransport for StdioTransport {
 impl Drop for StdioTransport {
     fn drop(&mut self) {
         // Killing the child ends the reader thread via EOF; a well-behaved
-        // server also exits on stdin close, but don't rely on it.
+        // server also exits on stdin close, but don't rely on it. The server
+        // gets its own process group at spawn, so signal the group to take any
+        // helper processes it forked with it.
         let mut child = lock(&self.child);
-        let _ = child.kill();
+        if unsafe { killpg(child.id() as i32, 9) } != 0 {
+            eprintln!(
+                "mcp: failed to kill process group: {}",
+                std::io::Error::last_os_error()
+            );
+            let _ = child.kill();
+        }
         let _ = child.wait();
     }
 }
