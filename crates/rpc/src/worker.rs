@@ -544,8 +544,11 @@ mod tests {
             "done",
         ]
         .join("\n");
-        std::fs::write(&fail_script, script_body).unwrap();
-        std::fs::set_permissions(&fail_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut tmp_script = fail_script.clone();
+        tmp_script.set_extension("tmp");
+        std::fs::write(&tmp_script, &script_body).unwrap();
+        std::fs::set_permissions(&tmp_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::rename(&tmp_script, &fail_script).unwrap();
         let mut worker = Worker::new(fail_script.to_str().unwrap()).expect("spawn");
         let result = worker.register_external_tools(vec![ToolDef {
             name: "test".to_string(),
