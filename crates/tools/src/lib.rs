@@ -145,15 +145,190 @@ pub fn truncate_output(content: &str, counter: u64) -> std::io::Result<String> {
     ))
 }
 
-/// Register all built-in tools.
+/// Allow or deny outcome for one tool invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Decision {
+    Allow,
+    Deny,
+}
+
+/// One policy rule: an exact tool name plus a literal substring of that
+/// tool's subject (its command for `run_bash`, its path otherwise). Both
+/// must match for the rule to apply.
+#[derive(Debug, Clone)]
+pub struct Rule {
+    pub tool: String,
+    /// Literal substring the subject must contain, tested with
+    /// `str::contains`: no globbing, no path normalization, no shell
+    /// parsing. Empty matches any subject.
+    pub contains: String,
+    pub decision: Decision,
+    /// Human-readable justification, echoed in the denial message.
+    pub reason: String,
+}
+
+impl Rule {
+    pub fn deny(tool: &str, contains: &str, reason: &str) -> Self {
+        Self {
+            tool: tool.to_string(),
+            contains: contains.to_string(),
+            decision: Decision::Deny,
+            reason: reason.to_string(),
+        }
+    }
+
+    pub fn allow(tool: &str, contains: &str, reason: &str) -> Self {
+        Self {
+            tool: tool.to_string(),
+            contains: contains.to_string(),
+            decision: Decision::Allow,
+            reason: reason.to_string(),
+        }
+    }
+}
+
+/// Synchronous allow/deny policy: ordered rules over a default decision.
+/// First matching rule wins; unmatched invocations fall back to `default`.
+///
+/// Matching is literal substring containment on the subject, which is a
+/// coarse filter and not a containment boundary: `contains: "src/"` also
+/// matches `../src/x` and `/etc/src/passwd`, and no substring test survives
+/// quoting, `$(…)`, `;` or `PATH` tricks in a bash command. Use it to catch
+/// obvious mistakes; anything that must genuinely be confined needs an
+/// out-of-band confirmation step as well.
+///
+// ponytail: substring matching is the entire engine. Security-grade
+// confinement needs a real allowlist plus per-tool parsers — canonicalized
+// path prefixes under a root for the file tools, argv-level command
+// allowlisting for run_bash. Upgrade when this policy has to hold against an
+// adversarial caller rather than an erring one.
+#[derive(Debug, Clone)]
+pub struct Policy {
+    pub default: Decision,
+    pub rules: Vec<Rule>,
+}
+
+impl Policy {
+    pub fn new(default: Decision) -> Self {
+        Self {
+            default,
+            rules: Vec::new(),
+        }
+    }
+
+    /// Permit everything — the behavior `builtin_tools()` has always had.
+    pub fn allow_all() -> Self {
+        Self::new(Decision::Allow)
+    }
+
+    pub fn deny_all() -> Self {
+        Self::new(Decision::Deny)
+    }
+
+    /// Append a rule; rules are evaluated in insertion order.
+    pub fn rule(mut self, rule: Rule) -> Self {
+        self.rules.push(rule);
+        self
+    }
+
+    /// Judge `tool` acting on `subject`. Denials carry the tool name and the
+    /// reason of the rule that rejected it. `subject` is compared by literal
+    /// substring containment — see the caveat on [`Policy`].
+    pub fn check(&self, tool: &str, subject: &str) -> Result<(), ToolError> {
+        let (decision, reason) = match self
+            .rules
+            .iter()
+            .find(|r| r.tool == tool && subject.contains(&r.contains))
+        {
+            Some(r) => (r.decision, r.reason.as_str()),
+            None => (self.default, "no matching rule"),
+        };
+        match decision {
+            Decision::Allow => Ok(()),
+            Decision::Deny => Err(ToolError::Message(format!(
+                "{tool} denied by permission policy: {reason}"
+            ))),
+        }
+    }
+}
+
+/// Argument key holding the subject a rule matches against, plus the subject
+/// to judge when that argument is absent or not a string.
+///
+/// Private, and closed over the built-in argument shapes on purpose: wrapping
+/// a third-party tool in [`Guarded`] must not look guarded when its subject
+/// lives under some other key. An unknown tool maps to no key, so it is
+/// judged on an empty subject and a deny default rejects it.
+fn subject_key(tool: &str) -> (&'static str, &'static str) {
+    match tool {
+        "run_bash" => ("command", ""),
+        // grep and glob take an optional path; rg searches the cwd without it
+        "grep" | "glob" => ("path", "."),
+        "read_file" | "write_file" | "edit" | "delete_file" => ("path", ""),
+        _ => ("", ""),
+    }
+}
+
+/// Tool wrapper that consults a [`Policy`] before delegating to `execute`.
+/// Transparent otherwise: name, description and schema are the inner tool's.
+/// The check runs first, so a denial lands before any side effect.
+///
+/// Only meaningful for the built-in tools: the subject mapping is private and
+/// keyed on built-in tool names, so an unknown inner tool is judged on an
+/// empty subject and is rejected outright under a deny default.
+pub struct Guarded<T> {
+    inner: T,
+    policy: Policy,
+}
+
+impl<T: Tool> Guarded<T> {
+    pub fn new(inner: T, policy: Policy) -> Self {
+        Self { inner, policy }
+    }
+}
+
+impl<T: Tool> Tool for Guarded<T> {
+    fn name(&self) -> &'static str {
+        self.inner.name()
+    }
+
+    fn description(&self) -> String {
+        self.inner.description()
+    }
+
+    fn parameters(&self) -> Value {
+        self.inner.parameters()
+    }
+
+    fn execute(&self, args: &Value, signal: &AtomicBool) -> Result<String, ToolError> {
+        let name = self.inner.name();
+        let (key, absent) = subject_key(name);
+        // Fail closed: a missing or non-string subject is still judged, using
+        // the tool's default subject, so a deny default cannot be sidestepped
+        // by omitting the argument.
+        let subject = args.get(key).and_then(Value::as_str).unwrap_or(absent);
+        self.policy.check(name, subject)?;
+        self.inner.execute(args, signal)
+    }
+}
+
+/// Register all built-in tools, unrestricted.
 pub fn builtin_tools() -> Vec<Box<dyn Tool>> {
+    builtin_tools_with_policy(Policy::allow_all())
+}
+
+/// Register all built-in tools, every one routed through `policy` so a
+/// `deny_all` default applies uniformly. The read-only tools are wrapped too;
+/// a policy that wants them permitted says so with an allow default or an
+/// explicit allow rule.
+pub fn builtin_tools_with_policy(policy: Policy) -> Vec<Box<dyn Tool>> {
     vec![
-        Box::new(read::ReadFile),
-        Box::new(write::WriteFile),
-        Box::new(edit::EditFile),
-        Box::new(bash::RunBash),
-        Box::new(grep::Grep),
-        Box::new(glob::Glob),
-        Box::new(delete::DeleteFile),
+        Box::new(Guarded::new(read::ReadFile, policy.clone())),
+        Box::new(Guarded::new(write::WriteFile, policy.clone())),
+        Box::new(Guarded::new(edit::EditFile, policy.clone())),
+        Box::new(Guarded::new(bash::RunBash, policy.clone())),
+        Box::new(Guarded::new(grep::Grep, policy.clone())),
+        Box::new(Guarded::new(glob::Glob, policy.clone())),
+        Box::new(Guarded::new(delete::DeleteFile, policy)),
     ]
 }
