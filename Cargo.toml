@@ -3,7 +3,7 @@ members = [
   "bin/cli", "bin/gate",
   "crates/adaptor", "crates/orbit", "crates/tools", "crates/rpc",
   "crates/task", "crates/spec", "crates/config", "crates/tui",
-  "crates/subagent", "crates/memory",
+  "crates/subagent", "crates/mcp", "crates/memory",
 ]
 resolver = "2"
 

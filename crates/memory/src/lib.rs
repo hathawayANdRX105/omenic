@@ -254,7 +254,8 @@ mod tests {
     fn disabled_is_noop() {
         let mut mem = Memory::disabled();
         assert!(!mem.enabled());
-        mem.append(MemoryEntry::new("secret")).expect("no-op append");
+        mem.append(MemoryEntry::new("secret"))
+            .expect("no-op append");
         assert!(mem.list().expect("no-op list").is_empty());
         assert!(mem.search("secret").expect("no-op search").is_empty());
     }
@@ -271,7 +272,11 @@ mod tests {
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].text, "user prefers tabs");
         assert_eq!(all[1].text, "deploy target is fly.io");
-        assert!(all[0].ts.ends_with('Z'), "ts should be ISO-ish: {}", all[0].ts);
+        assert!(
+            all[0].ts.ends_with('Z'),
+            "ts should be ISO-ish: {}",
+            all[0].ts
+        );
     }
 
     #[test]

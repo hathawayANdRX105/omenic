@@ -15,8 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use adaptor::ToolDef;
-use memory::{Memory, MemoryEntry, MemoryError};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// Tool output truncation limit (lines); tail is kept — errors live at the end.
 pub const MAX_OUTPUT_LINES: usize = 200;
@@ -103,7 +102,9 @@ impl From<std::io::Error> for ToolError {
 /// A tool the agent can call. `execute` returns its result as a string
 /// (errors are values — the loop backfills them into the context).
 pub trait Tool: Send + Sync {
-    fn name(&self) -> &'static str;
+    /// Tool name as seen by the model. Borrowed, not `&'static str`: MCP tool
+    /// names arrive at runtime from the server and are owned by the tool.
+    fn name(&self) -> &str;
     fn description(&self) -> String;
     fn parameters(&self) -> Value;
     fn execute(&self, args: &Value, signal: &AtomicBool) -> Result<String, ToolError>;
@@ -146,220 +147,190 @@ pub fn truncate_output(content: &str, counter: u64) -> std::io::Result<String> {
     ))
 }
 
-/// Register all built-in tools.
-pub fn builtin_tools() -> Vec<Box<dyn Tool>> {
-    vec![
-        Box::new(read::ReadFile),
-        Box::new(write::WriteFile),
-        Box::new(edit::EditFile),
-        Box::new(bash::RunBash),
-        Box::new(grep::Grep),
-        Box::new(glob::Glob),
-        Box::new(delete::DeleteFile),
-    ]
+/// Allow or deny outcome for one tool invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Decision {
+    Allow,
+    Deny,
 }
 
-/// Memory-backed tools: `memory_append` / `memory_list` / `memory_search`.
+/// One policy rule: an exact tool name plus a literal substring of that
+/// tool's subject (its command for `run_bash`, its path otherwise). Both
+/// must match for the rule to apply.
+#[derive(Debug, Clone)]
+pub struct Rule {
+    pub tool: String,
+    /// Literal substring the subject must contain, tested with
+    /// `str::contains`: no globbing, no path normalization, no shell
+    /// parsing. Empty matches any subject.
+    pub contains: String,
+    pub decision: Decision,
+    /// Human-readable justification, echoed in the denial message.
+    pub reason: String,
+}
+
+impl Rule {
+    pub fn deny(tool: &str, contains: &str, reason: &str) -> Self {
+        Self {
+            tool: tool.to_string(),
+            contains: contains.to_string(),
+            decision: Decision::Deny,
+            reason: reason.to_string(),
+        }
+    }
+
+    pub fn allow(tool: &str, contains: &str, reason: &str) -> Self {
+        Self {
+            tool: tool.to_string(),
+            contains: contains.to_string(),
+            decision: Decision::Allow,
+            reason: reason.to_string(),
+        }
+    }
+}
+
+/// Synchronous allow/deny policy: ordered rules over a default decision.
+/// First matching rule wins; unmatched invocations fall back to `default`.
 ///
-/// Registered separately from [`builtin_tools`] so the default tool set stays
-/// unchanged. A [`Memory::disabled`] handle still yields all three tools —
-/// they answer with a clear "memory disabled" error instead of vanishing, so
-/// the model learns why the call failed rather than hallucinating the tool.
-pub fn external_tools_from_memory(memory: Memory) -> Vec<Box<dyn Tool>> {
-    vec![
-        Box::new(MemoryAppend {
-            memory: memory.clone(),
-        }),
-        Box::new(MemoryList {
-            memory: memory.clone(),
-        }),
-        Box::new(MemorySearch { memory }),
-    ]
+/// Matching is literal substring containment on the subject, which is a
+/// coarse filter and not a containment boundary: `contains: "src/"` also
+/// matches `../src/x` and `/etc/src/passwd`, and no substring test survives
+/// quoting, `$(…)`, `;` or `PATH` tricks in a bash command. Use it to catch
+/// obvious mistakes; anything that must genuinely be confined needs an
+/// out-of-band confirmation step as well.
+///
+// ponytail: substring matching is the entire engine. Security-grade
+// confinement needs a real allowlist plus per-tool parsers — canonicalized
+// path prefixes under a root for the file tools, argv-level command
+// allowlisting for run_bash. Upgrade when this policy has to hold against an
+// adversarial caller rather than an erring one.
+#[derive(Debug, Clone)]
+pub struct Policy {
+    pub default: Decision,
+    pub rules: Vec<Rule>,
 }
 
-const MEMORY_DISABLED: &str =
-    "memory disabled: set `enabled = true` under `[memory]` in .oi/config.toml to use it";
-
-fn check_enabled(memory: &Memory) -> Result<(), ToolError> {
-    if memory.enabled() {
-        Ok(())
-    } else {
-        Err(ToolError::Message(MEMORY_DISABLED.into()))
-    }
-}
-
-fn render(entries: &[MemoryEntry]) -> Result<String, ToolError> {
-    if entries.is_empty() {
-        return Ok("no memory entries".into());
-    }
-    let body: Vec<String> = entries
-        .iter()
-        .map(|e| format!("#{} {} {}", e.id, e.ts, e.text))
-        .collect();
-    Ok(truncate_output(&body.join("\n"), 0)?)
-}
-
-pub struct MemoryAppend {
-    memory: Memory,
-}
-
-impl Tool for MemoryAppend {
-    fn name(&self) -> &'static str {
-        "memory_append"
-    }
-
-    fn description(&self) -> String {
-        "记一条长期记忆。参数：text（要记住的内容）。".into()
-    }
-
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {"text": {"type": "string"}},
-            "required": ["text"],
-        })
-    }
-
-    fn execute(&self, args: &Value, _signal: &AtomicBool) -> Result<String, ToolError> {
-        check_enabled(&self.memory)?;
-        let text = arg_str(args, "text")?;
-        if text.trim().is_empty() {
-            return Err(ToolError::Message("text must not be empty".into()));
+impl Policy {
+    pub fn new(default: Decision) -> Self {
+        Self {
+            default,
+            rules: Vec::new(),
         }
-        // ponytail: `Memory` is just a path — id assignment and the write happen
-        // under its own file lock, so a clone is a handle, not a second copy of
-        // state. Cheaper than wrapping every tool in a Mutex that guards nothing.
-        let mut memory = self.memory.clone();
-        memory.append(MemoryEntry::new(text))?;
-        Ok("remembered".into())
-    }
-}
-
-pub struct MemoryList {
-    memory: Memory,
-}
-
-impl Tool for MemoryList {
-    fn name(&self) -> &'static str {
-        "memory_list"
     }
 
-    fn description(&self) -> String {
-        "列出全部长期记忆（按 id 升序）。无参数。".into()
+    /// Permit everything — the behavior `builtin_tools()` has always had.
+    pub fn allow_all() -> Self {
+        Self::new(Decision::Allow)
     }
 
-    fn parameters(&self) -> Value {
-        json!({"type": "object", "properties": {}})
+    pub fn deny_all() -> Self {
+        Self::new(Decision::Deny)
     }
 
-    fn execute(&self, _args: &Value, _signal: &AtomicBool) -> Result<String, ToolError> {
-        check_enabled(&self.memory)?;
-        render(&self.memory.list()?)
-    }
-}
-
-pub struct MemorySearch {
-    memory: Memory,
-}
-
-impl Tool for MemorySearch {
-    fn name(&self) -> &'static str {
-        "memory_search"
+    /// Append a rule; rules are evaluated in insertion order.
+    pub fn rule(mut self, rule: Rule) -> Self {
+        self.rules.push(rule);
+        self
     }
 
-    fn description(&self) -> String {
-        "在长期记忆里按子串搜索（忽略大小写）。参数：query（子串，非正则）。".into()
-    }
-
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {"query": {"type": "string"}},
-            "required": ["query"],
-        })
-    }
-
-    fn execute(&self, args: &Value, _signal: &AtomicBool) -> Result<String, ToolError> {
-        check_enabled(&self.memory)?;
-        let query = arg_str(args, "query")?;
-        render(&self.memory.search(query)?)
-    }
-}
-
-impl From<MemoryError> for ToolError {
-    fn from(e: MemoryError) -> ToolError {
-        ToolError::Message(format!("memory: {e}"))
-    }
-}
-
-#[cfg(test)]
-mod memory_tool_tests {
-    use super::*;
-
-    fn run(tools: &[Box<dyn Tool>], name: &str, args: Value) -> Result<String, ToolError> {
-        let tool = tools
+    /// Judge `tool` acting on `subject`. Denials carry the tool name and the
+    /// reason of the rule that rejected it. `subject` is compared by literal
+    /// substring containment — see the caveat on [`Policy`].
+    pub fn check(&self, tool: &str, subject: &str) -> Result<(), ToolError> {
+        let (decision, reason) = match self
+            .rules
             .iter()
-            .find(|t| t.name() == name)
-            .unwrap_or_else(|| panic!("tool {name} not registered"));
-        tool.execute(&args, &AtomicBool::new(false))
-    }
-
-    #[test]
-    fn builtin_tools_have_no_memory_tools() {
-        let names: Vec<&str> = builtin_tools().iter().map(|t| t.name()).collect();
-        assert_eq!(names.len(), 7);
-        assert!(!names.iter().any(|n| n.starts_with("memory_")));
-    }
-
-    #[test]
-    fn disabled_memory_still_registers_and_explains() {
-        let tools = external_tools_from_memory(Memory::disabled());
-        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-        assert_eq!(names, vec!["memory_append", "memory_list", "memory_search"]);
-
-        for (name, args) in [
-            ("memory_append", json!({"text": "x"})),
-            ("memory_list", json!({})),
-            ("memory_search", json!({"query": "x"})),
-        ] {
-            let err = run(&tools, name, args).expect_err("disabled memory must error");
-            assert!(
-                err.to_string().contains("memory disabled"),
-                "{name}: {err}"
-            );
+            .find(|r| r.tool == tool && subject.contains(&r.contains))
+        {
+            Some(r) => (r.decision, r.reason.as_str()),
+            None => (self.default, "no matching rule"),
+        };
+        match decision {
+            Decision::Allow => Ok(()),
+            Decision::Deny => Err(ToolError::Message(format!(
+                "{tool} denied by permission policy: {reason}"
+            ))),
         }
     }
+}
 
-    #[test]
-    fn enabled_memory_append_list_search() {
-        let tmp = tempfile::tempdir().unwrap();
-        let tools = external_tools_from_memory(Memory::open(tmp.path()).unwrap());
+/// Argument key holding the subject a rule matches against, plus the subject
+/// to judge when that argument is absent or not a string.
+///
+/// Private, and closed over the built-in argument shapes on purpose: wrapping
+/// a third-party tool in [`Guarded`] must not look guarded when its subject
+/// lives under some other key. An unknown tool maps to no key, so it is
+/// judged on an empty subject and a deny default rejects it.
+fn subject_key(tool: &str) -> (&'static str, &'static str) {
+    match tool {
+        "run_bash" => ("command", ""),
+        // grep and glob take an optional path; rg searches the cwd without it
+        "grep" | "glob" => ("path", "."),
+        "read_file" | "write_file" | "edit" | "delete_file" => ("path", ""),
+        _ => ("", ""),
+    }
+}
 
-        assert_eq!(run(&tools, "memory_list", json!({})).unwrap(), "no memory entries");
-        run(&tools, "memory_append", json!({"text": "prefers ripgrep"})).unwrap();
-        run(&tools, "memory_append", json!({"text": "deploys on fly.io"})).unwrap();
+/// Tool wrapper that consults a [`Policy`] before delegating to `execute`.
+/// Transparent otherwise: name, description and schema are the inner tool's.
+/// The check runs first, so a denial lands before any side effect.
+///
+/// Only meaningful for the built-in tools: the subject mapping is private and
+/// keyed on built-in tool names, so an unknown inner tool is judged on an
+/// empty subject and is rejected outright under a deny default.
+pub struct Guarded<T> {
+    inner: T,
+    policy: Policy,
+}
 
-        let listed = run(&tools, "memory_list", json!({})).unwrap();
-        assert!(listed.contains("#1 "), "{listed}");
-        assert!(listed.contains("prefers ripgrep"), "{listed}");
-        assert!(listed.contains("deploys on fly.io"), "{listed}");
+impl<T: Tool> Guarded<T> {
+    pub fn new(inner: T, policy: Policy) -> Self {
+        Self { inner, policy }
+    }
+}
 
-        let found = run(&tools, "memory_search", json!({"query": "RIPGREP"})).unwrap();
-        assert!(found.contains("prefers ripgrep"), "{found}");
-        assert!(!found.contains("fly.io"), "{found}");
-        assert_eq!(
-            run(&tools, "memory_search", json!({"query": "nope"})).unwrap(),
-            "no memory entries"
-        );
+impl<T: Tool> Tool for Guarded<T> {
+    fn name(&self) -> &str {
+        self.inner.name()
     }
 
-    #[test]
-    fn append_rejects_blank_text() {
-        let tmp = tempfile::tempdir().unwrap();
-        let tools = external_tools_from_memory(Memory::open(tmp.path()).unwrap());
-        let err = run(&tools, "memory_append", json!({"text": "   "})).expect_err("blank");
-        assert!(err.to_string().contains("must not be empty"), "{err}");
-        let err = run(&tools, "memory_append", json!({})).expect_err("missing arg");
-        assert!(err.to_string().contains("text"), "{err}");
+    fn description(&self) -> String {
+        self.inner.description()
     }
+
+    fn parameters(&self) -> Value {
+        self.inner.parameters()
+    }
+
+    fn execute(&self, args: &Value, signal: &AtomicBool) -> Result<String, ToolError> {
+        let name = self.inner.name();
+        let (key, absent) = subject_key(name);
+        // Fail closed: a missing or non-string subject is still judged, using
+        // the tool's default subject, so a deny default cannot be sidestepped
+        // by omitting the argument.
+        let subject = args.get(key).and_then(Value::as_str).unwrap_or(absent);
+        self.policy.check(name, subject)?;
+        self.inner.execute(args, signal)
+    }
+}
+
+/// Register all built-in tools, unrestricted.
+pub fn builtin_tools() -> Vec<Box<dyn Tool>> {
+    builtin_tools_with_policy(Policy::allow_all())
+}
+
+/// Register all built-in tools, every one routed through `policy` so a
+/// `deny_all` default applies uniformly. The read-only tools are wrapped too;
+/// a policy that wants them permitted says so with an allow default or an
+/// explicit allow rule.
+pub fn builtin_tools_with_policy(policy: Policy) -> Vec<Box<dyn Tool>> {
+    vec![
+        Box::new(Guarded::new(read::ReadFile, policy.clone())),
+        Box::new(Guarded::new(write::WriteFile, policy.clone())),
+        Box::new(Guarded::new(edit::EditFile, policy.clone())),
+        Box::new(Guarded::new(bash::RunBash, policy.clone())),
+        Box::new(Guarded::new(grep::Grep, policy.clone())),
+        Box::new(Guarded::new(glob::Glob, policy.clone())),
+        Box::new(Guarded::new(delete::DeleteFile, policy)),
+    ]
 }

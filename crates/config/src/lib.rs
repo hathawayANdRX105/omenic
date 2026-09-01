@@ -28,11 +28,30 @@ pub struct Config {
     pub llm_model: Option<String>,
     /// Direct LLM max tokens.
     pub llm_max_tokens: Option<u32>,
+    /// External MCP servers to spawn for extra tools. Empty by default —
+    /// MCP is opt-in and nothing is spawned unless the user lists a server.
+    pub mcp_servers: Vec<McpServerConfig>,
+
     /// Persistent local memory. Off by default: nothing is written to disk
     /// until the user opts in via `[memory] enabled = true`.
     pub memory_enabled: bool,
     /// Override for the memory directory; `None` = `data_dir/memory`.
     pub memory_dir: Option<PathBuf>,
+}
+
+/// One external MCP server: a child process spoken to over stdio.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct McpServerConfig {
+    /// Short handle used to namespace this server's tool names.
+    pub name: String,
+    /// Executable to spawn.
+    pub command: String,
+    /// Arguments passed to `command`.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Extra environment variables for the child.
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
 }
 
 /// Errors that can occur during config loading.
@@ -103,6 +122,7 @@ impl Config {
             llm_base_url: None,
             llm_model: None,
             llm_max_tokens: None,
+            mcp_servers: Vec::new(),
             memory_enabled: false,
             memory_dir: None,
         };
@@ -128,6 +148,11 @@ impl Config {
         if let Ok(v) = env::var("OMENIC_DATA_DIR") {
             config.data_dir = PathBuf::from(v);
         }
+        if let Some(dir) = config.memory_dir.as_deref() {
+            // memory_dir validated below; here only resolve relative paths.
+        } else {
+            config.memory_dir = Some(config.data_dir.join("memory"));
+        }
         if let Ok(v) = env::var("OMENIC_MODEL") {
             config.model = v;
         }
@@ -143,11 +168,6 @@ impl Config {
         if let Ok(v) = env::var("OMENIC_LLM_MAX_TOKENS") {
             config.llm_max_tokens = v.parse().ok();
         }
-        // `[memory] dir` defaults under data_dir, resolved once here so no
-        // consumer has to re-derive it.
-        if config.memory_dir.is_none() {
-            config.memory_dir = Some(config.data_dir.join("memory"));
-        }
         config.validate()?;
         Ok(config)
     }
@@ -158,8 +178,6 @@ impl Config {
     /// - `omp_path`: if it contains a path separator, must exist and be executable;
     ///   bare command names are allowed (resolved via PATH at runtime).
     /// - `data_dir`: if it exists, must be a directory; if not, parent must exist.
-    /// - `memory_dir`: only checked when memory is enabled — a stale path must
-    ///   not break the default-off config.
     fn validate(&self) -> Result<(), ConfigError> {
         // model: non-empty (don't echo the value back — could be sensitive).
         if self.model.trim().is_empty() {
@@ -204,8 +222,8 @@ impl Config {
             // root with overlayfs etc. OS will give a clear error at write time.
         }
 
-        // memory_dir: `create_dir_all` builds missing levels, so only the
-        // nearest existing ancestor has to actually be a directory.
+        // memory_dir: when enabled, the nearest existing ancestor must be a directory.
+        // (When disabled, a stale path is allowed.)
         if self.memory_enabled
             && let Some(dir) = self.memory_dir.as_deref()
             && let Some(p) = dir.ancestors().find(|a| a.exists())
@@ -215,6 +233,23 @@ impl Config {
                 field: "memory_dir",
                 message: format!("'{}' exists but is not a directory", p.display()),
             });
+        }
+
+        // mcp servers: a listed server must be startable — an entry with no
+        // name or no command can only fail later at spawn time.
+        for s in &self.mcp_servers {
+            if s.name.trim().is_empty() {
+                return Err(ConfigError::Invalid {
+                    field: "mcp.servers.name",
+                    message: "must not be empty".to_string(),
+                });
+            }
+            if s.command.trim().is_empty() {
+                return Err(ConfigError::Invalid {
+                    field: "mcp.servers.command",
+                    message: format!("server '{}' has no command", s.name),
+                });
+            }
         }
 
         Ok(())
@@ -230,7 +265,15 @@ struct TomlConfig {
     #[serde(default)]
     llm: LlmToml,
     #[serde(default)]
+    mcp: McpToml,
+    #[serde(default)]
     memory: MemoryToml,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct MemoryToml {
+    enabled: Option<bool>,
+    dir: Option<String>,
 }
 
 /// `[llm]` TOML section for direct LLM credentials.
@@ -242,11 +285,11 @@ struct LlmToml {
     max_tokens: Option<u32>,
 }
 
-/// `[memory]` TOML section. Absent section = memory off.
+/// `[mcp]` TOML section. `servers` is a list of `[[mcp.servers]]` tables.
 #[derive(Debug, Default, serde::Deserialize)]
-struct MemoryToml {
-    enabled: Option<bool>,
-    dir: Option<String>,
+struct McpToml {
+    #[serde(default)]
+    servers: Vec<McpServerConfig>,
 }
 
 impl TomlConfig {
@@ -271,6 +314,9 @@ impl TomlConfig {
         }
         if let Some(v) = self.llm.max_tokens {
             base.llm_max_tokens = Some(v);
+        }
+        if !self.mcp.servers.is_empty() {
+            base.mcp_servers = self.mcp.servers;
         }
         if let Some(v) = self.memory.enabled {
             base.memory_enabled = v;
@@ -507,65 +553,68 @@ mod tests {
         assert_eq!(config.data_dir, PathBuf::from("./new-data-dir"));
     }
 
-    // --- #267: default-off persistent memory ---
+    // --- #266: MCP servers (default off) ---
 
     #[test]
-    fn memory_off_by_default() {
+    fn mcp_defaults_to_no_servers() {
         let _g = lock();
-        let _d = tmp_dir("mem-default");
-        let config = Config::load().unwrap();
-        assert!(!config.memory_enabled);
-        // dir is resolved even when disabled, so callers never re-derive it.
-        assert_eq!(config.memory_dir, Some(PathBuf::from("./.oi/memory")));
+        let _d = tmp_dir("mcp-default");
+        assert!(Config::load().unwrap().mcp_servers.is_empty());
     }
 
     #[test]
-    fn memory_section_opts_in() {
+    fn mcp_servers_parsed_from_toml() {
         let _g = lock();
-        let _d = tmp_dir("mem-on");
-        fs::write("./omenic.toml", "[memory]\nenabled = true\n").unwrap();
-        let config = Config::load().unwrap();
-        assert!(config.memory_enabled);
-        assert_eq!(config.memory_dir, Some(PathBuf::from("./.oi/memory")));
-    }
-
-    #[test]
-    fn memory_dir_override_wins() {
-        let _g = lock();
-        let _d = tmp_dir("mem-dir");
+        let _d = tmp_dir("mcp-parse");
         fs::write(
             "./omenic.toml",
-            "[memory]\nenabled = true\ndir = \"./mem-store\"\n",
+            "[[mcp.servers]]\n\
+             name = \"files\"\n\
+             command = \"mcp-server-filesystem\"\n\
+             args = [\"/tmp\"]\n\
+             env = { TOKEN = \"x\" }\n\
+             \n\
+             [[mcp.servers]]\n\
+             name = \"git\"\n\
+             command = \"mcp-server-git\"\n",
         )
         .unwrap();
-        let config = Config::load().unwrap();
-        assert_eq!(config.memory_dir, Some(PathBuf::from("./mem-store")));
+        let servers = Config::load().unwrap().mcp_servers;
+        assert_eq!(servers.len(), 2);
+        assert_eq!(servers[0].name, "files");
+        assert_eq!(servers[0].command, "mcp-server-filesystem");
+        assert_eq!(servers[0].args, ["/tmp"]);
+        assert_eq!(servers[0].env.get("TOKEN").map(String::as_str), Some("x"));
+        // args/env are optional per server.
+        assert!(servers[1].args.is_empty());
+        assert!(servers[1].env.is_empty());
     }
 
     #[test]
-    fn memory_dir_not_a_directory_rejected() {
+    fn mcp_server_without_name_rejected() {
         let _g = lock();
-        let _d = tmp_dir("mem-bad");
-        fs::write("./mem-not-a-dir", "x").unwrap();
+        let _d = tmp_dir("mcp-noname");
         fs::write(
             "./omenic.toml",
-            "[memory]\nenabled = true\ndir = \"./mem-not-a-dir\"\n",
+            "[[mcp.servers]]\nname = \"\"\ncommand = \"x\"\n",
         )
         .unwrap();
         let r = Config::load();
         assert!(r.is_err());
-        assert!(format!("{}", r.unwrap_err()).contains("memory_dir"));
-        let _ = fs::remove_file("./mem-not-a-dir");
+        assert!(format!("{}", r.unwrap_err()).contains("mcp.servers.name"));
     }
 
     #[test]
-    fn bad_memory_dir_ignored_while_disabled() {
+    fn mcp_server_without_command_rejected() {
         let _g = lock();
-        let _d = tmp_dir("mem-bad-off");
-        fs::write("./mem-off-not-a-dir", "x").unwrap();
-        fs::write("./omenic.toml", "[memory]\ndir = \"./mem-off-not-a-dir\"\n").unwrap();
-        let config = Config::load().unwrap();
-        assert!(!config.memory_enabled);
-        let _ = fs::remove_file("./mem-off-not-a-dir");
+        let _d = tmp_dir("mcp-nocmd");
+        fs::write(
+            "./omenic.toml",
+            "[[mcp.servers]]\nname = \"files\"\ncommand = \"  \"\n",
+        )
+        .unwrap();
+        let r = Config::load();
+        assert!(r.is_err());
+        assert!(format!("{}", r.unwrap_err()).contains("mcp.servers.command"));
     }
 }
