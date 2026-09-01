@@ -1047,6 +1047,7 @@ fn run_cmd(id: &str) -> Result<u8, String> {
         &task::runner::Ctx {
             omp_path: config.omp_path.clone(),
             data_dir: config.data_dir.clone(),
+            mcp_servers: config.mcp_servers.clone(),
             tasks: store
                 .load_all()
                 .map_err(|e| format!("store error: {e}"))?
