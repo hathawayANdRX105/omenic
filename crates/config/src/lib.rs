@@ -4,6 +4,7 @@
 //!
 //! M1.7: config struct + loader.
 
+use std::collections::HashSet;
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -235,6 +236,8 @@ impl Config {
 
         // mcp servers: a listed server must be startable — an entry with no
         // name or no command can only fail later at spawn time.
+        // ponytail: uniqueness inside the same loop — no second pass needed.
+        let mut seen = HashSet::new();
         for s in &self.mcp_servers {
             if s.name.trim().is_empty() {
                 return Err(ConfigError::Invalid {
@@ -246,6 +249,13 @@ impl Config {
                 return Err(ConfigError::Invalid {
                     field: "mcp.servers.command",
                     message: format!("server '{}' has no command", s.name),
+                });
+            }
+            // Checked last so a duplicate error only names an otherwise-valid server.
+            if !seen.insert(s.name.clone()) {
+                return Err(ConfigError::Invalid {
+                    field: "mcp.servers.name",
+                    message: format!("duplicate server name '{}'", s.name),
                 });
             }
         }
@@ -614,5 +624,19 @@ mod tests {
         let r = Config::load();
         assert!(r.is_err());
         assert!(format!("{}", r.unwrap_err()).contains("mcp.servers.command"));
+    }
+
+    #[test]
+    fn mcp_duplicate_server_name_rejected() {
+        let _g = lock();
+        let _d = tmp_dir("mcp-dupname");
+        fs::write(
+            "./omenic.toml",
+            "[[mcp.servers]]\nname = \"a\"\ncommand = \"x\"\n[[mcp.servers]]\nname = \"a\"\ncommand = \"y\"\n",
+        )
+        .unwrap();
+        let r = Config::load();
+        assert!(r.is_err());
+        assert!(format!("{}", r.unwrap_err()).contains("duplicate server name 'a'"));
     }
 }
