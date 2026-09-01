@@ -250,6 +250,7 @@ dependencies = [
  "adaptor",
  "clap",
  "config",
+ "mcp",
  "orbit",
  "rpc",
  "serde",
@@ -1538,6 +1539,7 @@ dependencies = [
 name = "rpc"
 version = "0.1.0"
 dependencies = [
+ "adaptor",
  "base64",
  "libc",
  "serde",
@@ -1880,12 +1882,16 @@ dependencies = [
 name = "task"
 version = "0.1.0"
 dependencies = [
+ "adaptor",
+ "config",
  "fs2",
+ "mcp",
  "rpc",
  "serde",
  "serde_json",
  "serde_yaml",
  "tempfile",
+ "tools",
 ]
 
 [[package]]
