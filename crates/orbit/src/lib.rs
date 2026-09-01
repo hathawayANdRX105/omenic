@@ -261,7 +261,11 @@ fn compact_context(
     // they alone blow the budget, summarizing the prefix cannot get under it:
     // shipping a summary here would just re-summarize the previous summary
     // every turn. Leave the context intact instead.
-    let kept_chars: usize = context.messages[keep_at..].iter().map(message_chars).sum();
+    let kept_chars: usize = context.system_prompt.as_ref().map_or(0, |s| s.len())
+        + context.messages[keep_at..]
+            .iter()
+            .map(message_chars)
+            .sum::<usize>();
     if kept_chars >= COMPACT_CHAR_BUDGET {
         return;
     }
@@ -969,6 +973,26 @@ mod tests {
         // Originals untouched; only the final assistant reply was appended.
         assert_eq!(ctx.messages.len(), before.len() + 1);
         assert!(ctx.messages.iter().take(before.len()).eq(before.iter()));
+    }
+
+    #[test]
+    fn compaction_skipped_when_system_prompt_alone_exceeds_budget() {
+        let backend = Shared(std::cell::RefCell::new(Scripted::new(vec![vec![
+            StreamEvent::TextDelta("summary should not be requested".into()),
+            StreamEvent::Done {
+                stop_reason: StopReason::EndTurn,
+            },
+        ]])));
+        let mut ctx = Context {
+            system_prompt: Some("s".repeat(110_000)),
+            messages: vec![Message::user_text("m".repeat(25_000))],
+        };
+        let before = ctx.messages.clone();
+
+        compact_context(&backend, &model(), &mut ctx, &sig());
+
+        assert!(backend.0.borrow().seen_contexts.is_empty());
+        assert_eq!(ctx.messages, before);
     }
 
     /// Scripted backend replays canned event lists per call.
