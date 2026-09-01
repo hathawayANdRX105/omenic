@@ -102,7 +102,9 @@ impl From<std::io::Error> for ToolError {
 /// A tool the agent can call. `execute` returns its result as a string
 /// (errors are values — the loop backfills them into the context).
 pub trait Tool: Send + Sync {
-    fn name(&self) -> &'static str;
+    /// Tool name as seen by the model. Borrowed, not `&'static str`: MCP tool
+    /// names arrive at runtime from the server and are owned by the tool.
+    fn name(&self) -> &str;
     fn description(&self) -> String;
     fn parameters(&self) -> Value;
     fn execute(&self, args: &Value, signal: &AtomicBool) -> Result<String, ToolError>;
