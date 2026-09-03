@@ -290,7 +290,7 @@ impl<T: Tool> Guarded<T> {
 }
 
 impl<T: Tool> Tool for Guarded<T> {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         self.inner.name()
     }
 
