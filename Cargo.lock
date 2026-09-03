@@ -1120,6 +1120,7 @@ version = "0.1.0"
 dependencies = [
  "adaptor",
  "fs2",
+ "prompts",
  "serde",
  "serde_json",
  "tempfile",
