@@ -1,0 +1,114 @@
+MIT License
+
+omenic is licensed under the MIT License below. The contents of
+`crates/prompts/prompts/` are verbatim copies from **oh-my-pi**
+(also called "omp"), a third-party agent harness also licensed
+under the MIT License; see the Third-Party Notices section at the
+bottom of this file for attribution and re-sync procedure.
+
+===============================================================================
+omenic main license
+===============================================================================
+
+MIT License
+
+Copyright (c) 2026 omenic authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+===============================================================================
+Third-Party Notices
+===============================================================================
+
+This project includes verbatim copies of prompt text from
+**oh-my-pi** (also called "omp"), a third-party agent harness.
+Upstream: <https://github.com/can1357/oh-my-pi>
+
+Files affected
+--------------
+
+The following files in this repository are verbatim copies of
+upstream oh-my-pi files, byte-for-byte:
+
+  crates/prompts/prompts/agents/*.md
+    (8 role profiles: task, scout, librarian, reviewer, designer,
+     init, security-reviewer, frontmatter)
+
+  crates/prompts/prompts/system/*.md
+    (69 system prompt fragments, lexicographic)
+
+  crates/prompts/prompts/system/personalities/*.md
+    (3 personality fragments)
+
+These are embedded into the `prompts` crate as Rust constants
+through `include_str!`. See `crates/prompts/src/agents.rs` and
+`crates/prompts/src/system.rs` for the binding code.
+
+Source pin
+----------
+
+Upstream commit: `969a94c1eeccb1b7528cd5621934bca1908ab622`
+Upstream branch: `main`
+Upstream path:    `packages/coding-agent/src/prompts/`
+Captured:         2026-09-04
+
+To re-sync: `cp -v` the upstream files from the desired commit
+into the matching `crates/prompts/prompts/` paths, then update the
+commit SHA in this file. The `every_system_md_has_a_constant`
+test in `crates/prompts/src/system.rs` will fail if a fragment is
+added upstream without adding the corresponding constant (and
+`include_str!` will fail to compile if a fragment is deleted
+upstream without removing its constant).
+
+oh-my-pi license
+----------------
+
+The copied prompt text is licensed by oh-my-pi's authors under
+the **MIT License**:
+
+  MIT License
+
+  Copyright (c) 2025 Mario Zechner
+  Copyright (c) 2025-2026 Can Bölük
+  Copyright (c) 2026 Stencil Labs, Inc.
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+Full upstream license: <https://github.com/can1357/oh-my-pi/blob/main/LICENSE>
+
+The MIT terms above are compatible with omenic's own MIT
+declaration. This notice exists to attribute the copied text
+to its original authors and to make the re-sync procedure
+unambiguous; the redistribution rights are unaffected.
