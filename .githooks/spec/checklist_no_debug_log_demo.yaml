@@ -1,0 +1,16 @@
+# demo: 检查新增代码里有没有遗留 println! / dbg! / eprintln!
+# mode: diff（pre-commit 也跑得起，省 token）
+enabled: true
+hooks: [pre-commit, pre-push, merge]
+fail_severity: FAIL
+match:
+  paths_include: ["**/*.rs"]
+  paths_exclude: ["target/", ".wt/"]
+mode: diff
+harness:
+  command: "sh"
+  args:
+    - "-c"
+    - "cat | claude --model haiku --print --output-format json '检查 git diff 中新增的 println!/dbg!/eprintln! 调用。命中时输出 JSON 数组: [{id:DBG-01, severity:FAIL, path:\"<从diff提取>\", line:<新行号>, message:\"<调用文本> 不应留在生产代码\"}]. 没有命中输出 []. 不要其他输出.'"
+optional: true
+timeout: 30

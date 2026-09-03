@@ -1,0 +1,16 @@
+# demo: 文件放置 / 巨型文件检查
+# mode: file（每个变更文件单独传，全文推理）
+enabled: true
+hooks: [pre-push, merge]
+fail_severity: WARN
+match:
+  paths_include: ["**/*.rs"]
+  paths_exclude: ["target/", ".wt/"]
+mode: file
+harness:
+  command: "sh"
+  args:
+    - "-c"
+    - "cat | claude --model haiku --print --output-format json '检查 Rust 文件: (1) 超过 1500 行 → 输出 {id:OS-01, severity:WARN, line:0, message:\"<N> lines exceeds 1500\"}; (2) 文件内 pub 函数 > 30 → {id:OS-02, severity:WARN, line:0, message:\"<N> pub functions, consider split\"}. 都没有输出 []. 不要其他输出.'"
+optional: true
+timeout: 60

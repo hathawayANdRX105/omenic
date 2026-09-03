@@ -3,20 +3,23 @@
 ```
 .githooks/
 ├── hooks/                     # git hooks 入口（core.hooksPath = .githooks/hooks）
-│   ├── pre-commit            # bash 包装 → exec gate pre-commit（CM-01/02/03 + workspace + code）
-│   ├── pre-push              # bash 包装 → exec gate pre-push（workspace + code）
-│   └── merge                 # bash 包装 → exec gate merge（PR + reviews + cleanup + CRG + ocr）
+│   ├── pre-commit            # bash 包装 → exec gate pre-commit（CM-01/02/03 + workspace + code + checklist）
+│   ├── pre-push              # bash 包装 → exec gate pre-push（workspace + code + checklist）
+│   └── merge                 # bash 包装 → exec gate merge（PR + reviews + cleanup + CRG + ocr + checklist）
 ├── spec/                      # 规则配置（改规则只改这里，不改脚本）
 │   ├── SPEC_OVERVIEW.md      # 本文件（规范总览）
 │   ├── dispatch.yaml         # 钩子→主题映射（哪个钩子跑哪些检查）
 │   ├── github_issues.yaml    # Issue 规则（IS-* 检查项）
 │   ├── github_pull_requests.yaml  # PR 规则（PR-* 检查项）
 │   ├── github_reviews.yaml   # Review 评论格式（RV-* 检查项）
-│   ├── code_{rust,go,javascript,typescript,python,bash}.yaml  # Rust code lint 参数
+│   ├── code_{rust,go,javascript,typescript,python,bash}.yaml  # 代码 lint 参数
+│   ├── checklist_*.yaml      # 项目级 LLM 检查清单（CK-*；harness = 任意可执行文件；详见 CHECKLIST_SPEC.md）
 │   ├── workspace_{tree_hygiene,file_placement}.yaml           # Rust workspace 检查参数
 │   ├── cleanup_branch_cleanup.yaml                            # CL-01 分支清理参数
 │   ├── cleanup_tests_{rust,go,javascript,bash}.yaml          # CL-02 测试代码检查参数
-│   └── cleanup_docs_hygiene.yaml                             # CL-03 文档卫生检查参数
+│   ├── cleanup_docs_hygiene.yaml                             # CL-03 文档卫生检查参数
+│   ├── CHECKLIST_SPEC.md      # Checklist 详细规范（yaml schema + harness 协议）
+│   └── CHECKLIST_DEMO_README.md # Checklist 用户使用指南
 ├── GITHUB_ISSUE_PR.md         # Issue/PR 创建指南（含关联机制）
 ├── PR_DEV_WORKFLOW.md         # PR 开发工作流指南（含 CRG + ocr 审查流程）
 └── WORKFLOW.md                # 工作隔离规范（.wt/ worktree 分支目录）
@@ -28,7 +31,7 @@
 - `code-review-graph`（CRG）：结构分析/变更影响检测（`detect-changes --brief --base main`）
 - `ocr`（OpenCodeReview CLI）：AI 代码审查（`review --format json --audience agent`）
 - `gh`（GitHub CLI）：所有 GitHub API 操作入口
-- `upx`：二进制压缩（gate 部署产物，构建期使用）
+- 任意 LLM CLI（`claude` / `codex` / `ollama` 等，被 checklist harness 调用；非必须，缺失按 `optional` 处理）
 
 ## 本文档用途
 
@@ -36,7 +39,7 @@
 
 - 规则**只**在 `.githooks/spec/*.yaml`（参数）和 Rust 校验器（逻辑）两处，改规则只改 spec
 - **新增/修改规则后必须更新本文档**
-- 规则编号采用**主题前缀 + 连续编号**（IS/PR/RV/GT/WS/CD/CL/CM）
+- 规则编号采用**主题前缀 + 连续编号**（IS/PR/RV/GT/WS/CD/CL/CM/CK）
 - commit 标题规则 CM-01/02/03 实现在 `gate pre-commit`，语义与 PR-01/PR-02 对齐
 
 ## 主题一：GitHub 规则（IS/PR/RV）
@@ -148,7 +151,21 @@
 ## 主题八：每日合规检查
 
 - `.github/workflows/daily_audit.yml`：每天 UTC 0:30 自动跑 `gate audit --recent=1`
-- 有 FAIL → 自动建 issue 记录；全部 PASS → 无动作；支持 workflow_dispatch
+
+## 主题九：Checklist（CK-01，gate checklist，**已实现**）
+
+- `.githooks/spec/checklist_*.yaml`：项目级 LLM 检查清单；glob 自动发现，按字典序跑
+- `mode: diff`（默认）传 `git diff <scope>` 给 harness；`mode: file` 每个变更文件单独传全文
+- harness = 任意可执行文件，stdout 必须是 finding JSON 数组（与 code/ocr/CRG 同协议）
+- 严重度合并：harness 报的与 yaml `fail_severity` **就高取大**（harness FAIL 永远阻断）
+- `optional: true`（默认）harness 缺失 → WARN 跳过；`false` → FAIL
+- 实现：`crates/spec/src/tools/checklist.rs`（CK-01 dispatcher） + `gate pre-commit/pre-push/merge` 调度
+- 详见 [CHECKLIST_SPEC.md](./CHECKLIST_SPEC.md) 与 [CHECKLIST_DEMO_README.md](./CHECKLIST_DEMO_README.md)
+
+- CK-01 yaml 字段：`enabled` / `hooks` / `match.{paths_include,paths_exclude}` / `mode` / `harness.{command,args}` / `timeout` / `optional` / `fail_severity` — FAIL/WARN/INFO
+- CK-02 diff 范围:pre-commit=`git diff --cached`,pre-push=`git diff HEAD`,merge=`git diff origin/main...HEAD`(unified=3)
+- CK-03 finding 兼容:单 object / 数组 / "text + [...JSON...]" 末尾数组三种都能解析
+- CK-04 `mode: grep`:harness 收空 stdin,跑任意静态检查(grep/find/自定义脚本),finding 自身带 path/line. 适合铁律类规则(禁路径模式、必放位置) — 零 LLM token,毫秒级
 
 
 ## 触发式（lazy）规则映射
@@ -158,9 +175,9 @@
 - gh pr create → PR-01~10、GT-02
 - gh pr merge → PR-11、PR-12、GT-05（含 squash 标题 CM-01/CM-02）、GT-06、GT-07、RV-01~06
 - gh pr comment → RV-01~06
-- git commit → CM-01、CM-02、CM-03、WS-01、WS-02、CD-01~06
-- git push → WS-01、WS-02、CD-01~06
-- gate merge 手动 → 全量（PR + reviews + cleanup：CL-01~03 + RV-07）
+- git commit → CM-01、CM-02、CM-03、WS-01、WS-02、CD-01~06、checklist（每 yaml 自身 `hooks` 过滤）
+- git push → WS-01、WS-02、CD-01~06、checklist（同上）
+- gate merge 手动 → 全量（PR + reviews + cleanup：CL-01~03 + RV-07 + checklist）
 - CI 每日（daily_audit.yml）→ 最近 1 天创建的 issue/PR 全规则
 
 ## 更新与校验

@@ -1,4 +1,5 @@
 pub mod audit;
+pub mod checklist;
 pub mod cleanup;
 pub mod code;
 pub mod docs_hygiene;
