@@ -360,17 +360,14 @@ pub fn run_agent_streaming(
     // ponytail: linear name lookup — four builtin tools; index if the registry grows.
     let find_tool = |name: &str| tools.iter().find(|t| t.name() == name);
 
-    // Default the system prompt to the main-agent template assembled from
-    // `crates/prompts/`. We only fill when the caller hasn't set one —
-    // explicit caller-provided prompts (tests, the subagent `task` tool)
-    // must keep winning. Filling once here means the loop body below
-    // never rebuilds the prompt across iterations.
+    // Default the system prompt to the main-agent profile, lifted
+    // verbatim from `crates/prompts/prompts/agents/main.md` (which in
+    // turn copies `oh-my-pi`'s `prompts/agents/task.md`). The whole file
+    // — frontmatter included — is the prompt; we do not concatenate a
+    // tool table here (omp does not). Filling once at entry keeps the
+    // caller-provided prompt contract: explicit wins, default fills.
     if context.system_prompt.is_none() {
-        context.system_prompt = Some(prompts::main_agent::build_pairs(
-            tool_defs
-                .iter()
-                .map(|td| (td.name.as_str(), td.description.as_str())),
-        ));
+        context.system_prompt = Some(prompts::agents::MAIN.to_string());
     }
 
     loop {
@@ -890,9 +887,9 @@ mod tests {
     fn run_agent_injects_default_system_prompt_when_caller_leaves_none() {
         // run_agent_streaming contract: when caller doesn't set
         // `Context.system_prompt`, orbit fills it with the main-agent
-        // template assembled from `crates/prompts/`. The LLM stream sees
-        // the filled prompt; tools listed in the table are derived from
-        // the `&[Box<dyn Tool>]` slice.
+        // profile lifted from `crates/prompts/prompts/agents/main.md`
+        // (oh-my-pi `prompts/agents/task.md`). The whole file —
+        // frontmatter included — is the prompt; no concatenation.
         let backend = Shared(std::cell::RefCell::new(Scripted::new(vec![vec![
             StreamEvent::TextDelta("hi".into()),
             StreamEvent::Done {
@@ -920,11 +917,13 @@ mod tests {
             .system_prompt
             .as_deref()
             .expect("system_prompt should be filled when caller left None");
-        // Sanity: the prompt comes from the .md fragments, not a placeholder.
-        assert!(prompt.contains("# Acceptance Criteria"));
-        assert!(prompt.contains("## Tools"));
-        // The tool name passed via the slice is reflected in the rendered table.
-        assert!(prompt.contains("read"));
+        // omp-style profile: frontmatter, <directives> block, the
+        // `tools:` line in the frontmatter lists what omenic exposes.
+        assert!(prompt.starts_with("---\n"));
+        assert!(prompt.contains("<directives>"));
+        assert!(
+            prompt.contains("tools: read, edit, write, run_bash, grep, glob, delete_file, task")
+        );
     }
     #[test]
     fn compaction_broken_summary_leaves_context_identical() {

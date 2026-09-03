@@ -1,31 +1,26 @@
-//! System prompts for omenic agents.
+//! System prompts for omenic agents, verbatim from
+//! `oh-my-pi`'s `packages/coding-agent/src/prompts/agents/`.
 //!
-//! Mirrors `oh-my-pi`'s `packages/coding-agent/src/prompts/` layout:
-//! ordered `.md` fragments under `crates/prompts/prompts/<role>/` are
-//! assembled at build time via [`include_str!`], then exposed as Rust
-//! constants for callers (orbit, subagent, compaction).
+//! Each `.md` under `crates/prompts/prompts/agents/<role>.md` is a
+//! self-contained agent profile: YAML frontmatter (`name`, `description`,
+//! `tools`) followed by a body of `<directives>`, `<procedure>`, `<critical>`
+//! blocks. The whole file is the prompt; nothing is concatenated.
 //!
-//! See also:
-//! - `oh-my-pi`: `packages/coding-agent/src/prompts/system/*` + `system-prompt.ts:666 buildSystemPrompt`
-//! - `zerostack`: `src/agent/prompt.rs` (`SYSTEM_PROMPT` constant)
-//! - `jcode`:    `crates/jcode-app-core/src/agent/prompting.rs`
+//! Layout mirrors `oh-my-pi` directly:
 //!
-//! ## Roles
+//! ```text
+//! oh-my-pi                                  omenic
+//! prompts/agents/task.md          ──►      prompts/agents/main.md
+//! prompts/agents/scout.md         ──►      prompts/agents/scout.md
+//! ```
 //!
-//! | Module | Role | Notes |
-//! |---|---|---|
-//! | [`main_agent`] | Top-level orchestrator agent | Reads `Context.system_prompt`; given tool set |
-//! | [`subagent`] | Read-only explorer | Existing `crates/subagent` `task` tool reuses this |
-//! | [`compaction`] | Context summarizer | Injected by `orbit::compact_context` |
-//! | [`acceptance`] | Done/Failed verifier | Post-run checklist against `Task.acceptance` |
+//! omenic currently has only two roles: `main` (full tool set) and `scout`
+//! (read-only). Other omp roles (`librarian`, `reviewer`, `designer`, etc.)
+//! are not implemented in omenic and not imported here.
 //!
-//! Every prompt is a single `&'static str` constant — no `format!` cost, no I/O,
-//! no async — so they can be used from any sync context (subagent tool dispatch,
-//! orbit loop, CLI startup).
+//! The frontmatter `tools:` line is preserved verbatim; consumers that want
+//! to render a tool table should split it themselves — see
+//! [`tools::render_tools_table`].
 
-pub mod acceptance;
-pub mod compaction;
-pub mod main_agent;
-pub mod subagent;
-
+pub mod agents;
 pub mod tools;
