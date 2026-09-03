@@ -12,6 +12,7 @@ tools = { path = "../tools" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 fs2 = { workspace = true }
+prompts = { path = "../prompts" }
 
 [dev-dependencies]
 tempfile = { workspace = true }

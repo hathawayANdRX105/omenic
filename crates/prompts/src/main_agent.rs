@@ -10,7 +10,7 @@
 //! fragments external so users can override them via a project-level
 //! `SYSTEM.md` drop-in later (see `oh-my-pi` `loadSystemPromptFiles`).
 
-use crate::tools::{ToolEntry, render_tools_table};
+use crate::tools::{ToolEntry, render_tools_table_pairs};
 
 const CORE: &str = include_str!("../prompts/main/core.md");
 const TASK_DECOMPOSITION: &str = include_str!("../prompts/main/task-decomposition.md");
@@ -18,16 +18,21 @@ const ACCEPTANCE_CRITERIA: &str = include_str!("../prompts/main/acceptance-crite
 const RULES: &str = include_str!("../prompts/main/rules.md");
 
 /// Build the main agent's system prompt for the given tool set.
-///
-/// Concatenation order is fixed: `core → tools → decomposition → rules →
-/// acceptance`. Order matters — the model weights the last block of the
-/// system prompt most heavily for `Done`/`Failed` decisions, so the
-/// acceptance criteria sit at the end.
 pub fn build(tools: &[ToolEntry]) -> String {
+    build_pairs(tools.iter().map(|t| (t.name, t.purpose)))
+}
+
+/// Same assembly as [`build`], but takes borrowed `(name, purpose)` pairs
+/// so callers with owned strings (e.g. `ToolDef` from the adaptor) don't
+/// have to clone into `ToolEntry` first.
+pub fn build_pairs<'a, I>(tools: I) -> String
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
     let mut out = String::with_capacity(2048);
     out.push_str(CORE);
     out.push_str("\n\n");
-    out.push_str(&render_tools_table(tools));
+    out.push_str(&render_tools_table_pairs(tools));
     out.push('\n');
     out.push_str(TASK_DECOMPOSITION);
     out.push_str("\n\n");
@@ -54,8 +59,6 @@ mod tests {
             },
         ];
         let p = build(&tools);
-        // Headings are '# Section' (level 1) per the .md fragments; check
-        // for the section anchor, not the markdown level.
         assert!(
             p.contains("# Acceptance Criteria"),
             "missing acceptance section: {p}"
@@ -68,7 +71,6 @@ mod tests {
 
     #[test]
     fn build_orders_acceptance_last() {
-        // Acceptance at the end: matters for the model's "Done" weight.
         let p = build(&[]);
         let acceptance_pos = p
             .find("# Acceptance Criteria")
@@ -79,5 +81,24 @@ mod tests {
             .expect("decomp section present");
         assert!(acceptance_pos > rules_pos);
         assert!(rules_pos > decomp_pos);
+    }
+
+    #[test]
+    fn build_pairs_matches_build_for_borrowed_strings() {
+        // Owning callers (e.g. orbit with `ToolDef`) should get the same
+        // output as static `ToolEntry` callers when the content matches.
+        let owned: Vec<(&str, &str)> = vec![("read", "Read files"), ("edit", "Edit files")];
+        let owned_rendered = build_pairs(owned);
+        let static_rendered = build(&[
+            ToolEntry {
+                name: "read",
+                purpose: "Read files",
+            },
+            ToolEntry {
+                name: "edit",
+                purpose: "Edit files",
+            },
+        ]);
+        assert_eq!(owned_rendered, static_rendered);
     }
 }

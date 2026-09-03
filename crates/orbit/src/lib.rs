@@ -360,6 +360,19 @@ pub fn run_agent_streaming(
     // ponytail: linear name lookup — four builtin tools; index if the registry grows.
     let find_tool = |name: &str| tools.iter().find(|t| t.name() == name);
 
+    // Default the system prompt to the main-agent template assembled from
+    // `crates/prompts/`. We only fill when the caller hasn't set one —
+    // explicit caller-provided prompts (tests, the subagent `task` tool)
+    // must keep winning. Filling once here means the loop body below
+    // never rebuilds the prompt across iterations.
+    if context.system_prompt.is_none() {
+        context.system_prompt = Some(prompts::main_agent::build_pairs(
+            tool_defs
+                .iter()
+                .map(|td| (td.name.as_str(), td.description.as_str())),
+        ));
+    }
+
     loop {
         // 0. Compact oversized contexts before the next call.
         compact_context(backend, model, context, signal);
@@ -825,8 +838,11 @@ mod tests {
         ]])));
         // 100 messages = 100_000 chars: far past the old 50-message trigger,
         // still under the char budget → no summary call at all.
+        // Caller-provided prompt must win — see run_agent_streaming contract:
+        // only fills system_prompt when caller left it None.
+        let caller_prompt = "test caller prompt";
         let mut ctx = Context {
-            system_prompt: None,
+            system_prompt: Some(caller_prompt.into()),
             messages: bulk(100),
         };
         let before = ctx.messages.clone();
@@ -834,7 +850,11 @@ mod tests {
 
         let seen = backend.0.borrow();
         assert_eq!(seen.seen_contexts.len(), 1, "summary stream was issued");
-        assert!(seen.seen_contexts[0].system_prompt.is_none());
+        assert_eq!(
+            seen.seen_contexts[0].system_prompt.as_deref(),
+            Some(caller_prompt),
+            "caller-provided prompt must not be overwritten by run_agent_streaming"
+        );
         assert_eq!(ctx.messages.len(), before.len() + 1);
         assert!(ctx.messages.iter().take(before.len()).eq(before.iter()));
     }
@@ -866,7 +886,46 @@ mod tests {
         assert_eq!(ctx.messages.len(), before.messages.len() + 1); // + final assistant msg
         assert!(ctx.messages.iter().take(200).eq(before.messages.iter()));
     }
+    #[test]
+    fn run_agent_injects_default_system_prompt_when_caller_leaves_none() {
+        // run_agent_streaming contract: when caller doesn't set
+        // `Context.system_prompt`, orbit fills it with the main-agent
+        // template assembled from `crates/prompts/`. The LLM stream sees
+        // the filled prompt; tools listed in the table are derived from
+        // the `&[Box<dyn Tool>]` slice.
+        let backend = Shared(std::cell::RefCell::new(Scripted::new(vec![vec![
+            StreamEvent::TextDelta("hi".into()),
+            StreamEvent::Done {
+                stop_reason: StopReason::EndTurn,
+            },
+        ]])));
+        let mut ctx = Context {
+            system_prompt: None,
+            messages: vec![Message::user_text("hi")],
+        };
+        let tools: Vec<Box<dyn tools::Tool>> = vec![Box::new(tools::read::ReadFile)];
+        let _ = run_agent_streaming(
+            &backend,
+            &model(),
+            &mut ctx,
+            &tools,
+            &sig(),
+            None,
+            &mut |_| {},
+        );
 
+        let seen = backend.0.borrow();
+        assert_eq!(seen.seen_contexts.len(), 1);
+        let prompt = seen.seen_contexts[0]
+            .system_prompt
+            .as_deref()
+            .expect("system_prompt should be filled when caller left None");
+        // Sanity: the prompt comes from the .md fragments, not a placeholder.
+        assert!(prompt.contains("# Acceptance Criteria"));
+        assert!(prompt.contains("## Tools"));
+        // The tool name passed via the slice is reflected in the rendered table.
+        assert!(prompt.contains("read"));
+    }
     #[test]
     fn compaction_broken_summary_leaves_context_identical() {
         // Error, abort, and empty-summary paths are each a pure no-op.
