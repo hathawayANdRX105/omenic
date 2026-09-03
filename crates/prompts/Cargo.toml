@@ -2,8 +2,8 @@
 name = "prompts"
 version = "0.1.0"
 edition = "2024"
-description = "System prompts for omenic agents: assembled from .md fragments under prompts/"
-license = "MIT"
+description = "System prompts for omenic agents: verbatim copies of oh-my-pi's prompts/agents/ and prompts/system/ (see ../../THIRD_PARTY_NOTICES)"
+license-file = "../../THIRD_PARTY_NOTICES"
 publish = false
 
 [dependencies]
