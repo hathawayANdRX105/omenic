@@ -2,12 +2,16 @@
 //! `oh-my-pi`'s `packages/coding-agent/src/prompts/system/`.
 //!
 //! Each constant is the entire contents of the corresponding `.md`
-//! file. Fragments are injected by the calling agent loop in a
-//! specific order; omenic currently has no per-fragment conditional
-//! gating (no `prep` step like omp `system-prompt.ts:666`), so the
-//! exposed constants are raw `&str` references for callers to
-//! compose at the role layer. See `agents.rs` for the role-level
-//! prompts; this module is the fragment library.
+//! file (frontmatter included). Fragments are injected by the calling
+//! agent loop in a specific order; omenic currently has no per-fragment
+//! conditional gating (no `prep` step like omp
+//! `system-prompt.ts:666 buildSystemPrompt`), so the exposed
+//! constants are raw `&str` references for callers to compose at the
+//! role layer. See `agents.rs` for the role-level prompts; this module
+//! is the fragment library.
+//!
+//! Source pin: oh-my-pi @ 969a94c1eeccb1b7528cd5621934bca1908ab622
+//! (see ../../THIRD_PARTY_NOTICES).
 
 /// System prompt fragment: `active-repo-context.md` (verbatim from omp).
 pub const ACTIVE_REPO_CONTEXT: &str = include_str!("../prompts/system/active-repo-context.md");
@@ -108,6 +112,15 @@ pub const OMFG_USER: &str = include_str!("../prompts/system/omfg-user.md");
 
 /// System prompt fragment: `orchestrate-notice.md` (verbatim from omp).
 pub const ORCHESTRATE_NOTICE: &str = include_str!("../prompts/system/orchestrate-notice.md");
+
+/// System prompt fragment: `default.md` (under `personalities/`) (verbatim from omp).
+pub const DEFAULT: &str = include_str!("../prompts/system/personalities/default.md");
+
+/// System prompt fragment: `friendly.md` (under `personalities/`) (verbatim from omp).
+pub const FRIENDLY: &str = include_str!("../prompts/system/personalities/friendly.md");
+
+/// System prompt fragment: `pragmatic.md` (under `personalities/`) (verbatim from omp).
+pub const PRAGMATIC: &str = include_str!("../prompts/system/personalities/pragmatic.md");
 
 /// System prompt fragment: `plan-filename.md` (verbatim from omp).
 pub const PLAN_FILENAME: &str = include_str!("../prompts/system/plan-filename.md");
@@ -249,3 +262,127 @@ pub const WORKFLOW_NOTICE: &str = include_str!("../prompts/system/workflow-notic
 
 /// System prompt fragment: `xdev-mount-notice.md` (verbatim from omp).
 pub const XDEV_MOUNT_NOTICE: &str = include_str!("../prompts/system/xdev-mount-notice.md");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    /// Walks `crates/prompts/prompts/system/` recursively and asserts
+    /// every `.md` file has a matching constant in this module. Catches
+    /// silent drift when omp adds or renames a fragment and the
+    /// sync step forgets to update this file.
+    #[test]
+    fn every_system_md_has_a_constant() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("prompts")
+            .join("system");
+        let on_disk: BTreeSet<String> = walk_md(&dir);
+        let in_code: BTreeSet<String> = [
+            ACTIVE_REPO_CONTEXT,
+            AGENT_CREATION_ARCHITECT,
+            AGENT_CREATION_USER,
+            AUTO_CONTINUE,
+            AUTO_THINKING_DIFFICULTY_LOCAL,
+            AUTO_THINKING_DIFFICULTY,
+            AUTOLEARN_GUIDANCE_LEARN,
+            AUTOLEARN_GUIDANCE,
+            AUTOLEARN_NUDGE_AUTOCONTINUE,
+            BACKGROUND_TAN_DISPATCH,
+            BTW_USER,
+            CHECKPOINT_ACTIVE_NOTICE,
+            COMMIT_MESSAGE_SYSTEM,
+            COMPUTER_SAFETY,
+            CUSTOM_SYSTEM_PROMPT,
+            DATE_CWD_REMINDER,
+            EAGER_TASK,
+            EAGER_TODO,
+            EMPTY_STOP_RETRY,
+            GEMINI_TOOL_CALL_REMINDER,
+            INTERRUPTED_THINKING,
+            IRC_AUTOREPLY,
+            IRC_INCOMING,
+            MANUAL_CONTINUE,
+            MCP_XDEV_GUIDANCE,
+            MEMORY_CONSOLIDATION_SYSTEM,
+            MEMORY_EXTRACTION_SYSTEM,
+            MID_RUN_TODO_NUDGE,
+            OMFG_USER,
+            ORCHESTRATE_NOTICE,
+            DEFAULT,
+            FRIENDLY,
+            PRAGMATIC,
+            PLAN_FILENAME,
+            PLAN_MODE_ACTIVE,
+            PLAN_MODE_APPROVED,
+            PLAN_MODE_COMPACT_INSTRUCTIONS,
+            PLAN_MODE_REFERENCE,
+            PLAN_MODE_SUBAGENT,
+            PLAN_MODE_TOOL_DECISION_REMINDER,
+            PLAN_YOLO_HANDOFF,
+            PREWALK_CHECKLIST,
+            PREWALK_CONTINUE,
+            PREWALK_PLAN,
+            PROJECT_PROMPT,
+            RECAP_USER,
+            RESOLVE_DEVICE_REMINDER,
+            REWIND_REPORT,
+            SIDE_CHANNEL_NO_TOOLS,
+            SNAPCOMPACT_CONTEXT_FRAMES_NOTE,
+            SNAPCOMPACT_CONTEXT_STUB,
+            SNAPCOMPACT_SYSTEM_FRAMES_NOTE,
+            SNAPCOMPACT_SYSTEM_STUB,
+            SNAPCOMPACT_TOOLRESULT_NOTE,
+            SPEECH_REWRITE,
+            SUBAGENT_ASYNC_PENDING,
+            SUBAGENT_SYSTEM_PROMPT,
+            SUBAGENT_USER_PROMPT,
+            SUBAGENT_YIELD_REMINDER,
+            SYSTEM_PROMPT,
+            TAN_CONTEXT_SWITCH,
+            TASK_LABEL,
+            THINKING_LOOP_REDIRECT,
+            TITLE_MARKER_INSTRUCTION,
+            TITLE_SYSTEM,
+            TOOL_CALL_LOOP_REDIRECT,
+            TTSR_INTERRUPT,
+            TTSR_TOOL_REMINDER,
+            ULTRATHINK_NOTICE,
+            UNEXPECTED_STOP_CLASSIFIER,
+            UNEXPECTED_STOP_RETRY,
+            VIBE_MODE_ACTIVE,
+            WEB_SEARCH,
+            WORKFLOW_NOTICE,
+            XDEV_MOUNT_NOTICE,
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let mut missing_from_code: Vec<_> = on_disk.difference(&in_code).collect();
+        let mut missing_from_disk: Vec<_> = in_code.difference(&on_disk).collect();
+        missing_from_code.sort();
+        missing_from_disk.sort();
+        assert!(
+            missing_from_code.is_empty() && missing_from_disk.is_empty(),
+            "prompts/system drift: on-disk files not in code: {missing_from_code:?}; constants not on disk: {missing_from_disk:?}"
+        );
+    }
+
+    fn walk_md(dir: &std::path::Path) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            panic!("cannot read system dir: {}", dir.display());
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                out.extend(walk_md(&path));
+            } else if path.extension().and_then(|s| s.to_str()) == Some("md") {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    out.insert(content);
+                }
+            }
+        }
+        out
+    }
+}
