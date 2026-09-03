@@ -4,7 +4,7 @@
 //! `dispatch.yaml` under `pre-push`. Uses native Rust validators.
 
 use crate::shared::{exit_code, print_findings};
-use crate::tools::{code, git, workspace};
+use crate::tools::{checklist, code, git, workspace};
 
 /// `gate pre-push` — runs dispatched workspace + code topics.
 pub fn run() -> i32 {
@@ -30,10 +30,10 @@ pub fn run() -> i32 {
     let mut findings = Vec::new();
 
     for topic in &topics {
-        eprintln!("--- {} ---", topic);
         let topic_findings = match topic.as_str() {
             "workspace" => workspace::run_workspace("."),
             "code" => code::run_code_all("."),
+            "checklist" => checklist::run_all(checklist::HookScope::PrePush),
             other => {
                 eprintln!("unknown pre-push topic: {}", other);
                 vec![]

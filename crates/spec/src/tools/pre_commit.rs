@@ -11,7 +11,7 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 use crate::shared::{Finding, Severity, exit_code, print_findings};
-use crate::tools::{code, git, workspace};
+use crate::tools::{checklist, code, git, workspace};
 
 // ---------------------------------------------------------------------------
 // Commit title validation (CM-01, CM-02, CM-03)
@@ -157,6 +157,7 @@ pub fn run() -> i32 {
         let topic_findings = match topic.as_str() {
             "workspace" => workspace::run_workspace("."),
             "code" => code::run_code_all("."),
+            "checklist" => checklist::run_all(checklist::HookScope::PreCommit),
             other => {
                 eprintln!("unknown pre-commit topic: {}", other);
                 vec![]

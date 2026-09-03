@@ -1,0 +1,39 @@
+# 自定义约定: 测试代码必须统一放 tests/ 目录, 严禁留在 src/
+# 为什么: 多 crate 架构下, src/ 留测试容易乱, tests/ 集中管理更好找
+# grep 模式, 零 LLM
+# 检测 1: 扫描 src/**/*.rs 中出现 #[cfg(test)] 或 #[test]
+# 检测 2: 扫描 src/ 下名为 *_test.rs 或 test_*.rs 的文件
+enabled: true
+hooks: [pre-commit, pre-push, merge]
+fail_severity: FAIL
+match:
+  paths_include: ["**/*.rs"]
+  paths_exclude: ["target/", ".wt/"]
+mode: grep
+harness:
+  command: "sh"
+  args:
+    - "-c"
+    - |
+      ROOT=$(git rev-parse --show-toplevel)
+      # 1. 找文件内容里的测试宏
+      matches=$(grep -rEn '#\[cfg\(test\)|#\[test\]' "$ROOT"/crates/*/src/ "$ROOT"/bin/*/src/ --include='*.rs' 2>/dev/null | head -20)
+      # 2. 找测试文件散落
+      files=$(find "$ROOT"/crates/*/src/ "$ROOT"/bin/*/src/ -name '*_test.rs' -o -name 'test_*.rs' -o -name 'tests.rs' 2>/dev/null | head -20)
+      out=""
+      if [ -n "$matches" ]; then out="$matches"; fi
+      if [ -n "$files" ]; then
+        for f in $files; do out="$out\n$f:1:测试文件必须放 crate/tests/ 目录"; done
+      fi
+      if [ -z "$out" ] || [ "$out" = "\n" ]; then
+        echo '[]'
+      else
+        printf '%b' "$out" | jq -R -s '
+          split("\n")
+          | map(select(length > 0))
+          | map(capture("^(?<path>.+):(?<line>[0-9]+):(?<rest>.*)$"))
+          | map({id: "NO-SRC-TEST", severity: "FAIL", path: .path, line: (.line|tonumber), message: ("测试必须同层 tests/ 目录, 严禁在 src/ 留测试代码: " + .rest)})
+        '
+      fi
+optional: true
+timeout: 15
