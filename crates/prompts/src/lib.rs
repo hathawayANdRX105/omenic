@@ -1,31 +1,38 @@
-//! System prompts for omenic agents.
+//! System prompts for omenic agents, copied verbatim from
+//! `oh-my-pi`'s `packages/coding-agent/src/prompts/`.
 //!
-//! Mirrors `oh-my-pi`'s `packages/coding-agent/src/prompts/` layout:
-//! ordered `.md` fragments under `crates/prompts/prompts/<role>/` are
-//! assembled at build time via [`include_str!`], then exposed as Rust
-//! constants for callers (orbit, subagent, compaction).
+//! Layout mirrors omp directly:
 //!
-//! See also:
-//! - `oh-my-pi`: `packages/coding-agent/src/prompts/system/*` + `system-prompt.ts:666 buildSystemPrompt`
-//! - `zerostack`: `src/agent/prompt.rs` (`SYSTEM_PROMPT` constant)
-//! - `jcode`:    `crates/jcode-app-core/src/agent/prompting.rs`
+//! ```text
+//! oh-my-pi                                  omenic
+//! packages/coding-agent/src/prompts/        crates/prompts/prompts/
+//! ├── agents/                               ├── agents/
+//! │   ├── task.md        ──►               │   ├── task.md
+//! │   ├── scout.md       ──►               │   ├── scout.md
+//! │   ├── librarian.md   ──►               │   ├── librarian.md
+//! │   ├── reviewer.md    ──►               │   ├── reviewer.md
+//! │   ├── designer.md    ──►               │   ├── designer.md
+//! │   ├── init.md        ──►               │   ├── init.md
+//! │   ├── security-reviewer.md ──►         │   ├── security-reviewer.md
+//! │   └── frontmatter.md ──►               │   └── frontmatter.md
+//! └── system/                               └── system/
+//!     ├── *.md (73 fragments)  ──►             ├── *.md (73 fragments)
+//!     └── personalities/           ──►         └── personalities/
+//! ```
 //!
-//! ## Roles
+//! Each `.md` file is exposed as a `&'static str` constant via
+//! `include_str!`. There is no concatenation, no tool-table generation,
+//! no frontmatter stripping — the whole file is the prompt, exactly as
+//! omp sends it. Callers compose fragments at the role layer (see
+//! `crates/orbit` for the only current consumer: `agents::TASK`).
 //!
-//! | Module | Role | Notes |
-//! |---|---|---|
-//! | [`main_agent`] | Top-level orchestrator agent | Reads `Context.system_prompt`; given tool set |
-//! | [`subagent`] | Read-only explorer | Existing `crates/subagent` `task` tool reuses this |
-//! | [`compaction`] | Context summarizer | Injected by `orbit::compact_context` |
-//! | [`acceptance`] | Done/Failed verifier | Post-run checklist against `Task.acceptance` |
-//!
-//! Every prompt is a single `&'static str` constant — no `format!` cost, no I/O,
-//! no async — so they can be used from any sync context (subagent tool dispatch,
-//! orbit loop, CLI startup).
+//! The `crates/prompts/prompts/system/` files (73 fragments including the
+//! 4 `personalities/`) are omenic's fragment library, available as
+//! `prompts::system::ACTIVE_REPO_CONTEXT` / `::COMPUTER_SAFETY` / etc.
+//! omenic does not yet have an omp-equivalent `buildSystemPrompt` prep
+//! step (no per-fragment conditional gating), so callers wanting to
+//! inject fragments must compose them by hand. Future PRs may add a
+//! prep step that mirrors `system-prompt.ts:666`.
 
-pub mod acceptance;
-pub mod compaction;
-pub mod main_agent;
-pub mod subagent;
-
-pub mod tools;
+pub mod agents;
+pub mod system;
