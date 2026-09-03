@@ -7,7 +7,9 @@
 
 use std::fmt::Write;
 
-/// One tool entry for the prompt table.
+/// One tool entry for the prompt table. Use the borrowed-string
+/// [`render_tools_table_pairs`] variant when the tool data is owned
+/// elsewhere (e.g. `ToolDef` from the adaptor) and shouldn't be cloned.
 pub struct ToolEntry {
     /// Wire name the model sees (e.g. "read", "edit", "run_bash").
     pub name: &'static str,
@@ -16,16 +18,22 @@ pub struct ToolEntry {
 }
 
 /// Render a "## Tools" markdown table for embedding into a system prompt.
-///
-/// Format is deliberately plain text so the result is stable across providers.
-/// The caller decides the table's neighbors (header / footer markdown) by
-/// composing [`render_tools_table`] into its own fragment.
 pub fn render_tools_table(tools: &[ToolEntry]) -> String {
+    render_tools_table_pairs(tools.iter().map(|t| (t.name, t.purpose)))
+}
+
+/// Borrowed-string version of [`render_tools_table`]. Callers with owned
+/// strings (e.g. `ToolDef` from the adaptor) avoid an extra clone by
+/// passing `(name, purpose)` references directly.
+pub fn render_tools_table_pairs<'a, I>(tools: I) -> String
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
     let mut out = String::from("## Tools\n");
-    for t in tools {
+    for (name, purpose) in tools {
         // Defensive: descriptions may include newlines; collapse to single line.
-        let one_line = t.purpose.replace('\n', " ");
-        let _ = writeln!(out, "- **{}**: {}", t.name, one_line);
+        let one_line = purpose.replace('\n', " ");
+        let _ = writeln!(out, "- **{}**: {}", name, one_line);
     }
     out
 }
