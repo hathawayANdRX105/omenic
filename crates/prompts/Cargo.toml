@@ -1,0 +1,11 @@
+[package]
+name = "prompts"
+version = "0.1.0"
+edition = "2024"
+description = "System prompts for omenic agents: assembled from .md fragments under prompts/"
+license = "MIT"
+publish = false
+
+[dependencies]
+
+[dev-dependencies]
