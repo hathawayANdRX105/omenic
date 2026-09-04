@@ -8,22 +8,12 @@
     margin: 0;
     padding: 0;
     box-sizing: border-box;
+    scrollbar-width: thin;
+    scrollbar-color: #2b2e3d transparent;
 }
 
-/* UI/UX Pro Max: Custom Sleek Slim Scrollbars (never thick white default) */
-::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-}
-::-webkit-scrollbar-track {
-    background: transparent;
-}
-::-webkit-scrollbar-thumb {
-    background: #2b2e3d;
-    border-radius: 9999px;
-}
-::-webkit-scrollbar-thumb:hover {
-    background: #43485c;
+:root {
+    color-scheme: dark;
 }
 
 body {
@@ -821,18 +811,24 @@ body {
     gap: 8px;
 }
 
-.action-pill-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 4px 10px;
+.form-input {
+    padding: 11px 14px;
+    background: #121317 !important;
+    background-color: #121317 !important;
+    border: 1px solid #2b2e3c !important;
     border-radius: 6px;
-    background: #20222a;
-    border: 1px solid #2d303d;
-    color: #94a3b8;
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 0.12s ease;
+    color: #f1f5f9 !important;
+    font-size: 14px;
+    outline: none;
+    font-family: inherit;
+    appearance: none;
+    color-scheme: dark;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.form-input:focus {
+    border-color: #38bdf8 !important;
+    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
 }
 
 .action-pill-btn:hover {
