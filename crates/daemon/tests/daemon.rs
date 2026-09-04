@@ -463,3 +463,49 @@ fn env_var_override_routes_session_db_and_socket() {
         env::remove_var("OMENIC_SESSION_DB");
     }
 }
+/// Test that the daemon's shutdown behavior is preserved when triggered via signals.
+/// This test verifies that Daemon::shutdown() can be called to trigger graceful shutdown,
+/// simulating what happens when a SIGINT/SIGTERM is received.
+#[test]
+fn shutdown_trigger_behaves_like_signal() {
+    let dir = TempDir::new().unwrap();
+    let cfg = daemon_config_in(&dir, "shutdown_signal");
+    let sock = cfg.socket_path.as_ref().unwrap().clone();
+    let lock_path = {
+        let mut s = sock.as_os_str().to_owned();
+        s.push(".lock");
+        PathBuf::from(s)
+    };
+    let pid_path = {
+        let mut s = sock.as_os_str().to_owned();
+        s.push(".pid");
+        PathBuf::from(s)
+    };
+
+    {
+        let mut daemon = Daemon::start(cfg).unwrap();
+        assert!(sock.exists(), "socket file should exist while daemon runs");
+        assert!(
+            lock_path.exists(),
+            "lock file should exist while daemon runs"
+        );
+        assert!(pid_path.exists(), "pid file should exist while daemon runs");
+
+        // Trigger shutdown like a signal handler would
+        daemon.shutdown();
+    }
+
+    // After shutdown, artifacts should be cleaned up
+    assert!(
+        !sock.exists(),
+        "socket file should be removed after shutdown"
+    );
+    assert!(
+        !lock_path.exists(),
+        "lock file should be removed after shutdown"
+    );
+    assert!(
+        !pid_path.exists(),
+        "pid file should be removed after shutdown"
+    );
+}

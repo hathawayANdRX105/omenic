@@ -16,4 +16,7 @@ rpc = { path = "../rpc" }
 session = { path = "../session" }
 config = { path = "../config" }
 parking_lot = "0.12"
+ctrlc = { workspace = true }
+
+[dev-dependencies]
 tempfile = { workspace = true }
