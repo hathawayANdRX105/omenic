@@ -4,7 +4,7 @@ members = [
   "crates/adaptor", "crates/orbit", "crates/tools", "crates/rpc",
   "crates/task", "crates/spec", "crates/config", "crates/tui",
   "crates/subagent", "crates/mcp", "crates/memory", "crates/prompts",
-  "crates/session",
+  "crates/session", "crates/daemon",
 ]
 resolver = "2"
 

@@ -302,7 +302,7 @@ mod tests {
         assert!(ignored(".git/config", &ignore));
         assert!(ignored("target/debug/foo", &ignore));
         assert!(ignored("crates/app/target/tmp", &ignore));
-        assert!(!ignored(".github/workflows/daily_audit.yml", &ignore));
+        assert!(!ignored(".github/workflows/ci.yml", &ignore));
         assert!(!ignored("src/retargeted.rs", &ignore));
     }
 }

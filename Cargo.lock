@@ -319,11 +319,13 @@ dependencies = [
  "adaptor",
  "clap",
  "config",
+ "daemon",
  "mcp",
  "orbit",
  "rpc",
  "serde",
  "serde_json",
+ "session",
  "spec",
  "subagent",
  "task",
@@ -448,6 +450,22 @@ checksum = "eb2a7d3066da2de787b7f032c736763eb7ae5d355f81a68bab2675a96008b0bf"
 dependencies = [
  "lab",
  "phf",
+]
+
+[[package]]
+name = "daemon"
+version = "0.1.0"
+dependencies = [
+ "adaptor",
+ "config",
+ "fs2",
+ "parking_lot",
+ "rpc",
+ "serde",
+ "serde_json",
+ "session",
+ "tempfile",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -2442,11 +2460,13 @@ dependencies = [
  "adaptor",
  "config",
  "crossterm",
+ "daemon",
  "fs2",
  "pulldown-cmark",
  "ratatui",
  "serde",
  "serde_json",
+ "session",
  "tempfile",
 ]
 
