@@ -8,8 +8,8 @@
 //! ponytail: one connection + one runtime per `SessionDb`. Cross-thread
 //! callers (multiple `SessionDb::open`s to the same file) rely on SQLite WAL
 //! + `busy_timeout`; per-connection serialization here is to prevent
-//! re-entrant `block_on` on the current-thread runtime, not to provide
-//! cross-process mutual exclusion.
+//!   re-entrant `block_on` on the current-thread runtime, not to provide
+//!   cross-process mutual exclusion.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -198,13 +198,17 @@ impl SessionDb {
     /// `SessionDb`.
     ///
     /// The same file can be opened from multiple threads / processes — SQLite
-    /// WAL + the `busy_timeout` PRAGMA handle cross-process contention.
+    /// WAL + the `busy_timeout` PRAGMA handle cross-process contention. We
+    /// set `busy_timeout` and `foreign_keys` before any DDL or `journal_mode`
+    /// switch so concurrent `SessionDb::open` calls block on the lock instead
+    /// of erroring with SQLITE_BUSY.
     pub fn open(path: impl AsRef<Path>) -> Result<SessionDb, SessionError> {
         let path = path.as_ref().to_path_buf();
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() && !parent.exists() {
-                std::fs::create_dir_all(parent)?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+            && !parent.exists()
+        {
+            std::fs::create_dir_all(parent)?;
         }
 
         // Build the long-lived runtime first; use it for everything else.
@@ -215,8 +219,7 @@ impl SessionDb {
 
         let db = runtime.block_on(libsql::Builder::new_local(&path).build())?;
         let conn = db.connect()?;
-        runtime.block_on(apply_schema(&conn))?;
-        runtime.block_on(apply_pragmas(&conn))?;
+        runtime.block_on(init_database(&conn))?;
 
         Ok(SessionDb {
             inner: Arc::new(Inner {
@@ -233,15 +236,33 @@ impl SessionDb {
     }
 }
 
+/// Number of retry rounds when `apply_schema` or `journal_mode` switching
+/// hits a transient lock error. Combined with `busy_timeout`, this is a
+/// safety net for the rare case where two callers race past the timeout
+/// boundary (e.g. one process is mid-switch-to-WAL while another is mid-DDL).
+/// Bounded on purpose: a runaway init that retries indefinitely would mask
+/// real I/O or schema problems.
+const INIT_LOCK_RETRIES: usize = 5;
+
+/// Set the per-connection knobs that don't need a write lock first so any
+/// later DDL or journal-mode switch can block on contention instead of
+/// returning SQLITE_BUSY immediately.
+async fn apply_safe_pragmas(conn: &Connection) -> Result<(), SessionError> {
+    run_with_lock_retry(|| async {
+        conn.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;")
+            .await?;
+        Ok(())
+    })
+    .await
+}
 async fn apply_schema(conn: &Connection) -> Result<(), SessionError> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS sessions (
+    let sql = "CREATE TABLE IF NOT EXISTS sessions (
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL
          );
-        CREATE TABLE IF NOT EXISTS messages (
+         CREATE TABLE IF NOT EXISTS messages (
             session_id TEXT NOT NULL,
             seq INTEGER NOT NULL,
             role TEXT NOT NULL,
@@ -250,21 +271,84 @@ async fn apply_schema(conn: &Connection) -> Result<(), SessionError> {
             PRIMARY KEY (session_id, seq),
             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
          );
-        CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);",
-    )
-    .await?;
-    Ok(())
+         CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);";
+    run_with_lock_retry(|| async {
+        conn.execute_batch(sql).await?;
+        Ok(())
+    })
+    .await
 }
 
 async fn apply_pragmas(conn: &Connection) -> Result<(), SessionError> {
-    conn.execute_batch(
-        "PRAGMA journal_mode = WAL;
-         PRAGMA synchronous = NORMAL;
-         PRAGMA busy_timeout = 5000;
-         PRAGMA foreign_keys = ON;",
-    )
-    .await?;
+    conn.execute_batch("PRAGMA synchronous = NORMAL;").await?;
     Ok(())
+}
+
+async fn enable_wal_if_needed(conn: &Connection) -> Result<(), SessionError> {
+    // `query` returns a `Rows` future that holds a live prepared statement.
+    // We must fully drain it (or `None`) before issuing another statement
+    // — otherwise libsql leaves the connection with an open statement,
+    // and the next `PRAGMA journal_mode = WAL` rejects it as "from within a
+    // transaction".
+    let mut rows = conn.query("PRAGMA journal_mode", libsql::params![]).await?;
+    let current = loop {
+        match rows.next().await? {
+            Some(row) => {
+                if let Ok(s) = row.get_str(0) {
+                    break s.to_string();
+                }
+            }
+            None => break String::new(),
+        }
+    };
+    drop(rows);
+    if current.eq_ignore_ascii_case("wal") {
+        return Ok(());
+    }
+    // Switching to WAL requires a write lock; retry on transient lock errors.
+    run_with_lock_retry(|| async {
+        conn.execute_batch("PRAGMA journal_mode = WAL;").await?;
+        Ok(())
+    })
+    .await
+}
+
+async fn init_database(conn: &Connection) -> Result<(), SessionError> {
+    apply_safe_pragmas(conn).await?;
+    enable_wal_if_needed(conn).await?;
+    apply_pragmas(conn).await?;
+    apply_schema(conn).await?;
+    Ok(())
+}
+
+fn is_lock_error(err: &SessionError) -> bool {
+    let SessionError::Libsql(libsql::Error::SqliteFailure(code, _)) = err else {
+        return false;
+    };
+    // Both SQLITE_BUSY (5) and SQLITE_LOCKED (6) and their extended codes
+    // share the primary code in the low 8 bits.
+    matches!(*code & 0xFF, 5 | 6)
+}
+
+async fn run_with_lock_retry<F, Fut>(op: F) -> Result<(), SessionError>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<(), SessionError>>,
+{
+    let mut attempt = 0usize;
+    loop {
+        match op().await {
+            Ok(()) => return Ok(()),
+            Err(e) if attempt < INIT_LOCK_RETRIES && is_lock_error(&e) => {
+                attempt += 1;
+                // No sleep: `busy_timeout` already drives the actual wait
+                // inside SQLite; this loop is a hedge against the rare case
+                // where the contention window is longer than the timeout.
+                continue;
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 fn now_ms() -> i64 {

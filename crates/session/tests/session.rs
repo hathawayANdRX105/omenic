@@ -5,6 +5,7 @@
 //! real WAL+`busy_timeout` cross-process path.
 
 use std::collections::HashSet;
+use std::sync::mpsc;
 use std::sync::{Arc, Barrier};
 use std::thread;
 
@@ -345,6 +346,7 @@ fn limit_zero_or_too_big_rejected() {
 }
 
 // -----------------------------------------------------------------------------
+
 // Real cross-thread concurrent writes
 // -----------------------------------------------------------------------------
 
@@ -354,6 +356,12 @@ fn concurrent_writers_from_distinct_session_dbs() {
     // the `busy_timeout` PRAGMA handle cross-process contention. We never
     // sleep; a Barrier releases all threads at once and we measure the
     // outcome after they all complete.
+    //
+    // ponytail: phase 1 races `SessionDb::open` (and the `ensure_session`
+    // step) on N distinct handles. If any handle's open fails we abort
+    // before any thread reaches the barrier — that keeps a single failing
+    // worker from leaving the others blocked forever on `barrier.wait`.
+    // Phase 2 uses the already-opened handles for the write race itself.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("race.db");
     let db = SessionDb::open(&path).expect("seed db");
@@ -371,18 +379,60 @@ fn concurrent_writers_from_distinct_session_dbs() {
 
     const THREADS: usize = 6;
     const PER_THREAD: i64 = 30;
-    let barrier = Arc::new(Barrier::new(THREADS));
     let path = Arc::new(path);
 
+    // Phase 1: race the opens. Each thread opens its own `SessionDb` and
+    // ensures its session row; any failure aborts the whole phase before we
+    // touch the barrier.
+    let (tx, rx) = mpsc::channel::<(usize, Result<(), SessionError>)>();
+    let mut handles = Vec::new();
+    for t in 0..THREADS {
+        let tx = tx.clone();
+        let path = Arc::clone(&path);
+        handles.push(thread::spawn(move || {
+            let result = (|| -> Result<(), SessionError> {
+                let db = SessionDb::open(&*path)?;
+                db.ensure_session(&format!("s{t}"), &format!("thread {t}"))?;
+                Ok(())
+            })();
+            // Best-effort send; receiver is joined before drop so this can't fail
+            // except in pathological cases.
+            let _ = tx.send((t, result));
+        }));
+    }
+    drop(tx);
+
+    let mut open_errors = Vec::new();
+    for (t, res) in rx {
+        if let Err(e) = res {
+            open_errors.push((t, e));
+        }
+    }
+    for h in handles {
+        // A panic during open is the same as an error for our purposes.
+        if h.join().is_err() && open_errors.is_empty() {
+            panic!("worker panicked during SessionDb::open / ensure_session");
+        }
+    }
+    if !open_errors.is_empty() {
+        panic!(
+            "{} worker(s) failed to open/ensure: {:#?}",
+            open_errors.len(),
+            open_errors
+        );
+    }
+
+    // Phase 2: re-open on distinct handles (so we keep 6 independent
+    // connections) and race the actual writes, synchronized through a
+    // Barrier so all 6 hit the WAL at once.
+    let barrier = Arc::new(Barrier::new(THREADS));
     let mut handles = Vec::new();
     for t in 0..THREADS {
         let barrier = Arc::clone(&barrier);
         let path = Arc::clone(&path);
         handles.push(thread::spawn(move || {
-            let db = SessionDb::open(&*path).expect("open in worker");
+            let db = SessionDb::open(&*path).expect("open in worker phase 2");
             let sid = format!("s{t}");
-            db.ensure_session(&sid, &format!("thread {t}"))
-                .expect("ensure");
             barrier.wait();
             for i in 0..PER_THREAD {
                 db.append_message(&sid, SessionRole::User, &format!("thread={t} i={i}"))
