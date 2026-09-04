@@ -6,9 +6,9 @@
 //!   - `/config`  Model / channel configuration
 
 pub mod components;
+pub mod llm;
 pub mod mock;
 pub mod pages;
-
 use dioxus::prelude::*;
 use pages::config_page::ConfigPage;
 use pages::stats::Stats;
@@ -24,6 +24,7 @@ pub enum Tab {
 #[component]
 pub fn App() -> Element {
     let mut current_tab = use_signal(|| Tab::Workspace);
+    let mut runtime_config = use_signal(llm::LlmRuntimeConfig::load_from_system);
 
     rsx! {
         nav { class: "top-nav",
@@ -49,14 +50,28 @@ pub fn App() -> Element {
                 }
             }
             div { class: "nav-right",
+                div { class: "nav-status-badge",
+                    span { class: "dot" }
+                    span { "{runtime_config().model}" }
+                }
                 span { class: "nav-version", "v0.1.0" }
             }
         }
 
         match current_tab() {
-            Tab::Workspace => rsx! { Workspace {} },
+            Tab::Workspace => rsx! {
+                Workspace {
+                    config: runtime_config(),
+                    on_update_config: move |cfg| runtime_config.set(cfg),
+                }
+            },
             Tab::Stats => rsx! { Stats {} },
-            Tab::Config => rsx! { ConfigPage {} },
+            Tab::Config => rsx! {
+                ConfigPage {
+                    config: runtime_config(),
+                    on_update_config: move |cfg| runtime_config.set(cfg),
+                }
+            },
         }
     }
 }

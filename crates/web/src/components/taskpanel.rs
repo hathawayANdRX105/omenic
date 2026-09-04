@@ -2,8 +2,7 @@ use crate::mock::TaskItem;
 use dioxus::prelude::*;
 
 #[component]
-pub fn TaskPanel(tasks: Vec<TaskItem>) -> Element {
-    let mut expanded = use_signal(|| false);
+pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
     let mut selected_filter = use_signal(|| "all".to_string());
     let mut selected_task_id = use_signal(|| None::<String>);
 
@@ -17,7 +16,7 @@ pub fn TaskPanel(tasks: Vec<TaskItem>) -> Element {
 
     let open_count = tasks.iter().filter(|t| t.status == "open").count();
     let in_progress = tasks.iter().filter(|t| t.status == "in_progress").count();
-    let blocked = tasks.iter().filter(|t| t.status == "blocked").count();
+    let _blocked = tasks.iter().filter(|t| t.status == "blocked").count();
     let done = tasks.iter().filter(|t| t.status == "done").count();
     let total = tasks.len();
 
@@ -34,57 +33,83 @@ pub fn TaskPanel(tasks: Vec<TaskItem>) -> Element {
         .collect();
 
     rsx! {
-        div { class: "task-panel",
-            button {
-                class: "task-toggle",
-                onclick: move |_| expanded.set(!expanded()),
-                if expanded() {
-                    span { "▾ 任务看板 ({open_count + in_progress + blocked} 待办)" }
-                } else {
-                    span { "▸ 任务看板 ({open_count + in_progress + blocked})" }
+        div { class: "workspace-side-panel",
+            // Header
+            div { class: "side-panel-header",
+                div { class: "side-panel-title",
+                    span { "📋" }
+                    span { "编排任务与进度" }
+                }
+                button {
+                    class: "btn-toggle-taskpanel",
+                    onclick: move |_| on_close.call(()),
+                    "✕ 收起"
                 }
             }
-            if expanded() {
-                div { class: "task-panel-body",
-                    // Filter tabs
-                    div { class: "task-summary",
-                        button {
-                            class: if selected_filter() == "all" { "task-filter-btn active" } else { "task-filter-btn" },
-                            onclick: move |_| selected_filter.set("all".into()),
-                            "全部 ({total})"
-                        }
-                        button {
-                            class: if selected_filter() == "in_progress" { "task-filter-btn active" } else { "task-filter-btn" },
-                            onclick: move |_| selected_filter.set("in_progress".into()),
-                            "🔄 进行中 ({in_progress})"
-                        }
-                        button {
-                            class: if selected_filter() == "open" { "task-filter-btn active" } else { "task-filter-btn" },
-                            onclick: move |_| selected_filter.set("open".into()),
-                            "🔲 待办 ({open_count})"
-                        }
-                        button {
-                            class: if selected_filter() == "blocked" { "task-filter-btn active" } else { "task-filter-btn" },
-                            onclick: move |_| selected_filter.set("blocked".into()),
-                            "🚫 阻塞 ({blocked})"
-                        }
-                        button {
-                            class: if selected_filter() == "done" { "task-filter-btn active" } else { "task-filter-btn" },
-                            onclick: move |_| selected_filter.set("done".into()),
-                            "✅ 完成 ({done})"
+
+            div { class: "side-panel-content",
+                // Git tools card (zcode style)
+                div { class: "goal-card",
+                    div { class: "goal-card-header",
+                        span { class: "goal-label", "Git 状态" }
+                        span { class: "goal-badge", "feat/web-dioxus" }
+                    }
+                    div { style: "display: flex; justify-content: space-between; font-size: 12.5px; color: #cbd5e1;",
+                        span { "变更统计: +1271 -977" }
+                        span { style: "color: #4ade80;", "已提交" }
+                    }
+                }
+
+                // Goal card (zcode style)
+                div { class: "goal-card",
+                    div { class: "goal-card-header",
+                        span { class: "goal-label", "Goal 总体目标" }
+                        span {
+                            class: "goal-badge",
+                            if done == total { "Complete" } else { "In Progress" }
                         }
                     }
+                    div { class: "goal-title", "任务编排看板 (DAG 编排链路)" }
+                    div { class: "goal-stats", "{done}/{total} 已完成 · 89K tokens · 7 项关键任务" }
+                }
 
-                    // Task List
-                    div { class: "task-list",
+                // Progress checklist section (zcode style)
+                div {
+                    div { class: "progress-section-header",
+                        span { class: "progress-title", "Progress 步骤清单" }
+                        div { class: "task-filter-group",
+                            button {
+                                class: if selected_filter() == "all" { "task-filter-pill active" } else { "task-filter-pill" },
+                                onclick: move |_| selected_filter.set("all".into()),
+                                "全部 ({total})"
+                            }
+                            button {
+                                class: if selected_filter() == "in_progress" { "task-filter-pill active" } else { "task-filter-pill" },
+                                onclick: move |_| selected_filter.set("in_progress".into()),
+                                "进行中 ({in_progress})"
+                            }
+                            button {
+                                class: if selected_filter() == "open" { "task-filter-pill active" } else { "task-filter-pill" },
+                                onclick: move |_| selected_filter.set("open".into()),
+                                "待办 ({open_count})"
+                            }
+                            button {
+                                class: if selected_filter() == "done" { "task-filter-pill active" } else { "task-filter-pill" },
+                                onclick: move |_| selected_filter.set("done".into()),
+                                "完成 ({done})"
+                            }
+                        }
+                    }
+                    div { class: "progress-task-list",
                         for task in filtered_tasks {
                             {
                                 let is_selected = selected_task_id().as_deref() == Some(&task.id);
                                 let task_id = task.id.clone();
+                                let p_class = format!("p{}", task.priority);
                                 rsx! {
                                     div {
                                         key: "{task.id}",
-                                        class: if is_selected { "task-item task-{task.status} selected" } else { "task-item task-{task.status}" },
+                                        class: if is_selected { "progress-task-item selected" } else { "progress-task-item" },
                                         onclick: move |_| {
                                             if is_selected {
                                                 selected_task_id.set(None);
@@ -92,33 +117,18 @@ pub fn TaskPanel(tasks: Vec<TaskItem>) -> Element {
                                                 selected_task_id.set(Some(task_id.clone()));
                                             }
                                         },
-                                        div { class: "task-item-row",
+                                        div { class: "task-row-top",
                                             span { class: "task-status-icon", "{status_icon(&task.status)}" }
-                                            div { class: "task-info",
-                                                div { class: "task-title", "{task.title}" }
-                                                div { class: "task-meta",
-                                                    span { class: "task-kind", "{task.kind}" }
-                                                    span { class: "task-priority", "P{task.priority}" }
-                                                    span { class: "task-id-badge", "#{task.id}" }
-                                                }
-                                            }
-                                            span { class: "task-expand-arrow", if is_selected { "▾" } else { "▸" } }
+                                            span { class: "task-title-text", "{task.title}" }
+                                            span { class: "task-priority-pill {p_class}", "P{task.priority}" }
                                         }
-
-                                        // Task details card when clicked
                                         if is_selected {
-                                            div { class: "task-detail-card",
+                                            div { class: "task-detail-drawer",
                                                 if !task.description.is_empty() {
-                                                    div { class: "task-desc-row",
-                                                        span { class: "task-desc-label", "说明：" }
-                                                        span { "{task.description}" }
-                                                    }
+                                                    div { "说明: {task.description}" }
                                                 }
                                                 if !task.acceptance.is_empty() {
-                                                    div { class: "task-desc-row",
-                                                        span { class: "task-desc-label", "验收：" }
-                                                        span { "{task.acceptance}" }
-                                                    }
+                                                    div { style: "color: #38bdf8;", "验收: {task.acceptance}" }
                                                 }
                                             }
                                         }

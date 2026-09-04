@@ -60,3 +60,14 @@ fn test_mock_config_serialize() {
     let de: ConfigData = serde_json::from_str(&json).unwrap();
     assert_eq!(de.default_model, "qwen3-32b");
 }
+
+#[test]
+fn test_llm_runtime_config() {
+    let cfg = web::llm::LlmRuntimeConfig::default();
+    assert!(!cfg.base_url.is_empty());
+    assert!(!cfg.api_key.is_empty());
+    assert!(!cfg.model.is_empty());
+    let json = serde_json::to_string(&cfg).unwrap();
+    let de: web::llm::LlmRuntimeConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(cfg.model, de.model);
+}

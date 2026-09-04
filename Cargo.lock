@@ -3743,14 +3743,16 @@ dependencies = [
 name = "web"
 version = "0.1.0"
 dependencies = [
+ "adaptor",
  "axum",
  "config",
  "dioxus",
  "dioxus-liveview",
  "serde",
  "serde_json",
- "task",
  "tokio",
+ "toml",
+ "ureq",
 ]
 
 [[package]]

@@ -13,5 +13,7 @@ axum = { version = "0.7", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+toml = { workspace = true }
+ureq = { workspace = true }
 config = { path = "../config" }
-task = { path = "../task" }
+adaptor = { path = "../adaptor" }
