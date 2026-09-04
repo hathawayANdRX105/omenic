@@ -9,6 +9,7 @@ pub mod components;
 pub mod llm;
 pub mod mock;
 pub mod pages;
+
 use dioxus::prelude::*;
 use pages::config_page::ConfigPage;
 use pages::stats::Stats;
@@ -25,8 +26,12 @@ pub enum Tab {
 pub fn App() -> Element {
     let mut current_tab = use_signal(|| Tab::Workspace);
     let mut runtime_config = use_signal(llm::LlmRuntimeConfig::load_from_system);
+    let css_content = include_str!("../assets/main.css");
 
     rsx! {
+        // Direct inline style injection to ensure zero desync / white browser defaults
+        style { "{css_content}" }
+
         nav { class: "top-nav",
             div { class: "nav-brand",
                 span { class: "nav-logo", "⚡" }
