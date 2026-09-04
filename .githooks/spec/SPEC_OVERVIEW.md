@@ -148,11 +148,7 @@
 4. 审查闭环：findings 留言（有行号）→ 修复 → `Agent 🤖 - Fix:` 逐条回复 → RV-06 校验
 5. `[ocr]` 前缀的错误/超时字符串不当 findings（ocr_has_findings 排除），空输出视为审查不可信（fail-closed）
 
-## 主题八：每日合规检查
-
-- `.github/workflows/daily_audit.yml`：每天 UTC 0:30 自动跑 `gate audit --recent=1`
-
-## 主题九：Checklist（CK-01，gate checklist，**已实现**）
+## 主题八：Checklist（CK-01，gate checklist，**已实现**）
 
 - `.githooks/spec/checklist_*.yaml`：项目级 LLM 检查清单；glob 自动发现，按字典序跑
 - `mode: diff`（默认）传 `git diff <scope>` 给 harness；`mode: file` 每个变更文件单独传全文
@@ -178,7 +174,6 @@
 - git commit → CM-01、CM-02、CM-03、WS-01、WS-02、CD-01~06、checklist（每 yaml 自身 `hooks` 过滤）
 - git push → WS-01、WS-02、CD-01~06、checklist（同上）
 - gate merge 手动 → 全量（PR + reviews + cleanup：CL-01~03 + RV-07 + checklist）
-- CI 每日（daily_audit.yml）→ 最近 1 天创建的 issue/PR 全规则
 
 ## 更新与校验
 

@@ -262,6 +262,80 @@ impl Config {
 
         Ok(())
     }
+
+    /// Resolve the absolute path to the session database file.
+    ///
+    /// Priority:
+    /// 1. `OMENIC_SESSION_DB` env var (verbatim).
+    /// 2. Platform-specific config directory + `omenic/sessions.db`.
+    ///
+    /// Returns `ConfigError::Invalid` when the platform-default lookup needs
+    /// an environment variable that is missing (e.g. `XDG_CONFIG_HOME` set
+    /// to empty, or `HOME`/`APPDATA` unset on Unix/macOS/Windows).
+    pub fn session_db_path(&self) -> Result<PathBuf, ConfigError> {
+        match env::var_os("OMENIC_SESSION_DB") {
+            Some(v) if !v.is_empty() => Ok(PathBuf::from(v)),
+            _ => Ok(platform_config_dir()?.join("omenic").join("sessions.db")),
+        }
+    }
+
+    /// Resolve the absolute path to the daemon Unix-domain / named-pipe socket.
+    ///
+    /// Priority:
+    /// 1. `OMENIC_DAEMON_SOCKET` env var (verbatim).
+    /// 2. Platform-specific config directory + `omenic/daemon.sock`.
+    ///
+    /// Same error semantics as [`Self::session_db_path`].
+    pub fn daemon_socket_path(&self) -> Result<PathBuf, ConfigError> {
+        match env::var_os("OMENIC_DAEMON_SOCKET") {
+            Some(v) if !v.is_empty() => Ok(PathBuf::from(v)),
+            _ => Ok(platform_config_dir()?.join("omenic").join("daemon.sock")),
+        }
+    }
+}
+
+/// Resolve the platform-specific user config directory root.
+///
+/// Unix/Linux: `$XDG_CONFIG_HOME` if non-empty, else `$HOME/.config`.
+/// macOS:     `$HOME/Library/Application Support`.
+/// Windows:   `%APPDATA%` (verbatim).
+///
+/// Returns `ConfigError::Invalid` if the underlying env var is missing or
+/// empty (no silent fallback to the current working directory).
+fn platform_config_dir() -> Result<PathBuf, ConfigError> {
+    #[cfg(target_family = "unix")]
+    {
+        if let Some(v) = env::var_os("XDG_CONFIG_HOME")
+            && !v.is_empty()
+        {
+            return Ok(PathBuf::from(v));
+        }
+        match env::var_os("HOME") {
+            Some(v) if !v.is_empty() => Ok(PathBuf::from(v).join(".config")),
+            _ => Err(ConfigError::Invalid {
+                field: "platform_config_dir",
+                message: "neither XDG_CONFIG_HOME nor HOME is set".to_string(),
+            }),
+        }
+    }
+    #[cfg(target_family = "windows")]
+    {
+        match env::var_os("APPDATA") {
+            Some(v) if !v.is_empty() => Ok(PathBuf::from(v)),
+            _ => Err(ConfigError::Invalid {
+                field: "platform_config_dir",
+                message: "APPDATA is not set".to_string(),
+            }),
+        }
+    }
+    #[cfg(not(any(target_family = "unix", target_family = "windows")))]
+    {
+        // ponytail: no spec'd target here; surface a clear error rather than silently fall back.
+        Err(ConfigError::Invalid {
+            field: "platform_config_dir",
+            message: "unsupported target family for platform config directory".to_string(),
+        })
+    }
 }
 
 /// Internal TOML config struct for deserialization (all fields optional).

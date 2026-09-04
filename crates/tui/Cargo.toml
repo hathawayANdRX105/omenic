@@ -13,6 +13,8 @@ path = "src/lib.rs"
 [dependencies]
 adaptor = { path = "../adaptor" }
 config = { path = "../config" }
+daemon = { path = "../daemon" }
+session = { path = "../session" }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 pulldown-cmark = { workspace = true }

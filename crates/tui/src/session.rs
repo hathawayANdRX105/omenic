@@ -179,3 +179,24 @@ pub fn list_sessions(data_dir: &Path) -> Vec<(String, std::time::SystemTime)> {
     entries.sort_by(|a, b| b.1.cmp(&a.1));
     entries
 }
+
+/// Daemon-backed listing. When a daemon is reachable on the configured
+/// socket, return its `SessionSummary` rows ordered by `updated_at` desc
+/// (the daemon already does the ordering). Falls back to an empty list on
+/// connect failure so a freshly initialized workspace keeps working
+/// without a daemon.
+///
+/// ponytail: this is the narrow compatibility shim — JSONL stays the
+/// fallback for chat messages, the daemon is the canonical source for the
+/// session roster when present. No JSONL-to-libSQL migration tool is
+/// provided here because the TUI still reads JSONL messages locally.
+pub fn list_sessions_via_daemon(cfg: &config::Config) -> Vec<session::SessionSummary> {
+    let client = match daemon::DaemonClient::from_config(cfg) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    match client.session_list("%", session::MAX_LIMIT) {
+        Ok(rows) => rows,
+        Err(_) => Vec::new(),
+    }
+}
