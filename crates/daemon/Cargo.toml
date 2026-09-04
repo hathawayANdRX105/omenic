@@ -1,0 +1,19 @@
+[package]
+name = "daemon"
+version = "0.1.0"
+edition = "2024"
+description = "Headless omenic daemon: JSONL socket protocol, single-instance lifecycle, persistent session/run state"
+license = "MIT"
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+fs2 = { workspace = true }
+adaptor = { path = "../adaptor" }
+rpc = { path = "../rpc" }
+session = { path = "../session" }
+config = { path = "../config" }
+parking_lot = "0.12"
+tempfile = { workspace = true }
