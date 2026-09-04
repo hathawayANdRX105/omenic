@@ -1,0 +1,20 @@
+[package]
+name = "web-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Web UI entrypoint for omenic"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "oi-web"
+path = "src/main.rs"
+
+[dependencies]
+dioxus = { version = "0.6", features = ["fullstack"] }
+web = { path = "../../crates/web" }
+
+[features]
+default = ["web"]
+web = ["dioxus/web", "web/web"]
+server = ["dioxus/server", "web/server"]

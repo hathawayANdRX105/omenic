@@ -1,9 +1,10 @@
 [workspace]
 members = [
-  "bin/cli", "bin/gate",
+  "bin/cli", "bin/gate", "bin/web",
   "crates/adaptor", "crates/orbit", "crates/tools", "crates/rpc",
   "crates/task", "crates/spec", "crates/config", "crates/tui",
   "crates/subagent", "crates/mcp", "crates/memory", "crates/prompts",
+  "crates/web",
 ]
 resolver = "2"
 
