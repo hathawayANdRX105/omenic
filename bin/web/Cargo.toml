@@ -15,6 +15,6 @@ dioxus = { version = "0.6", features = ["fullstack"] }
 web = { path = "../../crates/web" }
 
 [features]
-default = ["web"]
+default = ["server"]
 web = ["dioxus/web", "web/web"]
 server = ["dioxus/server", "web/server"]
