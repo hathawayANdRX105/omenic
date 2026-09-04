@@ -91,6 +91,12 @@ pub enum Command {
     /// `session.search` — `{ query, scope?: id, limit }` → `[SessionMessage]`.
     #[serde(rename = "session.search")]
     SessionSearch,
+    /// `session.get_runs` — `{ cursor }` → `[RunRecord]`.
+    #[serde(rename = "session.get_runs")]
+    SessionGetRuns,
+    /// `session.read_from_cursor` — `{ cursor }` → `[(RunRecord, cursor)]`.
+    #[serde(rename = "session.read_from_cursor")]
+    SessionReadFromCursor,
 
     /// `worker.ping` — round-trip to the omp worker (spawns it on first use).
     #[serde(rename = "worker.ping")]

@@ -222,6 +222,21 @@ impl DaemonClient {
         self.call(Command::SessionSearch, params)
     }
 
+    /// Read run records newer than `cursor` and return the next cursor.
+    pub fn read_from_cursor(
+        &self,
+        cursor: i64,
+    ) -> Result<(Vec<crate::state::RunRecord>, i64), ClientError> {
+        #[derive(serde::Deserialize)]
+        struct Replay {
+            runs: Vec<crate::state::RunRecord>,
+            cursor: i64,
+        }
+        let replay: Replay =
+            self.call(Command::SessionReadFromCursor, json!({ "cursor": cursor }))?;
+        Ok((replay.runs, replay.cursor))
+    }
+
     /// Agent-facing entry point. Routes a generic `session_query` payload
     /// (kind + args) to the daemon and returns the raw JSON. Used by the
     /// `session_query` external tool — the agent-facing name shows up in
