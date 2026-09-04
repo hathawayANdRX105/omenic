@@ -170,6 +170,23 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
             }
         }
 
+        // ---------------- Run ----------------
+        Command::RunList => {
+            let limit = match require_u32(&req.params, "limit") {
+                Ok(n) => n,
+                Err(m) => return Response::err(id, ResponseError::new("protocol", m)),
+            };
+            let mut runs = ctx.runs.list();
+            runs.truncate(limit as usize);
+            match serde_json::to_value(&runs) {
+                Ok(v) => Response::ok(id, v),
+                Err(e) => Response::err(
+                    id,
+                    ResponseError::new("internal", format!("serialize: {e}")),
+                ),
+            }
+        }
+
         Command::SessionAppend => {
             let sid = match require_str(&req.params, "session_id") {
                 Ok(s) => s,
