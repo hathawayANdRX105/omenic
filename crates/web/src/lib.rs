@@ -79,13 +79,44 @@ fn NotFound(route: Vec<String>) -> Element {
     }
 }
 
+/// Default fallback index.html template used in server-only / direct execution mode
+const DEFAULT_INDEX_HTML: &str = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>omenic</title>
+    <style>
+"#;
+
+const DEFAULT_INDEX_HTML_TAIL: &str = r#"
+    </style>
+</head>
+<body>
+    <div id="main"></div>
+</body>
+</html>"#;
+
 /// Launch the Dioxus application.
 pub fn launch() {
-    dioxus::launch(App);
+    #[cfg(feature = "server")]
+    {
+        let css = include_str!("../assets/main.css");
+        let html = format!("{DEFAULT_INDEX_HTML}{css}{DEFAULT_INDEX_HTML_TAIL}");
+        let cfg = dioxus::fullstack::ServeConfig::builder()
+            .index_html(html)
+            .build()
+            .expect("valid index html");
+        dioxus::LaunchBuilder::new().with_cfg(cfg).launch(App);
+    }
+    #[cfg(not(feature = "server"))]
+    {
+        dioxus::launch(App);
+    }
 }
 
 #[component]
-fn App() -> Element {
+pub fn App() -> Element {
     rsx! {
         Router::<Route> {}
     }
