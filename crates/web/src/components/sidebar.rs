@@ -6,6 +6,7 @@ pub fn Sidebar(
     sessions: Vec<Session>,
     active_id: String,
     on_select: EventHandler<String>,
+    on_create: EventHandler<()>,
 ) -> Element {
     let active_sessions: Vec<_> = sessions
         .iter()
@@ -20,7 +21,11 @@ pub fn Sidebar(
         aside { class: "sidebar",
             div { class: "sidebar-header",
                 h2 { "会话" }
-                button { class: "btn-new-session", "+ 新会话" }
+                button {
+                    class: "btn-new-session",
+                    onclick: move |_| on_create.call(()),
+                    "+ 新会话"
+                }
             }
             div { class: "sidebar-section",
                 div { class: "sidebar-label", "进行中" }

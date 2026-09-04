@@ -11,10 +11,5 @@ name = "oi-web"
 path = "src/main.rs"
 
 [dependencies]
-dioxus = { version = "0.6", features = ["fullstack"] }
 web = { path = "../../crates/web" }
-
-[features]
-default = ["server"]
-web = ["dioxus/web", "web/web"]
-server = ["dioxus/server", "web/server"]
+tokio = { version = "1", features = ["full"] }

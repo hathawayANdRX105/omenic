@@ -2,18 +2,32 @@ use crate::mock::*;
 use dioxus::prelude::*;
 
 #[component]
-pub fn StatsView(data: StatsData) -> Element {
+pub fn StatsView() -> Element {
+    let mut selected_range = use_signal(|| "24h".to_string());
+    let data = mock_stats_for_range(&selected_range());
+    let ranges = ["1h", "24h", "7d", "30d", "90d", "All"];
+
     rsx! {
         div { class: "stats-page",
             div { class: "stats-header",
-                h1 { "数据统计" }
+                div {
+                    h1 { "数据统计" }
+                    p { class: "stats-subtitle", "当前视图范围：最近 {selected_range()}" }
+                }
                 div { class: "time-filter",
-                    button { class: "time-btn", "1h" }
-                    button { class: "time-btn active", "24h" }
-                    button { class: "time-btn", "7d" }
-                    button { class: "time-btn", "30d" }
-                    button { class: "time-btn", "90d" }
-                    button { class: "time-btn", "All" }
+                    for r in ranges {
+                        {
+                            let r_str = r.to_string();
+                            rsx! {
+                                button {
+                                    key: "{r}",
+                                    class: if selected_range() == r { "time-btn active" } else { "time-btn" },
+                                    onclick: move |_| selected_range.set(r_str.clone()),
+                                    "{r}"
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -46,13 +60,13 @@ pub fn StatsView(data: StatsData) -> Element {
 
                 // Center: throughput chart
                 div { class: "throughput-section",
-                    h3 { "吞吐趋势" }
+                    h3 { "吞吐趋势 ({selected_range()})" }
                     ThroughputChart { points: data.throughput.clone() }
                 }
 
                 // Right: operational feed
                 div { class: "feed-section",
-                    h3 { "最近请求" }
+                    h3 { "最近请求 Feed" }
                     div { class: "feed-list",
                         for item in &data.feed {
                             FeedRow { key: "{item.time_ago}", item: item.clone() }
@@ -101,11 +115,15 @@ fn AgentBarRow(bar: AgentTokenBar) -> Element {
 
 #[component]
 fn ThroughputChart(points: Vec<ThroughputPoint>) -> Element {
-    let max_val = points.iter().map(|p| p.tokens).fold(f64::MIN, f64::max);
+    let max_val = points
+        .iter()
+        .map(|p| p.tokens)
+        .fold(f64::MIN, f64::max)
+        .max(1.0);
     let width = 400.0_f64;
     let height = 180.0_f64;
     let pad = 20.0;
-    let step = (width - pad * 2.0) / (points.len().max(1) - 1) as f64;
+    let step = (width - pad * 2.0) / (points.len().max(2) - 1) as f64;
 
     let path_data: String = points
         .iter()
@@ -124,7 +142,7 @@ fn ThroughputChart(points: Vec<ThroughputPoint>) -> Element {
 
     let area_data = format!(
         "{path_data} L {:.1} {:.1} L {:.1} {:.1} Z",
-        pad + (points.len().max(1) - 1) as f64 * step,
+        pad + (points.len().max(2) - 1) as f64 * step,
         height - pad,
         pad,
         height - pad,

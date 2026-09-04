@@ -1,4 +1,4 @@
-use crate::mock::{ChatMessage, StatusLine};
+use crate::mock::{ChatMessage, StatusLine, ToolCall};
 use dioxus::prelude::*;
 
 #[component]
@@ -6,6 +6,8 @@ pub fn Chat(
     messages: Vec<ChatMessage>,
     statusline: StatusLine,
     on_send: EventHandler<String>,
+    on_model_change: EventHandler<String>,
+    on_toggle_thinking: EventHandler<()>,
 ) -> Element {
     let mut input = use_signal(String::new);
 
@@ -20,9 +22,18 @@ pub fn Chat(
 
             // Status line (above input)
             div { class: "statusline",
-                span { class: "statusline-model", "🧠 {statusline.model}" }
+                span {
+                    class: "statusline-model clickable",
+                    title: "当前使用的模型",
+                    "🧠 {statusline.model}"
+                }
                 span { class: "statusline-sep", "│" }
-                span { class: "statusline-thinking", "thinking: {statusline.thinking}" }
+                span {
+                    class: "statusline-thinking clickable",
+                    title: "点击切换 thinking 模式",
+                    onclick: move |_| on_toggle_thinking.call(()),
+                    "thinking: {statusline.thinking} 🔄"
+                }
                 span { class: "statusline-sep", "│" }
                 span { class: "statusline-cwd", "📁 {statusline.cwd}" }
                 span { class: "statusline-sep", "│" }
@@ -48,21 +59,22 @@ pub fn Chat(
                 div { class: "chat-input-row",
                     input {
                         class: "chat-input",
-                        placeholder: "输入消息...",
+                        placeholder: "输入消息（按 Enter 发送）...",
                         value: "{input}",
                         oninput: move |e| input.set(e.value()),
                         onkeydown: move |e| {
-                            if e.key() == Key::Enter && !input().is_empty() {
-                                on_send.call(input());
+                            if e.key() == Key::Enter && !input().trim().is_empty() {
+                                on_send.call(input().trim().to_string());
                                 input.set(String::new());
                             }
                         },
                     }
                     button {
                         class: "btn-send",
+                        disabled: input().trim().is_empty(),
                         onclick: move |_| {
-                            if !input().is_empty() {
-                                on_send.call(input());
+                            if !input().trim().is_empty() {
+                                on_send.call(input().trim().to_string());
                                 input.set(String::new());
                             }
                         },
@@ -70,7 +82,10 @@ pub fn Chat(
                     }
                 }
                 div { class: "chat-options",
-                    ModelSelector {}
+                    ModelSelector {
+                        current: statusline.model.clone(),
+                        on_select: on_model_change,
+                    }
                 }
             }
         }
@@ -100,14 +115,22 @@ fn MessageBubble(message: ChatMessage) -> Element {
             }
             div { class: "message-body",
                 for line in message.content.lines() {
-                    if line.starts_with("已运行") || line.starts_with("已写入") {
-                        div { class: "message-tool-line", "{line}" }
-                    } else if line.starts_with("- ") {
+                    if line.starts_with("- ") {
                         div { class: "message-bullet", "{line}" }
                     } else if line.is_empty() {
                         br {}
                     } else {
                         p { "{line}" }
+                    }
+                }
+
+                // Tool calls accordion list
+                if !message.tool_calls.is_empty() {
+                    div { class: "message-tools-container",
+                        div { class: "tools-header-label", "调用工具与执行结果（点击展开详情）：" }
+                        for tool in &message.tool_calls {
+                            ToolAccordion { key: "{tool.id}", tool: tool.clone() }
+                        }
                     }
                 }
             }
@@ -116,9 +139,60 @@ fn MessageBubble(message: ChatMessage) -> Element {
 }
 
 #[component]
-fn ModelSelector() -> Element {
+fn ToolAccordion(tool: ToolCall) -> Element {
+    let mut is_open = use_signal(|| false);
+
+    let icon = match tool.kind.as_str() {
+        "bash" => "⚙️",
+        "edit" => "📝",
+        "read" => "🔍",
+        _ => "⚡",
+    };
+
+    rsx! {
+        div { class: if is_open() { "tool-accordion open" } else { "tool-accordion" },
+            div {
+                class: "tool-accordion-header",
+                onclick: move |_| is_open.set(!is_open()),
+                div { class: "tool-header-left",
+                    span { class: "tool-toggle-icon", if is_open() { "▾" } else { "▸" } }
+                    span { class: "tool-kind-icon", "{icon}" }
+                    span { class: "tool-title-text", "{tool.title}" }
+                }
+                div { class: "tool-header-right",
+                    span { class: "tool-status-badge {tool.status}", "✓ 成功" }
+                    span { class: "tool-expand-hint", if is_open() { "收起" } else { "展开详情" } }
+                }
+            }
+            if is_open() {
+                div { class: "tool-accordion-content",
+                    if !tool.summary.is_empty() {
+                        div { class: "tool-summary-line", "概要: {tool.summary}" }
+                    }
+                    div { class: "tool-detail-box",
+                        pre { class: "tool-detail-code",
+                            for line in tool.detail.lines() {
+                                if line.starts_with('+') && !line.starts_with("+++") {
+                                    span { class: "diff-add", "{line}\n" }
+                                } else if line.starts_with('-') && !line.starts_with("---") {
+                                    span { class: "diff-del", "{line}\n" }
+                                } else if line.starts_with("@@") {
+                                    span { class: "diff-hunk", "{line}\n" }
+                                } else {
+                                    span { "{line}\n" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn ModelSelector(current: String, on_select: EventHandler<String>) -> Element {
     let mut open = use_signal(|| false);
-    let mut current = use_signal(|| "qwen3-32b".to_string());
     let models = ["qwen3-32b", "agnes-2.5-flash", "kimi-k3", "deepseek-v3"];
 
     rsx! {
@@ -132,14 +206,19 @@ fn ModelSelector() -> Element {
             if open() {
                 div { class: "model-dropdown",
                     for m in models {
-                        div {
-                            key: "{m}",
-                            class: if *current.read() == m { "model-option selected" } else { "model-option" },
-                            onclick: move |_| {
-                                current.set(m.to_string());
-                                open.set(false);
-                            },
-                            "{m}"
+                        {
+                            let m_str = m.to_string();
+                            rsx! {
+                                div {
+                                    key: "{m}",
+                                    class: if current == m { "model-option selected" } else { "model-option" },
+                                    onclick: move |_| {
+                                        on_select.call(m_str.clone());
+                                        open.set(false);
+                                    },
+                                    "{m}"
+                                }
+                            }
                         }
                     }
                 }

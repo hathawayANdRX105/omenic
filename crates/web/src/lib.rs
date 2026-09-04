@@ -1,8 +1,8 @@
-//! Dioxus fullstack Web UI for omenic.
+//! Dioxus LiveView Web UI for omenic.
 //!
-//! Pages:
+//! Real-time WebSocket interactive interface:
 //!   - `/`        Workspace (session sidebar + chat + task board)
-//!   - `/stats`   Observability dashboard
+//!   - `/stats`   Observability dashboard with time range filtering
 //!   - `/config`  Model / channel configuration
 
 pub mod components;
@@ -14,49 +14,37 @@ use pages::config_page::ConfigPage;
 use pages::stats::Stats;
 use pages::workspace::Workspace;
 
-const MAIN_CSS: Asset = asset!("/assets/main.css");
-
-#[derive(Debug, Clone, Routable, PartialEq)]
-#[rustfmt::skip]
-pub enum Route {
-    #[layout(Navbar)]
-        #[route("/")]
-        Workspace {},
-        #[route("/stats")]
-        Stats {},
-        #[route("/config")]
-        ConfigPage {},
-    #[end_layout]
-    #[route("/:..route")]
-    NotFound { route: Vec<String> },
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    Workspace,
+    Stats,
+    Config,
 }
 
 #[component]
-fn Navbar() -> Element {
+pub fn App() -> Element {
+    let mut current_tab = use_signal(|| Tab::Workspace);
+
     rsx! {
-        document::Link { rel: "stylesheet", href: MAIN_CSS }
         nav { class: "top-nav",
             div { class: "nav-brand",
                 span { class: "nav-logo", "⚡" }
                 span { class: "nav-title", "omenic" }
             }
             div { class: "nav-tabs",
-                Link {
-                    class: "nav-tab",
-                    active_class: "nav-tab-active",
-                    to: Route::Workspace {},
+                button {
+                    class: if current_tab() == Tab::Workspace { "nav-tab nav-tab-active" } else { "nav-tab" },
+                    onclick: move |_| current_tab.set(Tab::Workspace),
                     "工作区"
                 }
-                Link {
-                    class: "nav-tab",
-                    active_class: "nav-tab-active",
-                    to: Route::Stats {},
+                button {
+                    class: if current_tab() == Tab::Stats { "nav-tab nav-tab-active" } else { "nav-tab" },
+                    onclick: move |_| current_tab.set(Tab::Stats),
                     "数据统计"
                 }
-                Link {
-                    class: "nav-tab",
-                    active_class: "nav-tab-active",
-                    to: Route::ConfigPage {},
+                button {
+                    class: if current_tab() == Tab::Config { "nav-tab nav-tab-active" } else { "nav-tab" },
+                    onclick: move |_| current_tab.set(Tab::Config),
                     "配置"
                 }
             }
@@ -64,60 +52,60 @@ fn Navbar() -> Element {
                 span { class: "nav-version", "v0.1.0" }
             }
         }
-        Outlet::<Route> {}
-    }
-}
 
-#[component]
-fn NotFound(route: Vec<String>) -> Element {
-    rsx! {
-        div { class: "not-found",
-            h1 { "404" }
-            p { "路径 /{route.join(\"/\")} 不存在" }
-            Link { to: Route::Workspace {}, "返回工作区" }
+        match current_tab() {
+            Tab::Workspace => rsx! { Workspace {} },
+            Tab::Stats => rsx! { Stats {} },
+            Tab::Config => rsx! { ConfigPage {} },
         }
     }
 }
 
-/// Default fallback index.html template used in server-only / direct execution mode
-const DEFAULT_INDEX_HTML: &str = r#"<!DOCTYPE html>
+/// Launch the interactive Dioxus LiveView server on http://127.0.0.1:8080.
+pub async fn launch() {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8080));
+    let view = dioxus_liveview::LiveViewPool::new();
+    let glue = dioxus_liveview::interpreter_glue("/ws");
+    let css = include_str!("../assets/main.css");
+
+    let index_html = format!(
+        r#"<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>omenic</title>
     <style>
-"#;
-
-const DEFAULT_INDEX_HTML_TAIL: &str = r#"
+{css}
     </style>
 </head>
 <body>
     <div id="main"></div>
+    {glue}
 </body>
-</html>"#;
+</html>"#
+    );
 
-/// Launch the Dioxus application.
-pub fn launch() {
-    #[cfg(feature = "server")]
-    {
-        let css = include_str!("../assets/main.css");
-        let html = format!("{DEFAULT_INDEX_HTML}{css}{DEFAULT_INDEX_HTML_TAIL}");
-        let cfg = dioxus::fullstack::ServeConfig::builder()
-            .index_html(html)
-            .build()
-            .expect("valid index html");
-        dioxus::LaunchBuilder::new().with_cfg(cfg).launch(App);
-    }
-    #[cfg(not(feature = "server"))]
-    {
-        dioxus::launch(App);
-    }
-}
+    let app = axum::Router::new()
+        .route(
+            "/ws",
+            axum::routing::get(move |ws: axum::extract::WebSocketUpgrade| async move {
+                ws.on_upgrade(move |socket| async move {
+                    _ = view
+                        .launch_virtualdom(dioxus_liveview::axum_socket(socket), move || {
+                            VirtualDom::new(App)
+                        })
+                        .await;
+                })
+            }),
+        )
+        .fallback(axum::routing::get(move || async move {
+            axum::response::Html(index_html.clone())
+        }));
 
-#[component]
-pub fn App() -> Element {
-    rsx! {
-        Router::<Route> {}
-    }
+    println!("⚡ omenic web server running on http://{addr}");
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    axum::serve(listener, app.into_make_service())
+        .await
+        .unwrap();
 }

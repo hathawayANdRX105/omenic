@@ -1,5 +1,6 @@
-//! bin/web — thin launcher for the Dioxus fullstack web UI.
+//! bin/web — thin launcher for the Dioxus LiveView web UI.
 
-fn main() {
-    web::launch();
+#[tokio::main]
+async fn main() {
+    web::launch().await;
 }

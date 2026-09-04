@@ -2,18 +2,16 @@
 name = "web"
 version = "0.1.0"
 edition = "2021"
-description = "Dioxus fullstack Web UI for omenic"
+description = "Dioxus LiveView Web UI for omenic"
 license = "MIT"
 publish = false
 
 [dependencies]
-dioxus = { version = "0.6", features = ["fullstack", "router"] }
+dioxus = { version = "0.6", features = ["liveview"] }
+dioxus-liveview = { version = "0.6.2", features = ["axum"] }
+axum = { version = "0.7", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 config = { path = "../config" }
 task = { path = "../task" }
-
-[features]
-default = []
-web = ["dioxus/web"]
-server = ["dioxus/server"]
