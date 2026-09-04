@@ -1,14 +1,22 @@
 # 自定义约定: 测试代码必须统一放 tests/ 目录, 严禁留在 src/
 # 为什么: 多 crate 架构下, src/ 留测试容易乱, tests/ 集中管理更好找
 # grep 模式, 零 LLM
-# 检测 1: 扫描 src/**/*.rs 中出现 #[cfg(test)] 或 #[test]
-# 检测 2: 扫描 src/ 下名为 *_test.rs 或 test_*.rs 的文件
+# 检测 1: 仅扫描本次 hook 触发的增量 src/*.rs 文件中是否包含 #[cfg(test)] 或 #[test]
+# 检测 2: 仅扫描本次 hook 触发的增量 src/*.rs 文件, 名称为 *_test.rs / test_*.rs / tests.rs
+#
+# 增量语义 (重要):
+#   harness 不从 argv 收到 scope, 必须从 git 状态自检决定候选集:
+#     1. 若 `git diff --cached --name-only` 非空 → 视为 pre-commit, 用它
+#     2. 否则若 `git diff HEAD --name-only` 非空 → 视为 pre-push, 用它
+#     3. 否则用 `git diff origin/main...HEAD --name-only` (merge scope)
+#   候选先按 *.rs 过滤, 再限定到 src/ 目录, 排除 .githooks/ / target/ / .wt/, 逐文件检查.
+#   干净 base 上三种 git diff 全空 → 候选为空 → 输出 [].
 enabled: true
 hooks: [pre-commit, pre-push, merge]
 fail_severity: FAIL
 match:
-  paths_include: ["**/*.rs"]
-  paths_exclude: ["target/", ".wt/"]
+  paths_include: ["**/src/**/*.rs"]
+  paths_exclude: ["target/", ".wt/", ".githooks/"]
 mode: grep
 harness:
   command: "sh"
@@ -16,14 +24,47 @@ harness:
     - "-c"
     - |
       ROOT=$(git rev-parse --show-toplevel)
-      # 1. 找文件内容里的测试宏
-      matches=$(grep -rEn '#\[cfg\(test\)|#\[test\]' "$ROOT"/crates/*/src/ "$ROOT"/bin/*/src/ --include='*.rs' 2>/dev/null | head -20)
-      # 2. 找测试文件散落
-      files=$(find "$ROOT"/crates/*/src/ "$ROOT"/bin/*/src/ -name '*_test.rs' -o -name 'test_*.rs' -o -name 'tests.rs' 2>/dev/null | head -20)
+      # 增量: 按 hook 自检取候选文件集 (pre-commit -> pre-push -> merge 优先)
+      candidates=""
+      if [ -n "$(git diff --cached --name-only 2>/dev/null)" ]; then
+        candidates=$(git diff --cached --name-only)
+      elif [ -n "$(git diff HEAD --name-only 2>/dev/null)" ]; then
+        candidates=$(git diff HEAD --name-only)
+      else
+        candidates=$(git diff origin/main...HEAD --name-only 2>/dev/null || true)
+      fi
       out=""
-      if [ -n "$matches" ]; then out="$matches"; fi
-      if [ -n "$files" ]; then
-        for f in $files; do out="$out\n$f:1:测试文件必须放 crate/tests/ 目录"; done
+      if [ -n "$candidates" ]; then
+        for f in $candidates; do
+          [ -z "$f" ] && continue
+          # 只关注 .rs 文件
+          case "$f" in
+            *.rs) ;;
+            *) continue ;;
+          esac
+          # 只关注 src/ 下的文件 (其它路径不属于本规则范围)
+          case "$f" in
+            */src/*) ;;
+            *) continue ;;
+          esac
+          # 排除特定子树
+          case "$f" in
+            .githooks/*|target/*|.wt/*) continue ;;
+          esac
+          base=$(basename "$f")
+          case "$base" in
+            *_test.rs|test_*.rs|tests.rs)
+              out="$out\n$f:1:测试文件必须放 crate/tests/ 目录"
+              continue
+            ;;
+          esac
+          hit=$(grep -En '#\[cfg\(test\)\]|#\[test\]' "$ROOT/$f" 2>/dev/null | head -1)
+          if [ -n "$hit" ]; then
+            lineno="${hit%%:*}"
+            rest="${hit#*:}"
+            out="$out\n$f:$lineno:$rest"
+          fi
+        done
       fi
       if [ -z "$out" ] || [ "$out" = "\n" ]; then
         echo '[]'
