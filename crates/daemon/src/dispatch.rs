@@ -177,7 +177,8 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                 Err(m) => return Response::err(id, ResponseError::new("protocol", m)),
             };
             let mut runs = ctx.runs.list();
-            runs.truncate(limit as usize);
+            let keep_from = runs.len().saturating_sub(limit as usize);
+            runs.drain(..keep_from);
             match serde_json::to_value(&runs) {
                 Ok(v) => Response::ok(id, v),
                 Err(e) => Response::err(

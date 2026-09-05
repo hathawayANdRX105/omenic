@@ -92,7 +92,7 @@ pub enum Command {
     #[serde(rename = "session.search")]
     SessionSearch,
 
-    /// `run.list` — `{ limit? }` → `[RunRecord]`.
+    /// `run.list` — `{ limit }` → `[RunRecord]`.
     #[serde(rename = "run.list")]
     RunList,
 
