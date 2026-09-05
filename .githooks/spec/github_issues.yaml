@@ -90,3 +90,37 @@ creation_suggestion:
   enabled: true
   severity: "WARN"
   hint: "新 issue 建议补充: Goal / Done when / Suspected areas / Out of scope"
+
+# 规则严重级别覆盖 (可选)
+# 格式: "规则ID": "FAIL" | "WARN" | "INFO"
+# 默认严重级别如下, 按需调整:
+#   IS-00: FAIL — 标题含禁用前缀 (父/issue:/sub:)
+#   IS-01: FAIL — 缺少必填 heading
+#   IS-02: WARN — Suspected areas 为空
+#   IS-03: WARN — 多个 H1 标题
+#   IS-04: FAIL — Done when 缺少 checkbox
+#   IS-05: FAIL — 标题非中文
+#   IS-06: FAIL — heading 含 CJK
+#   IS-07: FAIL — 正文缺少中文
+#   IS-08: WARN — backtick 路径引用不存在
+#   IS-09: FAIL — 含禁用交叉引用 (Parent:/Related:)
+#   IS-10: FAIL — sub-issue 含 PR 占位符
+#   IS-11: FAIL — parent 含 Done when
+#   IS-14: WARN — 缺少 type label / 关键词与 label 不对齐
+#   IS-05: "WARN"
+severity_overrides:
+  # IS-00: "FAIL"  — 标题含禁用前缀
+  # IS-01: "FAIL"  — 缺少必填 heading
+  # IS-02: "WARN"  — Suspected areas 为空
+  # IS-03: "WARN"  — 多个 H1 标题
+  IS-04: "FAIL"   # Done when 缺少 checkbox
+  IS-05: "FAIL"   # 标题非中文
+  IS-06: "FAIL"   # heading 含 CJK
+  IS-07: "FAIL"   # 正文缺少中文
+  IS-08: "WARN"   # backtick 路径引用不存在
+  IS-09: "FAIL"   # 含禁用交叉引用
+  IS-10: "FAIL"   # sub-issue 含 PR 占位符
+  IS-11: "FAIL"   # parent 含 Done when
+  IS-14: "WARN"   # 缺少 type label / 关键词不对齐
+  IS-15: "FAIL"   # 关闭时 Done when 未全勾
+  IS-16: "FAIL"   # 乱码/禁用关键词/全角标点
