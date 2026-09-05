@@ -166,13 +166,10 @@ pub fn run() -> i32 {
         findings.extend(topic_findings);
     }
 
+    crate::shared::apply_global_overrides(&mut findings);
     print_findings(&findings);
     exit_code(&findings)
 }
-
-// ===========================================================================
-// Tests
-// ===========================================================================
 
 #[cfg(test)]
 mod tests {

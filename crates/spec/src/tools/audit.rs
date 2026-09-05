@@ -125,7 +125,7 @@ pub fn run(args: &[String]) -> i32 {
                 title, body, &labels, head, state, draft, None,
             )
         } else {
-            crate::rules::issues::check_content(title, body, &labels, "sub", state)
+            crate::rules::issues::check_content(title, body, &labels, "sub", state, None)
         };
 
         let fails: Vec<&Finding> = findings
@@ -235,7 +235,7 @@ pub fn scan_recent(repo: &str, days: u32, limit: u32, workers: u32) -> i32 {
                 title, body, &labels, head, state, draft, None,
             )
         } else {
-            crate::rules::issues::check_content(title, body, &labels, "sub", state)
+            crate::rules::issues::check_content(title, body, &labels, "sub", state, None)
         };
 
         let fails: Vec<&Finding> = findings

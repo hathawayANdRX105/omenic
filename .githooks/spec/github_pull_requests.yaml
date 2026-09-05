@@ -71,3 +71,30 @@ keyword_label_suggestions:
 linkage_check:
   plain_text_links_severity: "INFO"   # Part of/Related 提示级别
   fixes_epic_severity: "WARN"         # Fixes 目标是 parent issue 时提示级别
+
+# 规则严重级别覆盖 (可选)
+# 格式: "规则ID": "FAIL" | "WARN" | "INFO"
+# 默认严重级别如下, 按需调整:
+#   PR-01: FAIL — 标题含 CJK
+#   PR-02: WARN — 标题非 conventional commit
+#   PR-03: FAIL — 缺少必填 heading
+#   PR-04: FAIL — heading 含 CJK
+#   PR-05: WARN — 缺少 Fixes # 关联
+#   PR-06: FAIL — 缺少 type label
+#   PR-07: FAIL — Construction plan/Checklist checkbox < 2
+#   PR-08: FAIL — 分支名前缀不在白名单
+#   PR-10: INFO — Part of/Related 纯文本
+#   PR-06: WARN — 关键词与 label 不对齐
+#
+# 示例: 把 PR-05 改成 INFO，不再警告缺少 issue 关联
+# severity_overrides:
+#   PR-05: "INFO"
+severity_overrides:
+  # PR-01: "FAIL"  — 标题含 CJK
+  # PR-02: "WARN"  — 标题非 conventional commit
+  PR-03: "FAIL"   # 缺少必填 heading
+  PR-04: "FAIL"   # heading 含 CJK / What 无中文
+  PR-05: "WARN"   # 缺少 Fixes # 关联 (改成 INFO 则不阻塞)
+  PR-06: "FAIL"   # 缺少 type label
+  PR-07: "FAIL"   # Construction plan/Checklist checkbox < 2
+  PR-08: "FAIL"   # 分支名前缀不在白名单
