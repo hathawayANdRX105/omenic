@@ -96,6 +96,25 @@ fn info_reports_pid_and_uptime() {
 }
 
 #[test]
+fn run_list_returns_the_latest_persisted_records() {
+    let dir = TempDir::new().unwrap();
+    let cfg = daemon_config_in(&dir, "runs");
+    let daemon = daemon::Daemon::start(cfg).unwrap();
+    daemon.runs().start("run-1", "session-1", 1).unwrap();
+    daemon.runs().start("run-2", "session-1", 2).unwrap();
+    daemon.runs().start("run-3", "session-1", 3).unwrap();
+
+    let client = DaemonClient::connect_to(daemon.socket_addr().path().to_path_buf());
+    let runs = client.run_list(2).unwrap();
+    assert_eq!(
+        runs.iter()
+            .map(|run| run.run_id.as_str())
+            .collect::<Vec<_>>(),
+        ["run-2", "run-3"]
+    );
+}
+
+#[test]
 fn session_crud_through_client_returns_typed_summaries() {
     let dir = TempDir::new().unwrap();
     let cfg = daemon_config_in(&dir, "crud");

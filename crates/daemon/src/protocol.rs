@@ -92,6 +92,10 @@ pub enum Command {
     #[serde(rename = "session.search")]
     SessionSearch,
 
+    /// `run.list` — `{ limit }` → `[RunRecord]`.
+    #[serde(rename = "run.list")]
+    RunList,
+
     /// `worker.ping` — round-trip to the omp worker (spawns it on first use).
     #[serde(rename = "worker.ping")]
     WorkerPing,
