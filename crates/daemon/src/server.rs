@@ -213,8 +213,11 @@ fn run_accept_loop(
         let worker = Arc::clone(&worker);
         let sessions = sessions.clone();
         let runs = runs.clone();
+        let shutdown = Arc::clone(&shutdown);
         thread::spawn(move || {
-            if let Err(e) = handle_connection(conn, &worker, &sessions, &runs, started_at_ms) {
+            if let Err(e) =
+                handle_connection(conn, &worker, &sessions, &runs, shutdown, started_at_ms)
+            {
                 eprintln!("daemon: connection error: {e}");
             }
         });
@@ -226,6 +229,7 @@ fn handle_connection(
     worker: &Arc<Mutex<WorkerHandle>>,
     sessions: &SessionState,
     runs: &RunLedger,
+    shutdown: Arc<AtomicBool>,
     started_at_ms: i64,
 ) -> Result<(), DaemonError> {
     loop {
@@ -259,6 +263,7 @@ fn handle_connection(
             runs: runs.clone(),
             worker: &mut *worker_guard,
             started_at_ms,
+            shutdown: &shutdown,
         };
         let resp = crate::dispatch::dispatch(&mut ctx, req);
         let payload = serde_json::to_string(&resp)?;

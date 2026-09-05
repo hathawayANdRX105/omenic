@@ -93,6 +93,19 @@ enum Command {
         #[command(subcommand)]
         sub: SessionCmd,
     },
+    /// Manage the local daemon.
+    Daemon {
+        #[command(subcommand)]
+        sub: DaemonCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum DaemonCmd {
+    /// Show daemon liveness and process information.
+    Status,
+    /// Ask the daemon to shut down cleanly.
+    Stop,
 }
 
 /// Sub-views of `cli subagent`.
@@ -424,6 +437,7 @@ fn dispatch_sub(command: Command, json: bool) -> Result<u8, String> {
             }
         },
         Command::Session { sub } => session_cmd_dispatch(sub, json),
+        Command::Daemon { sub } => daemon_cmd_dispatch(sub, json),
     }
 }
 
@@ -2230,6 +2244,37 @@ fn session_query_cmd(
         serde_json::to_string_pretty(&result).unwrap_or_default()
     );
     Ok(0)
+}
+
+// ---------------- Daemon commands ----------------
+
+fn daemon_cmd_dispatch(sub: DaemonCmd, json: bool) -> Result<u8, String> {
+    let client = daemon_client_from_config()?;
+    match sub {
+        DaemonCmd::Status => {
+            let info = client.info().map_err(|e| format!("daemon error: {e}"))?;
+            if json {
+                print_json(&info);
+            } else {
+                println!(
+                    "daemon running | pid {} | uptime {} ms | worker pid {}",
+                    info.pid, info.uptime_ms, info.worker_pid
+                );
+            }
+            Ok(0)
+        }
+        DaemonCmd::Stop => {
+            client
+                .shutdown()
+                .map_err(|e| format!("daemon error: {e}"))?;
+            if json {
+                print_json(&serde_json::json!({ "stopping": true }));
+            } else {
+                println!("daemon stopping");
+            }
+            Ok(0)
+        }
+    }
 }
 
 #[cfg(test)]
