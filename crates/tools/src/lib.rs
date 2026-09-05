@@ -334,3 +334,19 @@ pub fn builtin_tools_with_policy(policy: Policy) -> Vec<Box<dyn Tool>> {
         Box::new(Guarded::new(delete::DeleteFile, policy)),
     ]
 }
+
+/// Conservative headless policy for daemon worker.
+///
+/// Denies all tools by default and permits only read-only operations.
+///
+/// This policy is intentionally not a filesystem sandbox. Write, edit,
+/// delete and shell tools stay denied until a canonical-root policy exists.
+pub fn headless_policy() -> Policy {
+    Policy {
+        default: Decision::Deny,
+        rules: vec![
+            Rule::allow("read_file", "", "read operations are safe in headless mode"),
+            Rule::allow("session_query", "", "daemon session queries are read-only"),
+        ],
+    }
+}
