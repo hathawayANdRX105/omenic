@@ -339,6 +339,28 @@ fn permission_deny_all_covers_read_file() {
 }
 
 #[test]
+fn headless_policy_is_read_only_and_fail_closed() {
+    let policy = tools::headless_policy();
+    assert!(policy.check("read_file", "any/path").is_ok());
+    assert!(policy.check("session_query", "").is_ok());
+
+    for (tool, subject) in [
+        ("write_file", "crates/lib.rs"),
+        ("write_file", "/etc/crates/passwd"),
+        ("write_file", "../crates/lib.rs"),
+        ("edit", "src/lib.rs"),
+        ("delete_file", "src/lib.rs"),
+        ("run_bash", "echo safe"),
+        ("unknown_tool", "anything"),
+    ] {
+        assert!(
+            policy.check(tool, subject).is_err(),
+            "{tool} must be denied"
+        );
+    }
+}
+
+#[test]
 fn permission_denied_write_leaves_target_absent() {
     let dir = tempfile::tempdir().unwrap();
     let blocked = dir.path().join("blocked.txt");

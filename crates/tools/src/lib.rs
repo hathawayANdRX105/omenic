@@ -337,53 +337,16 @@ pub fn builtin_tools_with_policy(policy: Policy) -> Vec<Box<dyn Tool>> {
 
 /// Conservative headless policy for daemon worker.
 ///
-/// Denies all tools by default, explicitly allowing only safe operations:
-/// - Read-only tools (read_file, session_query)
-/// - Write/edit only to whitelisted safe paths under project root
-/// - Explicitly denies unknown tools and dangerous write targets
+/// Denies all tools by default and permits only read-only operations.
+///
+/// This policy is intentionally not a filesystem sandbox. Write, edit,
+/// delete and shell tools stay denied until a canonical-root policy exists.
 pub fn headless_policy() -> Policy {
     Policy {
         default: Decision::Deny,
         rules: vec![
-            // Allow read-only tools
-            Rule {
-                tool: "read_file".to_string(),
-                contains: "".to_string(),
-                decision: Decision::Allow,
-                reason: "Read operations are safe in headless mode".to_string(),
-            },
-            Rule {
-                tool: "session_query".to_string(),
-                contains: "".to_string(),
-                decision: Decision::Allow,
-                reason: "Daemon session queries are read-only".to_string(),
-            },
-            // Allow write/edit only to safe project paths
-            Rule {
-                tool: "write_file".to_string(),
-                contains: "crates/".to_string(),
-                decision: Decision::Allow,
-                reason: "Write to project crates directory is safe".to_string(),
-            },
-            Rule {
-                tool: "edit".to_string(),
-                contains: "src/".to_string(),
-                decision: Decision::Allow,
-                reason: "Edit source files in project root is safe".to_string(),
-            },
-            // Explicitly deny dangerous write targets
-            Rule {
-                tool: "write_file".to_string(),
-                contains: "/etc/".to_string(),
-                decision: Decision::Deny,
-                reason: "System configuration writes are blocked in headless mode".to_string(),
-            },
-            Rule {
-                tool: "write_file".to_string(),
-                contains: "../".to_string(),
-                decision: Decision::Deny,
-                reason: "Parent directory writes are blocked for safety".to_string(),
-            },
+            Rule::allow("read_file", "", "read operations are safe in headless mode"),
+            Rule::allow("session_query", "", "daemon session queries are read-only"),
         ],
     }
 }
