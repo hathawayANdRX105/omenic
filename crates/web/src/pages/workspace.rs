@@ -5,6 +5,9 @@ use crate::llm::LlmRuntimeConfig;
 use crate::mock::{self, ChatMessage, Session, SessionStatus, TaskItem, ToolCall};
 use dioxus::prelude::*;
 use std::collections::HashMap;
+use std::path::Path;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 fn db_load_sessions(data_dir: &str) -> (Vec<Session>, HashMap<String, Vec<ChatMessage>>, String) {
     let path = std::path::PathBuf::from(data_dir).join("sessions.db");
@@ -82,7 +85,7 @@ fn db_save_message(
     });
 }
 fn load_tasks(data_dir: &str) -> Vec<TaskItem> {
-    let store = task::store::Store::new(std::path::Path::new(data_dir));
+    let store = task::store::Store::new(Path::new(data_dir));
     if let Ok(real_tasks) = store.load_all() {
         if !real_tasks.is_empty() {
             return real_tasks
@@ -129,6 +132,8 @@ pub fn Workspace(
     let tasks = load_tasks(&config.data_dir);
     let mut show_tasks = use_signal(|| true);
     let mut is_streaming = use_signal(|| false);
+    let mut show_quick_switcher = use_signal(|| false);
+    let mut search_query = use_signal(|| String::new());
 
     let active_title = sessions()
         .iter()
@@ -146,7 +151,6 @@ pub fn Workspace(
     let config_model = config.clone();
     let active_title_for_send = active_title.clone();
 
-    // Handler: Send Message with Real Orbit Agent Loop
     let on_send = move |text: String| {
         let sid = active_session_id();
         let existing_len = session_messages().get(&sid).map(|m| m.len()).unwrap_or(0);
@@ -181,7 +185,6 @@ pub fn Workspace(
 
         is_streaming.set(true);
 
-        // 1. Persist user message to SessionDb
         db_save_message(
             config_send.data_dir.clone(),
             sid.clone(),
@@ -189,7 +192,7 @@ pub fn Workspace(
             session::SessionRole::User,
             text.clone(),
         );
-        // 2. Prepare Context for orbit::run_agent_streaming
+
         let mut context = adaptor::Context::default();
         for m in history.iter().take(history.len().saturating_sub(1)) {
             if m.role == "user" {
@@ -217,7 +220,7 @@ pub fn Workspace(
         };
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<orbit::AgentEvent>();
-        let abort_signal = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let abort_signal = Arc::new(AtomicBool::new(false));
 
         std::thread::spawn(move || {
             let backend = orbit::HttpLlm;
@@ -352,7 +355,6 @@ pub fn Workspace(
             st.cost_usd += (total_in + total_out) as f64 * 0.000002;
             statusline.set(st);
 
-            // Persist completed assistant message with its tool_calls
             let final_asst_msg = session_messages()
                 .get(&sid_for_events)
                 .and_then(|list| list.last().cloned());
@@ -372,12 +374,10 @@ pub fn Workspace(
         });
     };
 
-    // Handler: Switch Session
     let on_select_session = move |id: String| {
         active_session_id.set(id);
     };
 
-    // Handler: Create New Session
     let on_create_session = move |()| {
         let new_num = sessions().len() + 1;
         let new_id = format!("s{}", new_num);
@@ -420,7 +420,6 @@ pub fn Workspace(
         }
     };
 
-    // Handler: Switch Model
     let on_model_change = move |m: String| {
         let mut st = statusline();
         st.model = m.clone();
@@ -431,7 +430,6 @@ pub fn Workspace(
         on_update_config.call(cfg);
     };
 
-    // Handler: Toggle Thinking
     let on_toggle_thinking = move |()| {
         let mut st = statusline();
         st.thinking = if st.thinking == "off" {
@@ -446,31 +444,30 @@ pub fn Workspace(
 
     rsx! {
         div { class: "workspace-layout",
-            // Left Sidebar
             Sidebar {
                 sessions: sessions(),
                 active_id: active_session_id(),
                 on_select: on_select_session,
                 on_create: on_create_session,
             }
-
-            // Center Chat Canvas
             div { class: "workspace-main",
                 div { class: "workspace-chat-area",
-                    // Header Bar (zcode style)
                     div { class: "chat-header-bar",
                         div { class: "chat-header-title",
                             span { "{active_title}" }
                             span { class: "chat-header-badge", "{config.model}" }
                         }
                         button {
+                            class: "btn-quick-search",
+                            onclick: move |_| show_quick_switcher.set(true),
+                            "[ 快速检索会话 ⌘K ]"
+                        }
+                        button {
                             class: if show_tasks() { "btn-toggle-taskpanel active" } else { "btn-toggle-taskpanel" },
                             onclick: move |_| show_tasks.set(!show_tasks()),
-                            if show_tasks() { "隐藏看板" } else { "任务看板" }
+                            if show_tasks() { "隐藏任务 ▴" } else { "任务看板 ({tasks.len()}) ▾" }
                         }
                     }
-
-                    // Chat Stream
                     Chat {
                         messages: current_messages,
                         statusline: statusline(),
@@ -480,8 +477,52 @@ pub fn Workspace(
                         on_toggle_thinking: on_toggle_thinking,
                     }
                 }
-
-                // Right Panel (zcode Tasks Panel)
+                if show_quick_switcher() {
+                    div {
+                        class: "modal-backdrop",
+                        onclick: move |_| show_quick_switcher.set(false),
+                        div {
+                            class: "quick-switcher-modal",
+                            onclick: move |_| {},
+                            input {
+                                r#type: "text",
+                                placeholder: "输入关键词检索会话...",
+                                value: "{search_query}",
+                                oninput: move |e| search_query.set(e.value().clone()),
+                                autofocus: true,
+                                style: "width: 100%; padding: 12px; background: var(--bg-surface); border: 1px solid var(--border-accent); color: var(--text-primary); font-size: 14px; border-radius: 6px; margin-bottom: 12px;"
+                            }
+                            for session in sessions()
+                                .iter()
+                                .filter(|s| {
+                                    let query = search_query();
+                                    query.is_empty() || s.title.contains(&query) || s.id.contains(&query)
+                                })
+                            {
+                                div {
+                                    class: "session-row",
+                                    onclick: {
+                                        let id = session.id.clone();
+                                        let mut on_select = on_select_session.clone();
+                                        move |_| {
+                                            on_select(id.clone());
+                                            show_quick_switcher.set(false);
+                                        }
+                                    },
+                                    div { class: "session-dot", class: if session.status == SessionStatus::Active { "active" } else { "idle" } }
+                                    div { class: "session-info",
+                                        div { class: "session-title", "{session.title}" }
+                                        div { class: "session-meta",
+                                            span { "{session.id}" }
+                                            span { class: "session-tag", "{session.model}" }
+                                        }
+                                    }
+                                }
+                            }
+                            div { style: "margin-top: 16px; text-align: center; color: var(--text-muted); font-size: 12px;", "[Esc 退出]" }
+                        }
+                    }
+                }
                 if show_tasks() {
                     TaskPanel {
                         tasks: tasks,

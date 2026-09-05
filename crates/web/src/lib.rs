@@ -33,30 +33,25 @@ pub fn App() -> Element {
         style { "{css_content}" }
 
         nav { class: "top-nav",
-            div { class: "nav-brand",
-                span { class: "nav-title", "omenic" }
-            }
-            div { class: "nav-tabs",
+            // Left: workspace breadcrumb (Zcode style)
+            span { class: "nav-workspace", "omenic / feat/web-agent-harness [clean]" }
+
+            // Right: pure text nav tabs + version
+            div { class: "nav-right",
                 button {
                     class: if current_tab() == Tab::Workspace { "nav-tab nav-tab-active" } else { "nav-tab" },
                     onclick: move |_| current_tab.set(Tab::Workspace),
-                    "工作区"
+                    "[工作区]"
                 }
                 button {
                     class: if current_tab() == Tab::Stats { "nav-tab nav-tab-active" } else { "nav-tab" },
                     onclick: move |_| current_tab.set(Tab::Stats),
-                    "数据统计"
+                    "[数据统计]"
                 }
                 button {
                     class: if current_tab() == Tab::Config { "nav-tab nav-tab-active" } else { "nav-tab" },
                     onclick: move |_| current_tab.set(Tab::Config),
-                    "配置"
-                }
-            }
-            div { class: "nav-right",
-                div { class: "nav-status-badge",
-                    span { class: "dot" }
-                    span { "{runtime_config().model}" }
+                    "[配置]"
                 }
                 span { class: "nav-version", "v0.1.0" }
             }
