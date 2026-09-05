@@ -33,6 +33,8 @@ use crate::DaemonError;
 /// worker returns or aborts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunRecord {
+    #[serde(default)]
+    pub seq: i64,
     pub run_id: String,
     pub session_id: String,
     pub started_at_ms: i64,
@@ -51,6 +53,7 @@ pub struct RunLedger {
 struct RunLedgerInner {
     path: PathBuf,
     runs: Vec<RunRecord>,
+    next_seq: i64,
 }
 
 impl RunLedger {
@@ -80,8 +83,21 @@ impl RunLedger {
             Vec::new()
         };
 
+        // Initialize next_seq based on max existing seq
+        let mut max_seq = 0i64;
+        for run in &runs {
+            if run.seq > max_seq {
+                max_seq = run.seq;
+            }
+        }
+        let inner = RunLedgerInner {
+            path,
+            runs,
+            next_seq: max_seq + 1,
+        };
+
         Ok(RunLedger {
-            inner: Arc::new(Mutex::new(RunLedgerInner { path, runs })),
+            inner: Arc::new(Mutex::new(inner)),
         })
     }
 
@@ -93,14 +109,17 @@ impl RunLedger {
         session_id: impl Into<String>,
         started_at_ms: i64,
     ) -> Result<RunRecord, DaemonError> {
+        let mut inner = self.inner.lock().expect("run ledger poisoned");
+        let seq = inner.next_seq;
+        inner.next_seq += 1;
         let record = RunRecord {
+            seq,
             run_id: run_id.into(),
             session_id: session_id.into(),
             started_at_ms,
             finished_at_ms: None,
             status: None,
         };
-        let mut inner = self.inner.lock().expect("run ledger poisoned");
         inner.runs.push(record.clone());
         inner.flush()?;
         Ok(record)
@@ -139,6 +158,23 @@ impl RunLedger {
     pub fn get(&self, run_id: &str) -> Option<RunRecord> {
         let inner = self.inner.lock().expect("run ledger poisoned");
         inner.runs.iter().find(|r| r.run_id == run_id).cloned()
+    }
+
+    /// Read runs from cursor position (exclusive). Returns (remaining_runs, next_cursor).
+    pub fn read_from_cursor(&self, cursor: i64) -> (Vec<RunRecord>, i64) {
+        let inner = self.inner.lock().expect("run ledger poisoned");
+        let mut remaining = Vec::new();
+        for run in &inner.runs {
+            if run.seq > cursor {
+                remaining.push(run.clone());
+            }
+        }
+        let next_cursor = if inner.runs.is_empty() {
+            cursor
+        } else {
+            inner.runs.last().unwrap().seq
+        };
+        (remaining, next_cursor)
     }
 }
 

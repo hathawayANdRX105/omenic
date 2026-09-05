@@ -215,6 +215,26 @@ fn reconnect_after_drop_preserves_state() {
 }
 
 #[test]
+fn session_search_scope_is_preserved_on_the_wire() {
+    let dir = TempDir::new().unwrap();
+    let cfg = daemon_config_in(&dir, "search-scope");
+    let daemon = daemon::Daemon::start(cfg).unwrap();
+    let client = DaemonClient::connect_to(daemon.socket_addr().path().to_path_buf());
+    client.session_create("a", "a").unwrap();
+    client.session_create("b", "b").unwrap();
+    client
+        .session_append("a", SessionRole::User, "shared text")
+        .unwrap();
+    client
+        .session_append("b", SessionRole::User, "shared text")
+        .unwrap();
+
+    let rows = client.session_search("shared", Some("a"), 10).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].session_id, "a");
+}
+
+#[test]
 fn unknown_command_is_a_structured_error() {
     let dir = TempDir::new().unwrap();
     let cfg = daemon_config_in(&dir, "bad");
