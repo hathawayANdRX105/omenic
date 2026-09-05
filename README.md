@@ -12,6 +12,21 @@ oi plan
 oi task add "implement login"
 ```
 
+
+## Web UI
+
+Dioxus fullstack Web 界面（工作区 / 数据统计 / 模型配置）：
+
+```bash
+# 启动 Web 服务
+cargo run -p web-cli
+```
+
+启动后在浏览器访问 `http://127.0.0.1:8026`（或 Dioxus 默认分配端口）。
+
+- **工作区**：左侧会话列表、右侧聊天流 + 任务编排看板、输入框上方状态栏（模型/分支/Token/费用/上下文占用）
+- **数据统计**：仿 OH MY PI Observability 面板（KPI 指标卡、Token 分布、吞吐趋势折线图、最近请求 Feed）
+- **配置**：模型与 Provider 渠道配置
 ## Subagent exploration (opt-in)
 
 Read-only parallel exploration via `crates/subagent`. Each subagent only sees

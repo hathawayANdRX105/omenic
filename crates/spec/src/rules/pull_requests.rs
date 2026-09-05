@@ -1306,7 +1306,9 @@ severity_overrides:
         assert!(
             !pr05.iter().any(|f| f.severity == Severity::Warn),
             "PR-05 WARN should be demoted to INFO, got: {:?}",
-            pr05.iter().map(|f| (&f.severity, &f.msg)).collect::<Vec<_>>()
+            pr05.iter()
+                .map(|f| (&f.severity, &f.msg))
+                .collect::<Vec<_>>()
         );
         // PR-03 should still FAIL with empty body (no WARN/FAIL from overrides)
         let pr03 = find_rule(&findings, "PR-03");

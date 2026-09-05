@@ -7,8 +7,8 @@
 //! Usage: `gate merge <owner/repo> <pr_number> [--dry-run]`
 
 use crate::shared::{
-    apply_global_overrides, exit_code, gh_api, gh_api_paginate, load_yaml, print_findings,
-    Finding, Severity,
+    Finding, Severity, apply_global_overrides, exit_code, gh_api, gh_api_paginate, load_yaml,
+    print_findings,
 };
 use crate::tools::{checklist, cleanup, git};
 /// `gate merge <owner/repo> <pr_number> [--dry-run]` — pre-merge validation.
