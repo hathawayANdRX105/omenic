@@ -108,6 +108,79 @@ pub fn exit_code(findings: &[Finding]) -> i32 {
     if aggregate_result(findings) { 1 } else { 0 }
 }
 
+/// Apply user-provided severity overrides to a list of findings.
+/// Loads overrides from `.githooks/spec/severity_overrides.yaml` in the repo root.
+pub fn apply_global_overrides(findings: &mut [Finding]) {
+    let overrides = match load_severity_overrides() {
+        Some(cfg) => cfg,
+        None => return,
+    };
+
+    let map = match overrides.get("severity_overrides").and_then(|c| c.as_mapping()) {
+        Some(m) => m,
+        None => return,
+    };
+    for finding in findings.iter_mut() {
+        if let Some(sev_val) = map.get(&YamlValue::String(finding.rule_id.to_string())) {
+            if let Some(sev_str) = sev_val.as_str() {
+                let new_sev = match sev_str.to_uppercase().as_str() {
+                    "FAIL" => Severity::Fail,
+                    "WARN" => Severity::Warn,
+                    "INFO" => Severity::Info,
+                    _ => continue,
+                };
+                if finding.severity != Severity::Info {
+                    finding.severity = new_sev;
+                }
+            }
+        }
+    }
+}
+pub fn apply_severity_overrides(findings: &mut [Finding], cfg: Option<&YamlValue>) {
+    let map = match cfg
+        .and_then(|c| c.get("severity_overrides"))
+        .and_then(|c| c.as_mapping())
+    {
+        Some(m) => m,
+        None => return,
+    };
+    for finding in findings.iter_mut() {
+        if let Some(sev_val) = map.get(&YamlValue::String(finding.rule_id.to_string())) {
+            if let Some(sev_str) = sev_val.as_str() {
+                let new_sev = match sev_str.to_uppercase().as_str() {
+                    "FAIL" => Severity::Fail,
+                    "WARN" => Severity::Warn,
+                    "INFO" => Severity::Info,
+                    _ => continue,
+                };
+                if finding.severity != Severity::Info {
+                    finding.severity = new_sev;
+                }
+            }
+        }
+    }
+}
+
+/// Load severity_overrides from `.githooks/spec/severity_overrides.yaml`.
+fn load_severity_overrides() -> Option<YamlValue> {
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        let candidate = dir.join(".githooks");
+        if candidate.is_dir() {
+            let path = candidate.join("spec/severity_overrides.yaml");
+            if let Ok(text) = fs::read_to_string(&path) {
+                if let Ok(cfg) = serde_yaml::from_str(&text) {
+                    return Some(cfg);
+                }
+            }
+            return None;
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 /// Print FAIL/WARN findings; suppress INFO unless no issues found.
 /// All output goes to **stderr** — matches the Python which writes every line
 /// to `sys.stderr`.

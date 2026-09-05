@@ -7,10 +7,10 @@
 //! Usage: `gate merge <owner/repo> <pr_number> [--dry-run]`
 
 use crate::shared::{
-    Finding, Severity, exit_code, gh_api, gh_api_paginate, load_yaml, print_findings,
+    apply_global_overrides, exit_code, gh_api, gh_api_paginate, load_yaml, print_findings,
+    Finding, Severity,
 };
 use crate::tools::{checklist, cleanup, git};
-
 /// `gate merge <owner/repo> <pr_number> [--dry-run]` — pre-merge validation.
 pub fn run(args: &[String]) -> i32 {
     let mut positional = Vec::new();
@@ -87,8 +87,8 @@ pub fn run(args: &[String]) -> i32 {
     println!("--- review (CRG + ocr) ---");
     findings.extend(check_pr_review(repo, pr_num));
 
+    apply_global_overrides(&mut findings);
     print_findings(&findings);
-
     let rc = exit_code(&findings);
     if rc == 0 && !dry_run {
         // Extract Fixes from PR body
