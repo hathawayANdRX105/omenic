@@ -2,9 +2,20 @@
 //!
 //! This module provides the main entry point for the daemon binary,
 //! following the daemon config pattern from server.rs.
+//!
+//! Signal handling:
+//! - SIGINT (Ctrl-C) and SIGTERM trigger graceful shutdown via Daemon::shutdown()
+//! - The Drop implementation handles cleanup if signals are not caught
+//!
+//! This avoids using systemd/Windows service integrations, keeping the
+//! daemon portable and embeddable.
 
 use config::Config;
+use ctrlc;
 use daemon::{Daemon, DaemonConfig, DaemonError};
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Main entry point for the omenic daemon binary.
 ///
@@ -27,17 +38,27 @@ fn main() -> Result<(), DaemonError> {
     );
     println!("Daemon PID: {}", daemon.pid());
 
-    // Wait for shutdown signal
-    // In a real implementation, this might wait on a signal or
-    // allow the daemon to handle incoming connections
-    // For now, we just keep it alive until dropped
+    // Shared flag to track if shutdown was requested via signal
+    let shutdown_requested = Arc::new(AtomicBool::new(false));
+    let shutdown_flag = Arc::clone(&shutdown_requested);
 
-    // The daemon will be dropped when main() returns,
-    // which triggers the Drop implementation for cleanup
+    // Set up signal handlers for SIGINT and SIGTERM
+    ctrlc::set_handler(move || {
+        shutdown_flag.store(true, Ordering::SeqCst);
+    })
+    .expect("Failed to set signal handler");
 
-    // Keep the process alive - in a real implementation
-    // we might handle signals or provide a way to shut down gracefully
-    loop {
-        std::thread::sleep(std::time::Duration::from_secs(60));
+    println!("Daemon running. Press Ctrl-C to stop.");
+
+    // Stop on either a process signal or a daemon.shutdown request.
+    while !shutdown_requested.load(Ordering::SeqCst) && !daemon.is_shutdown_requested() {
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
+
+    println!("Shutdown requested, stopping daemon...");
+    daemon.shutdown();
+    drop(daemon);
+    println!("Daemon stopped cleanly.");
+
+    Ok(())
 }
