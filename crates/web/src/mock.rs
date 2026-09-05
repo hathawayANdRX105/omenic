@@ -284,16 +284,7 @@ pub fn mock_messages_for_session(session_id: &str) -> Vec<ChatMessage> {
                 id: "m4".into(),
                 role: "assistant".into(),
                 content: "确认了。`compact()` 里 `kept_chars` 只统计了 `messages` 的字符，漏掉了 `system_prompt` 的长度。\n修复：在 `compact()` 开头把 `system_prompt.len()` 加入 `kept_chars` 初始值。\n测试通过。".into(),
-                tool_calls: vec![
-                    ToolCall {
-                        id: "tc-3".into(),
-                        title: "已写入 crates/orbit/src/lib.rs +2 -1".into(),
-                        kind: "edit".into(),
-                        summary: "在 kept_chars 累加初始值计入 system_prompt.len()".into(),
-                        detail: "@@ -330,2 +330,3 @@\n-    let mut kept_chars = 0;\n+    let mut kept_chars = system_prompt.as_ref().map(|s| s.len()).unwrap_or(0);".into(),
-                        status: "success".into(),
-                    },
-                ],
+                tool_calls: vec![],
                 timestamp: "14:36".into(),
             },
         ],

@@ -2,7 +2,7 @@ use crate::components::chat::Chat;
 use crate::components::sidebar::Sidebar;
 use crate::components::taskpanel::TaskPanel;
 use crate::llm::LlmRuntimeConfig;
-use crate::mock::{self, ChatMessage, Session, SessionStatus, ToolCall};
+use crate::mock::{self, ChatMessage, Session, SessionStatus};
 use dioxus::prelude::*;
 use std::collections::HashMap;
 
@@ -74,41 +74,22 @@ pub fn Workspace(
 
         // Prepare context for real LLM request
         let cfg_clone = config_send.clone();
-        // Perform real LLM call
+        // Perform real LLM call asynchronously on a blocking thread pool
         spawn(async move {
-            let start = std::time::Instant::now();
-            let result = cfg_clone.chat(&history);
-            let elapsed = start.elapsed();
+            let endpoint = cfg_clone.base_url.clone();
+            let result = tokio::task::spawn_blocking(move || cfg_clone.chat(&history))
+                .await
+                .unwrap_or_else(|e| Err(format!("任务执行异常: {}", e)));
 
             let (asst_content, tool_calls) = match result {
-                Ok(reply) => {
-                    let tc = vec![ToolCall {
-                        id: format!("tc-live-{}", sid),
-                        title: format!("▶ 已完成模型推理: {} ({:.1}s)", cfg_clone.model, elapsed.as_secs_f64()),
-                        kind: "bash".into(),
-                        summary: format!("耗时 {:.2}s，模型 {} 正常输出", elapsed.as_secs_f64(), cfg_clone.model),
-                        detail: format!(
-                            "端点: {}/v1/chat/completions\n模型: {}\n耗时: {:.2}s\n返回长度: {} 字符\n状态: HTTP 200 OK",
-                            cfg_clone.base_url.trim_end_matches('/'),
-                            cfg_clone.model,
-                            elapsed.as_secs_f64(),
-                            reply.len()
-                        ),
-                        status: "success".into(),
-                    }];
-                    (reply, tc)
-                }
-                Err(err) => {
-                    let tc = vec![ToolCall {
-                        id: format!("tc-err-{}", sid),
-                        title: format!("⚠️ 无法直连真实端点: {}", cfg_clone.base_url),
-                        kind: "edit".into(),
-                        summary: format!("错误: {} (请在「配置」页检查 API Key / URL)", err),
-                        detail: format!("请求错误信息: {}\n当前端点: {}\n已自动降级为本地 mock 回复，确保界面可用。", err, cfg_clone.base_url),
-                        status: "error".into(),
-                    }];
-                    (format!("收到指令：`{text}`\n\n（提示：当前连接到 `{}` 发生异常：{}。已自动降级展示）", cfg_clone.base_url, err), tc)
-                }
+                Ok(reply) => (reply, Vec::new()),
+                Err(err) => (
+                    format!(
+                        "❌ 请求失败: {}\n请检查「配置」页中的端点 `{}` 与 API Key 是否有效。",
+                        err, endpoint
+                    ),
+                    Vec::new(),
+                ),
             };
 
             let asst_msg = ChatMessage {

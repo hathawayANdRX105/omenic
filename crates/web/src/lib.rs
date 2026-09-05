@@ -102,6 +102,71 @@ pub async fn launch() {
 <body>
     <div id="main"></div>
     {glue}
+    <script>
+    // Client-side instant input clear & auto-scroll watchdog
+    (function() {{
+        function scrollToBottom() {{
+            const chatEl = document.querySelector(".chat-messages");
+            if (chatEl) {{
+                chatEl.scrollTop = chatEl.scrollHeight + 5000;
+            }}
+            const anchor = document.getElementById("chat-scroll-anchor");
+            if (anchor) {{
+                anchor.scrollIntoView({{ behavior: "instant", block: "end" }});
+            }}
+        }}
+
+        function clearInput() {{
+            const ta = document.getElementById("chat-input-area") || document.querySelector(".chat-input-field");
+            if (ta) {{
+                ta.value = "";
+                ta.textContent = "";
+                ta.dispatchEvent(new Event("input", {{ bubbles: true }}));
+                [10, 30, 80, 150, 300].forEach(function(delay) {{
+                    setTimeout(function() {{
+                        if (ta) {{
+                            ta.value = "";
+                        }}
+                    }}, delay);
+                }});
+            }}
+        }}
+
+        // 1. Synchronously handle Enter key on textarea
+        document.addEventListener("keydown", function(e) {{
+            const isInput = e.target && (e.target.id === "chat-input-area" || e.target.classList.contains("chat-input-field"));
+            if (isInput && e.key === "Enter" && !e.shiftKey) {{
+                if (e.isComposing || e.keyCode === 229) {{
+                    return; // Do not intercept during IME composition
+                }}
+                e.preventDefault(); // Stop trailing newline
+                clearInput();
+                scrollToBottom();
+                setTimeout(scrollToBottom, 50);
+                setTimeout(scrollToBottom, 200);
+            }}
+        }}, true);
+
+        // 2. Clear input and scroll on send button click
+        document.addEventListener("click", function(e) {{
+            const btn = e.target.closest(".btn-send-round");
+            if (btn) {{
+                clearInput();
+                scrollToBottom();
+                setTimeout(scrollToBottom, 50);
+                setTimeout(scrollToBottom, 200);
+            }}
+        }}, true);
+
+        // 3. Auto-scroll chat container whenever new messages arrive
+        let scrollTimeout = null;
+        const observer = new MutationObserver(function() {{
+            clearTimeout(scrollTimeout);
+            scrollTimeout = setTimeout(scrollToBottom, 20);
+        }});
+        observer.observe(document.body, {{ childList: true, subtree: true }});
+    }})();
+    </script>
 </body>
 </html>"#
     );

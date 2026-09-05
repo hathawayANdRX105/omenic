@@ -1,4 +1,5 @@
 use crate::mock::{ChatMessage, StatusLine, ToolCall};
+use dioxus::document::eval;
 use dioxus::prelude::*;
 
 #[component]
@@ -12,6 +13,20 @@ pub fn Chat(
 ) -> Element {
     let mut input = use_signal(String::new);
     let mut show_model_menu = use_signal(|| false);
+
+    // Auto-scroll chat messages to bottom on message updates
+    use_effect(use_reactive(&messages.len(), move |_| {
+        eval(
+            r#"
+            setTimeout(() => {
+                const el = document.querySelector(".chat-messages");
+                if (el) {
+                    el.scrollTop = el.scrollHeight;
+                }
+            }, 50);
+            "#,
+        );
+    }));
 
     let models = [
         "agnes-2.5-flash",
@@ -40,12 +55,13 @@ pub fn Chat(
                         }
                     }
                 }
+                div { id: "chat-scroll-anchor", class: "chat-bottom-spacer" }
             }
 
             // Input Docked Floating Box (zcode Style)
             div { class: "chat-input-container",
                 div { class: "chat-input-box",
-                    // Integrated Status Line at Top of Input (Single Location!)
+                    // Integrated Status Line at Top of Input
                     div { class: "integrated-statusline",
                         // Model Selector Pill with Dropdown Menu
                         div {
@@ -107,7 +123,6 @@ pub fn Chat(
                         div { class: "statusline-pill cost",
                             "💰 ${statusline.cost_usd:.3}"
                         }
-
                         // Context Bar Pill
                         div { class: "statusline-pill context",
                             div { class: "context-bar-bg",
@@ -122,20 +137,22 @@ pub fn Chat(
 
                     // Input Text Field
                     textarea {
+                        id: "chat-input-area",
                         class: "chat-input-field",
-                        placeholder: "继续输入后续修改需求，按 Enter 发送 (Shift+Enter 换行)...",
+                        placeholder: "输入消息，按 Enter 发送 (Shift+Enter 换行)...",
                         value: "{input}",
                         oninput: move |e| input.set(e.value()),
                         onkeydown: move |e| {
                             if e.key() == Key::Enter && !e.modifiers().contains(Modifiers::SHIFT) {
-                                if !input().trim().is_empty() && !is_streaming {
-                                    on_send.call(input().trim().to_string());
+                                e.prevent_default();
+                                let text = input().trim().to_string();
+                                if !text.is_empty() && !is_streaming {
                                     input.set(String::new());
+                                    on_send.call(text);
                                 }
                             }
                         },
                     }
-
                     // Bottom Action Toolbar (zcode Style)
                     div { class: "chat-input-actions",
                         div { class: "input-action-left",
@@ -147,9 +164,10 @@ pub fn Chat(
                                 class: "btn-send-round",
                                 disabled: input().trim().is_empty() || is_streaming,
                                 onclick: move |_| {
-                                    if !input().trim().is_empty() && !is_streaming {
-                                        on_send.call(input().trim().to_string());
+                                    let content = input().trim().to_string();
+                                    if !content.is_empty() && !is_streaming {
                                         input.set(String::new());
+                                        on_send.call(content);
                                     }
                                 },
                                 if is_streaming { "⏳" } else { "↑" }
@@ -194,7 +212,7 @@ fn MessageBubble(message: ChatMessage) -> Element {
                     }
                 }
 
-                // Tool calls accordion list
+                // Tool calls accordion list (Only rendered when there are real tool calls)
                 if !message.tool_calls.is_empty() {
                     div { class: "message-tools-container",
                         div { class: "tools-header-label", "调用工具与执行结果（点击展开详情）：" }
