@@ -91,6 +91,9 @@ pub enum Command {
     /// `session.search` — `{ query, scope?: id, limit }` → `[SessionMessage]`.
     #[serde(rename = "session.search")]
     SessionSearch,
+    /// `session.read_from_cursor` — `{ cursor }` → `{ runs, cursor }`.
+    #[serde(rename = "session.read_from_cursor")]
+    SessionReadFromCursor,
 
     /// `run.list` — `{ limit }` → `[RunRecord]`.
     #[serde(rename = "run.list")]
