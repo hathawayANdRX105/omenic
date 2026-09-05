@@ -137,6 +137,12 @@ impl DaemonClient {
         self.call(Command::Info, Value::Null)
     }
 
+    /// `daemon.shutdown` requests graceful daemon termination.
+    pub fn shutdown(&self) -> Result<(), ClientError> {
+        let _: Value = self.call(Command::Shutdown, Value::Null)?;
+        Ok(())
+    }
+
     /// `session.create` → created session summary.
     pub fn session_create(
         &self,

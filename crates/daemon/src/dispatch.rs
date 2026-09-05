@@ -72,6 +72,7 @@ pub struct DispatchCtx<'a> {
     pub runs: RunLedger,
     pub worker: &'a mut WorkerHandle,
     pub started_at_ms: i64,
+    pub shutdown: &'a std::sync::atomic::AtomicBool,
 }
 
 /// Dispatch a single request.  Always returns a `Response`; the caller just
@@ -82,8 +83,8 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
         Command::Ping => Response::ok(id, json!({ "pong": true })),
 
         Command::Shutdown => {
-            // Server handles the actual shutdown by polling an atomic flag.
-            // We just acknowledge here.
+            ctx.shutdown
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             Response::ok(id, json!({ "shutting_down": true }))
         }
 
