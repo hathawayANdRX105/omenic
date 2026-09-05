@@ -142,16 +142,6 @@ pub fn Chat(
                         placeholder: "输入消息，按 Enter 发送 (Shift+Enter 换行)...",
                         value: "{input}",
                         oninput: move |e| input.set(e.value()),
-                        onkeydown: move |e| {
-                            if e.key() == Key::Enter && !e.modifiers().contains(Modifiers::SHIFT) {
-                                e.prevent_default();
-                                let text = input().trim().to_string();
-                                if !text.is_empty() && !is_streaming {
-                                    input.set(String::new());
-                                    on_send.call(text);
-                                }
-                            }
-                        },
                     }
                     // Bottom Action Toolbar (zcode Style)
                     div { class: "chat-input-actions",
