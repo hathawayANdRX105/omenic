@@ -1,5 +1,4 @@
 use crate::mock::{ChatMessage, StatusLine, ToolCall};
-use dioxus::document::eval;
 use dioxus::prelude::*;
 
 #[component]
@@ -11,22 +10,7 @@ pub fn Chat(
     on_model_change: EventHandler<String>,
     on_toggle_thinking: EventHandler<()>,
 ) -> Element {
-    let mut input = use_signal(String::new);
     let mut show_model_menu = use_signal(|| false);
-
-    // Auto-scroll chat messages to bottom on message updates
-    use_effect(use_reactive(&messages.len(), move |_| {
-        eval(
-            r#"
-            setTimeout(() => {
-                const el = document.querySelector(".chat-messages");
-                if (el) {
-                    el.scrollTop = el.scrollHeight;
-                }
-            }, 50);
-            "#,
-        );
-    }));
 
     let models = [
         "agnes-2.5-flash",
@@ -46,33 +30,32 @@ pub fn Chat(
                 if is_streaming {
                     div { class: "message assistant",
                         div { class: "message-header",
-                            span { class: "message-avatar", "🤖" }
                             span { class: "message-name", "omenic" }
                             span { class: "message-time", "思考中..." }
                         }
                         div { class: "message-body streaming",
-                            span { class: "streaming-dots", "正在连接真实模型并思考生成回答..." }
+                            "正在连接模型并思考生成回答..."
                         }
                     }
                 }
                 div { id: "chat-scroll-anchor", class: "chat-bottom-spacer" }
             }
 
-            // Input Docked Floating Box (zcode Style)
+            // Input Docked Floating Box (zcode / Linear Style)
             div { class: "chat-input-container",
                 div { class: "chat-input-box",
-                    // Integrated Status Line at Top of Input
+                    // Integrated Status Line (zcode Style, Clean & Text-focused)
                     div { class: "integrated-statusline",
-                        // Model Selector Pill with Dropdown Menu
+                        // Model Selector Pill
                         div {
                             class: "statusline-pill model interactive",
-                            title: "点击切换模型",
+                            title: "点击切换当前模型",
                             onclick: move |_| show_model_menu.set(!show_model_menu()),
-                            "🧠 {statusline.model} ▾"
+                            span { "model: {statusline.model} ▾" }
                         }
                         if show_model_menu() {
                             div { class: "model-dropdown-menu",
-                                div { class: "model-dropdown-header", "选择推理模型" }
+                                div { class: "model-dropdown-header", "选择模型" }
                                 for m in models {
                                     {
                                         let m_str = m.to_string();
@@ -87,7 +70,7 @@ pub fn Chat(
                                                 },
                                                 span { "{m}" }
                                                 if is_active {
-                                                    span { "✓" }
+                                                    span { style: "font-size: 11px;", "✓" }
                                                 }
                                             }
                                         }
@@ -96,33 +79,34 @@ pub fn Chat(
                             }
                         }
 
-                        // Thinking Mode Toggle Pill
+                        // Thinking Mode Pill
                         div {
                             class: "statusline-pill thinking interactive",
-                            title: "点击循环切换思考强度",
+                            title: "点击切换思考强度",
                             onclick: move |_| on_toggle_thinking.call(()),
-                            "thinking: {statusline.thinking} 🔄"
+                            "thinking: {statusline.thinking}"
                         }
 
                         // CWD Pill
                         div { class: "statusline-pill cwd",
-                            "📁 {statusline.cwd}"
+                            "{statusline.cwd}"
                         }
 
-                        // Git Branch Pill
+                        // Branch Pill
                         div { class: "statusline-pill branch",
-                            "🌿 {statusline.git_branch}"
+                            "{statusline.git_branch}"
                         }
 
-                        // Tokens Metrics
+                        // Tokens Metric Pill
                         div { class: "statusline-pill tokens",
-                            "📊 {statusline.tokens_in}→{statusline.tokens_out}"
+                            "{statusline.tokens_in} / {statusline.tokens_out}"
                         }
 
                         // Cost Pill
                         div { class: "statusline-pill cost",
-                            "💰 ${statusline.cost_usd:.3}"
+                            "${statusline.cost_usd:.3}"
                         }
+
                         // Context Bar Pill
                         div { class: "statusline-pill context",
                             div { class: "context-bar-bg",
@@ -135,32 +119,42 @@ pub fn Chat(
                         }
                     }
 
-                    // Input Text Field
-                    textarea {
-                        id: "chat-input-area",
-                        class: "chat-input-field",
-                        placeholder: "输入消息，按 Enter 发送 (Shift+Enter 换行)...",
-                        value: "{input}",
-                        oninput: move |e| input.set(e.value()),
-                    }
-                    // Bottom Action Toolbar (zcode Style)
-                    div { class: "chat-input-actions",
-                        div { class: "input-action-left",
-                            button { class: "action-pill-btn", "+ 附件" }
-                            button { class: "action-pill-btn", "🛡️ 变更前确认 ▾" }
+                    // Form Container with Native Form Submit
+                    form {
+                        class: "chat-input-form",
+                        onsubmit: move |e: FormEvent| {
+                            let values = e.values();
+                            let text = values
+                                .get("message")
+                                .and_then(|v| v.first())
+                                .map(|s| s.trim().to_string())
+                                .unwrap_or_default();
+                            if !text.is_empty() && !is_streaming {
+                                on_send.call(text);
+                            }
+                        },
+
+                        textarea {
+                            id: "chat-input-area",
+                            name: "message",
+                            class: "chat-input-field",
+                            placeholder: "输入消息，Enter 发送，Shift+Enter 换行...",
                         }
-                        div { class: "input-action-right",
-                            button {
-                                class: "btn-send-round",
-                                disabled: input().trim().is_empty() || is_streaming,
-                                onclick: move |_| {
-                                    let content = input().trim().to_string();
-                                    if !content.is_empty() && !is_streaming {
-                                        input.set(String::new());
-                                        on_send.call(content);
-                                    }
-                                },
-                                if is_streaming { "⏳" } else { "↑" }
+
+                        div { class: "chat-input-actions",
+                            div { class: "input-action-left",
+                                button {
+                                    r#type: "button",
+                                    class: "action-pill-btn",
+                                    "确认模式: 自动"
+                                }
+                            }
+                            div { class: "input-action-right",
+                                button {
+                                    r#type: "submit",
+                                    class: "btn-send-round",
+                                    if is_streaming { "Sending..." } else { "Send" }
+                                }
                             }
                         }
                     }
@@ -178,16 +172,11 @@ fn MessageBubble(message: ChatMessage) -> Element {
     } else {
         "message assistant"
     };
-    let (avatar, name) = if is_user {
-        ("👤", "你")
-    } else {
-        ("🤖", "omenic")
-    };
+    let name = if is_user { "You" } else { "omenic" };
 
     rsx! {
         div { class: "{class}",
             div { class: "message-header",
-                span { class: "message-avatar", "{avatar}" }
                 span { class: "message-name", "{name}" }
                 span { class: "message-time", "{message.timestamp}" }
             }
@@ -202,10 +191,9 @@ fn MessageBubble(message: ChatMessage) -> Element {
                     }
                 }
 
-                // Tool calls accordion list (Only rendered when there are real tool calls)
+                // Tool calls list (only when tools were genuinely called)
                 if !message.tool_calls.is_empty() {
                     div { class: "message-tools-container",
-                        div { class: "tools-header-label", "调用工具与执行结果（点击展开详情）：" }
                         for tool in &message.tool_calls {
                             ToolAccordion { key: "{tool.id}", tool: tool.clone() }
                         }
@@ -220,32 +208,23 @@ fn MessageBubble(message: ChatMessage) -> Element {
 fn ToolAccordion(tool: ToolCall) -> Element {
     let mut is_open = use_signal(|| false);
 
-    let icon = match tool.kind.as_str() {
-        "bash" => "▶",
-        "edit" => "✏️",
-        "read" => "🔍",
-        _ => "⚡",
-    };
-
     rsx! {
-        div { class: if is_open() { "tool-accordion open" } else { "tool-accordion" },
+        div { class: "tool-accordion",
             div {
                 class: "tool-accordion-header",
                 onclick: move |_| is_open.set(!is_open()),
                 div { class: "tool-header-left",
-                    span { class: "tool-toggle-icon", if is_open() { "▾" } else { "▸" } }
-                    span { class: "tool-kind-icon", "{icon}" }
+                    span { class: "tool-tag", "{tool.kind}" }
                     span { class: "tool-title-text", "{tool.title}" }
                 }
                 div { class: "tool-header-right",
-                    span { class: "tool-status-badge {tool.status}", "✓ 成功" }
-                    span { class: "tool-expand-hint", if is_open() { "收起" } else { "展开详情" } }
+                    span { if is_open() { "hide" } else { "details" } }
                 }
             }
             if is_open() {
                 div { class: "tool-accordion-content",
                     if !tool.summary.is_empty() {
-                        div { class: "tool-summary-line", "概要: {tool.summary}" }
+                        div { style: "font-size: 12px; color: var(--text-secondary); margin-bottom: 6px;", "{tool.summary}" }
                     }
                     div { class: "tool-detail-box",
                         pre { class: "tool-detail-code",

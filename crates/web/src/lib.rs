@@ -34,7 +34,6 @@ pub fn App() -> Element {
 
         nav { class: "top-nav",
             div { class: "nav-brand",
-                span { class: "nav-logo", "⚡" }
                 span { class: "nav-title", "omenic" }
             }
             div { class: "nav-tabs",
@@ -103,32 +102,44 @@ pub async fn launch() {
     <div id="main"></div>
     {glue}
     <script>
-    // Client-side instant input clear & auto-scroll watchdog
     (function() {{
         function scrollToBottom() {{
             const chatEl = document.querySelector(".chat-messages");
             if (chatEl) {{
                 chatEl.scrollTop = chatEl.scrollHeight;
             }}
-            const anchor = document.getElementById("chat-scroll-anchor");
-            if (anchor) {{
-                anchor.scrollIntoView({{ behavior: "smooth", block: "end" }});
-            }}
         }}
 
-        // Forward Enter on chat input directly to send button
+        // Handle Enter key on textarea to submit form
         document.addEventListener("keydown", function(e) {{
-            const isInput = e.target && (e.target.id === "chat-input-area" || e.target.classList.contains("chat-input-field"));
-            if (isInput && e.key === "Enter" && !e.shiftKey) {{
-                if (e.isComposing || e.keyCode === 229) {{
-                    return; // IME composition in progress
+            if (e.target && e.target.id === "chat-input-area" && e.key === "Enter" && !e.shiftKey) {{
+                if (e.isComposing || e.keyCode === 229) return;
+                e.preventDefault();
+                const form = e.target.closest("form");
+                if (form) {{
+                    form.requestSubmit();
+                    setTimeout(function() {{
+                        e.target.value = "";
+                    }}, 0);
+                    setTimeout(scrollToBottom, 40);
                 }}
-                e.preventDefault(); // Stop newline
-                const btn = document.querySelector(".btn-send-round");
-                if (btn && !btn.disabled) {{
-                    btn.click();
+            }}
+        }}, true);
+
+        // Clear textarea when clicking submit button
+        document.addEventListener("click", function(e) {{
+            const btn = e.target.closest("button[type='submit']");
+            if (btn) {{
+                const form = btn.closest("form");
+                if (form) {{
+                    const ta = form.querySelector("textarea");
+                    if (ta) {{
+                        setTimeout(function() {{
+                            ta.value = "";
+                        }}, 0);
+                    }}
+                    setTimeout(scrollToBottom, 40);
                 }}
-                setTimeout(scrollToBottom, 40);
             }}
         }}, true);
 
@@ -138,7 +149,7 @@ pub async fn launch() {
             for (let i = 0; i < mutations.length; i++) {{
                 if (mutations[i].addedNodes.length > 0) {{
                     clearTimeout(scrollTimeout);
-                    scrollTimeout = setTimeout(scrollToBottom, 40);
+                    scrollTimeout = setTimeout(scrollToBottom, 30);
                     break;
                 }}
             }}
@@ -167,7 +178,7 @@ pub async fn launch() {
             axum::response::Html(index_html.clone())
         }));
 
-    println!("⚡ omenic web server running on http://{addr}");
+    println!("omenic web server running on http://{addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app.into_make_service())
         .await

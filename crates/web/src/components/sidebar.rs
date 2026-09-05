@@ -19,25 +19,13 @@ pub fn Sidebar(
 
     rsx! {
         aside { class: "sidebar",
-            // Header with primary "+ 新建任务" button
+            // Header with "+ 新建任务" button
             div { class: "sidebar-header",
                 button {
                     class: "btn-new-session",
                     onclick: move |_| on_create.call(()),
-                    span { "➕" }
+                    span { style: "font-weight: 600; font-size: 14px; line-height: 1;", "+" }
                     span { "新建任务" }
-                }
-            }
-
-            // Quick action links (zcode style)
-            div { class: "sidebar-quick-links",
-                div { class: "sidebar-quick-link",
-                    span { "📁" }
-                    span { "打开工作区" }
-                }
-                div { class: "sidebar-quick-link",
-                    span { "⚡" }
-                    span { "技能配置" }
                 }
             }
 
@@ -54,7 +42,7 @@ pub fn Sidebar(
                 }
 
                 if !archived.is_empty() {
-                    div { class: "sidebar-label", style: "margin-top: 12px;", "已完成 / 归档" }
+                    div { class: "sidebar-label", style: "margin-top: 14px;", "已归档" }
                     for session in archived {
                         SessionRow {
                             key: "{session.id}",
@@ -66,16 +54,13 @@ pub fn Sidebar(
                 }
             }
 
-            // Bottom user profile bar (zcode style)
+            // Bottom status bar
             div { class: "sidebar-user-footer",
                 div { class: "user-profile",
-                    div { class: "user-avatar", "🤖" }
-                    div {
-                        div { class: "user-name", "omenic agent" }
-                        div { class: "user-status-text", "● 在线就绪" }
-                    }
+                    span { class: "user-status-dot" }
+                    span { class: "user-name", "omenic agent" }
                 }
-                span { style: "color: #64748b; cursor: pointer; font-size: 16px;", "⚙️" }
+                span { style: "font-size: 11px; color: var(--text-muted); font-family: monospace;", "ready" }
             }
         }
     }
@@ -95,7 +80,6 @@ fn SessionRow(session: Session, active: bool, on_select: EventHandler<String>) -
     };
     let id = session.id.clone();
 
-    // Generate project tag from title or default
     let tag = if session.title.contains("orbit") {
         "orbit"
     } else if session.title.contains("MCP") {
@@ -105,7 +89,7 @@ fn SessionRow(session: Session, active: bool, on_select: EventHandler<String>) -
     } else if session.title.contains("TUI") {
         "tui"
     } else {
-        "omenic"
+        "task"
     };
 
     rsx! {
@@ -117,7 +101,7 @@ fn SessionRow(session: Session, active: bool, on_select: EventHandler<String>) -
                 div { class: "session-title", "{session.title}" }
                 div { class: "session-meta",
                     span { class: "session-tag", "{tag}" }
-                    span { class: "session-time", "{session.last_active}" }
+                    span { "{session.last_active}" }
                 }
             }
         }

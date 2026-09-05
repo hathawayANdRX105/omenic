@@ -6,14 +6,6 @@ pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
     let mut selected_filter = use_signal(|| "all".to_string());
     let mut selected_task_id = use_signal(|| None::<String>);
 
-    let status_icon = |s: &str| match s {
-        "open" => "🔲",
-        "in_progress" => "🔄",
-        "blocked" => "🚫",
-        "done" => "✅",
-        _ => "❓",
-    };
-
     let open_count = tasks.iter().filter(|t| t.status == "open").count();
     let in_progress = tasks.iter().filter(|t| t.status == "in_progress").count();
     let _blocked = tasks.iter().filter(|t| t.status == "blocked").count();
@@ -36,14 +28,11 @@ pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
         div { class: "workspace-side-panel",
             // Header
             div { class: "side-panel-header",
-                div { class: "side-panel-title",
-                    span { "📋" }
-                    span { "编排任务与进度" }
-                }
+                div { class: "side-panel-title", "编排任务与进度" }
                 button {
                     class: "btn-toggle-taskpanel",
                     onclick: move |_| on_close.call(()),
-                    "✕ 收起"
+                    "收起"
                 }
             }
 
@@ -54,34 +43,34 @@ pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
                         span { class: "goal-label", "Git 状态" }
                         span { class: "goal-badge", "feat/web-dioxus" }
                     }
-                    div { style: "display: flex; justify-content: space-between; font-size: 12.5px; color: #cbd5e1;",
-                        span { "变更统计: +1271 -977" }
-                        span { style: "color: #4ade80;", "已提交" }
+                    div { style: "display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-secondary);",
+                        span { "变更: +1271 -977" }
+                        span { style: "color: var(--accent-green);", "已提交" }
                     }
                 }
 
                 // Goal card (zcode style)
                 div { class: "goal-card",
                     div { class: "goal-card-header",
-                        span { class: "goal-label", "Goal 总体目标" }
+                        span { class: "goal-label", "总体目标" }
                         span {
                             class: "goal-badge",
                             if done == total { "Complete" } else { "In Progress" }
                         }
                     }
-                    div { class: "goal-title", "任务编排看板 (DAG 编排链路)" }
-                    div { class: "goal-stats", "{done}/{total} 已完成 · 89K tokens · 7 项关键任务" }
+                    div { class: "goal-title", "任务编排看板 (DAG 链路)" }
+                    div { class: "goal-stats", "{done}/{total} 已完成 · 89K tokens" }
                 }
 
                 // Progress checklist section (zcode style)
                 div {
                     div { class: "progress-section-header",
-                        span { class: "progress-title", "Progress 步骤清单" }
+                        span { class: "progress-title", "步骤清单" }
                         div { class: "task-filter-group",
                             button {
                                 class: if selected_filter() == "all" { "task-filter-pill active" } else { "task-filter-pill" },
                                 onclick: move |_| selected_filter.set("all".into()),
-                                "全部 ({total})"
+                                "全部"
                             }
                             button {
                                 class: if selected_filter() == "in_progress" { "task-filter-pill active" } else { "task-filter-pill" },
@@ -100,12 +89,14 @@ pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
                             }
                         }
                     }
+
                     div { class: "progress-task-list",
                         for task in filtered_tasks {
                             {
                                 let is_selected = selected_task_id().as_deref() == Some(&task.id);
                                 let task_id = task.id.clone();
                                 let p_class = format!("p{}", task.priority);
+                                let dot_status = task.status.clone();
                                 rsx! {
                                     div {
                                         key: "{task.id}",
@@ -118,7 +109,7 @@ pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
                                             }
                                         },
                                         div { class: "task-row-top",
-                                            span { class: "task-status-icon", "{status_icon(&task.status)}" }
+                                            span { class: "task-status-dot {dot_status}" }
                                             span { class: "task-title-text", "{task.title}" }
                                             span { class: "task-priority-pill {p_class}", "P{task.priority}" }
                                         }
@@ -128,7 +119,7 @@ pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
                                                     div { "说明: {task.description}" }
                                                 }
                                                 if !task.acceptance.is_empty() {
-                                                    div { style: "color: #38bdf8;", "验收: {task.acceptance}" }
+                                                    div { style: "color: var(--accent-blue);", "验收: {task.acceptance}" }
                                                 }
                                             }
                                         }

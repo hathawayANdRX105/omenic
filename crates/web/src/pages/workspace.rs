@@ -74,29 +74,27 @@ pub fn Workspace(
 
         // Prepare context for real LLM request
         let cfg_clone = config_send.clone();
-        // Perform real LLM call asynchronously on a blocking thread pool
         spawn(async move {
             let endpoint = cfg_clone.base_url.clone();
             let result = tokio::task::spawn_blocking(move || cfg_clone.chat(&history))
                 .await
                 .unwrap_or_else(|e| Err(format!("任务执行异常: {}", e)));
 
-            let (asst_content, tool_calls) = match result {
-                Ok(reply) => (reply, Vec::new()),
-                Err(err) => (
+            let asst_content = match result {
+                Ok(reply) => reply,
+                Err(err) => {
                     format!(
-                        "❌ 请求失败: {}\n请检查「配置」页中的端点 `{}` 与 API Key 是否有效。",
+                        "连接异常: {}\n请在「配置」页检查端点 `{}` 与 API 凭证。",
                         err, endpoint
-                    ),
-                    Vec::new(),
-                ),
+                    )
+                }
             };
 
             let asst_msg = ChatMessage {
                 id: asst_id,
                 role: "assistant".into(),
                 content: asst_content,
-                tool_calls,
+                tool_calls: vec![],
                 timestamp: "刚刚".into(),
             };
 
@@ -127,7 +125,7 @@ pub fn Workspace(
         let new_id = format!("s{}", new_num);
         let new_session = Session {
             id: new_id.clone(),
-            title: format!("新会话 #{}", new_num),
+            title: format!("任务 #{}", new_num),
             last_active: "刚刚".into(),
             model: config_create.model.clone(),
             status: SessionStatus::Active,
@@ -143,7 +141,7 @@ pub fn Workspace(
                 id: format!("{}-welcome", new_id),
                 role: "assistant".into(),
                 content: format!(
-                    "新会话已开启。当前连接模型为 `{}` (端点 `{}`)，请输入任务开始工作。",
+                    "新任务已创建。当前配置模型为 `{}` (端点 `{}`)，输入指令开始执行。",
                     config_create.model, config_create.base_url
                 ),
                 tool_calls: vec![],
@@ -191,17 +189,16 @@ pub fn Workspace(
             // Center Chat Canvas
             div { class: "workspace-main",
                 div { class: "workspace-chat-area",
-                    // Header Bar (zcode breadcrumbs & taskboard toggle)
+                    // Header Bar (zcode style)
                     div { class: "chat-header-bar",
                         div { class: "chat-header-title",
-                            span { "💬" }
                             span { "{active_title}" }
                             span { class: "chat-header-badge", "{config.model}" }
                         }
                         button {
                             class: if show_tasks() { "btn-toggle-taskpanel active" } else { "btn-toggle-taskpanel" },
                             onclick: move |_| show_tasks.set(!show_tasks()),
-                            if show_tasks() { "📋 隐藏看板" } else { "📋 任务看板 (7)" }
+                            if show_tasks() { "隐藏看板" } else { "任务看板" }
                         }
                     }
 
@@ -216,7 +213,7 @@ pub fn Workspace(
                     }
                 }
 
-                // Right Panel (zcode Goal & Progress)
+                // Right Panel (zcode Tasks Panel)
                 if show_tasks() {
                     TaskPanel {
                         tasks: tasks,
