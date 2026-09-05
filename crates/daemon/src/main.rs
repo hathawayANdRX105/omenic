@@ -50,15 +50,14 @@ fn main() -> Result<(), DaemonError> {
 
     println!("Daemon running. Press Ctrl-C to stop.");
 
-    // Block until a shutdown signal is received
-    while !shutdown_requested.load(Ordering::SeqCst) {
+    // Stop on either a process signal or a daemon.shutdown request.
+    while !shutdown_requested.load(Ordering::SeqCst) && !daemon.is_shutdown_requested() {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    println!("Shutdown signal received, stopping daemon...");
-    // Trigger graceful shutdown via Daemon::shutdown()
-    // This sets the shutdown flag and waits for accept thread to finish
+    println!("Shutdown requested, stopping daemon...");
     daemon.shutdown();
+    drop(daemon);
     println!("Daemon stopped cleanly.");
 
     Ok(())

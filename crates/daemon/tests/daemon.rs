@@ -16,9 +16,11 @@
 use std::env;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
+use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
+use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use daemon::{Command, Daemon, DaemonConfig, Request, Response, ResponseError};
 use parking_lot::Mutex;
@@ -508,4 +510,53 @@ fn shutdown_trigger_behaves_like_signal() {
         !pid_path.exists(),
         "pid file should be removed after shutdown"
     );
+}
+
+fn daemon_binary() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_daemon"))
+}
+
+fn runtime_paths(socket: &std::path::Path) -> (PathBuf, PathBuf) {
+    let mut lock = socket.as_os_str().to_owned();
+    lock.push(".lock");
+    let mut pid = socket.as_os_str().to_owned();
+    pid.push(".pid");
+    (PathBuf::from(lock), PathBuf::from(pid))
+}
+
+fn wait_for_path(path: &std::path::Path, present: bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while path.exists() != present && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(path.exists(), present, "path state: {}", path.display());
+}
+
+#[test]
+fn daemon_binary_cleans_runtime_files_after_sigint_and_sigterm() {
+    for signal in [libc::SIGINT, libc::SIGTERM] {
+        let dir = TempDir::new().unwrap();
+        let socket = dir.path().join(format!("signal-{signal}.sock"));
+        let db = dir.path().join(format!("signal-{signal}.db"));
+        let (lock, pid) = runtime_paths(&socket);
+        let mut child = ProcessCommand::new(daemon_binary())
+            .env("OMENIC_DAEMON_SOCKET", &socket)
+            .env("OMENIC_SESSION_DB", &db)
+            .env("OMENIC_OMP_PATH", "omp-not-installed-for-tests")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start daemon binary");
+
+        wait_for_path(&socket, true);
+        wait_for_path(&lock, true);
+        wait_for_path(&pid, true);
+        assert_eq!(unsafe { libc::kill(child.id() as i32, signal) }, 0);
+        let status = child.wait().expect("wait for daemon");
+        assert!(status.success(), "daemon exited: {status:?}");
+        assert_eq!(status.signal(), None);
+        wait_for_path(&socket, false);
+        wait_for_path(&lock, false);
+        wait_for_path(&pid, false);
+    }
 }
