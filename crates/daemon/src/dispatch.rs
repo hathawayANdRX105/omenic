@@ -223,7 +223,11 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                 Ok(s) => s,
                 Err(m) => return Response::err(id, ResponseError::new("protocol", m)),
             };
-            let scope = req.params.get("scope").and_then(Value::as_str);
+            let scope = req
+                .params
+                .get("scope")
+                .and_then(|value| value.get("id"))
+                .and_then(Value::as_str);
             let limit = match require_u32(&req.params, "limit") {
                 Ok(n) => n,
                 Err(m) => return Response::err(id, ResponseError::new("protocol", m)),
@@ -238,16 +242,6 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                 },
                 Err(e) => session_error_response(id, "session.search", e),
             }
-        }
-
-        Command::SessionGetRuns => {
-            let cursor = req
-                .params
-                .get("cursor")
-                .and_then(Value::as_i64)
-                .unwrap_or(0);
-            let (runs, next_cursor) = ctx.runs.read_from_cursor(cursor);
-            Response::ok(id, json!({ "runs": runs, "cursor": next_cursor }))
         }
 
         Command::SessionReadFromCursor => {
@@ -345,7 +339,9 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
         }
 
         Command::WorkerAbort => {
-            let _ = ctx.worker.ensure_started();
+            if let Err(e) = ctx.worker.ensure_started() {
+                return e;
+            }
             let w = (*ctx.worker).inner.as_mut().expect("ensured");
             match w.abort() {
                 Ok(v) => Response::ok(id, v),
