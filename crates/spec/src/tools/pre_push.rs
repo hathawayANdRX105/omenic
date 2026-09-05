@@ -3,7 +3,7 @@
 //! Port of `.githooks/hooks/pre-push`. Runs the topics listed in
 //! `dispatch.yaml` under `pre-push`. Uses native Rust validators.
 
-use crate::shared::{exit_code, print_findings};
+use crate::shared::{apply_global_overrides, exit_code, print_findings};
 use crate::tools::{checklist, code, git, workspace};
 
 /// `gate pre-push` — runs dispatched workspace + code topics.
@@ -42,6 +42,7 @@ pub fn run() -> i32 {
         findings.extend(topic_findings);
     }
 
+    apply_global_overrides(&mut findings);
     print_findings(&findings);
     exit_code(&findings)
 }

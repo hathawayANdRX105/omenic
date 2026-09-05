@@ -557,6 +557,8 @@ pub fn check_content(
             ));
         }
     }
+    // Apply user-provided severity overrides (e.g. PR-05 demoted to WARN).
+    crate::shared::apply_severity_overrides(&mut findings, cfg);
 
     findings
 }
@@ -1276,5 +1278,40 @@ allowed_branch_prefixes:
         );
         let pr08b = find_rule(&findings2, "PR-08");
         assert!(pr08b.iter().any(|f| f.severity == Severity::Info));
+    }
+
+    // -----------------------------------------------------------------------
+    // Severity overrides: PR-05 demoted from WARN to INFO via YAML config
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn severity_override_demotes_pr05_to_info() {
+        // A non-draft PR without "Fixes #"
+        let yaml_str = r#"
+severity_overrides:
+  PR-05: "INFO"
+"#;
+        let cfg: YamlValue = serde_yaml::from_str(yaml_str).unwrap();
+        let findings = check_content(
+            "feat: x",
+            GOOD_BODY,
+            &["enhancement"],
+            "feat/x",
+            "open",
+            false,
+            Some(&cfg),
+        );
+        let pr05 = find_rule(&findings, "PR-05");
+        // PR-05 should NOT have any WARN findings; all should be INFO
+        assert!(
+            !pr05.iter().any(|f| f.severity == Severity::Warn),
+            "PR-05 WARN should be demoted to INFO, got: {:?}",
+            pr05.iter()
+                .map(|f| (&f.severity, &f.msg))
+                .collect::<Vec<_>>()
+        );
+        // PR-03 should still FAIL with empty body (no WARN/FAIL from overrides)
+        let pr03 = find_rule(&findings, "PR-03");
+        assert!(pr03.iter().any(|f| f.severity == Severity::Info));
     }
 }

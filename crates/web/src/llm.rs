@@ -23,7 +23,7 @@ impl LlmRuntimeConfig {
     /// Load settings from `.oi/config.toml`, environment variables, or fallback to local new-api.
     pub fn load_from_system() -> Self {
         let mut base_url = "http://127.0.0.1:3182".to_string();
-        let mut api_key = "sk-sj93dHD9Wgn4jblgLVOfKFopInxHSvfB4Y9L1AbHbV6CMObg".to_string();
+        let mut api_key = String::new();
         let mut model = "agnes-2.5-flash".to_string();
         let mut max_tokens = 4096;
         let mut data_dir = "./.oi".to_string();

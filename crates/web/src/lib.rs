@@ -82,7 +82,12 @@ pub fn App() -> Element {
 
 /// Launch the interactive Dioxus LiveView server on http://127.0.0.1:8080.
 pub async fn launch() {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8080));
+    let port = std::env::var("PORT")
+        .or_else(|_| std::env::var("OMENIC_WEB_PORT"))
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(8026);
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let view = dioxus_liveview::LiveViewPool::new();
     let glue = dioxus_liveview::interpreter_glue("/ws");
     let css = include_str!("../assets/main.css");
@@ -178,9 +183,13 @@ pub async fn launch() {
             axum::response::Html(index_html.clone())
         }));
 
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("Failed to bind to {addr}: {e}");
+            return;
+        }
+    };
     println!("omenic web server running on http://{addr}");
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    axum::serve(listener, app.into_make_service())
-        .await
-        .unwrap();
+    let _ = axum::serve(listener, app.into_make_service()).await;
 }

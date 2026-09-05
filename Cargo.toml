@@ -4,7 +4,7 @@ members = [
   "crates/adaptor", "crates/orbit", "crates/tools", "crates/rpc",
   "crates/task", "crates/spec", "crates/config", "crates/tui",
   "crates/subagent", "crates/mcp", "crates/memory", "crates/prompts",
-  "crates/web",
+  "crates/session", "crates/daemon", "crates/web",
 ]
 resolver = "2"
 
@@ -18,6 +18,7 @@ toml = "0.8"
 base64 = "0.22"
 tempfile = "3"
 ureq = { version = "2", features = ["json"] }
+thiserror = "2"
 anyhow = "1"
 ratatui = "0.30"
 crossterm = "0.29"

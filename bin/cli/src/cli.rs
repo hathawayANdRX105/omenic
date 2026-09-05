@@ -88,6 +88,24 @@ enum Command {
         #[command(subcommand)]
         sub: SubagentCmd,
     },
+    /// Session store queries (daemon-backed)
+    Session {
+        #[command(subcommand)]
+        sub: SessionCmd,
+    },
+    /// Manage the local daemon.
+    Daemon {
+        #[command(subcommand)]
+        sub: DaemonCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum DaemonCmd {
+    /// Show daemon liveness and process information.
+    Status,
+    /// Ask the daemon to shut down cleanly.
+    Stop,
 }
 
 /// Sub-views of `cli subagent`.
@@ -181,6 +199,57 @@ enum TaskCmd {
     },
     /// Show task details + computed relationships
     Show { id: String },
+}
+
+/// Session commands backed by the omenic daemon. Reads and writes go
+/// through the running daemon's `SessionDb`; the CLI is a thin client.
+#[derive(Subcommand)]
+enum SessionCmd {
+    /// List sessions matching a query (substring of id/title)
+    List {
+        /// Substring to match against session id / title
+        query: String,
+        /// Maximum number of rows to return (default 50)
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// Show one session by id
+    Get {
+        /// Session id
+        id: String,
+    },
+    /// Substring search across message text (optionally scoped to one session)
+    Search {
+        /// Substring to match against message text
+        query: String,
+        /// Restrict the search to one session id
+        #[arg(long = "scope")]
+        scope: Option<String>,
+        /// Maximum number of messages to return (default 50)
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// Delete a session by id (cascades to its messages)
+    Delete {
+        /// Session id
+        id: String,
+    },
+    /// Agent-facing dispatcher — same args shape as the `session_query`
+    /// ToolDef so the CLI and the worker call the same code path.
+    Query {
+        /// Kind: list | get | search | delete
+        #[arg(long)]
+        kind: String,
+        /// Substring for list / search kinds
+        #[arg(long)]
+        query: Option<String>,
+        /// Session id for get / delete / search kinds
+        #[arg(long = "session-id")]
+        session_id: Option<String>,
+        /// Maximum rows (default 50)
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -367,6 +436,8 @@ fn dispatch_sub(command: Command, json: bool) -> Result<u8, String> {
                 subagent_run_cmd(&prompts, max_turns as usize)
             }
         },
+        Command::Session { sub } => session_cmd_dispatch(sub, json),
+        Command::Daemon { sub } => daemon_cmd_dispatch(sub, json),
     }
 }
 
@@ -2009,6 +2080,201 @@ fn pr_render_cmd(id: &str, json: bool) -> Result<u8, String> {
         std::io::stdout().flush().ok();
     }
     Ok(0)
+}
+
+// ---------------- Session commands ----------------
+
+/// Build a daemon client from `Config` (honors `OMENIC_DAEMON_SOCKET`).
+fn daemon_client_from_config() -> Result<daemon::DaemonClient, String> {
+    let config = Config::load().map_err(|e| format!("config error: {e}"))?;
+    daemon::DaemonClient::from_config(&config).map_err(|e| format!("daemon socket error: {e}"))
+}
+
+/// Dispatch `session ...` subcommands. Routes through `DaemonClient`.
+fn session_cmd_dispatch(sub: SessionCmd, json: bool) -> Result<u8, String> {
+    let client = daemon_client_from_config()?;
+    match sub {
+        SessionCmd::List { query, limit } => session_list_cmd(&client, &query, limit, json),
+        SessionCmd::Get { id } => session_get_cmd(&client, &id, json),
+        SessionCmd::Search {
+            query,
+            scope,
+            limit,
+        } => session_search_cmd(&client, &query, scope.as_deref(), limit, json),
+        SessionCmd::Delete { id } => session_delete_cmd(&client, &id, json),
+        SessionCmd::Query {
+            kind,
+            query,
+            session_id,
+            limit,
+        } => session_query_cmd(
+            &client,
+            &kind,
+            query.as_deref(),
+            session_id.as_deref(),
+            limit,
+            json,
+        ),
+    }
+}
+
+/// `oi session list <query> [--limit N]` — text or JSON list.
+fn session_list_cmd(
+    client: &daemon::DaemonClient,
+    query: &str,
+    limit: u32,
+    json: bool,
+) -> Result<u8, String> {
+    let rows = client
+        .session_list(query, limit)
+        .map_err(|e| format!("daemon error: {e}"))?;
+    if json {
+        print_json(&rows);
+        return Ok(0);
+    }
+    if rows.is_empty() {
+        println!("(no sessions matching `{query}`)");
+        return Ok(0);
+    }
+    println!("{} session(s) matching `{query}`:", rows.len());
+    for row in &rows {
+        println!(
+            "  {} | {} | {} msgs | updated {}",
+            row.id, row.title, row.message_count, row.updated_at_ms
+        );
+    }
+    Ok(0)
+}
+
+/// `oi session get <id>` — text or JSON single summary.
+fn session_get_cmd(client: &daemon::DaemonClient, id: &str, json: bool) -> Result<u8, String> {
+    let row: Option<session::SessionSummary> = client
+        .session_get(id)
+        .map_err(|e| format!("daemon error: {e}"))?;
+    let row = row.ok_or_else(|| format!("session `{id}` not found"))?;
+    if json {
+        print_json(&row);
+        return Ok(0);
+    }
+    println!(
+        "{} | {} | {} msgs | created {} | updated {}",
+        row.id, row.title, row.message_count, row.created_at_ms, row.updated_at_ms
+    );
+    Ok(0)
+}
+
+/// `oi session search <query> [--scope ID] [--limit N]`.
+fn session_search_cmd(
+    client: &daemon::DaemonClient,
+    query: &str,
+    scope: Option<&str>,
+    limit: u32,
+    json: bool,
+) -> Result<u8, String> {
+    let msgs = client
+        .session_search(query, scope, limit)
+        .map_err(|e| format!("daemon error: {e}"))?;
+    if json {
+        print_json(&msgs);
+        return Ok(0);
+    }
+    if msgs.is_empty() {
+        println!("(no messages matching `{query}`)");
+        return Ok(0);
+    }
+    println!("{} message(s) matching `{query}`:", msgs.len());
+    for m in &msgs {
+        println!(
+            "  [{}:{}] {} | {}",
+            m.session_id,
+            m.seq,
+            m.role.as_str(),
+            m.text.replace('\n', " ")
+        );
+    }
+    Ok(0)
+}
+
+/// `oi session delete <id>` — JSON `{"deleted":bool}`.
+fn session_delete_cmd(client: &daemon::DaemonClient, id: &str, json: bool) -> Result<u8, String> {
+    let deleted = client
+        .session_delete(id)
+        .map_err(|e| format!("daemon error: {e}"))?;
+    if json {
+        print_json(&serde_json::json!({ "deleted": deleted }));
+        return Ok(0);
+    }
+    println!(
+        "{}",
+        if deleted {
+            format!("deleted session `{id}`")
+        } else {
+            format!("session `{id}` not found")
+        }
+    );
+    Ok(0)
+}
+
+/// `oi session query ...` — agent-facing dispatcher with the same args
+/// shape as the `session_query` ToolDef.
+fn session_query_cmd(
+    client: &daemon::DaemonClient,
+    kind: &str,
+    query: Option<&str>,
+    session_id: Option<&str>,
+    limit: u32,
+    json: bool,
+) -> Result<u8, String> {
+    let mut args = serde_json::json!({ "kind": kind, "limit": limit });
+    if let Some(q) = query {
+        args["query"] = serde_json::Value::String(q.to_string());
+    }
+    if let Some(id) = session_id {
+        args["session_id"] = serde_json::Value::String(id.to_string());
+    }
+    let result = client
+        .session_query(&args)
+        .map_err(|e| format!("daemon error: {e}"))?;
+    if json {
+        print_json(&result);
+        return Ok(0);
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&result).unwrap_or_default()
+    );
+    Ok(0)
+}
+
+// ---------------- Daemon commands ----------------
+
+fn daemon_cmd_dispatch(sub: DaemonCmd, json: bool) -> Result<u8, String> {
+    let client = daemon_client_from_config()?;
+    match sub {
+        DaemonCmd::Status => {
+            let info = client.info().map_err(|e| format!("daemon error: {e}"))?;
+            if json {
+                print_json(&info);
+            } else {
+                println!(
+                    "daemon running | pid {} | uptime {} ms | worker pid {}",
+                    info.pid, info.uptime_ms, info.worker_pid
+                );
+            }
+            Ok(0)
+        }
+        DaemonCmd::Stop => {
+            client
+                .shutdown()
+                .map_err(|e| format!("daemon error: {e}"))?;
+            if json {
+                print_json(&serde_json::json!({ "stopping": true }));
+            } else {
+                println!("daemon stopping");
+            }
+            Ok(0)
+        }
+    }
 }
 
 #[cfg(test)]

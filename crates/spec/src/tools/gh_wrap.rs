@@ -388,7 +388,9 @@ pub fn intercept_issue_create(args: &[String]) -> i32 {
     let repo = derive_repo();
     let mode = if is_epic(&labels) { "parent" } else { "sub" };
     let labels_str: Vec<&str> = labels.iter().map(String::as_str).collect();
-    let findings = issues::check_content(&title, &body, &labels_str, mode, "open");
+    let mut findings = issues::check_content(&title, &body, &labels_str, mode, "open", None);
+    // Apply global severity overrides
+    crate::shared::apply_global_overrides(&mut findings);
     let fails: Vec<&Finding> = findings
         .iter()
         .filter(|f| f.severity == Severity::Fail)
@@ -639,8 +641,21 @@ pub fn intercept_pr_create(args: &[String]) -> i32 {
     };
     let labels_str: Vec<&str> = labels.iter().map(String::as_str).collect();
 
-    let findings =
-        pull_requests::check_content(&title, &body, &labels_str, &head, "open", false, None);
+    let cfg = crate::tools::git::find_githooks_dir()
+        .and_then(|d| {
+            crate::shared::load_yaml(
+                d.join("spec/github_pull_requests.yaml")
+                    .to_str()
+                    .unwrap_or(""),
+            )
+            .ok()
+        })
+        .unwrap_or(serde_yaml::Value::Null);
+
+    let mut findings =
+        pull_requests::check_content(&title, &body, &labels_str, &head, "open", false, Some(&cfg));
+    // Apply global severity overrides from severity_overrides.yaml
+    crate::shared::apply_global_overrides(&mut findings);
     let fails: Vec<&Finding> = findings
         .iter()
         .filter(|f| f.severity == Severity::Fail)
@@ -1281,7 +1296,7 @@ mod tests {
 Parent: #205
 ";
         let findings =
-            crate::rules::issues::check_content("添加功能", body, &labels, "sub", "open");
+            crate::rules::issues::check_content("添加功能", body, &labels, "sub", "open", None);
         assert!(
             findings.iter().any(|f| f.rule_id == "IS-09"
                 && f.severity == crate::shared::Severity::Fail
