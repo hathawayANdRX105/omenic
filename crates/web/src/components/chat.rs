@@ -11,6 +11,7 @@ pub fn Chat(
     on_toggle_thinking: EventHandler<()>,
 ) -> Element {
     let mut show_model_menu = use_signal(|| false);
+    let mut show_thinking_menu = use_signal(|| false);
 
     let models = [
         "agnes-2.5-flash",
@@ -18,6 +19,13 @@ pub fn Chat(
         "claude-opus-4-7",
         "qwen3-32b",
         "kimi-k3",
+    ];
+
+    let thinking_options = [
+        ("关闭", "off"),
+        ("轻量", "2k"),
+        ("标准", "8k"),
+        ("深度", "16k"),
     ];
 
     rsx! {
@@ -44,80 +52,6 @@ pub fn Chat(
             // Input Docked Floating Box (zcode / Linear Style)
             div { class: "chat-input-container",
                 div { class: "chat-input-box",
-                    // Integrated Status Line (zcode Style, Clean & Text-focused)
-                    div { class: "integrated-statusline",
-                        // Model Selector Pill
-                        div {
-                            class: "statusline-pill model interactive",
-                            title: "点击切换当前模型",
-                            onclick: move |_| show_model_menu.set(!show_model_menu()),
-                            span { "model: {statusline.model} ▾" }
-                        }
-                        if show_model_menu() {
-                            div { class: "model-dropdown-menu",
-                                div { class: "model-dropdown-header", "选择模型" }
-                                for m in models {
-                                    {
-                                        let m_str = m.to_string();
-                                        let is_active = statusline.model == m;
-                                        rsx! {
-                                            div {
-                                                key: "{m}",
-                                                class: if is_active { "model-dropdown-item active" } else { "model-dropdown-item" },
-                                                onclick: move |_| {
-                                                    on_model_change.call(m_str.clone());
-                                                    show_model_menu.set(false);
-                                                },
-                                                span { "{m}" }
-                                                if is_active {
-                                                    span { style: "font-size: 11px;", "✓" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Thinking Mode Pill
-                        div {
-                            class: "statusline-pill thinking interactive",
-                            title: "点击切换思考强度",
-                            onclick: move |_| on_toggle_thinking.call(()),
-                            "thinking: {statusline.thinking}"
-                        }
-
-                        // CWD Pill
-                        div { class: "statusline-pill cwd",
-                            "{statusline.cwd}"
-                        }
-
-                        // Branch Pill
-                        div { class: "statusline-pill branch",
-                            "{statusline.git_branch}"
-                        }
-
-                        // Tokens Metric Pill
-                        div { class: "statusline-pill tokens",
-                            "{statusline.tokens_in} / {statusline.tokens_out}"
-                        }
-
-                        // Cost Pill
-                        div { class: "statusline-pill cost",
-                            "${statusline.cost_usd:.3}"
-                        }
-
-                        // Context Bar Pill
-                        div { class: "statusline-pill context",
-                            div { class: "context-bar-bg",
-                                div {
-                                    class: "context-bar-fill",
-                                    style: "width: {statusline.context_pct}%",
-                                }
-                            }
-                            span { "{statusline.context_pct}%" }
-                        }
-                    }
 
                     // Form Container with Native Form Submit
                     form {
@@ -141,19 +75,86 @@ pub fn Chat(
                             placeholder: "输入消息，Enter 发送，Shift+Enter 换行...",
                         }
 
-                        div { class: "chat-input-actions",
-                            div { class: "input-action-left",
-                                button {
-                                    r#type: "button",
-                                    class: "action-pill-btn",
-                                    "确认模式: 自动"
+                        // Footer Toolbar (replaces integrated-statusline + chat-input-actions)
+                        div { class: "chat-input-footer-toolbar",
+                            // Left controls
+                            div { class: "footer-left",
+                                // Model selector
+                                div {
+                                    class: "toolbar-pill model interactive",
+                                    title: "切换模型",
+                                    onclick: move |_| show_model_menu.set(!show_model_menu()),
+                                    span { "模型: {statusline.model} ▾" }
                                 }
+                                if show_model_menu() {
+                                    div { class: "model-dropdown-menu",
+                                        div { class: "model-dropdown-header", "选择模型" }
+                                        for m in models {
+                                            {
+                                                let m_str = m.to_string();
+                                                let is_active = statusline.model == m;
+                                                rsx! {
+                                                    div {
+                                                        key: "{m}",
+                                                        class: if is_active { "model-dropdown-item active" } else { "model-dropdown-item" },
+                                                        onclick: move |_| {
+                                                            on_model_change.call(m_str.clone());
+                                                            show_model_menu.set(false);
+                                                        },
+                                                        span { "{m}" },
+                                                        if is_active {
+                                                            span { style: "font-size: 11px;", "[✓]" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Thinking selector
+                                div {
+                                    class: "toolbar-pill thinking interactive",
+                                    title: "切换思考强度",
+                                    onclick: move |_| show_thinking_menu.set(!show_thinking_menu()),
+                                    span { "思考: {statusline.thinking} ▾" }
+                                }
+                                if show_thinking_menu() {
+                                    div { class: "thinking-dropdown-menu",
+                                        div { class: "thinking-dropdown-header", "选择思考强度" }
+                                        for (label, value) in thinking_options {
+                                            {
+                                                let is_active = statusline.thinking == value;
+                                                rsx! {
+                                                    div {
+                                                        key: "{value}",
+                                                        class: if is_active { "thinking-dropdown-item active" } else { "thinking-dropdown-item" },
+                                                        onclick: move |_| {
+                                                            show_thinking_menu.set(false);
+                                                            on_toggle_thinking.call(());
+                                                        },
+                                                        span { "{label}" },
+                                                        if is_active {
+                                                            span { style: "font-size: 11px;", "[✓]" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Auto execute toggle
+                                div { class: "toolbar-pill auto-exec", "[自动执行]" }
                             }
-                            div { class: "input-action-right",
+
+                            // Right metrics
+                            div { class: "footer-right",
+                                span { class: "token-stats", style: "color: var(--text-secondary); font-family: monospace;", "{statusline.tokens_in} / {statusline.tokens_out}" },
                                 button {
                                     r#type: "submit",
                                     class: "btn-send-round",
-                                    if is_streaming { "Sending..." } else { "Send" }
+                                    if is_streaming { "发送中..." } else { "发送 ↵" }
                                 }
                             }
                         }
