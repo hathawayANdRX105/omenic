@@ -1,0 +1,15 @@
+[package]
+name = "web-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Web UI entrypoint for omenic"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "oi-web"
+path = "src/main.rs"
+
+[dependencies]
+web = { path = "../../crates/web" }
+tokio = { version = "1", features = ["full"] }

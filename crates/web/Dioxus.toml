@@ -1,0 +1,13 @@
+[application]
+name = "oi-web"
+default_platform = "web"
+
+[web.app]
+title = "omenic"
+
+[web.watcher]
+reload_html = true
+watch_path = ["src", "assets"]
+
+[web.resource]
+style = ["assets/main.css"]

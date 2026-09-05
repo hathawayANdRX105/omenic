@@ -642,7 +642,14 @@ pub fn intercept_pr_create(args: &[String]) -> i32 {
     let labels_str: Vec<&str> = labels.iter().map(String::as_str).collect();
 
     let cfg = crate::tools::git::find_githooks_dir()
-        .and_then(|d| crate::shared::load_yaml(d.join("spec/github_pull_requests.yaml").to_str().unwrap_or("")).ok())
+        .and_then(|d| {
+            crate::shared::load_yaml(
+                d.join("spec/github_pull_requests.yaml")
+                    .to_str()
+                    .unwrap_or(""),
+            )
+            .ok()
+        })
         .unwrap_or(serde_yaml::Value::Null);
 
     let mut findings =

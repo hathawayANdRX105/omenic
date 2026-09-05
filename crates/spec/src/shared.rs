@@ -116,7 +116,10 @@ pub fn apply_global_overrides(findings: &mut [Finding]) {
         None => return,
     };
 
-    let map = match overrides.get("severity_overrides").and_then(|c| c.as_mapping()) {
+    let map = match overrides
+        .get("severity_overrides")
+        .and_then(|c| c.as_mapping())
+    {
         Some(m) => m,
         None => return,
     };
