@@ -16,9 +16,11 @@
 use std::env;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
+use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
+use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use daemon::{Command, Daemon, DaemonConfig, Request, Response, ResponseError};
 use parking_lot::Mutex;
@@ -461,5 +463,100 @@ fn env_var_override_routes_session_db_and_socket() {
     unsafe {
         env::remove_var("OMENIC_DAEMON_SOCKET");
         env::remove_var("OMENIC_SESSION_DB");
+    }
+}
+/// Test that the daemon's shutdown behavior is preserved when triggered via signals.
+/// This test verifies that Daemon::shutdown() can be called to trigger graceful shutdown,
+/// simulating what happens when a SIGINT/SIGTERM is received.
+#[test]
+fn shutdown_trigger_behaves_like_signal() {
+    let dir = TempDir::new().unwrap();
+    let cfg = daemon_config_in(&dir, "shutdown_signal");
+    let sock = cfg.socket_path.as_ref().unwrap().clone();
+    let lock_path = {
+        let mut s = sock.as_os_str().to_owned();
+        s.push(".lock");
+        PathBuf::from(s)
+    };
+    let pid_path = {
+        let mut s = sock.as_os_str().to_owned();
+        s.push(".pid");
+        PathBuf::from(s)
+    };
+
+    {
+        let mut daemon = Daemon::start(cfg).unwrap();
+        assert!(sock.exists(), "socket file should exist while daemon runs");
+        assert!(
+            lock_path.exists(),
+            "lock file should exist while daemon runs"
+        );
+        assert!(pid_path.exists(), "pid file should exist while daemon runs");
+
+        // Trigger shutdown like a signal handler would
+        daemon.shutdown();
+    }
+
+    // After shutdown, artifacts should be cleaned up
+    assert!(
+        !sock.exists(),
+        "socket file should be removed after shutdown"
+    );
+    assert!(
+        !lock_path.exists(),
+        "lock file should be removed after shutdown"
+    );
+    assert!(
+        !pid_path.exists(),
+        "pid file should be removed after shutdown"
+    );
+}
+
+fn daemon_binary() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_daemon"))
+}
+
+fn runtime_paths(socket: &std::path::Path) -> (PathBuf, PathBuf) {
+    let mut lock = socket.as_os_str().to_owned();
+    lock.push(".lock");
+    let mut pid = socket.as_os_str().to_owned();
+    pid.push(".pid");
+    (PathBuf::from(lock), PathBuf::from(pid))
+}
+
+fn wait_for_path(path: &std::path::Path, present: bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while path.exists() != present && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(path.exists(), present, "path state: {}", path.display());
+}
+
+#[test]
+fn daemon_binary_cleans_runtime_files_after_sigint_and_sigterm() {
+    for signal in [libc::SIGINT, libc::SIGTERM] {
+        let dir = TempDir::new().unwrap();
+        let socket = dir.path().join(format!("signal-{signal}.sock"));
+        let db = dir.path().join(format!("signal-{signal}.db"));
+        let (lock, pid) = runtime_paths(&socket);
+        let mut child = ProcessCommand::new(daemon_binary())
+            .env("OMENIC_DAEMON_SOCKET", &socket)
+            .env("OMENIC_SESSION_DB", &db)
+            .env("OMENIC_OMP_PATH", "omp-not-installed-for-tests")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start daemon binary");
+
+        wait_for_path(&socket, true);
+        wait_for_path(&lock, true);
+        wait_for_path(&pid, true);
+        assert_eq!(unsafe { libc::kill(child.id() as i32, signal) }, 0);
+        let status = child.wait().expect("wait for daemon");
+        assert!(status.success(), "daemon exited: {status:?}");
+        assert_eq!(status.signal(), None);
+        wait_for_path(&socket, false);
+        wait_for_path(&lock, false);
+        wait_for_path(&pid, false);
     }
 }

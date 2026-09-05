@@ -121,6 +121,11 @@ impl Daemon {
         }
     }
 
+    /// Whether shutdown has been requested by a signal or daemon command.
+    pub fn is_shutdown_requested(&self) -> bool {
+        self.shutdown.load(Ordering::SeqCst)
+    }
+
     /// Socket address the daemon is listening on.
     pub fn socket_addr(&self) -> &SocketAddr {
         &self.socket
@@ -152,14 +157,12 @@ impl Drop for Daemon {
         // dropped when the thread exits, cleaning up the socket file.
         self.shutdown.store(true, Ordering::SeqCst);
         if let Some(handle) = self.accept_thread.take() {
-            // Bound the join — the loop checks the shutdown flag on every
-            // accept and between reads, so this should be near-instant.
             let _ = handle.join();
         }
-        // Reset the worker to drop the omp child (its Drop kills the
-        // process group) before we close the socket.
-        if let Ok(mut w) = self.worker.lock() {
-            w.reset();
+        // A worker prompt may be blocked forever in an external process.
+        // Never turn daemon shutdown into an unbounded mutex wait.
+        if let Ok(mut worker) = self.worker.try_lock() {
+            worker.reset();
         }
     }
 }
