@@ -33,25 +33,31 @@ pub fn App() -> Element {
         style { "{css_content}" }
 
         nav { class: "top-nav",
-            // Left: workspace breadcrumb (Zcode style)
-            span { class: "nav-workspace", "omenic / feat/web-agent-harness [clean]" }
-
-            // Right: pure text nav tabs + version
+            div { class: "nav-left",
+                div { class: "nav-workspace",
+                    span { class: "workspace-title", "omenic" }
+                    span { class: "workspace-sep", "/" }
+                    span { class: "workspace-branch", "feat/web-agent-harness" }
+                    span { class: "workspace-status", "clean" }
+                }
+            }
             div { class: "nav-right",
-                button {
-                    class: if current_tab() == Tab::Workspace { "nav-tab nav-tab-active" } else { "nav-tab" },
-                    onclick: move |_| current_tab.set(Tab::Workspace),
-                    "[工作区]"
-                }
-                button {
-                    class: if current_tab() == Tab::Stats { "nav-tab nav-tab-active" } else { "nav-tab" },
-                    onclick: move |_| current_tab.set(Tab::Stats),
-                    "[数据统计]"
-                }
-                button {
-                    class: if current_tab() == Tab::Config { "nav-tab nav-tab-active" } else { "nav-tab" },
-                    onclick: move |_| current_tab.set(Tab::Config),
-                    "[配置]"
+                div { class: "nav-tabs",
+                    button {
+                        class: if current_tab() == Tab::Workspace { "nav-tab active" } else { "nav-tab" },
+                        onclick: move |_| current_tab.set(Tab::Workspace),
+                        "工作区"
+                    }
+                    button {
+                        class: if current_tab() == Tab::Stats { "nav-tab active" } else { "nav-tab" },
+                        onclick: move |_| current_tab.set(Tab::Stats),
+                        "数据统计"
+                    }
+                    button {
+                        class: if current_tab() == Tab::Config { "nav-tab active" } else { "nav-tab" },
+                        onclick: move |_| current_tab.set(Tab::Config),
+                        "配置"
+                    }
                 }
                 span { class: "nav-version", "v0.1.0" }
             }
@@ -143,6 +149,14 @@ pub async fn launch() {
             }}
         }}, true);
 
+        // Global Cmd+K / Ctrl+K for quick switcher
+        document.addEventListener("keydown", function(e) {{
+            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {{
+                e.preventDefault();
+                const btn = document.querySelector(".nav-search-bar");
+                if (btn) btn.click();
+            }}
+        }});
         // Auto-scroll chat container whenever new messages arrive
         let scrollTimeout = null;
         const observer = new MutationObserver(function(mutations) {{

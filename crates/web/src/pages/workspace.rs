@@ -453,19 +453,20 @@ pub fn Workspace(
             div { class: "workspace-main",
                 div { class: "workspace-chat-area",
                     div { class: "chat-header-bar",
-                        div { class: "chat-header-title",
-                            span { "{active_title}" }
+                        div { class: "chat-header-left",
+                            span { class: "chat-header-title", "{active_title}" }
                             span { class: "chat-header-badge", "{config.model}" }
                         }
                         button {
-                            class: "btn-quick-search",
+                            class: "nav-search-bar",
                             onclick: move |_| show_quick_switcher.set(true),
-                            "[ 快速检索会话 ⌘K ]"
+                            span { "搜索会话" }
+                            kbd { "⌘K" }
                         }
                         button {
-                            class: if show_tasks() { "btn-toggle-taskpanel active" } else { "btn-toggle-taskpanel" },
+                            class: if show_tasks() { "btn-task-toggle active" } else { "btn-task-toggle" },
                             onclick: move |_| show_tasks.set(!show_tasks()),
-                            if show_tasks() { "隐藏任务 ▴" } else { "任务看板 ({tasks.len()}) ▾" }
+                            span { "任务看板 {tasks.len()} ▾" }
                         }
                     }
                     Chat {
@@ -485,41 +486,48 @@ pub fn Workspace(
                             class: "quick-switcher-modal",
                             onclick: move |_| {},
                             input {
+                                class: "switcher-input",
                                 r#type: "text",
-                                placeholder: "输入关键词检索会话...",
+                                placeholder: "搜索会话名称或编号...",
                                 value: "{search_query}",
                                 oninput: move |e| search_query.set(e.value().clone()),
                                 autofocus: true,
-                                style: "width: 100%; padding: 12px; background: var(--bg-surface); border: 1px solid var(--border-accent); color: var(--text-primary); font-size: 14px; border-radius: 6px; margin-bottom: 12px;"
                             }
-                            for session in sessions()
-                                .iter()
-                                .filter(|s| {
-                                    let query = search_query();
-                                    query.is_empty() || s.title.contains(&query) || s.id.contains(&query)
-                                })
-                            {
-                                div {
-                                    class: "session-row",
-                                    onclick: {
-                                        let id = session.id.clone();
-                                        let mut on_select = on_select_session.clone();
-                                        move |_| {
-                                            on_select(id.clone());
-                                            show_quick_switcher.set(false);
+                            div { class: "switcher-results",
+                                for session in sessions()
+                                    .iter()
+                                    .filter(|s| {
+                                        let query = search_query();
+                                        let q = query.to_lowercase();
+                                        query.is_empty() || s.title.to_lowercase().contains(&q) || s.id.to_lowercase().contains(&q)
+                                    })
+                                {
+                                    div {
+                                        key: "{session.id}",
+                                        class: if session.id == active_session_id() { "switcher-item selected" } else { "switcher-item" },
+                                        onclick: {
+                                            let id = session.id.clone();
+                                            let mut on_select = on_select_session.clone();
+                                            move |_| {
+                                                on_select(id.clone());
+                                                show_quick_switcher.set(false);
+                                            }
+                                        },
+                                        div { class: "switcher-item-left",
+                                            span { class: if session.status == SessionStatus::Active { "status-dot run" } else { "status-dot idle" } }
+                                            span { class: "switcher-title", "{session.title}" }
                                         }
-                                    },
-                                    div { class: "session-dot", class: if session.status == SessionStatus::Active { "active" } else { "idle" } }
-                                    div { class: "session-info",
-                                        div { class: "session-title", "{session.title}" }
-                                        div { class: "session-meta",
-                                            span { "{session.id}" }
-                                            span { class: "session-tag", "{session.model}" }
-                                        }
+                                        span { class: "switcher-id", "{session.id}" }
                                     }
                                 }
                             }
-                            div { style: "margin-top: 16px; text-align: center; color: var(--text-muted); font-size: 12px;", "[Esc 退出]" }
+                            div { class: "switcher-footer",
+                                span { "选择会话快速切换" }
+                                div { style: "display: flex; gap: 6px; align-items: center;",
+                                    kbd { "ESC" }
+                                    span { "退出" }
+                                }
+                            }
                         }
                     }
                 }

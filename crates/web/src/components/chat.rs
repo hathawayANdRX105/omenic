@@ -30,7 +30,7 @@ pub fn Chat(
 
     rsx! {
         div { class: "chat-container",
-            // Messages area
+            // Messages stream (centered within max-width: 880px)
             div { class: "chat-messages",
                 for msg in &messages {
                     MessageBubble { key: "{msg.id}", message: msg.clone() }
@@ -49,11 +49,9 @@ pub fn Chat(
                 div { id: "chat-scroll-anchor", class: "chat-bottom-spacer" }
             }
 
-            // Input Docked Floating Box (zcode / Linear Style)
+            // Input Docked Floating Box (Cursor Composer Aesthetic)
             div { class: "chat-input-container",
                 div { class: "chat-input-box",
-
-                    // Form Container with Native Form Submit
                     form {
                         class: "chat-input-form",
                         onsubmit: move |e: FormEvent| {
@@ -72,23 +70,23 @@ pub fn Chat(
                             id: "chat-input-area",
                             name: "message",
                             class: "chat-input-field",
-                            placeholder: "输入消息，Enter 发送，Shift+Enter 换行...",
+                            placeholder: "输入指令，Enter 发送，Shift+Enter 换行...",
                         }
 
-                        // Footer Toolbar (replaces integrated-statusline + chat-input-actions)
                         div { class: "chat-input-footer-toolbar",
-                            // Left controls
                             div { class: "footer-left",
-                                // Model selector
+                                // Model selector pill
                                 div {
-                                    class: "toolbar-pill model interactive",
-                                    title: "切换模型",
-                                    onclick: move |_| show_model_menu.set(!show_model_menu()),
-                                    span { "模型: {statusline.model} ▾" }
+                                    class: if show_model_menu() { "toolbar-pill active" } else { "toolbar-pill" },
+                                    onclick: move |_| {
+                                        show_thinking_menu.set(false);
+                                        show_model_menu.set(!show_model_menu());
+                                    },
+                                    span { "{statusline.model} ▾" }
                                 }
                                 if show_model_menu() {
-                                    div { class: "model-dropdown-menu",
-                                        div { class: "model-dropdown-header", "选择模型" }
+                                    div { class: "dropdown-popover",
+                                        div { class: "dropdown-header", "选择模型" }
                                         for m in models {
                                             {
                                                 let m_str = m.to_string();
@@ -96,14 +94,14 @@ pub fn Chat(
                                                 rsx! {
                                                     div {
                                                         key: "{m}",
-                                                        class: if is_active { "model-dropdown-item active" } else { "model-dropdown-item" },
+                                                        class: if is_active { "dropdown-item active" } else { "dropdown-item" },
                                                         onclick: move |_| {
                                                             on_model_change.call(m_str.clone());
                                                             show_model_menu.set(false);
                                                         },
-                                                        span { "{m}" },
+                                                        span { "{m}" }
                                                         if is_active {
-                                                            span { style: "font-size: 11px;", "[✓]" }
+                                                            span { style: "color: var(--accent); font-weight: bold;", "✓" }
                                                         }
                                                     }
                                                 }
@@ -112,30 +110,32 @@ pub fn Chat(
                                     }
                                 }
 
-                                // Thinking selector
+                                // Thinking selector pill
                                 div {
-                                    class: "toolbar-pill thinking interactive",
-                                    title: "切换思考强度",
-                                    onclick: move |_| show_thinking_menu.set(!show_thinking_menu()),
-                                    span { "思考: {statusline.thinking} ▾" }
+                                    class: if show_thinking_menu() { "toolbar-pill active" } else { "toolbar-pill" },
+                                    onclick: move |_| {
+                                        show_model_menu.set(false);
+                                        show_thinking_menu.set(!show_thinking_menu());
+                                    },
+                                    span { "思考 {statusline.thinking} ▾" }
                                 }
                                 if show_thinking_menu() {
-                                    div { class: "thinking-dropdown-menu",
-                                        div { class: "thinking-dropdown-header", "选择思考强度" }
+                                    div { class: "dropdown-popover",
+                                        div { class: "dropdown-header", "思考强度" }
                                         for (label, value) in thinking_options {
                                             {
                                                 let is_active = statusline.thinking == value;
                                                 rsx! {
                                                     div {
                                                         key: "{value}",
-                                                        class: if is_active { "thinking-dropdown-item active" } else { "thinking-dropdown-item" },
+                                                        class: if is_active { "dropdown-item active" } else { "dropdown-item" },
                                                         onclick: move |_| {
                                                             show_thinking_menu.set(false);
                                                             on_toggle_thinking.call(());
                                                         },
-                                                        span { "{label}" },
+                                                        span { "{label}" }
                                                         if is_active {
-                                                            span { style: "font-size: 11px;", "[✓]" }
+                                                            span { style: "color: var(--accent); font-weight: bold;", "✓" }
                                                         }
                                                     }
                                                 }
@@ -144,16 +144,14 @@ pub fn Chat(
                                     }
                                 }
 
-                                // Auto execute toggle
-                                div { class: "toolbar-pill auto-exec", "[自动执行]" }
+                                div { class: "toolbar-pill", "自动执行" }
                             }
 
-                            // Right metrics
                             div { class: "footer-right",
-                                span { class: "token-stats", style: "color: var(--text-secondary); font-family: monospace;", "{statusline.tokens_in} / {statusline.tokens_out}" },
+                                span { class: "token-stats", "{statusline.tokens_in} / {statusline.tokens_out}" }
                                 button {
                                     r#type: "submit",
-                                    class: "btn-send-round",
+                                    class: "btn-send",
                                     if is_streaming { "发送中..." } else { "发送 ↵" }
                                 }
                             }
@@ -192,7 +190,6 @@ fn MessageBubble(message: ChatMessage) -> Element {
                     }
                 }
 
-                // Tool calls list (only when tools were genuinely called)
                 if !message.tool_calls.is_empty() {
                     div { class: "message-tools-container",
                         for tool in &message.tool_calls {
@@ -219,13 +216,13 @@ fn ToolAccordion(tool: ToolCall) -> Element {
                     span { class: "tool-title-text", "{tool.title}" }
                 }
                 div { class: "tool-header-right",
-                    span { if is_open() { "hide" } else { "details" } }
+                    span { if is_open() { "收起" } else { "详情" } }
                 }
             }
             if is_open() {
                 div { class: "tool-accordion-content",
                     if !tool.summary.is_empty() {
-                        div { style: "font-size: 12px; color: var(--text-secondary); margin-bottom: 6px;", "{tool.summary}" }
+                        div { class: "tool-summary-text", "{tool.summary}" }
                     }
                     div { class: "tool-detail-box",
                         pre { class: "tool-detail-code",

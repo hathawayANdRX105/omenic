@@ -19,79 +19,70 @@ pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
         .collect();
 
     rsx! {
-        div {
-            class: "floating-task-window",
-            div {
-                class: "floating-task-window-header",
-                div { class: "floating-task-window-title", "TASKS" }
+        div { class: "floating-task-window",
+            div { class: "floating-task-header",
+                div { class: "floating-task-title", "TASKS ({tasks.len()})" }
                 button {
-                    class: "floating-task-window-close",
+                    class: "floating-task-close",
                     onclick: move |_| on_close.call(()),
-                    "[收起 ✕]"
+                    "✕"
                 }
             }
-            div {
-                class: "floating-task-window-content",
-                div {
-                    class: "task-filter-group",
-                    for filter in ["all", "open", "in_progress", "done"] {
-                        button {
-                            class: if selected_filter() == filter {
-                                "task-filter-pill active"
-                            } else {
-                                "task-filter-pill"
-                            },
-                            onclick: move |_| selected_filter.set(filter.to_string()),
-                            match filter {
-                                "all" => "全部",
-                                "open" => "进行中",
-                                "in_progress" => "进行中",
-                                "done" => "已完成",
-                                _ => filter,
-                            }
-                        }
+            div { class: "floating-task-content",
+                div { class: "task-filter-group",
+                    button {
+                        class: if selected_filter() == "all" { "task-filter-pill active" } else { "task-filter-pill" },
+                        onclick: move |_| selected_filter.set("all".into()),
+                        "全部"
+                    }
+                    button {
+                        class: if selected_filter() == "in_progress" { "task-filter-pill active" } else { "task-filter-pill" },
+                        onclick: move |_| selected_filter.set("in_progress".into()),
+                        "进行中"
+                    }
+                    button {
+                        class: if selected_filter() == "open" { "task-filter-pill active" } else { "task-filter-pill" },
+                        onclick: move |_| selected_filter.set("open".into()),
+                        "待办"
+                    }
+                    button {
+                        class: if selected_filter() == "done" { "task-filter-pill active" } else { "task-filter-pill" },
+                        onclick: move |_| selected_filter.set("done".into()),
+                        "已完成"
                     }
                 }
-                div {
-                    class: "progress-task-list",
+                div { class: "progress-task-list",
                     for task in filtered_tasks {
                         {
                             let is_selected = selected_task_id() == Some(task.id.clone());
-                            let dot_class = if task.status == "open" {
-                                "open"
-                            } else if task.status == "in_progress" {
-                                "in_progress"
-                            } else if task.status == "blocked" {
-                                "blocked"
-                            } else if task.status == "done" {
-                                "done"
-                            } else {
-                                ""
+                            let dot_class = match task.status.as_str() {
+                                "in_progress" => "task-dot in_progress",
+                                "done" => "task-dot done",
+                                "blocked" => "task-dot blocked",
+                                _ => "task-dot",
                             };
-                            let priority_class = match task.priority {
-                                0 => "p0",
-                                1 => "p1",
-                                2 => "p2",
-                                _ => "",
-                            };
+                            let priority_str = format!("P{}", task.priority);
                             let task_id = task.id.clone();
 
                             rsx! {
                                 div {
-                                    class: if is_selected {
-                                        "progress-task-item selected"
-                                    } else {
-                                        "progress-task-item"
+                                    key: "{task.id}",
+                                    class: if is_selected { "progress-task-item selected" } else { "progress-task-item" },
+                                    onclick: move |_| {
+                                        if is_selected {
+                                            selected_task_id.set(None);
+                                        } else {
+                                            selected_task_id.set(Some(task_id.clone()));
+                                        }
                                     },
-                                    onclick: move |_| selected_task_id.set(Some(task_id.clone())),
-                                    div {
-                                        class: "task-row-top",
-                                        div { class: "task-status-dot {dot_class}" }
-                                        div { class: "task-title-text", "{task.title}" }
-                                        div { class: "task-priority-pill {priority_class}", "{task.priority}" }
+                                    div { class: "task-row-top",
+                                        span { class: "{dot_class}" }
+                                        span { class: "task-id", "{task.id}" }
+                                        span { class: "task-title", "{task.title}" }
                                     }
-                                    if !task.description.is_empty() {
-                                        div { class: "task-detail-drawer", "{task.description}" }
+                                    div { class: "task-row-bottom",
+                                        span { "{task.kind}" }
+                                        span { "{priority_str}" }
                                     }
                                 }
                             }
