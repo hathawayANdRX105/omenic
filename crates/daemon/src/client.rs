@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+use crate::state::RunRecord;
 use session::{SessionMessage, SessionRole, SessionSummary};
 
 use crate::DaemonError;
@@ -274,6 +275,11 @@ impl DaemonClient {
                 "unknown session_query kind `{other}`"
             ))),
         }
+    }
+
+    /// `run.list` → up to `limit` runs (empty list allowed).
+    pub fn run_list(&self, limit: u32) -> Result<Vec<RunRecord>, ClientError> {
+        self.call(Command::RunList, json!({ "limit": limit }))
     }
 }
 
