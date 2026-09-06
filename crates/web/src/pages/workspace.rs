@@ -32,13 +32,14 @@ fn db_load_sessions(data_dir: &str) -> (Vec<Session>, HashMap<String, Vec<ChatMe
                 let chat_msgs: Vec<ChatMessage> = db_msgs
                     .into_iter()
                     .map(|m| {
-                        if let Ok(parsed) = serde_json::from_str::<ChatMessage>(&m.text) {
+                        let role = match m.role {
+                            session::SessionRole::User => "user",
+                            _ => "assistant",
+                        };
+                        if let Ok(mut parsed) = serde_json::from_str::<ChatMessage>(&m.text) {
+                            parsed.id = format!("{}-{}-{}", s.id, parsed.id, m.seq);
                             parsed
                         } else {
-                            let role = match m.role {
-                                session::SessionRole::User => "user",
-                                _ => "assistant",
-                            };
                             ChatMessage {
                                 id: format!("{}-{}", s.id, m.seq),
                                 role: role.into(),
@@ -84,6 +85,24 @@ fn db_save_message(
         }
     });
 }
+fn read_subdirectories(parent: &Path) -> Vec<String> {
+    let mut dirs = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(parent) {
+        for entry in entries.flatten() {
+            if let Ok(ft) = entry.file_type() {
+                if ft.is_dir() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if !name.starts_with('.') && name != "node_modules" && name != "target" {
+                        dirs.push(name);
+                    }
+                }
+            }
+        }
+    }
+    dirs.sort();
+    dirs
+}
+
 fn discover_workspaces(active_path: &str) -> Vec<crate::components::sidebar::WorkspaceSpace> {
     use crate::components::sidebar::WorkspaceSpace;
     let mut list = Vec::new();
@@ -227,6 +246,16 @@ pub fn Workspace(
     let mut show_tasks = use_signal(|| true);
     let mut is_streaming = use_signal(|| false);
     let mut search_query = use_signal(|| String::new());
+    // Space Directory Picker state
+    let mut show_space_picker = use_signal(|| false);
+    let mut picker_current_path = use_signal(|| {
+        let home = std::env::var("HOME").expect("HOME not set");
+        format!("{}/projects", home)
+    });
+    let mut picker_subdirs = use_signal(|| {
+        let home = std::env::var("HOME").expect("HOME not set");
+        read_subdirectories(Path::new(&format!("{}/projects", home)))
+    });
 
     let on_select_space = move |path: String| {
         active_space_path.set(path.clone());
@@ -238,8 +267,7 @@ pub fn Workspace(
         let fresh_tasks = load_tasks(&oi_dir);
         tasks.set(fresh_tasks);
     };
-
-    let on_open_space = move |path: String| {
+    let mut on_open_space = move |path: String| {
         let name = std::path::Path::new(&path)
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -519,6 +547,17 @@ pub fn Workspace(
     };
 
     let on_select_session = move |id: String| {
+        let mut list = sessions();
+        for s in list.iter_mut() {
+            if s.id == id {
+                s.status = if s.status == SessionStatus::Active {
+                    SessionStatus::Active
+                } else {
+                    SessionStatus::Idle
+                };
+            }
+        }
+        sessions.set(list);
         active_session_id.set(id);
     };
 
@@ -592,7 +631,13 @@ pub fn Workspace(
                 spaces: spaces(),
                 active_space_id: active_space_path(),
                 on_select_space: on_select_space,
-                on_open_space: on_open_space,
+                on_trigger_picker: move |_| {
+                    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/hathaway".to_string());
+                    let p = format!("{}/projects", home);
+                    picker_current_path.set(p.clone());
+                    picker_subdirs.set(read_subdirectories(Path::new(&p)));
+                    show_space_picker.set(true);
+                },
                 sessions: sessions(),
                 active_id: active_session_id(),
                 on_select: on_select_session,
@@ -677,6 +722,99 @@ pub fn Workspace(
                     TaskPanel {
                         tasks: tasks(),
                         on_close: move |_| show_tasks.set(false),
+                    }
+                }
+                if show_space_picker() {
+                    div { class: "modal-backdrop",
+                        onclick: move |_| show_space_picker.set(false),
+                        div { class: "space-picker-modal",
+                            onclick: move |e: MouseEvent| e.stop_propagation(),
+                            div { class: "space-picker-header",
+                                span { class: "space-picker-title", "选择本地工作区目录" }
+                                button {
+                                    class: "floating-task-close",
+                                    onclick: move |_| show_space_picker.set(false),
+                                    "✕"
+                                }
+                            }
+                            div { class: "space-picker-path-row",
+                                input {
+                                    class: "space-picker-path-input",
+                                    r#type: "text",
+                                    value: "{picker_current_path()}",
+                                    oninput: move |e| {
+                                        let p = e.value();
+                                        picker_current_path.set(p.clone());
+                                        let sub = read_subdirectories(Path::new(&p));
+                                        picker_subdirs.set(sub);
+                                    }
+                                }
+                                button {
+                                    class: "btn-picker-nav",
+                                    onclick: move |_| {
+                                        let par = Path::new(&picker_current_path()).parent().map(|sp| sp.to_path_buf());
+                                        if let Some(pr) = par {
+                                            let s = pr.display().to_string();
+                                            picker_current_path.set(s.clone());
+                                            let sub = read_subdirectories(&pr);
+                                            picker_subdirs.set(sub);
+                                        }
+                                    },
+                                    ".. 上级目录"
+                                }
+                            }
+                            div { class: "space-picker-folder-list",
+                                if picker_subdirs().is_empty() {
+                                    div { style: "padding: 12px; color: var(--text-muted); font-size: 11.5px;", "（此路径下没有可见工作区子目录）" }
+                                }
+                                for dir_name in picker_subdirs() {
+                                    {
+                                        let d = dir_name.clone();
+                                        let dpath1 = format!("{}/{}", picker_current_path(), d);
+                                        let dpath2 = dpath1.clone();
+                                        let mut on_open_fn = on_open_space.clone();
+                                        rsx! {
+                                            div {
+                                                key: "{dir_name}",
+                                                class: "folder-item-row",
+                                                onclick: move |_| {
+                                                    picker_current_path.set(dpath1.clone());
+                                                    let sub = read_subdirectories(Path::new(&dpath1));
+                                                    picker_subdirs.set(sub);
+                                                },
+                                                div { class: "folder-item-left",
+                                                    span { class: "folder-badge", "DIR" }
+                                                    span { class: "folder-name", "{d}" }
+                                                }
+                                                button {
+                                                    class: "btn-picker-nav",
+                                                    onclick: move |e: MouseEvent| {
+                                                        e.stop_propagation();
+                                                        on_open_fn(dpath2.clone());
+                                                        show_space_picker.set(false);
+                                                    },
+                                                    "打开"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            div { class: "space-picker-footer",
+                                div { class: "space-picker-footer-info", span { "当前目录: {picker_current_path()}" } }
+                                button {
+                                    class: "btn-confirm-space",
+                                    onclick: {
+                                        let mut on_open_fn = on_open_space.clone();
+                                        move |_| {
+                                            on_open_fn(picker_current_path());
+                                            show_space_picker.set(false);
+                                        }
+                                    },
+                                    "选择此目录"
+                                }
+                            }
+                        }
                     }
                 }
             }

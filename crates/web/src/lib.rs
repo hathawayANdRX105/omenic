@@ -171,11 +171,21 @@ pub async fn launch() {
                 if (btn) btn.click();
             }}
         }});
-        // Auto-scroll chat container whenever new messages arrive
+        // Auto-scroll chat container ONLY when streaming and user is already near bottom
         let scrollTimeout = null;
+        function isNearBottom(el) {{
+            return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+        }}
         const observer = new MutationObserver(function(mutations) {{
+            const chatEl = document.querySelector(".chat-messages");
+            if (!chatEl) return;
             for (let i = 0; i < mutations.length; i++) {{
-                if (mutations[i].addedNodes.length > 0) {{
+                const target = mutations[i].target;
+                if (target && target.closest && target.closest(".tool-accordion")) {{
+                    // Clicked or toggled tool accordion: DO NOT scroll!
+                    return;
+                }}
+                if (mutations[i].addedNodes.length > 0 && isNearBottom(chatEl)) {{
                     clearTimeout(scrollTimeout);
                     scrollTimeout = setTimeout(scrollToBottom, 30);
                     break;

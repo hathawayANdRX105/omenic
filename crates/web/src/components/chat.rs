@@ -45,8 +45,8 @@ pub fn Chat(
         div { class: "chat-container",
             // Messages stream (centered within max-width: 880px)
             div { class: "chat-messages",
-                for msg in &messages {
-                    MessageBubble { key: "{msg.id}", message: msg.clone() }
+                for (idx, msg) in messages.iter().enumerate() {
+                    MessageBubble { key: "{msg.id}-{idx}", message: msg.clone() }
                 }
                 if is_streaming {
                     div { class: "message assistant",
@@ -195,8 +195,8 @@ fn MessageBubble(message: ChatMessage) -> Element {
 
                 if !message.tool_calls.is_empty() {
                     div { class: "message-tools-container",
-                        for tool in &message.tool_calls {
-                            ToolAccordion { key: "{tool.id}", tool: tool.clone() }
+                        for (t_idx, tool) in message.tool_calls.iter().enumerate() {
+                            ToolAccordion { key: "{tool.id}-{t_idx}", tool: tool.clone() }
                         }
                     }
                 }
@@ -207,13 +207,18 @@ fn MessageBubble(message: ChatMessage) -> Element {
 
 #[component]
 fn ToolAccordion(tool: ToolCall) -> Element {
-    let mut is_open = use_signal(|| false);
+    let lines_count = tool.detail.lines().count();
+    let is_short_content = lines_count <= 6 && tool.detail.len() <= 350;
+    let mut is_open = use_signal(move || is_short_content);
 
     rsx! {
         div { class: "tool-accordion",
             div {
                 class: "tool-accordion-header",
-                onclick: move |_| is_open.set(!is_open()),
+                onclick: move |e: MouseEvent| {
+                    e.stop_propagation();
+                    is_open.set(!is_open());
+                },
                 div { class: "tool-header-left",
                     span { class: "tool-tag", "{tool.kind}" }
                     span { class: "tool-title-text", "{tool.title}" }

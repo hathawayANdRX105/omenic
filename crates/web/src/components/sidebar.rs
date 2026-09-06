@@ -15,15 +15,13 @@ pub fn Sidebar(
     spaces: Vec<WorkspaceSpace>,
     active_space_id: String,
     on_select_space: EventHandler<String>,
-    on_open_space: EventHandler<String>,
+    on_trigger_picker: EventHandler<()>,
     sessions: Vec<Session>,
     active_id: String,
     on_select: EventHandler<String>,
     on_create: EventHandler<()>,
 ) -> Element {
     let mut show_only_running = use_signal(|| false);
-    let mut show_open_input = use_signal(|| false);
-    let mut custom_path = use_signal(|| String::new());
 
     let active_sessions: Vec<_> = sessions
         .iter()
@@ -47,37 +45,16 @@ pub fn Sidebar(
                     span { class: "sidebar-title", "SPACES" }
                     button {
                         class: "btn-subtle",
-                        onclick: move |_| show_open_input.set(!show_open_input()),
-                        if show_open_input() { "收起" } else { "打开" }
-                    }
-                }
-
-                if show_open_input() {
-                    div { class: "space-open-container",
-                        input {
-                            class: "space-open-input",
-                            r#type: "text",
-                            placeholder: "输入本地路径或 .wt/... 按回车",
-                            value: "{custom_path}",
-                            oninput: move |e| custom_path.set(e.value()),
-                            onkeydown: move |e: KeyboardEvent| {
-                                if e.key() == Key::Enter {
-                                    let p = custom_path().trim().to_string();
-                                    if !p.is_empty() {
-                                        on_open_space.call(p);
-                                        custom_path.set(String::new());
-                                        show_open_input.set(false);
-                                    }
-                                }
-                            }
-                        }
+                        onclick: move |_| on_trigger_picker.call(()),
+                        "打开"
                     }
                 }
 
                 div { class: "spaces-list",
                     for space in spaces {
                         {
-                            let is_active = space.id == active_space_id || space.is_active;
+                            // 严格单选：只允许当前选中的这唯独一个空间激活
+                            let is_active = space.id == active_space_id || space.path == active_space_id;
                             let space_id = space.id.clone();
                             rsx! {
                                 div {
