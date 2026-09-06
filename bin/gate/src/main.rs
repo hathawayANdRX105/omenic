@@ -21,10 +21,15 @@ enum Commands {
     Merge(MergeArgs),
     /// Run CRG + ocr code review
     Review(ReviewArgs),
-    /// Audit issues/PRs for checkbox & linkage compliance
-    Audit(AuditArgs),
+    /// Run named quality checks: `gate check [names...]` (no args = list)
+    Check {
+        /// Checklist names (file name minus `checklist_` prefix and `.yaml`)
+        names: Vec<String>,
+    },
     /// Validate issues
     Issue,
+    /// Audit issues/PRs for checkbox & linkage compliance
+    Audit(AuditArgs),
     /// Validate issues
     Pr,
 }
@@ -109,6 +114,12 @@ fn main() -> ExitCode {
             let args_vec: Vec<String> = build_review_args(&args);
             let rc = spec::tools::review::run(&args_vec);
             ExitCode::from(rc as u8)
+        }
+        Commands::Check { names } => {
+            let mut findings = spec::tools::checklist::run_named(&names);
+            spec::shared::apply_global_overrides(&mut findings);
+            spec::shared::print_findings(&findings);
+            ExitCode::from(spec::shared::exit_code(&findings) as u8)
         }
         Commands::Audit(args) => {
             let args_vec: Vec<String> = build_audit_args(&args);

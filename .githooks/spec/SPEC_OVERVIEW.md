@@ -173,7 +173,29 @@
 - gh pr comment → RV-01~06
 - git commit → CM-01、CM-02、CM-03、WS-01、WS-02、CD-01~06、checklist（每 yaml 自身 `hooks` 过滤）
 - git push → WS-01、WS-02、CD-01~06、checklist（同上）
-- gate merge 手动 → 全量（PR + reviews + cleanup：CL-01~03 + RV-07 + checklist）
+> 清单更新顺序：按文件名字典序（加 `00_`/`10_` 前缀可强制提前）。
+
+## 主题十：手动运行检查（gate check）
+
+`gate check [names...]` — 按名字或列出所有 checklist，强制忽略 yaml 的 `hooks:` 过滤，用于调试/CI/按需跑：
+
+- `gate check` → 列出全部 13 个可用检查项名字
+- `gate check clippy` → 只跑 clippy
+- `gate check clippy dep_hygiene slop_comment` → 按名字跑多个
+
+每次加/删 checklist yaml，清单自动更新；新规则只需 `cp spec/xxx.yaml .githooks/spec/` 即可。
+
+| 名字 | 触发 | 严重度 | 检测内容 |
+|---|---|---|---|
+| `clippy` | pre-push, merge | FAIL | `cargo clippy --workspace --all-targets -- -D warnings` JSON → findings |
+| `dep_hygiene` | pre-push, merge | WARN | `cargo-machete` 未使用依赖 |
+| `slop_comment` | all | WARN | AI 风格注释（Step 1:/This function/该函数…, 5 语言） |
+
+## 更新与校验
+
+- 新增/修改规则：只改 `.githooks/spec/*.yaml` 参数 + 相应校验器逻辑，更新本文档
+ - gate 改动后：`cargo build --release -p gate` → `upx --best --lzma target/release/gate` → `gate init` 重部署 + `install` 复制为 `~/.local/bin/gh`
+ - 触发式按上表 lazy 执行，不全局扫描
 
 ## 更新与校验
 

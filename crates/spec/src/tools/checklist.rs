@@ -9,9 +9,10 @@
 //! See `.githooks/spec/CHECKLIST_SPEC.md` for the full yaml schema and
 //! harness protocol.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
@@ -286,20 +287,43 @@ fn run_harness(spec: &ChecklistSpec, stdin_payload: &[u8]) -> (i32, String) {
         Ok(c) => c,
         Err(_) => return (127, String::new()),
     };
-    if let Some(mut sin) = child.stdin.take() {
-        let _ = sin.write_all(stdin_payload);
-    }
-    match child.wait_with_output() {
-        Ok(out) => {
-            let code = out.status.code().unwrap_or(-1);
-            let combined = format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            (code, combined)
+    // Feed stdin from a thread: a harness that never reads must not block
+    // the timeout loop below on a full pipe.
+    let payload = stdin_payload.to_vec();
+    let mut sin = child.stdin.take();
+    std::thread::spawn(move || {
+        if let Some(w) = &mut sin {
+            let _ = w.write_all(&payload);
         }
-        Err(_) => (1, String::new()),
+    });
+    wait_with_timeout(child, spec.timeout_secs)
+}
+
+/// Poll until the child exits or the deadline passes; kill on timeout.
+/// Timeout returns rc=2 (per CHECKLIST_SPEC: harness failed → WARN skip).
+fn wait_with_timeout(mut child: Child, timeout_secs: u64) -> (i32, String) {
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let code = status.code().unwrap_or(-1);
+                let mut combined = String::new();
+                if let Some(mut out) = child.stdout.take() {
+                    let _ = out.read_to_string(&mut combined);
+                }
+                if let Some(mut err) = child.stderr.take() {
+                    let _ = err.read_to_string(&mut combined);
+                }
+                return (code, combined);
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return (2, String::new());
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(_) => return (1, String::new()),
+        }
     }
 }
 
@@ -320,16 +344,12 @@ fn findings_from_stdout(spec: &ChecklistSpec, stdout: &str) -> Vec<Finding> {
         Ok(HarnessFinding::Single(s)) => vec![s],
         Err(_) => {
             // Maybe harness wrapped output — try the last JSON array on a line.
-            if let Some(start) = trimmed.rfind('[') {
-                if let Some(end) = trimmed.rfind(']') {
-                    if end > start {
-                        if let Ok(HarnessFinding::Many(v)) =
-                            serde_json::from_str(&trimmed[start..=end])
-                        {
-                            return convert(spec, v);
-                        }
-                    }
-                }
+            if let Some(start) = trimmed.rfind('[')
+                && let Some(end) = trimmed.rfind(']')
+                && end > start
+                && let Ok(HarnessFinding::Many(v)) = serde_json::from_str(&trimmed[start..=end])
+            {
+                return convert(spec, v);
             }
             eprintln!(
                 "checklist.{}: harness stdout not valid JSON; first 80 chars: {}",
@@ -387,7 +407,7 @@ fn truncate(s: &str, max: usize) -> String {
 // Per-spec execution
 // ---------------------------------------------------------------------------
 
-fn run_one(spec: &ChecklistSpec, scope: HookScope) -> Vec<Finding> {
+fn run_one(spec: &ChecklistSpec, scope: HookScope, ignore_hooks: bool) -> Vec<Finding> {
     if !spec.enabled {
         return vec![Finding::new(
             &format!("checklist.{}", spec.name),
@@ -395,7 +415,7 @@ fn run_one(spec: &ChecklistSpec, scope: HookScope) -> Vec<Finding> {
             "disabled in config",
         )];
     }
-    if !spec.hooks.iter().any(|h| scope.matches_yaml(h)) {
+    if !ignore_hooks && !spec.hooks.iter().any(|h| scope.matches_yaml(h)) {
         return vec![]; // not in this hook's scope — silent skip
     }
     if spec.mode != Mode::Grep && !has_match(spec, scope) {
@@ -473,16 +493,51 @@ fn run_one(spec: &ChecklistSpec, scope: HookScope) -> Vec<Finding> {
 /// appends them to the global finding list and prints via the shared
 /// `print_findings`.
 pub fn run_all(scope: HookScope) -> Vec<Finding> {
-    let githooks = git::find_githooks_dir().unwrap_or_else(|| PathBuf::from(".githooks"));
-    let spec_dir = githooks.join("spec");
-    let specs = find_specs(&spec_dir);
+    let specs = find_specs(&spec_dir());
     if specs.is_empty() {
         return vec![];
     }
     let mut findings = Vec::new();
     for (_path, spec) in &specs {
         eprintln!("--- checklist: {} ---", spec.name);
-        findings.extend(run_one(spec, scope));
+        findings.extend(run_one(spec, scope, false));
+    }
+    findings
+}
+
+fn spec_dir() -> std::path::PathBuf {
+    let githooks = git::find_githooks_dir().unwrap_or_else(|| PathBuf::from(".githooks"));
+    githooks.join("spec")
+}
+
+/// `gate check [names...]` — run named checklists on Merge scope regardless
+/// of their `hooks:` filter, ignoring `enabled: false`. Manual invocation,
+/// not a gate: findings are advisory (exit 0 unless a FAIL fires, matching
+/// hook semantics).
+pub fn run_named(names: &[String]) -> Vec<Finding> {
+    let specs = find_specs(&spec_dir());
+    if names.is_empty() {
+        for (_, s) in &specs {
+            eprintln!("{}", s.name);
+        }
+        return vec![];
+    }
+    let mut findings = Vec::new();
+    for name in names {
+        match specs.iter().find(|(_, s)| &s.name == name) {
+            Some((_, spec)) => {
+                eprintln!("--- checklist: {} ---", spec.name);
+                findings.extend(run_one(spec, HookScope::Merge, true));
+            }
+            None => eprintln!(
+                "unknown checklist: {name} (available: {})",
+                specs
+                    .iter()
+                    .map(|(_, s)| s.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
     }
     findings
 }
