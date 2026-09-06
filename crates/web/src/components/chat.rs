@@ -1,5 +1,18 @@
 use crate::mock::{ChatMessage, StatusLine, ToolCall};
 use dioxus::prelude::*;
+use pulldown_cmark::{html, Options as MarkdownOptions, Parser};
+
+/// 将 Agent/用户消息渲染为 Markdown HTML。
+fn markdown_to_html(input: &str) -> String {
+    let mut opts = MarkdownOptions::empty();
+    opts.insert(MarkdownOptions::ENABLE_STRIKETHROUGH);
+    opts.insert(MarkdownOptions::ENABLE_TASKLISTS);
+    opts.insert(MarkdownOptions::ENABLE_TABLES);
+    let parser = Parser::new_ext(input, opts);
+    let mut output = String::new();
+    html::push_html(&mut output, parser);
+    output
+}
 
 #[component]
 pub fn Chat(
@@ -176,16 +189,9 @@ fn MessageBubble(message: ChatMessage) -> Element {
                 span { class: "message-name", "{name}" }
                 span { class: "message-time", "{message.timestamp}" }
             }
-            div { class: "message-body",
-                for line in message.content.lines() {
-                    if line.starts_with("- ") {
-                        div { class: "message-bullet", "{line}" }
-                    } else if line.is_empty() {
-                        br {}
-                    } else {
-                        p { "{line}" }
-                    }
-                }
+            div { class: "message-body markdown-body",
+                // Rendered markdown
+                div { dangerous_inner_html: "{markdown_to_html(&message.content)}" }
 
                 if !message.tool_calls.is_empty() {
                     div { class: "message-tools-container",

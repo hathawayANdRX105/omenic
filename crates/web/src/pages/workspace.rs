@@ -201,17 +201,29 @@ pub fn Workspace(
     let mut spaces = use_signal(|| discover_workspaces(&active_space_path()));
 
     let initial_data = use_signal(|| db_load_sessions(&config.data_dir));
-    let mut sessions = use_signal(|| initial_data.read().0.clone());
+    let mut sessions = use_signal(|| {
+        let mut list = initial_data.read().0.clone();
+        let target_id = initial_data.read().2.clone();
+        if let Some(s) = list.iter_mut().find(|s| s.id == target_id) {
+            s.status = SessionStatus::Idle;
+        }
+        list
+    });
     let mut active_session_id = use_signal(|| initial_data.read().2.clone());
     let mut session_messages = use_signal(|| initial_data.read().1.clone());
 
     let mut statusline = use_signal(|| {
         let mut st = mock::mock_statusline();
         st.model = config.model.clone();
+        st.cwd = config.data_dir.clone();
+        st.tokens_in = 0;
+        st.tokens_out = 0;
+        st.cost_usd = 0.0;
+        st.context_pct = 0.0;
         st
     });
 
-    let tasks = load_tasks(&config.data_dir);
+    let mut tasks = use_signal(|| load_tasks(&config.data_dir));
     let mut show_tasks = use_signal(|| true);
     let mut is_streaming = use_signal(|| false);
     let mut search_query = use_signal(|| String::new());
@@ -223,6 +235,8 @@ pub fn Workspace(
         sessions.set(new_sessions);
         session_messages.set(new_msgs);
         active_session_id.set(first_id);
+        let fresh_tasks = load_tasks(&oi_dir);
+        tasks.set(fresh_tasks);
     };
 
     let on_open_space = move |path: String| {
@@ -246,6 +260,8 @@ pub fn Workspace(
         sessions.set(new_sessions);
         session_messages.set(new_msgs);
         active_session_id.set(first_id);
+        let fresh_tasks = load_tasks(&oi_dir);
+        tasks.set(fresh_tasks);
     };
 
     let active_title = sessions()
@@ -265,6 +281,13 @@ pub fn Workspace(
 
     let on_send = move |text: String| {
         let sid = active_session_id();
+        {
+            let mut list = sessions();
+            if let Some(s) = list.iter_mut().find(|s| s.id == sid) {
+                s.status = SessionStatus::Active;
+            }
+            sessions.set(list);
+        }
         let existing_len = session_messages().get(&sid).map(|m| m.len()).unwrap_or(0);
         let user_id = format!("{}-user-{}", sid, existing_len + 1);
         let asst_id = format!("{}-asst-{}", sid, existing_len + 2);
@@ -462,11 +485,14 @@ pub fn Workspace(
             }
 
             let mut st = statusline();
-            st.tokens_in += total_in + 80;
             st.tokens_out += total_out;
-            st.cost_usd += (total_in + total_out) as f64 * 0.000002;
+            st.tokens_in = (history.iter().map(|m| m.content.len()).sum::<usize>() / 4) as u64;
+            st.cost_usd += total_out as f64 * 0.000002;
+            st.context_pct =
+                ((st.tokens_in + st.tokens_out) as f64 / st.context_max as f64 * 100.0).min(100.0);
             statusline.set(st);
 
+            let sid_for_cleanup = sid_for_events.clone();
             let final_asst_msg = session_messages()
                 .get(&sid_for_events)
                 .and_then(|list| list.last().cloned());
@@ -483,6 +509,12 @@ pub fn Workspace(
             }
 
             is_streaming.set(false);
+
+            let mut list = sessions();
+            if let Some(s) = list.iter_mut().find(|s| s.id == sid_for_cleanup) {
+                s.status = SessionStatus::Idle;
+            }
+            sessions.set(list);
         });
     };
 
@@ -643,7 +675,7 @@ pub fn Workspace(
                 }
                 if show_tasks() {
                     TaskPanel {
-                        tasks: tasks,
+                        tasks: tasks(),
                         on_close: move |_| show_tasks.set(false),
                     }
                 }

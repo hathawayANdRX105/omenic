@@ -4011,6 +4011,7 @@ dependencies = [
  "dioxus",
  "dioxus-liveview",
  "orbit",
+ "pulldown-cmark",
  "serde",
  "serde_json",
  "session",
