@@ -1,14 +1,29 @@
 use crate::mock::{Session, SessionStatus};
 use dioxus::prelude::*;
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceSpace {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub branch: String,
+    pub is_active: bool,
+}
+
 #[component]
 pub fn Sidebar(
+    spaces: Vec<WorkspaceSpace>,
+    active_space_id: String,
+    on_select_space: EventHandler<String>,
+    on_open_space: EventHandler<String>,
     sessions: Vec<Session>,
     active_id: String,
     on_select: EventHandler<String>,
     on_create: EventHandler<()>,
 ) -> Element {
     let mut show_only_running = use_signal(|| false);
+    let mut show_open_input = use_signal(|| false);
+    let mut custom_path = use_signal(|| String::new());
 
     let active_sessions: Vec<_> = sessions
         .iter()
@@ -32,25 +47,54 @@ pub fn Sidebar(
                     span { class: "sidebar-title", "SPACES" }
                     button {
                         class: "btn-subtle",
-                        onclick: move |_| {},
-                        "打开"
+                        onclick: move |_| show_open_input.set(!show_open_input()),
+                        if show_open_input() { "收起" } else { "打开" }
                     }
                 }
-                div { class: "spaces-list",
-                    div { class: "space-card active",
-                        div { class: "space-card-top",
-                            span { class: "space-name", "web-agent-harness" }
-                            span { class: "space-badge", "active" }
+
+                if show_open_input() {
+                    div { class: "space-open-container",
+                        input {
+                            class: "space-open-input",
+                            r#type: "text",
+                            placeholder: "输入本地路径或 .wt/... 按回车",
+                            value: "{custom_path}",
+                            oninput: move |e| custom_path.set(e.value()),
+                            onkeydown: move |e: KeyboardEvent| {
+                                if e.key() == Key::Enter {
+                                    let p = custom_path().trim().to_string();
+                                    if !p.is_empty() {
+                                        on_open_space.call(p);
+                                        custom_path.set(String::new());
+                                        show_open_input.set(false);
+                                    }
+                                }
+                            }
                         }
-                        span { class: "space-branch", "feat/web-agent-harness" }
-                        span { class: "space-path", ".wt/web-agent-harness" }
                     }
-                    div { class: "space-card",
-                        div { class: "space-card-top",
-                            span { class: "space-name", "omenic" }
+                }
+
+                div { class: "spaces-list",
+                    for space in spaces {
+                        {
+                            let is_active = space.id == active_space_id || space.is_active;
+                            let space_id = space.id.clone();
+                            rsx! {
+                                div {
+                                    key: "{space.id}",
+                                    class: if is_active { "space-card active" } else { "space-card" },
+                                    onclick: move |_| on_select_space.call(space_id.clone()),
+                                    div { class: "space-card-top",
+                                        span { class: "space-name", "{space.name}" }
+                                        if is_active {
+                                            span { class: "space-badge", "active" }
+                                        }
+                                    }
+                                    span { class: "space-branch", "{space.branch}" }
+                                    span { class: "space-path", "{space.path}" }
+                                }
+                            }
                         }
-                        span { class: "space-branch", "main" }
-                        span { class: "space-path", "~/projects/omenic" }
                     }
                 }
             }

@@ -26,10 +26,10 @@ pub enum Tab {
 pub fn App() -> Element {
     let mut current_tab = use_signal(|| Tab::Workspace);
     let mut runtime_config = use_signal(llm::LlmRuntimeConfig::load_from_system);
+    let mut show_quick_switcher = use_signal(|| false);
     let css_content = include_str!("../assets/main.css");
 
     rsx! {
-        // Direct inline style injection to ensure zero desync / white browser defaults
         style { "{css_content}" }
 
         nav { class: "top-nav",
@@ -39,6 +39,19 @@ pub fn App() -> Element {
                     span { class: "workspace-sep", "/" }
                     span { class: "workspace-branch", "feat/web-agent-harness" }
                     span { class: "workspace-status", "clean" }
+                }
+            }
+            div { class: "nav-center",
+                button {
+                    class: "nav-search-bar",
+                    onclick: move |_| {
+                        if current_tab() != Tab::Workspace {
+                            current_tab.set(Tab::Workspace);
+                        }
+                        show_quick_switcher.set(true);
+                    },
+                    span { "搜索会话" }
+                    kbd { "⌘K" }
                 }
             }
             div { class: "nav-right",
@@ -68,6 +81,7 @@ pub fn App() -> Element {
                 Workspace {
                     config: runtime_config(),
                     on_update_config: move |cfg| runtime_config.set(cfg),
+                    show_quick_switcher: show_quick_switcher,
                 }
             },
             Tab::Stats => rsx! { Stats {} },

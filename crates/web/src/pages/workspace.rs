@@ -84,6 +84,80 @@ fn db_save_message(
         }
     });
 }
+fn discover_workspaces(active_path: &str) -> Vec<crate::components::sidebar::WorkspaceSpace> {
+    use crate::components::sidebar::WorkspaceSpace;
+    let mut list = Vec::new();
+
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+    {
+        if output.status.success() {
+            if let Ok(text) = String::from_utf8(output.stdout) {
+                let mut cur_path = String::new();
+                let mut cur_branch = String::new();
+                for line in text.lines() {
+                    if let Some(rest) = line.strip_prefix("worktree ") {
+                        cur_path = rest.trim().to_string();
+                    } else if let Some(rest) = line.strip_prefix("branch refs/heads/") {
+                        cur_branch = rest.trim().to_string();
+                    } else if line.is_empty() && !cur_path.is_empty() {
+                        let name = std::path::Path::new(&cur_path)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| cur_path.clone());
+                        let name_display = if cur_branch == "main" {
+                            format!("{name} (main)")
+                        } else {
+                            name
+                        };
+                        let is_active = cur_path == active_path;
+                        list.push(WorkspaceSpace {
+                            id: cur_path.clone(),
+                            name: name_display,
+                            path: cur_path.clone(),
+                            branch: if cur_branch.is_empty() {
+                                "detached".into()
+                            } else {
+                                cur_branch.clone()
+                            },
+                            is_active,
+                        });
+                        cur_path.clear();
+                        cur_branch.clear();
+                    }
+                }
+                if !cur_path.is_empty() {
+                    let name = std::path::Path::new(&cur_path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| cur_path.clone());
+                    let is_active = cur_path == active_path;
+                    list.push(WorkspaceSpace {
+                        id: cur_path.clone(),
+                        name,
+                        path: cur_path.clone(),
+                        branch: cur_branch,
+                        is_active,
+                    });
+                }
+            }
+        }
+    }
+
+    if list.is_empty() {
+        list.push(WorkspaceSpace {
+            id: active_path.to_string(),
+            name: "web-agent-harness".to_string(),
+            path: active_path.to_string(),
+            branch: "feat/web-agent-harness".to_string(),
+            is_active: true,
+        });
+    }
+
+    list
+}
+
 fn load_tasks(data_dir: &str) -> Vec<TaskItem> {
     let store = task::store::Store::new(Path::new(data_dir));
     if let Ok(real_tasks) = store.load_all() {
@@ -117,7 +191,15 @@ fn load_tasks(data_dir: &str) -> Vec<TaskItem> {
 pub fn Workspace(
     config: LlmRuntimeConfig,
     on_update_config: EventHandler<LlmRuntimeConfig>,
+    show_quick_switcher: Signal<bool>,
 ) -> Element {
+    let mut active_space_path = use_signal(|| {
+        std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| ".".to_string())
+    });
+    let mut spaces = use_signal(|| discover_workspaces(&active_space_path()));
+
     let initial_data = use_signal(|| db_load_sessions(&config.data_dir));
     let mut sessions = use_signal(|| initial_data.read().0.clone());
     let mut active_session_id = use_signal(|| initial_data.read().2.clone());
@@ -132,15 +214,45 @@ pub fn Workspace(
     let tasks = load_tasks(&config.data_dir);
     let mut show_tasks = use_signal(|| true);
     let mut is_streaming = use_signal(|| false);
-    let mut show_quick_switcher = use_signal(|| false);
     let mut search_query = use_signal(|| String::new());
+
+    let on_select_space = move |path: String| {
+        active_space_path.set(path.clone());
+        let oi_dir = format!("{path}/.oi");
+        let (new_sessions, new_msgs, first_id) = db_load_sessions(&oi_dir);
+        sessions.set(new_sessions);
+        session_messages.set(new_msgs);
+        active_session_id.set(first_id);
+    };
+
+    let on_open_space = move |path: String| {
+        let name = std::path::Path::new(&path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone());
+        let new_space = crate::components::sidebar::WorkspaceSpace {
+            id: path.clone(),
+            name,
+            path: path.clone(),
+            branch: "custom".into(),
+            is_active: true,
+        };
+        let mut list = spaces();
+        list.insert(0, new_space);
+        spaces.set(list);
+        active_space_path.set(path.clone());
+        let oi_dir = format!("{path}/.oi");
+        let (new_sessions, new_msgs, first_id) = db_load_sessions(&oi_dir);
+        sessions.set(new_sessions);
+        session_messages.set(new_msgs);
+        active_session_id.set(first_id);
+    };
 
     let active_title = sessions()
         .iter()
         .find(|s| s.id == active_session_id())
         .map(|s| s.title.clone())
         .unwrap_or_else(|| "当前对话".into());
-
     let current_messages = session_messages()
         .get(&active_session_id())
         .cloned()
@@ -445,6 +557,10 @@ pub fn Workspace(
     rsx! {
         div { class: "workspace-layout",
             Sidebar {
+                spaces: spaces(),
+                active_space_id: active_space_path(),
+                on_select_space: on_select_space,
+                on_open_space: on_open_space,
                 sessions: sessions(),
                 active_id: active_session_id(),
                 on_select: on_select_session,
@@ -456,12 +572,6 @@ pub fn Workspace(
                         div { class: "chat-header-left",
                             span { class: "chat-header-title", "{active_title}" }
                             span { class: "chat-header-badge", "{config.model}" }
-                        }
-                        button {
-                            class: "nav-search-bar",
-                            onclick: move |_| show_quick_switcher.set(true),
-                            span { "搜索会话" }
-                            kbd { "⌘K" }
                         }
                         button {
                             class: if show_tasks() { "btn-task-toggle active" } else { "btn-task-toggle" },

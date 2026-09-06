@@ -143,10 +143,7 @@ pub fn Chat(
                                         }
                                     }
                                 }
-
-                                div { class: "toolbar-pill", "自动执行" }
                             }
-
                             div { class: "footer-right",
                                 span { class: "token-stats", "{statusline.tokens_in} / {statusline.tokens_out}" }
                                 button {
@@ -171,7 +168,7 @@ fn MessageBubble(message: ChatMessage) -> Element {
     } else {
         "message assistant"
     };
-    let name = if is_user { "You" } else { "omenic" };
+    let name = if is_user { "You" } else { "Agent" };
 
     rsx! {
         div { class: "{class}",
