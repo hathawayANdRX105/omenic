@@ -181,26 +181,40 @@ pub async fn launch() {
                 if (btn) btn.click();
             }}
         }});
-        // Auto-scroll chat container ONLY when streaming and user is already near bottom
-        let scrollTimeout = null;
-        function isNearBottom(el) {{
-            return el.scrollHeight - el.scrollTop - el.clientHeight < 360;
+        // Smart scroll pin: 用户主动向上滚动后解除跟随,回到底部附近才恢复
+        const PIN_EPS = 48;
+        const pinned = {{ value: true }};
+        function markPinned(el) {{
+            if (!el) return;
+            pinned.value = el.scrollHeight - el.scrollTop - el.clientHeight < PIN_EPS;
         }}
+        function setUpPin() {{
+            const chatEl = document.querySelector(".chat-messages");
+            if (chatEl && !chatEl.__pinWired) {{
+                chatEl.__pinWired = true;
+                chatEl.addEventListener("scroll", function() {{ markPinned(chatEl); }});
+            }}
+        }}
+        let scrollTimeout = null;
         const observer = new MutationObserver(function(mutations) {{
             const chatEl = document.querySelector(".chat-messages");
             if (!chatEl) return;
+            let insideTools = false;
             for (let i = 0; i < mutations.length; i++) {{
                 const target = mutations[i].target;
                 if (target && target.closest && target.closest(".tool-accordion")) {{
-                    return;
-                }}
-                if (mutations[i].addedNodes.length > 0 && isNearBottom(chatEl)) {{
-                    clearTimeout(scrollTimeout);
-                    scrollTimeout = setTimeout(scrollToBottom, 30);
+                    insideTools = true;
                     break;
                 }}
             }}
+            if (insideTools) return;
+            setUpPin();
+            if (pinned.value) {{
+                clearTimeout(scrollTimeout);
+                scrollTimeout = setTimeout(scrollToBottom, 30);
+            }}
         }});
+        setUpPin();
         setTimeout(scrollToBottom, 150);
         observer.observe(document.body, {{ childList: true, subtree: true }});
     }})();

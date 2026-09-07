@@ -228,25 +228,27 @@ fn MessageBubble(message: ChatMessage) -> Element {
 
 #[component]
 fn ToolAccordion(tool: ToolCall) -> Element {
-    let lines_count = tool.detail.lines().count();
-    let is_short_content = lines_count <= 6 && tool.detail.len() <= 350;
-    let mut is_open = use_signal(move || is_short_content);
+    // 默认折叠：Codex/Claude 桌面风格,工具调用压缩成一行,点击才展开
+    let mut is_open = use_signal(|| false);
+
+    let status_marker = match tool.status.as_str() {
+        "running" => ("tool-status running", "⋯"),
+        "error" => ("tool-status error", "✕"),
+        _ => ("tool-status success", "✓"),
+    };
 
     rsx! {
         div { class: "tool-accordion",
             div {
-                class: "tool-accordion-header",
+                class: if is_open() { "tool-accordion-header open" } else { "tool-accordion-header" },
                 onclick: move |e: MouseEvent| {
                     e.stop_propagation();
                     is_open.set(!is_open());
                 },
-                div { class: "tool-header-left",
-                    span { class: "tool-tag", "{tool.kind}" }
-                    span { class: "tool-title-text", "{tool.title}" }
-                }
-                div { class: "tool-header-right",
-                    span { if is_open() { "收起" } else { "详情" } }
-                }
+                span { class: status_marker.0, "{status_marker.1}" }
+                span { class: "tool-tag", "{tool.kind}" }
+                span { class: "tool-title-text", "{tool.title}" }
+                span { class: "tool-toggle-chevron", if is_open() { "▾" } else { "▸" } }
             }
             if is_open() {
                 div { class: "tool-accordion-content",
