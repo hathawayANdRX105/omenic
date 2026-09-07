@@ -1,11 +1,18 @@
 # CK-OCR-REVIEW: ocr AI 语义审查 (L3 LLM 层)
 # 工具: ocr (alibaba/open-code-review, 已装)
-# 触发: harness 调 ocr review, 解析 findings JSON
-# 性能: 2-5min (LLM 调用)
-# SLA: l3 (LLM, 按需)
-# Hook: merge (重量, token 成本高)
-# 注意: mode: file (每个变更文件单独审查) + std diff (harness 接 diff 但 ocr 内部重新读)
-#       这里用 diff 模式 — ocr 自己读 diff 输出 findings
+# 输出 schema (供开发 agent 判断):
+#   id: "OCR-{CATEGORY}-{H|M|L}" (H=conf>=0.7, M=0.4-0.7, L<0.4)
+#   severity: FAIL (critical+conf>=0.7) | WARN (critical/important+mid conf) | INFO (低 conf 误报嫌疑)
+#   confidence: ocr 自己的把握度 0-1
+#   message: "[confidence] finding 描述"
+#   hint: 修复建议 (ocr 提供)
+# 开发 agent 读这些后判断:
+#   - FAIL + conf>=0.7: 必修
+#   - WARN: 看 hint, 决定
+#   - INFO: 误报嫌疑, 不动
+# 性能: 2-5min (LLM)
+# SLA: l3
+# Hook: merge
 enabled: true
 hooks: [merge]
 sla: l3
@@ -19,28 +26,37 @@ harness:
   args:
     - "-c"
     - |
+      exec 2>/tmp/gate-ocr-err.log
       if ! command -v ocr >/dev/null 2>&1; then
-        # ocr 不在 — 返回 INFO finding
-        printf '%s' '[]'
+        echo '[]'
         exit 0
       fi
-      # 调 ocr review (会读 git diff 自动)
       raw=$(ocr review --format json --audience agent 2>/dev/null)
       if [ -z "$raw" ] || [ "$raw" = "null" ]; then
         echo '[]'
         exit 0
       fi
-      # 解析 ocr 输出, 只取高置信度 finding
+      # jaq 兼容: 用 or 链 不用 IN()
       echo "$raw" | jq -c '
-        [.. | objects | select(has("path")) | select((.severity // "") | IN("critical","important","high"))]
-        | .[]
-        | {
-            id: ("OCR-" + (.category // "finding") | ascii_upcase),
-            severity: (if (.severity // "") == "critical" then "FAIL" else "WARN" end),
-            path: .path,
-            line: (.start_line // 0),
-            message: ((.content // .message // "ocr finding") | tostring | .[0:200])
-          }
-      ' 2>/dev/null | jq -cs '.' || echo '[]'
+        [.. | objects
+          | select(has("path"))
+          | select(.severity == "critical" or .severity == "important" or .severity == "high" or .severity == "medium" or .severity == "low")
+          | {
+              id: (((("OCR-" + (.category // "review")) | ascii_upcase) + "-") + (if .confidence >= 0.7 then "H" elif .confidence >= 0.4 then "M" else "L" end)),
+              severity: (
+                if (.severity == "critical" and .confidence >= 0.7) then "FAIL"
+                elif .severity == "critical" then "WARN"
+                elif (.severity == "important" and .confidence >= 0.6) then "WARN"
+                else "INFO"
+                end
+              ),
+              confidence: (.confidence // 0),
+              path: .path,
+              line: (.start_line // .line // 0),
+              message: ("[" + ((.confidence // 0) | tostring) + "] " + (.content // .message // "ocr finding")),
+              hint: (.suggestion // .fix // "")
+            }]
+        | if length == 0 then [] else . end
+      ' 2>/dev/null | jq -c '.' || echo '[]'
 optional: true
 timeout: 600
