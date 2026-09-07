@@ -1,7 +1,8 @@
 # demo: 检查新增代码里有没有遗留 println! / dbg! / eprintln!
 # mode: diff（pre-commit 也跑得起，省 token）
 enabled: true
-hooks: [pre-commit, pre-push, merge]
+hooks: [merge]
+sla: l3
 fail_severity: FAIL
 match:
   paths_include: ["**/*.rs"]

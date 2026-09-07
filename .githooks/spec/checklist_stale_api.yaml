@@ -6,6 +6,7 @@
 # 需人工处理: 所有匹配项
 enabled: true
 hooks: [pre-commit, pre-push, merge]
+sla: l1
 fail_severity: WARN
 match:
   paths_include: ["**/*.rs"]

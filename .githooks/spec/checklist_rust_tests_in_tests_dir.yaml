@@ -15,6 +15,7 @@
 #   干净 base 上三种 git diff 全空 → 候选为空 → 输出 [].
 enabled: true
 hooks: [pre-commit, pre-push, merge]
+sla: l1
 fail_severity: FAIL
 match:
   paths_include: ["**/src/**/*.rs"]

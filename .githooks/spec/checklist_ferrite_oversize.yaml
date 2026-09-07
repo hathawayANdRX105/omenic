@@ -3,7 +3,8 @@
 # 用法：cp omenic/.githooks/spec/checklist_ferrite_oversize.yaml ~/projects/ferrite/.githooks/spec/
 #      然后把 prompt 替换成你想用的 LLM CLI
 enabled: true
-hooks: [pre-push, merge]
+hooks: [merge]
+sla: l3
 fail_severity: WARN
 match:
   paths_include: ["**/*.rs"]

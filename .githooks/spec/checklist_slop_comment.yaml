@@ -6,6 +6,7 @@
 # 刻意不查(误报太高): 空 catch 块、单行空 fn、注释密度、// ---- 分节线(仓库自身惯例) — 靠 clippy + oversize 兜底
 enabled: true
 hooks: [pre-commit, pre-push, merge]
+sla: l1
 fail_severity: WARN
 match:
   paths_include: ["**/*.rs", "**/*.ts", "**/*.js", "**/*.py", "**/*.go"]

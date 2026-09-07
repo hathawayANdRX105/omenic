@@ -1,7 +1,8 @@
 # demo: 文件放置 / 巨型文件检查
 # mode: file（每个变更文件单独传，全文推理）
 enabled: true
-hooks: [pre-push, merge]
+hooks: [merge]
+sla: l3
 fail_severity: WARN
 match:
   paths_include: ["**/*.rs"]

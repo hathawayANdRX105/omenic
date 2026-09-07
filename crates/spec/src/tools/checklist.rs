@@ -551,6 +551,9 @@ pub fn run_named(names: &[String], max_sla: SlaLevel) -> Vec<Finding> {
     let specs = find_specs(&spec_dir());
     if names.is_empty() {
         for (_, s) in &specs {
+            if s.sla > max_sla {
+                continue;
+            }
             eprintln!("{}", s.name);
         }
         return vec![];

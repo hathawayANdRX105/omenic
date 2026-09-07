@@ -4,6 +4,7 @@
 # 限制: awk 启发式, 不能处理嵌套 mod tests, 但足以拦掉最常见的"跑过就算"
 enabled: true
 hooks: [pre-commit, pre-push, merge]
+sla: l1
 fail_severity: WARN
 match:
   paths_include: ["**/tests/*.rs", "**/*_test.rs", "**/test_*.rs"]

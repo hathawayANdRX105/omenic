@@ -5,7 +5,8 @@
 # mode: diff 不适用(clippy 需全 crate 编译), 用 grep 模式让 harness 自己跑
 # 注意: 慢(增量 ~2min 全新 ~7min), 放 pre-push / merge, 不放 pre-commit
 enabled: true
-hooks: [pre-push, merge]
+hooks: [merge]
+sla: l3
 fail_severity: FAIL
 match:
   paths_include: ["**/*.rs"]
