@@ -129,6 +129,10 @@ struct FindingJson {
     #[serde(default)]
     line: Option<u32>,
     message: String,
+    /// Catch-all extra fields (score, confidence, evidence, category, ...)
+    /// 来自 L3 审查 agent 输出, --json 模式暴露给 dev agent.
+    #[serde(default, flatten)]
+    extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -409,6 +413,11 @@ fn convert(spec: &ChecklistSpec, items: Vec<FindingJson>) -> Vec<Finding> {
             let mut f = Finding::new(&id, severity, &msg);
             if let Some(l) = raw.line {
                 f = f.with_line(l);
+            }
+            // Forward harness-provided extra fields (score, confidence, evidence)
+            // as Finding.extra so --json mode can expose them to dev agents.
+            for (k, v) in raw.extra {
+                f = f.with_extra(&k, v.to_string());
             }
             Some(f)
         })

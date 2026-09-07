@@ -28,6 +28,10 @@ enum Commands {
         /// Maximum SLA tier to run (l1/l2/l3, default l1)
         #[arg(long, default_value = "l1")]
         sla: String,
+        /// Output machine-readable JSON with all finding extras (score,
+        /// confidence, evidence, ...). For dev agents to consume.
+        #[arg(long)]
+        json: bool,
     },
     /// Validate issues
     Issue,
@@ -118,7 +122,7 @@ fn main() -> ExitCode {
             let rc = spec::tools::review::run(&args_vec);
             ExitCode::from(rc as u8)
         }
-        Commands::Check { names, sla } => {
+        Commands::Check { names, sla, json } => {
             let max_sla = match sla.as_str() {
                 "l2" => spec::tools::checklist::SlaLevel::L2,
                 "l3" => spec::tools::checklist::SlaLevel::L3,
@@ -126,7 +130,12 @@ fn main() -> ExitCode {
             };
             let mut findings = spec::tools::checklist::run_named(&names, max_sla);
             spec::shared::apply_global_overrides(&mut findings);
-            spec::shared::print_findings(&findings);
+            if json {
+                let arr = serde_json::Value::Array(findings.iter().map(|f| f.to_json()).collect());
+                println!("{}", serde_json::to_string_pretty(&arr).unwrap_or_default());
+            } else {
+                spec::shared::print_findings(&findings);
+            }
             ExitCode::from(spec::shared::exit_code(&findings) as u8)
         }
         Commands::Audit(args) => {

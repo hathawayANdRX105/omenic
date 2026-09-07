@@ -1,22 +1,27 @@
 # CK-OCR-REVIEW: ocr AI 语义审查 (L3 LLM 层)
 # 工具: ocr (alibaba/open-code-review, 已装)
-# 输出 schema (供开发 agent 判断):
-#   id: "OCR-{CATEGORY}-{H|M|L}" (H=conf>=0.7, M=0.4-0.7, L<0.4)
-#   severity: FAIL (critical+conf>=0.7) | WARN (critical/important+mid conf) | INFO (低 conf 误报嫌疑)
-#   confidence: ocr 自己的把握度 0-1
-#   message: "[confidence] finding 描述"
-#   hint: 修复建议 (ocr 提供)
-# 开发 agent 读这些后判断:
-#   - FAIL + conf>=0.7: 必修
-#   - WARN: 看 hint, 决定
-#   - INFO: 误报嫌疑, 不动
+# 设计: 审查 agent 只给 score + confidence + evidence, 不预设"必修/不必修"
+# 调用方 (开发 agent) 读 score 后自行决定阈值.
+# 推荐解读:
+#   score >= 0.8  -> 必修
+#   score 0.5-0.8 -> 看 evidence, 决定
+#   score < 0.5   -> 误报嫌疑, 跳过
+# confidence < 0.4 整体降信
+# 输出 schema (每个 finding):
+#   id: OCR-{category}-{tier}  (H=conf>=0.7, M=0.4-0.7, L=<0.4)
+#   score: 0-1, ocr 算的关注度
+#   confidence: 0-1, ocr 自己把握度
+#   category: ocr 分类 (bug/security/...)
+#   reason: 简短描述
+#   evidence: 修复建议
 # 性能: 2-5min (LLM)
 # SLA: l3
 # Hook: merge
+# Gate severity 设为 INFO: 闸门默认不阻断, 让调用方按 score 决策
 enabled: true
 hooks: [merge]
 sla: l3
-fail_severity: WARN
+fail_severity: INFO
 match:
   paths_include: ["**/*.rs", "**/*.ts", "**/*.py"]
   paths_exclude: ["target/", ".wt/", "**/tests/**", "**/test_*.rs"]
@@ -36,25 +41,30 @@ harness:
         echo '[]'
         exit 0
       fi
-      # jaq 兼容: 用 or 链 不用 IN()
+      # 输出 score+confidence schema, 不预设 severity
       echo "$raw" | jq -c '
         [.. | objects
           | select(has("path"))
-          | select(.severity == "critical" or .severity == "important" or .severity == "high" or .severity == "medium" or .severity == "low")
+          | select((.severity // "") != "")
+          | . as $f
           | {
-              id: (((("OCR-" + (.category // "review")) | ascii_upcase) + "-") + (if .confidence >= 0.7 then "H" elif .confidence >= 0.4 then "M" else "L" end)),
-              severity: (
-                if (.severity == "critical" and .confidence >= 0.7) then "FAIL"
-                elif .severity == "critical" then "WARN"
-                elif (.severity == "important" and .confidence >= 0.6) then "WARN"
-                else "INFO"
+              id: (((("OCR-" + ($f.category // "review")) | ascii_upcase) + "-") + (if ($f.confidence // 0) >= 0.7 then "H" elif ($f.confidence // 0) >= 0.4 then "M" else "L" end)),
+              category: ($f.category // "review"),
+              score: (
+                if ($f.severity // "") == "critical" then 0.9
+                elif ($f.severity // "") == "important" then 0.7
+                elif ($f.severity // "") == "high" then 0.7
+                elif ($f.severity // "") == "medium" then 0.5
+                elif ($f.severity // "") == "low" then 0.3
+                else 0.5
                 end
               ),
-              confidence: (.confidence // 0),
-              path: .path,
-              line: (.start_line // .line // 0),
-              message: ("[" + ((.confidence // 0) | tostring) + "] " + (.content // .message // "ocr finding")),
-              hint: (.suggestion // .fix // "")
+              confidence: ($f.confidence // 0),
+              path: $f.path,
+              line: ($f.start_line // $f.line // 0),
+              reason: ($f.content // $f.message // "ocr finding"),
+              evidence: ($f.suggestion // $f.fix // ""),
+              severity: "INFO"
             }]
         | if length == 0 then [] else . end
       ' 2>/dev/null | jq -c '.' || echo '[]'
