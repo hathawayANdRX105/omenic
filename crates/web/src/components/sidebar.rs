@@ -24,31 +24,30 @@ pub fn Sidebar(
     on_archive: EventHandler<String>,
     on_rename: EventHandler<(String, String)>,
 ) -> Element {
-    // 顶部图标 tab：🗂 工作空间 / 💬 会话
     let mut tab = use_signal(|| "sessions".to_string());
 
     rsx! {
         aside { class: "sidebar",
-            // Top icon tab bar (合并 SPACES 与 AGENTS 入口)
+            // 顶层 icon tab(可悬浮文字提示,跟随 Cursor/Claude 桌面习惯)
             div { class: "sidebar-tabs",
                 button {
                     class: if tab() == "spaces" { "sidebar-tab active" } else { "sidebar-tab" },
                     title: "工作空间",
                     onclick: move |_| tab.set("spaces".into()),
-                    "🗂"
+                    "◇"
                 }
                 button {
                     class: if tab() == "sessions" { "sidebar-tab active" } else { "sidebar-tab" },
                     title: "会话",
                     onclick: move |_| tab.set("sessions".into()),
-                    "💬"
+                    "▦"
                 }
             }
 
             if tab() == "spaces" {
-                div { class: "sidebar-section sidebar-spaces-section sidebar-fill",
+                div { class: "sidebar-section sidebar-fill",
                     div { class: "sidebar-section-header",
-                        span { class: "sidebar-title", "SPACES" }
+                        span { class: "sidebar-title", "Spaces" }
                         button {
                             class: "btn-subtle",
                             onclick: move |_| on_trigger_picker.call(()),
@@ -82,9 +81,9 @@ pub fn Sidebar(
                     }
                 }
             } else {
-                div { class: "sidebar-section sidebar-agents-section sidebar-fill",
+                div { class: "sidebar-section sidebar-fill",
                     div { class: "sidebar-section-header",
-                        span { class: "sidebar-title", "会话" }
+                        span { class: "sidebar-title", "Sessions" }
                         button {
                             class: "btn-subtle-accent",
                             onclick: move |_| on_create.call(()),

@@ -209,27 +209,32 @@ html, body {
 
 .sidebar-tabs {
     display: flex;
-    gap: 4px;
-    padding: 8px 8px 0;
+    gap: 0;
+    padding: 0;
     border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
 }
 
 .sidebar-tab {
     flex: 1;
-    padding: 6px 0;
-    font-size: 14px;
+    padding: 9px 0 10px;
+    font-size: 16px;
     background: transparent;
     border: none;
     color: var(--text-muted);
     border-bottom: 2px solid transparent;
     cursor: pointer;
-    transition: color 0.15s ease, border-color 0.15s ease;
+    transition: all 0.15s ease;
     line-height: 1;
+    font-family: -apple-system, sans-serif;
 }
 
-.sidebar-tab:hover { color: var(--text-primary); }
-.sidebar-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.sidebar-tab:hover { color: var(--text-secondary); background: rgba(255,255,255,0.02); }
+.sidebar-tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--accent);
+    background: rgba(138,123,174,0.05);
+}
 
 .sidebar-section {
     flex: 1;
