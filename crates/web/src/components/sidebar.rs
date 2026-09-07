@@ -25,6 +25,8 @@ pub fn Sidebar(
     on_rename: EventHandler<(String, String)>,
 ) -> Element {
     let mut tab = use_signal(|| "sessions".to_string());
+    let mut rename_open = use_signal(|| false);
+    let mut rename_val = use_signal(String::new);
 
     rsx! {
         aside { class: "sidebar",
@@ -91,16 +93,95 @@ pub fn Sidebar(
                         }
                     }
                     div { class: "agents-list",
-                        for session in sessions {
+                        for session in sessions.iter() {
                             SessionRow {
                                 key: "{session.id}",
                                 session: session.clone(),
                                 active: session.id == active_id,
                                 on_select: on_select,
-                                on_delete: on_delete,
-                                on_archive: on_archive,
-                                on_rename: on_rename,
                             }
+                        }
+                    }
+
+                    {
+                        let active = sessions.iter().find(|s| s.id == active_id).cloned();
+                        if let Some(active) = active {
+                            let id_for_rename = active.id.clone();
+                            let id_for_archive = active.id.clone();
+                            let id_for_delete = active.id.clone();
+                            let active_is_archived = active.status == SessionStatus::Archived;
+                            rsx! {
+                                div { class: "sidebar-action-bar",
+                                    if rename_open() {
+                                        input {
+                                            class: "sidebar-rename-input",
+                                            value: "{rename_val}",
+                                            placeholder: "新名称",
+                                            oninput: move |e| rename_val.set(e.value()),
+                                            autofocus: true,
+                                            onkeydown: {
+                                                let id = id_for_rename.clone();
+                                                let on_rename = on_rename;
+                                                move |e: KeyboardEvent| {
+                                                    if e.key() == Key::Enter {
+                                                        let t = rename_val().trim().to_string();
+                                                        if !t.is_empty() {
+                                                            on_rename.call((id.clone(), t));
+                                                        }
+                                                        rename_open.set(false);
+                                                    } else if e.key() == Key::Escape {
+                                                        rename_open.set(false);
+                                                    }
+                                                }
+                                            },
+                                        }
+                                        button {
+                                            class: "sidebar-action-icon",
+                                            title: "确认重命名",
+                                            onclick: {
+                                                let id = id_for_rename.clone();
+                                                let on_rename = on_rename;
+                                                move |_| {
+                                                    let t = rename_val().trim().to_string();
+                                                    if !t.is_empty() {
+                                                        on_rename.call((id.clone(), t));
+                                                    }
+                                                    rename_open.set(false);
+                                                }
+                                            },
+                                            "✓"
+                                        }
+                                    } else {
+                                        button {
+                                            class: "sidebar-action-icon",
+                                            title: "重命名会话",
+                                            onclick: {
+                                                let title = active.title.clone();
+                                                move |_| {
+                                                    rename_val.set(title.clone());
+                                                    rename_open.set(true);
+                                                }
+                                            },
+                                            "✎"
+                                        }
+                                    }
+                                    button {
+                                        class: "sidebar-action-icon",
+                                        title: if active_is_archived { "取消归档" } else { "归档会话" },
+                                        onclick: move |_| on_archive.call(id_for_archive.clone()),
+                                        if active_is_archived { "📤" } else { "📥" }
+                                    }
+                                    button {
+                                        class: "sidebar-action-icon danger",
+                                        title: "删除会话",
+                                        onclick: move |_| on_delete.call(id_for_delete.clone()),
+                                        "🗑"
+                                    }
+                                    span { class: "sidebar-action-hint", "{active.title}" }
+                                }
+                            }
+                        } else {
+                            rsx! {}
                         }
                     }
                 }
@@ -110,19 +191,7 @@ pub fn Sidebar(
 }
 
 #[component]
-fn SessionRow(
-    session: Session,
-    active: bool,
-    on_select: EventHandler<String>,
-    on_delete: EventHandler<String>,
-    on_archive: EventHandler<String>,
-    on_rename: EventHandler<(String, String)>,
-) -> Element {
-    let class = if active {
-        "session-row active"
-    } else {
-        "session-row"
-    };
+fn SessionRow(session: Session, active: bool, on_select: EventHandler<String>) -> Element {
     let is_run = session.status == SessionStatus::Active;
     let is_archived = session.status == SessionStatus::Archived;
     let dot_class = if is_run {
@@ -131,27 +200,7 @@ fn SessionRow(
         "status-dot idle"
     };
     let status_label = if is_run { "RUN" } else { "IDLE" };
-
     let id_for_select = session.id.clone();
-    let id_delete = session.id.clone();
-    let id_archive = session.id.clone();
-    let id_rename = session.id.clone();
-
-    let mut edit_mode = use_signal(|| false);
-    let mut edit_text = use_signal(|| session.title.clone());
-    let title_for_submit = session.title.clone();
-
-    let tag = if session.title.contains("orbit") {
-        "orbit"
-    } else if session.title.contains("MCP") {
-        "mcp"
-    } else if session.title.contains("memory") {
-        "memory"
-    } else if session.title.contains("TUI") {
-        "tui"
-    } else {
-        "task"
-    };
 
     rsx! {
         div {
@@ -162,89 +211,17 @@ fn SessionRow(
             } else {
                 "session-row"
             },
-            div {
-                class: "session-main-click",
-                onclick: move |_| {
-                    if !edit_mode() { on_select.call(id_for_select.clone()); }
-                },
-                div { class: "session-dot-col",
-                    span { class: "{dot_class}" }
-                }
-                div { class: "session-content",
-                    if edit_mode() {
-                        input {
-                            class: "session-rename-input",
-                            r#type: "text",
-                            value: "{edit_text}",
-                            oninput: move |e| edit_text.set(e.value()),
-                            onkeydown: {
-                                let id_for_key = id_rename.clone();
-                                let on_rename_key = on_rename;
-                                let title0 = session.title.clone();
-                                move |e: KeyboardEvent| {
-                                    if e.key() == Key::Enter {
-                                        let t = edit_text().trim().to_string();
-                                        if !t.is_empty() && t != title0 {
-                                            on_rename_key.call((id_for_key.clone(), t));
-                                        }
-                                        edit_mode.set(false);
-                                    }
-                                }
-                            },
-                            onblur: {
-                                let id_for_blur = id_rename.clone();
-                                let on_rename_blur = on_rename;
-                                let title0 = session.title.clone();
-                                move |_| {
-                                    let t = edit_text().trim().to_string();
-                                    if !t.is_empty() && t != title0 {
-                                        on_rename_blur.call((id_for_blur.clone(), t));
-                                    }
-                                    edit_mode.set(false);
-                                }
-                            },
-                            autofocus: true,
-                        }
-                    } else {
-                        div { class: "session-title-row",
-                            span { class: "session-title", "{session.title}" }
-                            span { class: "session-tag-chip", "{status_label}" }
-                        }
-                        div { class: "session-meta-row",
-                            span { "{tag}" }
-                            span { class: "session-time", "{session.last_active}" }
-                        }
-                    }
-                }
+            onclick: move |_| on_select.call(id_for_select.clone()),
+            div { class: "session-dot-col",
+                span { class: "{dot_class}" }
             }
-            div { class: "session-actions",
-                button {
-                    class: "session-action-btn",
-                    title: "重命名",
-                    onclick: move |e: MouseEvent| {
-                        e.stop_propagation();
-                        edit_text.set(session.title.clone());
-                        edit_mode.set(true);
-                    },
-                    "✎"
+            div { class: "session-content",
+                div { class: "session-title-row",
+                    span { class: "session-title", "{session.title}" }
+                    span { class: "session-tag-chip", "{status_label}" }
                 }
-                button {
-                    class: "session-action-btn",
-                    title: if is_archived { "取消归档" } else { "归档" },
-                    onclick: move |e: MouseEvent| {
-                        e.stop_propagation();
-                        on_archive.call(id_archive.clone());
-                    },
-                    if is_archived { "📤" } else { "📥" }
-                }
-                button {
-                    class: "session-action-btn danger",
-                    title: "删除会话",
-                    onclick: move |e: MouseEvent| {
-                        e.stop_propagation();
-                        on_delete.call(id_delete.clone());
-                    },
-                    "🗑"
+                div { class: "session-meta-row",
+                    span { class: "session-time", "{session.last_active}" }
                 }
             }
         }

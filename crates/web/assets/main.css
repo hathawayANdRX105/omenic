@@ -767,6 +767,26 @@ html, body {
     overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: rgba(255,255,255,0.1) transparent;
+    padding: 4px 0;
+    margin-top: 2px;
+}
+
+/* 工具行最小高度固定+文字真正截断,避免 28 个工具全堆一起变成细分空白 */
+.process-panel .tool-accordion {
+    min-height: 22px;
+    flex-shrink: 0;
+}
+
+.process-panel .tool-title-text {
+    display: inline-block;
+    vertical-align: middle;
+    max-width: calc(100% - 60px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11.5px;
+    line-height: 1.4;
+    height: 1.4em;
 }
 
 .process-panel::-webkit-scrollbar { width: 3px; }
@@ -2235,4 +2255,60 @@ kbd {
     font-size: 12.5px;
     max-width: 420px;
     line-height: 1.6;
+}
+
+/* ── 侧栏底部操作列(作用于当前选中会话) ───────────────────────────────────── */
+.sidebar-action-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border-top: 1px solid var(--border-subtle);
+    background: rgba(0,0,0,0.22);
+    flex-shrink: 0;
+}
+
+.sidebar-action-icon {
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    border-radius: 5px;
+    color: var(--text-muted);
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    transition: all 0.15s ease;
+}
+.sidebar-action-icon:hover {
+    color: var(--text-primary);
+    border-color: var(--border-hover);
+    background: var(--bg-hover);
+}
+.sidebar-action-icon.danger:hover {
+    color: #f87171;
+    border-color: rgba(248,113,113,0.35);
+    background: rgba(248,113,113,0.1);
+}
+
+.sidebar-action-hint {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-left: auto;
+    max-width: 110px;
+    font-family: var(--font-mono);
+}
+
+.sidebar-rename-input {
+    flex: 1;
+    background: var(--bg-base);
+    border: 1px solid var(--accent);
+    border-radius: 5px;
+    color: var(--text-primary);
+    padding: 4px 7px;
+    font-size: 12.5px;
+    outline: none;
+    min-width: 0;
 }
