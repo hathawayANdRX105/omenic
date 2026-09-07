@@ -76,6 +76,8 @@ fn test_e2e_session_deletion_and_creation_diff() {
                 on_select: move |_| {},
                 on_create: on_create,
                 on_delete: on_delete,
+                on_archive: move |_| {},
+                on_rename: move |(_id, _t): (String, String)| {},
             }
         }
     }

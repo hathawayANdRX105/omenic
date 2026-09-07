@@ -203,19 +203,36 @@ fn MessageBubble(message: ChatMessage) -> Element {
         "message assistant"
     };
     let name = if is_user { "You" } else { "Agent" };
+    let has_tools = !message.tool_calls.is_empty();
+    // 默认显示最终结果,过程只在用户点击时展开
+    let mut view_mode = use_signal(|| "result"); // "result" | "process"
 
     rsx! {
         div { class: "{class}",
             div { class: "message-header",
                 span { class: "message-name", "{name}" }
                 span { class: "message-time", "{message.timestamp}" }
+                if has_tools {
+                    div { class: "msg-tabs",
+                        button {
+                            class: if view_mode() == "result" { "msg-tab active" } else { "msg-tab" },
+                            onclick: move |e| { e.stop_propagation(); view_mode.set("result"); },
+                            "结果"
+                        }
+                        button {
+                            class: if view_mode() == "process" { "msg-tab active" } else { "msg-tab" },
+                            onclick: move |e| { e.stop_propagation(); view_mode.set("process"); },
+                            "过程 ({message.tool_calls.len()})"
+                        }
+                    }
+                }
             }
             div { class: "message-body markdown-body",
-                // Rendered markdown
-                div { dangerous_inner_html: "{markdown_to_html(&message.content)}" }
-
-                if !message.tool_calls.is_empty() {
-                    div { class: "message-tools-container",
+                if view_mode() == "result" || !has_tools {
+                    div { class: "final-content", dangerous_inner_html: "{markdown_to_html(&message.content)}" }
+                }
+                if view_mode() == "process" && has_tools {
+                    div { class: "process-panel",
                         for (t_idx, tool) in message.tool_calls.iter().enumerate() {
                             ToolAccordion { key: "{tool.id}-{t_idx}", tool: tool.clone() }
                         }

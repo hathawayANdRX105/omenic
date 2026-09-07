@@ -87,6 +87,8 @@ fn test_sidebar_render() {
                 on_select: move |_| {},
                 on_create: move |_| {},
                 on_delete: move |_| {},
+                on_archive: move |_| {},
+                on_rename: move |(_id, _t): (String, String)| {},
             }
         }
     }

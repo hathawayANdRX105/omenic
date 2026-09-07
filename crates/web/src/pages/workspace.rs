@@ -314,14 +314,50 @@ pub fn Workspace(
     let active_title_for_send = active_title.clone();
 
     let on_send = move |text: String| {
-        let sid = active_session_id();
+        {
+            // 若切到无会话的工作区+直接发送,先自建新会话再走原流程
+            if active_session_id().is_empty()
+                || !sessions().iter().any(|s| s.id == active_session_id())
+            {
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis();
+                let new_id = format!("s-{}", ts);
+                let new_session = Session {
+                    id: new_id.clone(),
+                    title: format!("会话 {}", ts % 1_000_000),
+                    last_active: "刚刚".into(),
+                    model: config_send.model.clone(),
+                    status: SessionStatus::Idle,
+                    last_active_epoch: ts as u64,
+                };
+                let mut list = sessions();
+                list.insert(0, new_session);
+                sessions.set(list);
+                let mut map = session_messages();
+                map.insert(new_id.clone(), Vec::new());
+                session_messages.set(map);
+                active_session_id.set(new_id.clone());
+                let data_dir = format!("{}/.oi", active_space_path());
+                let sid2 = new_id.clone();
+                let t = format!("会话 {}", ts % 1_000_000);
+                std::thread::spawn(move || {
+                    let path = std::path::PathBuf::from(data_dir).join("sessions.db");
+                    if let Ok(db) = session::SessionDb::open(path) {
+                        let _ = db.create_session(&sid2, &t);
+                    }
+                });
+            }
+        }
         {
             let mut list = sessions();
-            if let Some(s) = list.iter_mut().find(|s| s.id == sid) {
+            if let Some(s) = list.iter_mut().find(|s| s.id == active_session_id()) {
                 s.status = SessionStatus::Active;
             }
             sessions.set(list);
         }
+        let sid = active_session_id();
         let existing_len = session_messages().get(&sid).map(|m| m.len()).unwrap_or(0);
         let user_id = format!("{}-user-{}", sid, existing_len + 1);
         let asst_id = format!("{}-asst-{}", sid, existing_len + 2);
@@ -634,6 +670,40 @@ pub fn Workspace(
         });
     };
 
+    // 会话归档:仅前端状态切换(数据库还没有归档字段);Rename 单位入库
+    let on_archive_session = move |id: String| {
+        let mut list = sessions();
+        if let Some(s) = list.iter_mut().find(|s| s.id == id) {
+            s.status = if s.status == SessionStatus::Archived {
+                SessionStatus::Idle
+            } else {
+                SessionStatus::Archived
+            };
+        }
+        sessions.set(list);
+    };
+
+    let on_rename_session = move |(id, new_title): (String, String)| {
+        let trimmed = new_title.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        let mut list = sessions();
+        if let Some(s) = list.iter_mut().find(|s| s.id == id) {
+            s.title = trimmed.to_string();
+        }
+        sessions.set(list);
+        let data_dir = format!("{}/.oi", active_space_path());
+        let tid = id.clone();
+        let new_t = trimmed.to_string();
+        std::thread::spawn(move || {
+            let path = std::path::PathBuf::from(data_dir).join("sessions.db");
+            if let Ok(db) = session::SessionDb::open(path) {
+                let _ = db.create_session(&tid, &new_t);
+            }
+        });
+    };
+
     let on_model_change = move |m: String| {
         let mut st = statusline();
         st.model = m.clone();
@@ -674,6 +744,8 @@ pub fn Workspace(
                 on_select: on_select_session,
                 on_create: on_create_session,
                 on_delete: on_delete_session,
+                on_archive: on_archive_session,
+                on_rename: on_rename_session,
             }
             div { class: "workspace-main",
                 div { class: "workspace-chat-area",

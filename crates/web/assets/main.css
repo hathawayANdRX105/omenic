@@ -207,16 +207,100 @@ html, body {
     user-select: none;
 }
 
-.sidebar-spaces-section {
-    padding: 12px 14px;
-    border-bottom: 1px solid var(--border-subtle);
+.sidebar-tabs {
     display: flex;
-    flex-direction: column;
-    gap: 8px;
-    height: 40%;
-    max-height: 40%;
+    gap: 4px;
+    padding: 8px 8px 0;
+    border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
 }
+
+.sidebar-tab {
+    flex: 1;
+    padding: 6px 0;
+    font-size: 14px;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: color 0.15s ease, border-color 0.15s ease;
+    line-height: 1;
+}
+
+.sidebar-tab:hover { color: var(--text-primary); }
+.sidebar-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.sidebar-section {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.sidebar-fill { height: 100%; }
+
+.sidebar-spaces-section {
+    padding: 12px 14px;
+    border-bottom: none;
+    height: auto;
+    max-height: 100%;
+}
+
+.session-actions {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    display: flex;
+    gap: 2px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+    background: rgba(15,15,20,0.6);
+    border-radius: 4px;
+    padding: 2px 4px;
+}
+
+.session-row:hover .session-actions,
+.session-row.active .session-actions {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.session-action-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: color 0.12s ease, background 0.12s ease;
+}
+.session-action-btn:hover { color: var(--text-primary); background: rgba(255,255,255,0.06); }
+.session-action-btn.danger:hover { color: #f87171; background: rgba(248,113,113,0.18); }
+
+.session-rename-input {
+    width: 100%;
+    flex: 1;
+    background: var(--bg-base);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 13px;
+    padding: 4px 7px;
+    outline: none;
+    min-width: 0;
+}
+
+/* 归档会话弱化显示 */
+.session-row.archived {
+    opacity: 0.45;
+}
+.session-row.archived .session-title { text-decoration: line-through; }
+
 
 .sidebar-section-header {
     display: flex;
@@ -636,6 +720,53 @@ html, body {
     align-items: center;
     gap: 8px;
 }
+
+/* ── 消息体内的 结果/过程 双 tab ─────────────────────────────────────────── */
+.msg-tabs {
+    display: inline-flex;
+    gap: 2px;
+    background: rgba(0,0,0,0.25);
+    padding: 2px;
+    border-radius: 4px;
+    margin-left: auto;
+}
+
+.msg-tab {
+    padding: 1px 7px;
+    font-size: 10px;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.12s ease;
+    font-family: var(--font-mono);
+}
+
+.msg-tab:hover { color: var(--text-primary); }
+.msg-tab.active {
+    background: var(--bg-surface-elevated);
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.final-content {
+    display: block;
+}
+
+.process-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 460px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.1) transparent;
+}
+
+.process-panel::-webkit-scrollbar { width: 3px; }
+.process-panel::-webkit-scrollbar-track { background: transparent; }
+.process-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
 
 .chat-container {
     flex: 1;
