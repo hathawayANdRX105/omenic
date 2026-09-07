@@ -20,6 +20,7 @@ fn test_e2e_session_deletion_and_creation_diff() {
                     last_active: "刚刚".into(),
                     model: "default".into(),
                     status: SessionStatus::Idle,
+                    last_active_epoch: 0,
                 },
                 Session {
                     id: "s-2".into(),
@@ -27,6 +28,7 @@ fn test_e2e_session_deletion_and_creation_diff() {
                     last_active: "刚刚".into(),
                     model: "default".into(),
                     status: SessionStatus::Idle,
+                    last_active_epoch: 0,
                 },
                 Session {
                     id: "s-3".into(),
@@ -34,6 +36,7 @@ fn test_e2e_session_deletion_and_creation_diff() {
                     last_active: "刚刚".into(),
                     model: "default".into(),
                     status: SessionStatus::Idle,
+                    last_active_epoch: 0,
                 },
             ]
         });
@@ -56,6 +59,7 @@ fn test_e2e_session_deletion_and_creation_diff() {
                     last_active: "刚刚".into(),
                     model: "default".into(),
                     status: SessionStatus::Idle,
+                    last_active_epoch: 0,
                 },
             );
             sessions.set(list);

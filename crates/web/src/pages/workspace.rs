@@ -1,6 +1,5 @@
 use crate::components::chat::Chat;
 use crate::components::sidebar::Sidebar;
-use crate::components::taskpanel::TaskPanel;
 use crate::llm::LlmRuntimeConfig;
 use crate::mock::{self, ChatMessage, Session, SessionStatus, TaskItem, ToolCall};
 use dioxus::prelude::*;
@@ -23,12 +22,14 @@ pub fn db_load_sessions(
         let mut messages = HashMap::new();
         let first_id = summaries[0].id.clone();
         for s in summaries {
+            let last_ms = s.updated_at_ms as u64;
             sessions.push(Session {
                 id: s.id.clone(),
                 title: s.title.clone(),
-                last_active: "刚刚".into(),
+                last_active: crate::mock::format_relative_time(last_ms),
                 model: "default".into(),
                 status: SessionStatus::Idle,
+                last_active_epoch: last_ms,
             });
             if let Ok(db_msgs) = db.load_messages(&s.id, 100) {
                 let chat_msgs: Vec<ChatMessage> = db_msgs
@@ -38,8 +39,11 @@ pub fn db_load_sessions(
                             session::SessionRole::User => "user",
                             _ => "assistant",
                         };
+                        let ts_rel = crate::mock::format_relative_time(m.created_at_ms as u64);
                         if let Ok(mut parsed) = serde_json::from_str::<ChatMessage>(&m.text) {
                             parsed.id = format!("{}-{}-{}", s.id, parsed.id, m.seq);
+                            parsed.timestamp = ts_rel.clone();
+                            parsed.ts_epoch_ms = m.created_at_ms as u64;
                             parsed
                         } else {
                             ChatMessage {
@@ -47,7 +51,8 @@ pub fn db_load_sessions(
                                 role: role.into(),
                                 content: m.text,
                                 tool_calls: vec![],
-                                timestamp: "历史".into(),
+                                timestamp: ts_rel,
+                                ts_epoch_ms: m.created_at_ms as u64,
                             }
                         }
                     })
@@ -249,8 +254,6 @@ pub fn Workspace(
         st
     });
 
-    let mut tasks = use_signal(|| load_tasks(&format!("{}/.oi", active_space_path())));
-    let mut show_tasks = use_signal(|| true);
     let mut is_streaming = use_signal(|| false);
     let mut search_query = use_signal(|| String::new());
     // Space Directory Picker state
@@ -271,8 +274,6 @@ pub fn Workspace(
         sessions.set(new_sessions);
         session_messages.set(new_msgs);
         active_session_id.set(first_id);
-        let fresh_tasks = load_tasks(&oi_dir);
-        tasks.set(fresh_tasks);
     };
     let mut on_open_space = move |path: String| {
         let name = std::path::Path::new(&path)
@@ -295,8 +296,6 @@ pub fn Workspace(
         sessions.set(new_sessions);
         session_messages.set(new_msgs);
         active_session_id.set(first_id);
-        let fresh_tasks = load_tasks(&oi_dir);
-        tasks.set(fresh_tasks);
     };
 
     let active_title = sessions()
@@ -327,12 +326,17 @@ pub fn Workspace(
         let user_id = format!("{}-user-{}", sid, existing_len + 1);
         let asst_id = format!("{}-asst-{}", sid, existing_len + 2);
 
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
         let user_msg = ChatMessage {
             id: user_id,
             role: "user".into(),
             content: text.clone(),
             tool_calls: vec![],
             timestamp: "刚刚".into(),
+            ts_epoch_ms: now_ms,
         };
 
         let asst_msg = ChatMessage {
@@ -341,6 +345,7 @@ pub fn Workspace(
             content: String::new(),
             tool_calls: vec![],
             timestamp: "刚刚".into(),
+            ts_epoch_ms: now_ms,
         };
 
         let history = {
@@ -582,6 +587,7 @@ pub fn Workspace(
             last_active: "刚刚".into(),
             model: config_create.model.clone(),
             status: SessionStatus::Idle,
+            last_active_epoch: ts as u64,
         };
         let mut current_sessions = sessions();
         current_sessions.insert(0, new_session);
@@ -676,11 +682,6 @@ pub fn Workspace(
                             span { class: "chat-header-title", "{active_title}" }
                             span { class: "chat-header-badge", "{config.model}" }
                         }
-                        button {
-                            class: if show_tasks() { "btn-task-toggle active" } else { "btn-task-toggle" },
-                            onclick: move |_| show_tasks.set(!show_tasks()),
-                            span { "任务看板 {tasks.len()} ▾" }
-                        }
                     }
                     Chat {
                         messages: current_messages,
@@ -741,12 +742,6 @@ pub fn Workspace(
                                 }
                             }
                         }
-                    }
-                }
-                if show_tasks() {
-                    TaskPanel {
-                        tasks: tasks(),
-                        on_close: move |_| show_tasks.set(false),
                     }
                 }
                 if show_space_picker() {

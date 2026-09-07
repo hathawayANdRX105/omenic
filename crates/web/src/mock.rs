@@ -25,6 +25,9 @@ pub struct ChatMessage {
     #[serde(default)]
     pub tool_calls: Vec<ToolCall>,
     pub timestamp: String,
+    /// Unix epoch milliseconds — 真实落库时间戳,用于渲染相对时间
+    #[serde(default)]
+    pub ts_epoch_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -34,6 +37,9 @@ pub struct Session {
     pub last_active: String,
     pub model: String,
     pub status: SessionStatus,
+    /// Unix epoch milliseconds for last activity (for real relative-time display)
+    #[serde(default)]
+    pub last_active_epoch: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -145,6 +151,35 @@ pub struct ConfigData {
 
 // ── Mock data generators ────────────────────────────────────────────────────
 
+/// 把毫秒时间戳转成相对时间："刚刚"/"X 分钟前"/"X 小时前"/"昨天 HH:MM"
+pub fn format_relative_time(epoch_ms: u64) -> String {
+    if epoch_ms == 0 {
+        return "刚刚".into();
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let age_ms = now.saturating_sub(epoch_ms);
+    let secs = age_ms / 1000;
+    if secs < 60 {
+        return "刚刚".into();
+    }
+    let mins = secs / 60;
+    if mins < 60 {
+        return format!("{mins} 分钟前");
+    }
+    let hrs = mins / 60;
+    if hrs < 24 {
+        return format!("{hrs} 小时前");
+    }
+    let days = hrs / 24;
+    match days {
+        1 => "昨天".into(),
+        _ => format!("{days} 天前"),
+    }
+}
+
 pub fn mock_sessions() -> Vec<Session> {
     vec![
         Session {
@@ -153,6 +188,7 @@ pub fn mock_sessions() -> Vec<Session> {
             last_active: "2 分钟前".into(),
             model: "qwen3-32b".into(),
             status: SessionStatus::Idle,
+            last_active_epoch: 0,
         },
         Session {
             id: "s2".into(),
@@ -160,6 +196,7 @@ pub fn mock_sessions() -> Vec<Session> {
             last_active: "15 分钟前".into(),
             model: "qwen3-32b".into(),
             status: SessionStatus::Idle,
+            last_active_epoch: 0,
         },
         Session {
             id: "s3".into(),
@@ -167,6 +204,7 @@ pub fn mock_sessions() -> Vec<Session> {
             last_active: "1 小时前".into(),
             model: "agnes-2.5-flash".into(),
             status: SessionStatus::Idle,
+            last_active_epoch: 0,
         },
         Session {
             id: "s4".into(),
@@ -174,6 +212,7 @@ pub fn mock_sessions() -> Vec<Session> {
             last_active: "3 小时前".into(),
             model: "qwen3-32b".into(),
             status: SessionStatus::Archived,
+            last_active_epoch: 0,
         },
         Session {
             id: "s5".into(),
@@ -181,6 +220,7 @@ pub fn mock_sessions() -> Vec<Session> {
             last_active: "昨天".into(),
             model: "agnes-2.5-flash".into(),
             status: SessionStatus::Archived,
+            last_active_epoch: 0,
         },
     ]
 }
@@ -198,6 +238,7 @@ pub fn mock_messages_for_session(session_id: &str) -> Vec<ChatMessage> {
                 content: "我们需要将外部 MCP 服务的工具注册进 worker 的 runner 中。".into(),
                 tool_calls: vec![],
                 timestamp: "12:10".into(),
+                ts_epoch_ms: 0,
             },
             ChatMessage {
                 id: "s2-m2".into(),
@@ -214,6 +255,7 @@ pub fn mock_messages_for_session(session_id: &str) -> Vec<ChatMessage> {
                     },
                 ],
                 timestamp: "12:12".into(),
+                ts_epoch_ms: 0,
             },
         ],
         "s3" => vec![
@@ -223,6 +265,7 @@ pub fn mock_messages_for_session(session_id: &str) -> Vec<ChatMessage> {
                 content: "排查 memory store 在意外断电时可能发生的数据截断问题。".into(),
                 tool_calls: vec![],
                 timestamp: "10:05".into(),
+                ts_epoch_ms: 0,
             },
             ChatMessage {
                 id: "s3-m2".into(),
@@ -239,6 +282,7 @@ pub fn mock_messages_for_session(session_id: &str) -> Vec<ChatMessage> {
                     },
                 ],
                 timestamp: "10:08".into(),
+                ts_epoch_ms: 0,
             },
         ],
         _ => vec![
@@ -248,6 +292,7 @@ pub fn mock_messages_for_session(session_id: &str) -> Vec<ChatMessage> {
                 content: "帮我重构 orbit 的 compaction 策略，把固定 50 条改成字符预算模式".into(),
                 tool_calls: vec![],
                 timestamp: "14:30".into(),
+                ts_epoch_ms: 0,
             },
             ChatMessage {
                 id: "m2".into(),
@@ -272,6 +317,7 @@ pub fn mock_messages_for_session(session_id: &str) -> Vec<ChatMessage> {
                     },
                 ],
                 timestamp: "14:31".into(),
+                ts_epoch_ms: 0,
             },
             ChatMessage {
                 id: "m3".into(),
@@ -279,6 +325,7 @@ pub fn mock_messages_for_session(session_id: &str) -> Vec<ChatMessage> {
                 content: "kept_chars 的守卫逻辑有 bug，system_prompt 没算进去".into(),
                 tool_calls: vec![],
                 timestamp: "14:35".into(),
+                ts_epoch_ms: 0,
             },
             ChatMessage {
                 id: "m4".into(),
@@ -286,6 +333,7 @@ pub fn mock_messages_for_session(session_id: &str) -> Vec<ChatMessage> {
                 content: "确认了。`compact()` 里 `kept_chars` 只统计了 `messages` 的字符，漏掉了 `system_prompt` 的长度。\n修复：在 `compact()` 开头把 `system_prompt.len()` 加入 `kept_chars` 初始值。\n测试通过。".into(),
                 tool_calls: vec![],
                 timestamp: "14:36".into(),
+                ts_epoch_ms: 0,
             },
         ],
     }
