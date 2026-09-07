@@ -9,7 +9,9 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-fn db_load_sessions(data_dir: &str) -> (Vec<Session>, HashMap<String, Vec<ChatMessage>>, String) {
+pub fn db_load_sessions(
+    data_dir: &str,
+) -> (Vec<Session>, HashMap<String, Vec<ChatMessage>>, String) {
     let path = std::path::PathBuf::from(data_dir).join("sessions.db");
     let res = std::thread::spawn(move || -> Result<_, session::SessionError> {
         let db = session::SessionDb::open(path)?;
@@ -64,7 +66,7 @@ fn db_load_sessions(data_dir: &str) -> (Vec<Session>, HashMap<String, Vec<ChatMe
     (Vec::new(), HashMap::new(), String::new())
 }
 
-fn db_save_message(
+pub fn db_save_message(
     data_dir: String,
     sid: String,
     title: Option<String>,
@@ -81,7 +83,7 @@ fn db_save_message(
         }
     });
 }
-fn read_subdirectories(parent: &Path) -> Vec<String> {
+pub fn read_subdirectories(parent: &Path) -> Vec<String> {
     let mut dirs = Vec::new();
     if let Ok(entries) = std::fs::read_dir(parent) {
         for entry in entries.flatten() {
@@ -99,7 +101,59 @@ fn read_subdirectories(parent: &Path) -> Vec<String> {
     dirs
 }
 
-fn discover_workspaces(active_path: &str) -> Vec<crate::components::sidebar::WorkspaceSpace> {
+/// 从 `git worktree list --porcelain` 输出解析出 worktree 列表(去重)
+pub fn parse_worktree_porcelain(
+    porcelain: &str,
+    active_path: &str,
+) -> Vec<crate::components::sidebar::WorkspaceSpace> {
+    use crate::components::sidebar::WorkspaceSpace;
+    let mut list: Vec<WorkspaceSpace> = Vec::new();
+    let mut cur_path = String::new();
+    let mut cur_branch = String::new();
+    let mut push_space = |path: &str, branch: &str, list: &mut Vec<WorkspaceSpace>| {
+        if path.is_empty() {
+            return;
+        }
+        if list.iter().any(|s| s.path == path) {
+            return;
+        }
+        let name = std::path::Path::new(path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string());
+        let name_display = if branch == "main" {
+            format!("{name} (main)")
+        } else {
+            name
+        };
+        list.push(WorkspaceSpace {
+            id: path.to_string(),
+            name: name_display,
+            path: path.to_string(),
+            branch: if branch.is_empty() {
+                "detached".into()
+            } else {
+                branch.to_string()
+            },
+            is_active: path == active_path,
+        });
+    };
+    for line in porcelain.lines() {
+        if let Some(rest) = line.strip_prefix("worktree ") {
+            cur_path = rest.trim().to_string();
+        } else if let Some(rest) = line.strip_prefix("branch refs/heads/") {
+            cur_branch = rest.trim().to_string();
+        } else if line.is_empty() && !cur_path.is_empty() {
+            push_space(&cur_path, &cur_branch, &mut list);
+            cur_path.clear();
+            cur_branch.clear();
+        }
+    }
+    push_space(&cur_path, &cur_branch, &mut list);
+    list
+}
+
+pub fn discover_workspaces(active_path: &str) -> Vec<crate::components::sidebar::WorkspaceSpace> {
     use crate::components::sidebar::WorkspaceSpace;
     let mut list: Vec<WorkspaceSpace> = Vec::new();
 
@@ -109,49 +163,7 @@ fn discover_workspaces(active_path: &str) -> Vec<crate::components::sidebar::Wor
     {
         if output.status.success() {
             if let Ok(text) = String::from_utf8(output.stdout) {
-                let mut cur_path = String::new();
-                let mut cur_branch = String::new();
-                let mut push_space = |path: &str, branch: &str, list: &mut Vec<WorkspaceSpace>| {
-                    if path.is_empty() {
-                        return;
-                    }
-                    // ponytail: 按路径去重，git worktree list 对同一 repo 可能重复输出
-                    if list.iter().any(|s| s.path == path) {
-                        return;
-                    }
-                    let name = std::path::Path::new(path)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| path.to_string());
-                    let name_display = if branch == "main" {
-                        format!("{name} (main)")
-                    } else {
-                        name
-                    };
-                    list.push(WorkspaceSpace {
-                        id: path.to_string(),
-                        name: name_display,
-                        path: path.to_string(),
-                        branch: if branch.is_empty() {
-                            "detached".into()
-                        } else {
-                            branch.to_string()
-                        },
-                        is_active: path == active_path,
-                    });
-                };
-                for line in text.lines() {
-                    if let Some(rest) = line.strip_prefix("worktree ") {
-                        cur_path = rest.trim().to_string();
-                    } else if let Some(rest) = line.strip_prefix("branch refs/heads/") {
-                        cur_branch = rest.trim().to_string();
-                    } else if line.is_empty() && !cur_path.is_empty() {
-                        push_space(&cur_path, &cur_branch, &mut list);
-                        cur_path.clear();
-                        cur_branch.clear();
-                    }
-                }
-                push_space(&cur_path, &cur_branch, &mut list);
+                list = parse_worktree_porcelain(&text, active_path);
             }
         }
     }
@@ -159,9 +171,12 @@ fn discover_workspaces(active_path: &str) -> Vec<crate::components::sidebar::Wor
     if list.is_empty() {
         list.push(WorkspaceSpace {
             id: active_path.to_string(),
-            name: "web-agent-harness".to_string(),
+            name: std::path::Path::new(active_path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "workspace".to_string()),
             path: active_path.to_string(),
-            branch: "feat/web-agent-harness".to_string(),
+            branch: "current".into(),
             is_active: true,
         });
     }
@@ -169,7 +184,7 @@ fn discover_workspaces(active_path: &str) -> Vec<crate::components::sidebar::Wor
     list
 }
 
-fn load_tasks(data_dir: &str) -> Vec<TaskItem> {
+pub fn load_tasks(data_dir: &str) -> Vec<TaskItem> {
     let store = task::store::Store::new(Path::new(data_dir));
     if let Ok(real_tasks) = store.load_all() {
         if !real_tasks.is_empty() {
@@ -297,7 +312,6 @@ pub fn Workspace(
     let config_send = config.clone();
     let config_create = config.clone();
     let config_model = config.clone();
-    let config_delete = config.clone();
     let active_title_for_send = active_title.clone();
 
     let on_send = move |text: String| {
