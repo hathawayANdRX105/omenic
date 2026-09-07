@@ -268,9 +268,16 @@ mod tests {
         assert_eq!(msgs.len(), 4);
         assert_eq!(msgs[0]["role"], "system");
         assert_eq!(msgs[2]["role"], "assistant");
-        assert_eq!(msgs[2]["content"][0]["type"], "tool_use");
-        assert_eq!(msgs[3]["role"], "user");
-        assert_eq!(msgs[3]["content"][0]["type"], "tool_result");
+        // assistant 侧:tool_calls 数组挂 OpenAI 顶层字段,不是 content 数组
+        assert!(msgs[2]["content"].is_null() || msgs[2]["content"].is_string());
+        let tc = msgs[2]["tool_calls"][0].clone();
+        assert_eq!(tc["id"], "t1");
+        assert_eq!(tc["type"], "function");
+        assert_eq!(tc["function"]["name"], "read_file");
+        // 工具结果变成独立的 role:tool 消息,带 tool_call_id 能回填给模型
+        assert_eq!(msgs[3]["role"], "tool");
+        assert_eq!(msgs[3]["tool_call_id"], "t1");
+        assert_eq!(msgs[3]["content"], "contents");
 
         // Context serializes to plain JSON and restores losslessly.
         let s = serde_json::to_string(&ctx).unwrap();
