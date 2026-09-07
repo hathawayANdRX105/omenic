@@ -110,7 +110,7 @@ pub fn parse_worktree_porcelain(
     let mut list: Vec<WorkspaceSpace> = Vec::new();
     let mut cur_path = String::new();
     let mut cur_branch = String::new();
-    let mut push_space = |path: &str, branch: &str, list: &mut Vec<WorkspaceSpace>| {
+    let push_space = |path: &str, branch: &str, list: &mut Vec<WorkspaceSpace>| {
         if path.is_empty() {
             return;
         }
