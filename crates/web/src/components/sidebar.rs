@@ -22,21 +22,7 @@ pub fn Sidebar(
     on_create: EventHandler<()>,
     on_delete: EventHandler<String>,
 ) -> Element {
-    let mut show_only_running = use_signal(|| false);
-
-    let active_sessions: Vec<_> = sessions
-        .iter()
-        .filter(|s| matches!(s.status, SessionStatus::Active))
-        .cloned()
-        .collect();
-    let running_count = active_sessions.len();
-    let total_count = sessions.len();
-
-    let display_sessions = if show_only_running() {
-        active_sessions
-    } else {
-        sessions.clone()
-    };
+    let display_sessions = sessions.clone();
 
     rsx! {
         aside { class: "sidebar",
@@ -69,7 +55,11 @@ pub fn Sidebar(
                                         }
                                     }
                                     span { class: "space-branch", "{space.branch}" }
-                                    span { class: "space-path", "{space.path}" }
+                                    {
+                                        let home = std::env::var("HOME").unwrap_or_default();
+                                        let short = space.path.replacen(&home, "~", 1);
+                                        rsx! { span { class: "space-path", "{short}" } }
+                                    }
                                 }
                             }
                         }
@@ -88,20 +78,6 @@ pub fn Sidebar(
                         class: "btn-subtle-accent",
                         onclick: move |_| on_create.call(()),
                         "+ 新建"
-                    }
-                }
-
-                // Filter bar: 运行中 vs 全部
-                div { class: "agents-filter-bar",
-                    button {
-                        class: if show_only_running() { "filter-tab active" } else { "filter-tab" },
-                        onclick: move |_| show_only_running.set(true),
-                        "运行中 {running_count}"
-                    }
-                    button {
-                        class: if !show_only_running() { "filter-tab active" } else { "filter-tab" },
-                        onclick: move |_| show_only_running.set(false),
-                        "全部 {total_count}"
                     }
                 }
 

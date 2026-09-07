@@ -60,12 +60,8 @@ fn db_load_sessions(data_dir: &str) -> (Vec<Session>, HashMap<String, Vec<ChatMe
     if let Ok(Ok(Some(data))) = res {
         return data;
     }
-
-    let mut default_map = HashMap::new();
-    default_map.insert("s1".into(), mock::mock_messages_for_session("s1"));
-    default_map.insert("s2".into(), mock::mock_messages_for_session("s2"));
-    default_map.insert("s3".into(), mock::mock_messages_for_session("s3"));
-    (mock::mock_sessions(), default_map, "s1".to_string())
+    // ponytail: 空库不要 mock 假会话，否则所有工作区显示同一批假数据
+    (Vec::new(), HashMap::new(), String::new())
 }
 
 fn db_save_message(
@@ -105,7 +101,7 @@ fn read_subdirectories(parent: &Path) -> Vec<String> {
 
 fn discover_workspaces(active_path: &str) -> Vec<crate::components::sidebar::WorkspaceSpace> {
     use crate::components::sidebar::WorkspaceSpace;
-    let mut list = Vec::new();
+    let mut list: Vec<WorkspaceSpace> = Vec::new();
 
     if let Ok(output) = std::process::Command::new("git")
         .args(["worktree", "list", "--porcelain"])
@@ -115,51 +111,47 @@ fn discover_workspaces(active_path: &str) -> Vec<crate::components::sidebar::Wor
             if let Ok(text) = String::from_utf8(output.stdout) {
                 let mut cur_path = String::new();
                 let mut cur_branch = String::new();
+                let mut push_space = |path: &str, branch: &str, list: &mut Vec<WorkspaceSpace>| {
+                    if path.is_empty() {
+                        return;
+                    }
+                    // ponytail: 按路径去重，git worktree list 对同一 repo 可能重复输出
+                    if list.iter().any(|s| s.path == path) {
+                        return;
+                    }
+                    let name = std::path::Path::new(path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.to_string());
+                    let name_display = if branch == "main" {
+                        format!("{name} (main)")
+                    } else {
+                        name
+                    };
+                    list.push(WorkspaceSpace {
+                        id: path.to_string(),
+                        name: name_display,
+                        path: path.to_string(),
+                        branch: if branch.is_empty() {
+                            "detached".into()
+                        } else {
+                            branch.to_string()
+                        },
+                        is_active: path == active_path,
+                    });
+                };
                 for line in text.lines() {
                     if let Some(rest) = line.strip_prefix("worktree ") {
                         cur_path = rest.trim().to_string();
                     } else if let Some(rest) = line.strip_prefix("branch refs/heads/") {
                         cur_branch = rest.trim().to_string();
                     } else if line.is_empty() && !cur_path.is_empty() {
-                        let name = std::path::Path::new(&cur_path)
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_else(|| cur_path.clone());
-                        let name_display = if cur_branch == "main" {
-                            format!("{name} (main)")
-                        } else {
-                            name
-                        };
-                        let is_active = cur_path == active_path;
-                        list.push(WorkspaceSpace {
-                            id: cur_path.clone(),
-                            name: name_display,
-                            path: cur_path.clone(),
-                            branch: if cur_branch.is_empty() {
-                                "detached".into()
-                            } else {
-                                cur_branch.clone()
-                            },
-                            is_active,
-                        });
+                        push_space(&cur_path, &cur_branch, &mut list);
                         cur_path.clear();
                         cur_branch.clear();
                     }
                 }
-                if !cur_path.is_empty() {
-                    let name = std::path::Path::new(&cur_path)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| cur_path.clone());
-                    let is_active = cur_path == active_path;
-                    list.push(WorkspaceSpace {
-                        id: cur_path.clone(),
-                        name,
-                        path: cur_path.clone(),
-                        branch: cur_branch,
-                        is_active,
-                    });
-                }
+                push_space(&cur_path, &cur_branch, &mut list);
             }
         }
     }
@@ -219,7 +211,7 @@ pub fn Workspace(
     });
     let mut spaces = use_signal(|| discover_workspaces(&active_space_path()));
 
-    let initial_data = use_signal(|| db_load_sessions(&config.data_dir));
+    let initial_data = use_signal(|| db_load_sessions(&format!("{}/.oi", active_space_path())));
     let mut sessions = use_signal(|| {
         let mut list = initial_data.read().0.clone();
         let target_id = initial_data.read().2.clone();
@@ -242,7 +234,7 @@ pub fn Workspace(
         st
     });
 
-    let mut tasks = use_signal(|| load_tasks(&config.data_dir));
+    let mut tasks = use_signal(|| load_tasks(&format!("{}/.oi", active_space_path())));
     let mut show_tasks = use_signal(|| true);
     let mut is_streaming = use_signal(|| false);
     let mut search_query = use_signal(|| String::new());
@@ -349,8 +341,9 @@ pub fn Workspace(
 
         is_streaming.set(true);
 
+        let data_dir_for_send = format!("{}/.oi", active_space_path());
         db_save_message(
-            config_send.data_dir.clone(),
+            data_dir_for_send.clone(),
             sid.clone(),
             Some(active_title_for_send.clone()),
             session::SessionRole::User,
@@ -403,7 +396,7 @@ pub fn Workspace(
         });
 
         let sid_for_events = sid.clone();
-        let db_dir_for_events = config_send.data_dir.clone();
+        let db_dir_for_events = data_dir_for_send.clone();
 
         spawn(async move {
             let total_in = 0u64;
@@ -568,7 +561,7 @@ pub fn Workspace(
             .unwrap_or_default()
             .as_millis();
         let new_id = format!("s-{}", ts);
-        let title = format!("任务 #{}", sessions().len() + 1);
+        let title = format!("会话 {}", ts % 1_000_000);
         let new_session = Session {
             id: new_id.clone(),
             title: title.clone(),
@@ -580,31 +573,20 @@ pub fn Workspace(
         current_sessions.insert(0, new_session);
         sessions.set(current_sessions);
 
-        let welcome_msg = ChatMessage {
-            id: format!("{}-welcome", new_id),
-            role: "assistant".into(),
-            content: format!(
-                "新任务已创建。当前配置模型为 `{}` (端点 `{}`)，支持使用 bash、文件读写与代码编辑工具，输入指令开始执行。",
-                config_create.model, config_create.base_url
-            ),
-            tool_calls: vec![],
-            timestamp: "刚刚".into(),
-        };
-
+        // ponytail: 新会话不插欢迎气泡；空会话直挂活动工作区的 sessions.db
         let mut map = session_messages();
-        map.insert(new_id.clone(), vec![welcome_msg.clone()]);
+        map.insert(new_id.clone(), Vec::new());
         session_messages.set(map);
         active_session_id.set(new_id.clone());
 
-        if let Ok(ser) = serde_json::to_string(&welcome_msg) {
-            db_save_message(
-                config_create.data_dir.clone(),
-                new_id.clone(),
-                Some(title),
-                session::SessionRole::Assistant,
-                ser,
-            );
-        }
+        let data_dir = format!("{}/.oi", active_space_path());
+        let sid = new_id.clone();
+        std::thread::spawn(move || {
+            let path = std::path::PathBuf::from(data_dir).join("sessions.db");
+            if let Ok(db) = session::SessionDb::open(path) {
+                let _ = db.create_session(&sid, &title);
+            }
+        });
     };
     let on_delete_session = move |id: String| {
         let mut list = sessions();
@@ -622,7 +604,7 @@ pub fn Workspace(
                 active_session_id.set(String::new());
             }
         }
-        let data_dir = config_delete.data_dir.clone();
+        let data_dir = format!("{}/.oi", active_space_path());
         let del_id = id.clone();
         std::thread::spawn(move || {
             let path = std::path::PathBuf::from(data_dir).join("sessions.db");
@@ -706,7 +688,6 @@ pub fn Workspace(
                                 class: "switcher-input",
                                 r#type: "text",
                                 placeholder: "搜索会话名称或编号...",
-                                value: "{search_query}",
                                 oninput: move |e| search_query.set(e.value().clone()),
                                 autofocus: true,
                             }

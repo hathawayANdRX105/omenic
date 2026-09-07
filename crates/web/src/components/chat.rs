@@ -51,6 +51,12 @@ pub fn Chat(
         div { class: "chat-container",
             // Messages stream (centered within max-width: 880px)
             div { class: "chat-messages",
+                if display_messages.is_empty() && !is_streaming {
+                    div { class: "chat-empty-state",
+                        div { class: "chat-empty-title", "开始一个新的任务" }
+                        div { class: "chat-empty-hint", "在下方输入指令，Agent 将使用文件读写、bash 与代码编辑工具协助你完成。" }
+                    }
+                }
                 for (idx, msg) in display_messages.iter().enumerate() {
                     if msg.content.is_empty() && msg.tool_calls.is_empty() {
                         div { key: "streaming-{idx}", class: "message assistant",

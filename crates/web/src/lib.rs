@@ -130,10 +130,19 @@ pub async fn launch() {
             }}
         }}
 
+        // Track IME composition explicitly: isComposing alone is unreliable on fcitx/ibus + Linux
+        let composing = {{ active: false }};
+        document.addEventListener("compositionstart", function(e) {{
+            if (e.target && e.target.id === "chat-input-area") composing.active = true;
+        }}, true);
+        document.addEventListener("compositionend", function(e) {{
+            if (e.target && e.target.id === "chat-input-area") composing.active = false;
+        }}, true);
+
         // Handle Enter key on textarea to submit form
         document.addEventListener("keydown", function(e) {{
             if (e.target && e.target.id === "chat-input-area" && e.key === "Enter" && !e.shiftKey) {{
-                if (e.isComposing || e.keyCode === 229) return;
+                if (composing.active || e.isComposing || e.keyCode === 229) return;
                 e.preventDefault();
                 const form = e.target.closest("form");
                 if (form) {{
@@ -146,10 +155,11 @@ pub async fn launch() {
             }}
         }}, true);
 
-        // Clear textarea when clicking submit button
+        // Clear textarea when clicking submit button (never mid-composition)
         document.addEventListener("click", function(e) {{
             const btn = e.target.closest("button[type='submit']");
             if (btn) {{
+                if (composing.active) return;
                 const form = btn.closest("form");
                 if (form) {{
                     const ta = form.querySelector("textarea");
