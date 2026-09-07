@@ -128,6 +128,14 @@ fn main() -> ExitCode {
                 "l3" => spec::tools::checklist::SlaLevel::L3,
                 _ => spec::tools::checklist::SlaLevel::L1,
             };
+            if !json {
+                eprintln!("══════════════════════════════════════════════════════");
+                eprintln!("⚠️  L3 质量关卡: 需开发 agent 自主判断 (非强制拦截, 仅参考)");
+                eprintln!("    L3 finding 带 score/confidence, agent 自行设阈值决定改不改");
+                eprintln!("    ocr 深度审查请自行调: ocr review --format json --audience agent");
+                eprintln!("✅  L1+L2 是硬门槛 (确定性检查): FAIL 必须修复才能 commit/push");
+                eprintln!("══════════════════════════════════════════════════════");
+            }
             let mut findings = spec::tools::checklist::run_named(&names, max_sla);
             spec::shared::apply_global_overrides(&mut findings);
             if json {
@@ -135,6 +143,10 @@ fn main() -> ExitCode {
                 println!("{}", serde_json::to_string_pretty(&arr).unwrap_or_default());
             } else {
                 spec::shared::print_findings(&findings);
+                eprintln!("══════════════════════════════════════════════════════");
+                eprintln!("ℹ️  L3 finding 仅供参考: 开发 agent 自主判断是否采纳");
+                eprintln!("    L1+L2 FAIL = 硬门槛, 必须修复. 深度审查请自行调 ocr.");
+                eprintln!("══════════════════════════════════════════════════════");
             }
             ExitCode::from(spec::shared::exit_code(&findings) as u8)
         }
