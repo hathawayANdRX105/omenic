@@ -20,6 +20,7 @@ pub fn Sidebar(
     active_id: String,
     on_select: EventHandler<String>,
     on_create: EventHandler<()>,
+    on_delete: EventHandler<String>,
 ) -> Element {
     let mut show_only_running = use_signal(|| false);
 
@@ -112,6 +113,7 @@ pub fn Sidebar(
                             session: session.clone(),
                             active: session.id == active_id,
                             on_select: on_select,
+                            on_delete: on_delete,
                         }
                     }
                 }
@@ -121,7 +123,12 @@ pub fn Sidebar(
 }
 
 #[component]
-fn SessionRow(session: Session, active: bool, on_select: EventHandler<String>) -> Element {
+fn SessionRow(
+    session: Session,
+    active: bool,
+    on_select: EventHandler<String>,
+    on_delete: EventHandler<String>,
+) -> Element {
     let class = if active {
         "session-row active"
     } else {
@@ -141,7 +148,8 @@ fn SessionRow(session: Session, active: bool, on_select: EventHandler<String>) -
     };
     let status_label = if is_run { "RUN" } else { "IDLE" };
 
-    let id = session.id.clone();
+    let id_for_select = session.id.clone();
+    let id_for_delete = session.id.clone();
     let tag = if session.title.contains("orbit") {
         "orbit"
     } else if session.title.contains("MCP") {
@@ -153,23 +161,34 @@ fn SessionRow(session: Session, active: bool, on_select: EventHandler<String>) -
     } else {
         "task"
     };
-
     rsx! {
         div {
             class: "{class}",
-            onclick: move |_| on_select.call(id.clone()),
-            div { class: "session-dot-col",
-                span { class: "{dot_class}" }
+            div {
+                class: "session-main-click",
+                onclick: move |_| on_select.call(id_for_select.clone()),
+                div { class: "session-dot-col",
+                    span { class: "{dot_class}" }
+                }
+                div { class: "session-content",
+                    div { class: "session-title-row",
+                        span { class: "session-title", "{session.title}" }
+                        span { class: "{tag_class}", "{status_label}" }
+                    }
+                    div { class: "session-meta-row",
+                        span { "{tag}" }
+                        span { class: "session-time", "{session.last_active}" }
+                    }
+                }
             }
-            div { class: "session-content",
-                div { class: "session-title-row",
-                    span { class: "session-title", "{session.title}" }
-                    span { class: "{tag_class}", "{status_label}" }
-                }
-                div { class: "session-meta-row",
-                    span { "{tag}" }
-                    span { class: "session-time", "{session.last_active}" }
-                }
+            button {
+                class: "btn-delete-session",
+                title: "删除会话",
+                onclick: move |e: MouseEvent| {
+                    e.stop_propagation();
+                    on_delete.call(id_for_delete.clone());
+                },
+                "×"
             }
         }
     }

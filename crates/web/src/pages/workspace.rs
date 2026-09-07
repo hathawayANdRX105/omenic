@@ -26,7 +26,7 @@ fn db_load_sessions(data_dir: &str) -> (Vec<Session>, HashMap<String, Vec<ChatMe
                 title: s.title.clone(),
                 last_active: "刚刚".into(),
                 model: "default".into(),
-                status: SessionStatus::Active,
+                status: SessionStatus::Idle,
             });
             if let Ok(db_msgs) = db.load_messages(&s.id, 100) {
                 let chat_msgs: Vec<ChatMessage> = db_msgs
@@ -305,6 +305,7 @@ pub fn Workspace(
     let config_send = config.clone();
     let config_create = config.clone();
     let config_model = config.clone();
+    let config_delete = config.clone();
     let active_title_for_send = active_title.clone();
 
     let on_send = move |text: String| {
@@ -562,15 +563,18 @@ pub fn Workspace(
     };
 
     let on_create_session = move |()| {
-        let new_num = sessions().len() + 1;
-        let new_id = format!("s{}", new_num);
-        let title = format!("任务 #{}", new_num);
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let new_id = format!("s-{}", ts);
+        let title = format!("任务 #{}", sessions().len() + 1);
         let new_session = Session {
             id: new_id.clone(),
             title: title.clone(),
             last_active: "刚刚".into(),
             model: config_create.model.clone(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Idle,
         };
         let mut current_sessions = sessions();
         current_sessions.insert(0, new_session);
@@ -601,6 +605,31 @@ pub fn Workspace(
                 ser,
             );
         }
+    };
+    let on_delete_session = move |id: String| {
+        let mut list = sessions();
+        list.retain(|s| s.id != id);
+        sessions.set(list.clone());
+
+        let mut map = session_messages();
+        map.remove(&id);
+        session_messages.set(map);
+
+        if active_session_id() == id {
+            if let Some(first) = list.first() {
+                active_session_id.set(first.id.clone());
+            } else {
+                active_session_id.set(String::new());
+            }
+        }
+        let data_dir = config_delete.data_dir.clone();
+        let del_id = id.clone();
+        std::thread::spawn(move || {
+            let path = std::path::PathBuf::from(data_dir).join("sessions.db");
+            if let Ok(db) = session::SessionDb::open(path) {
+                let _ = db.delete_session(&del_id);
+            }
+        });
     };
 
     let on_model_change = move |m: String| {
@@ -642,6 +671,7 @@ pub fn Workspace(
                 active_id: active_session_id(),
                 on_select: on_select_session,
                 on_create: on_create_session,
+                on_delete: on_delete_session,
             }
             div { class: "workspace-main",
                 div { class: "workspace-chat-area",

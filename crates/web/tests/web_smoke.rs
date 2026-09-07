@@ -71,3 +71,26 @@ fn test_llm_runtime_config() {
     let de: web::llm::LlmRuntimeConfig = serde_json::from_str(&json).unwrap();
     assert_eq!(cfg.model, de.model);
 }
+#[test]
+fn test_sidebar_render() {
+    use dioxus::prelude::*;
+    #[component]
+    fn App() -> Element {
+        rsx! {
+            web::components::sidebar::Sidebar {
+                spaces: vec![],
+                active_space_id: String::new(),
+                on_select_space: move |_| {},
+                on_trigger_picker: move |_| {},
+                sessions: mock_sessions(),
+                active_id: String::from("s1"),
+                on_select: move |_| {},
+                on_create: move |_| {},
+                on_delete: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(App);
+    dom.rebuild_in_place();
+}

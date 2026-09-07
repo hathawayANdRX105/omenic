@@ -41,22 +41,30 @@ pub fn Chat(
         ("深度", "16k"),
     ];
 
+    let display_messages: Vec<_> = messages
+        .iter()
+        .filter(|m| !m.content.is_empty() || !m.tool_calls.is_empty() || is_streaming)
+        .cloned()
+        .collect();
+
     rsx! {
         div { class: "chat-container",
             // Messages stream (centered within max-width: 880px)
             div { class: "chat-messages",
-                for (idx, msg) in messages.iter().enumerate() {
-                    MessageBubble { key: "{msg.id}-{idx}", message: msg.clone() }
-                }
-                if is_streaming {
-                    div { class: "message assistant",
-                        div { class: "message-header",
-                            span { class: "message-name", "omenic" }
-                            span { class: "message-time", "思考中..." }
+                for (idx, msg) in display_messages.iter().enumerate() {
+                    if msg.content.is_empty() && msg.tool_calls.is_empty() {
+                        div { key: "streaming-{idx}", class: "message assistant",
+                            div { class: "message-header",
+                                span { class: "message-name", "Agent" }
+                                span { class: "message-time", "思考中..." }
+                            }
+                            div { class: "message-body streaming",
+                                span { class: "btn-spinner inline" }
+                                span { "正在连接模型并思考生成回答..." }
+                            }
                         }
-                        div { class: "message-body streaming",
-                            "正在连接模型并思考生成回答..."
-                        }
+                    } else {
+                        MessageBubble { key: "{msg.id}-{idx}", message: msg.clone() }
                     }
                 }
                 div { id: "chat-scroll-anchor", class: "chat-bottom-spacer" }
@@ -157,12 +165,19 @@ pub fn Chat(
                                     }
                                 }
                             }
+
                             div { class: "footer-right",
                                 span { class: "token-stats", "{statusline.tokens_in} / {statusline.tokens_out}" }
                                 button {
                                     r#type: "submit",
-                                    class: "btn-send",
-                                    if is_streaming { "发送中..." } else { "发送 ↵" }
+                                    class: if is_streaming { "btn-send loading" } else { "btn-send" },
+                                    disabled: is_streaming,
+                                    if is_streaming {
+                                        span { class: "btn-spinner" }
+                                        span { "发送中..." }
+                                    } else {
+                                        span { "发送 ↵" }
+                                    }
                                 }
                             }
                         }

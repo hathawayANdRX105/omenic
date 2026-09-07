@@ -174,7 +174,7 @@ pub async fn launch() {
         // Auto-scroll chat container ONLY when streaming and user is already near bottom
         let scrollTimeout = null;
         function isNearBottom(el) {{
-            return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+            return el.scrollHeight - el.scrollTop - el.clientHeight < 360;
         }}
         const observer = new MutationObserver(function(mutations) {{
             const chatEl = document.querySelector(".chat-messages");
@@ -182,7 +182,6 @@ pub async fn launch() {
             for (let i = 0; i < mutations.length; i++) {{
                 const target = mutations[i].target;
                 if (target && target.closest && target.closest(".tool-accordion")) {{
-                    // Clicked or toggled tool accordion: DO NOT scroll!
                     return;
                 }}
                 if (mutations[i].addedNodes.length > 0 && isNearBottom(chatEl)) {{
@@ -192,6 +191,7 @@ pub async fn launch() {
                 }}
             }}
         }});
+        setTimeout(scrollToBottom, 150);
         observer.observe(document.body, {{ childList: true, subtree: true }});
     }})();
     </script>

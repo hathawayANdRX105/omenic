@@ -278,19 +278,20 @@ pub fn ConfigPage(
                     span { style: "font-size: 11.5px; color: var(--text-muted);", "点击选用" }
                 }
 
-                div { style: "display: flex; flex-direction: column; gap: 6px;",
+                div { class: "model-list-grid",
                     for m in &models {
                         {
                             let m_str = m.clone();
                             let is_current = *model.read() == *m;
+                            let card_class = if is_current { "model-item-card current" } else { "model-item-card" };
                             rsx! {
                                 div {
                                     key: "{m}",
-                                    style: "display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: 5px;",
+                                    class: "{card_class}",
                                     div { style: "display: flex; align-items: center; gap: 8px;",
-                                        span { style: "color: var(--accent-blue); font-family: ui-monospace, monospace; font-size: 13px;", "{m}" }
+                                        span { class: "model-name", "{m}" }
                                         if is_current {
-                                            span { style: "background: #11261d; color: var(--accent-green); border: 1px solid #1a4231; padding: 1px 5px; border-radius: 3px; font-size: 10.5px;", "默认" }
+                                            span { class: "model-tag-badge", "默认" }
                                         }
                                     }
                                     button {
@@ -299,7 +300,7 @@ pub fn ConfigPage(
                                         onclick: move |_| {
                                             model.set(m_str.clone());
                                         },
-                                        if is_current { "已选用" } else { "选用" }
+                                        if is_current { "当前默认" } else { "选用" }
                                     }
                                 }
                             }

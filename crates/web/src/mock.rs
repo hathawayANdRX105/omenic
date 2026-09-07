@@ -152,7 +152,7 @@ pub fn mock_sessions() -> Vec<Session> {
             title: "重构 orbit compaction".into(),
             last_active: "2 分钟前".into(),
             model: "qwen3-32b".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Idle,
         },
         Session {
             id: "s2".into(),
