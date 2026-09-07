@@ -25,6 +25,9 @@ enum Commands {
     Check {
         /// Checklist names (file name minus `checklist_` prefix and `.yaml`)
         names: Vec<String>,
+        /// Maximum SLA tier to run (l1/l2/l3, default l1)
+        #[arg(long, default_value = "l1")]
+        sla: String,
     },
     /// Validate issues
     Issue,
@@ -115,8 +118,13 @@ fn main() -> ExitCode {
             let rc = spec::tools::review::run(&args_vec);
             ExitCode::from(rc as u8)
         }
-        Commands::Check { names } => {
-            let mut findings = spec::tools::checklist::run_named(&names);
+        Commands::Check { names, sla } => {
+            let max_sla = match sla.as_str() {
+                "l2" => spec::tools::checklist::SlaLevel::L2,
+                "l3" => spec::tools::checklist::SlaLevel::L3,
+                _ => spec::tools::checklist::SlaLevel::L1,
+            };
+            let mut findings = spec::tools::checklist::run_named(&names, max_sla);
             spec::shared::apply_global_overrides(&mut findings);
             spec::shared::print_findings(&findings);
             ExitCode::from(spec::shared::exit_code(&findings) as u8)

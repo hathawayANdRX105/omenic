@@ -41,6 +41,23 @@ impl HookScope {
     }
 }
 
+/// SLA tier for a checklist check.
+/// L1 = structural (zero token, milliseconds).
+/// L2 = semantic (lightweight, seconds).
+/// L3 = LLM-based (on-demand, minutes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SlaLevel {
+    L1,
+    L2,
+    L3,
+}
+
+impl Default for SlaLevel {
+    fn default() -> Self {
+        SlaLevel::L1
+    }
+}
+
 #[derive(Debug, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 struct RawSpec {
@@ -53,6 +70,7 @@ struct RawSpec {
     timeout: Option<u64>,
     optional: Option<bool>,
     fail_severity: Option<String>,
+    sla: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -82,6 +100,7 @@ struct ChecklistSpec {
     timeout_secs: u64,
     optional: bool,
     base_severity: Severity,
+    sla: SlaLevel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -153,6 +172,11 @@ fn load_spec(path: &std::path::Path) -> Option<ChecklistSpec> {
         "grep" => Mode::Grep,
         _ => Mode::Diff,
     };
+    let sla = match raw.sla.as_deref().unwrap_or("l1").to_lowercase().as_str() {
+        "l2" => SlaLevel::L2,
+        "l3" => SlaLevel::L3,
+        _ => SlaLevel::L1,
+    };
     let base_severity = raw
         .fail_severity
         .as_deref()
@@ -174,6 +198,7 @@ fn load_spec(path: &std::path::Path) -> Option<ChecklistSpec> {
         timeout_secs: raw.timeout.unwrap_or(60),
         optional: raw.optional.unwrap_or(true),
         base_severity,
+        sla,
     })
 }
 
@@ -407,7 +432,15 @@ fn truncate(s: &str, max: usize) -> String {
 // Per-spec execution
 // ---------------------------------------------------------------------------
 
-fn run_one(spec: &ChecklistSpec, scope: HookScope, ignore_hooks: bool) -> Vec<Finding> {
+fn run_one(
+    spec: &ChecklistSpec,
+    scope: HookScope,
+    ignore_hooks: bool,
+    max_sla: SlaLevel,
+) -> Vec<Finding> {
+    if spec.sla > max_sla {
+        return vec![];
+    }
     if !spec.enabled {
         return vec![Finding::new(
             &format!("checklist.{}", spec.name),
@@ -500,7 +533,7 @@ pub fn run_all(scope: HookScope) -> Vec<Finding> {
     let mut findings = Vec::new();
     for (_path, spec) in &specs {
         eprintln!("--- checklist: {} ---", spec.name);
-        findings.extend(run_one(spec, scope, false));
+        findings.extend(run_one(spec, scope, false, SlaLevel::L3));
     }
     findings
 }
@@ -514,7 +547,7 @@ fn spec_dir() -> std::path::PathBuf {
 /// of their `hooks:` filter, ignoring `enabled: false`. Manual invocation,
 /// not a gate: findings are advisory (exit 0 unless a FAIL fires, matching
 /// hook semantics).
-pub fn run_named(names: &[String]) -> Vec<Finding> {
+pub fn run_named(names: &[String], max_sla: SlaLevel) -> Vec<Finding> {
     let specs = find_specs(&spec_dir());
     if names.is_empty() {
         for (_, s) in &specs {
@@ -527,7 +560,7 @@ pub fn run_named(names: &[String]) -> Vec<Finding> {
         match specs.iter().find(|(_, s)| &s.name == name) {
             Some((_, spec)) => {
                 eprintln!("--- checklist: {} ---", spec.name);
-                findings.extend(run_one(spec, HookScope::Merge, true));
+                findings.extend(run_one(spec, HookScope::Merge, true, max_sla));
             }
             None => eprintln!(
                 "unknown checklist: {name} (available: {})",
