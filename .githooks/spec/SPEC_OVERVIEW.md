@@ -179,26 +179,45 @@
 
 `gate check [names...]` — 按名字或列出所有 checklist，强制忽略 yaml 的 `hooks:` 过滤，用于调试/CI/按需跑：
 
-- `gate check` → 列出全部 13 个可用检查项名字
+- `gate check` → 列出当前 SLA 层级（默认 l1）下的检查项
 - `gate check clippy` → 只跑 clippy
-- `gate check clippy dep_hygiene slop_comment` → 按名字跑多个
+- `gate check --sla l2` / `l3` → 解锁更高 SLA 层
 
 每次加/删 checklist yaml，清单自动更新；新规则只需 `cp spec/xxx.yaml .githooks/spec/` 即可。
 
-| 名字 | 触发 | 严重度 | 检测内容 |
-|---|---|---|---|
-| `clippy` | pre-push, merge | FAIL | `cargo clippy --workspace --all-targets -- -D warnings` JSON → findings |
-| `dep_hygiene` | pre-push, merge | WARN | `cargo-machete` 未使用依赖 |
-| `slop_comment` | all | WARN | AI 风格注释（Step 1:/This function/该函数…, 5 语言） |
+| 名字 | SLA | 触发 | 严重度 | 检测内容 |
+|---|---|---|---|---|
+| `hardcoded_secret` | l1 | pre-commit, pre-push, merge | WARN | 硬编码密钥/密码/Token（PCRE, 5 语言） |
+| `stale_api` | l1 | pre-commit, pre-push, merge | WARN | 废弃 Rust API（uninitialized/try!/ONCE_INIT） |
+| `slop_comment` | l1 | pre-commit, pre-push, merge | WARN | AI 风格注释（Step 1:/This function/该函数…, 5 语言） |
+| `rust_no_process_cmd` | l1 | pre-commit, pre-push, merge | FAIL | HTTP 调用走 reqwest, 不要 subprocess curl/wget |
+| `rust_no_dead_code_allow` | l1 | pre-commit, pre-push, merge | WARN | 合并前清理 #[allow(dead_code)] |
+| `rust_no_empty_module` | l1 | pre-commit, pre-push, merge | WARN | 微型空文件, 考虑合并到上层 mod |
+| `rust_tests_in_tests_dir` | l1 | pre-commit, pre-push, merge | FAIL | 测试必须同层 tests/ 目录 |
+| `rust_todo_needs_issue` | l1 | pre-commit, pre-push, merge | WARN | TODO/FIXME 必须关联 issue 号 |
+| `rust_test_no_assert` | l1 | pre-commit, pre-push, merge | WARN | 测试函数必须含 assert |
+| `rust_no_cfg_test_in_tests_dir` | l1 | pre-commit, pre-push, merge | WARN | tests/ 目录里不要 #[cfg(test)] |
+| `duplication` | l2 | merge | WARN | 跨文件 4+ 连续行重复块（sh+awk, 零依赖） |
+| `crg_impact` | l2 | merge | WARN | diff 跨 3+ crate 改动 → 警告耦合 |
+| `clippy` | l3 | merge | FAIL | `cargo clippy --workspace --all-targets -- -D warnings` JSON → findings |
+| `dep_hygiene` | l3 | merge | WARN | `cargo-machete` 未使用依赖 |
+| `ferrite_oversize` | l3 | merge | WARN | 单文件 > 1500 行（LLM 审） |
+| `oversize_demo` | l3 | merge | WARN | 大文件 demo（LLM 审） |
+| `no_debug_log_demo` | l3 | merge | FAIL | demo: LLM 调日志审计 |
+| `ocr_review` | l3 | merge | WARN | `ocr review` AI 语义审查（critical/important 升级 FAIL） |
+| `falsifiability` | l3 | merge | FAIL | LLM 证伪门：让 ocr 推翻自身 finding |
+
+### SLA 分层
+
+- **l1 结构层**：零 token，毫秒级（grep / clippy / 静态分析）
+- **l2 语义层**：轻量，秒级（影响面 / 重复检测）
+- **l3 LLM 层**：按需，分钟级（ocr AI 审查 / 证伪门）
+
+`gate check` 默认只跑 l1；`--sla l2` 或 `l3` 解锁更高层。
+l3 默认 hooks: [merge]，本地用 `gate check <l3-name> --sla l3` 触发。
 
 ## 更新与校验
 
 - 新增/修改规则：只改 `.githooks/spec/*.yaml` 参数 + 相应校验器逻辑，更新本文档
- - gate 改动后：`cargo build --release -p gate` → `upx --best --lzma target/release/gate` → `gate init` 重部署 + `install` 复制为 `~/.local/bin/gh`
- - 触发式按上表 lazy 执行，不全局扫描
-
-## 更新与校验
-
-- 新增/修改规则：只改 `.githooks/spec/*.yaml` 参数 + 对应校验器逻辑，更新本文档
-- gate 改动后：`cargo build --release -p gate` → `upx --best --lzma target/release/gate` → `gate init` 重部署 + `install` 复制为 `~/.local/bin/gh`
+- gate 改动后：`cargo build --release -p gate-bin` → `upx --best --lzma target/release/gate` → `gate init` 重部署 + `install` 复制为 `~/.local/bin/gh`
 - 触发式按上表 lazy 执行，不全局扫描
