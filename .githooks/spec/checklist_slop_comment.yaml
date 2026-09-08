@@ -19,9 +19,14 @@ harness:
     - |
       ROOT=$(git rev-parse --show-toplevel)
       pat='// *(Step [0-9]|第[一二三四五六七八九十]+步|步骤[0-9一二三四五六七八九十]+|This (function|method|class|module)|该(函数|方法|类|模块))'
-      matches=$(grep -rEn "$pat" "$ROOT"/crates/*/src/ "$ROOT"/bin/*/src/ \
+      matches=$(grep -rEn "$pat" "$ROOT" \
         --include='*.rs' --include='*.ts' --include='*.js' \
-        --include='*.py' --include='*.go' 2>/dev/null | head -30)
+        --include='*.py' --include='*.go' \
+        --exclude='*_test.go' --exclude='*_test.py' --exclude='test_*.py' \
+        --exclude='*.test.ts' --exclude='*.test.js' --exclude='*.spec.ts' --exclude='*.spec.js' \
+        --exclude-dir=target --exclude-dir=.wt --exclude-dir=node_modules \
+        --exclude-dir=.git --exclude-dir=dist --exclude-dir=build \
+        --exclude-dir=vendor --exclude-dir=tests 2>/dev/null | head -30)
       if [ -z "$matches" ]; then
         echo '[]'
       else
