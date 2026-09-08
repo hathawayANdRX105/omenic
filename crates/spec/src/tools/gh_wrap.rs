@@ -867,7 +867,7 @@ pub fn intercept_pr_merge(args: &[String]) -> i32 {
                         "REJECT",
                         &format!(
                             "title not CC: {}",
-                            &merge_title[..merge_title.len().min(60)]
+                            crate::shared::truncate_utf8(&merge_title, 60)
                         ),
                     );
                     return 1;
@@ -879,7 +879,10 @@ pub fn intercept_pr_merge(args: &[String]) -> i32 {
                         "PR_MERGE",
                         &format!("PR #{num}"),
                         "REJECT",
-                        &format!("title CJK: {}", &merge_title[..merge_title.len().min(60)]),
+                        &format!(
+                            "title CJK: {}",
+                            crate::shared::truncate_utf8(&merge_title, 60)
+                        ),
                     );
                     return 1;
                 }
@@ -902,7 +905,7 @@ pub fn intercept_pr_merge(args: &[String]) -> i32 {
             "PR_MERGE",
             &format!("PR #{}", pr_num.unwrap_or_default()),
             "FAIL",
-            &err[..err.len().min(80)],
+            &crate::shared::truncate_utf8(&err, 80),
         );
         return rc;
     }
@@ -951,7 +954,7 @@ pub fn intercept_pr_merge(args: &[String]) -> i32 {
             "PR_MERGE",
             &format!("PR #{num}"),
             "MERGED",
-            &merge_reason[..merge_reason.len().min(80)],
+            crate::shared::truncate_utf8(&merge_reason, 80),
         );
     }
     rc

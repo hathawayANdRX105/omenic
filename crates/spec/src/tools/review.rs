@@ -223,7 +223,7 @@ pub fn format_ocr_results(raw: &str) -> String {
             }
             "无审查发现".to_string()
         }
-        Err(_) => raw[..raw.len().min(2000)].to_string(),
+        Err(_) => crate::shared::truncate_utf8(raw, 2000).to_string(),
     }
 }
 
