@@ -10,7 +10,6 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use serde_yaml::Value as YamlValue;
 
