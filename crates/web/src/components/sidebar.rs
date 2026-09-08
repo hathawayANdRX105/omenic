@@ -29,24 +29,24 @@ pub fn Sidebar(
     let mut rename_val = use_signal(String::new);
 
     rsx! {
-        aside { class: "sidebar",
-            // 顶层标签 tab:文字清晰区分两个上下文
-            div { class: "sidebar-tabs",
+        aside { class: "w-[260px] min-w-[260px] h-full bg-[var(--bg-sidebar)] border-r border-[var(--border-subtle)] flex flex-col overflow-hidden select-none",
+            // 顶层标签 tab
+            div { class: "flex border-b border-[var(--border-subtle)] shrink-0",
                 button {
-                    class: if tab() == "spaces" { "sidebar-tab active" } else { "sidebar-tab" },
+                    class: if tab() == "spaces" { "flex-1 py-2 px-0 text-[13px] font-medium text-[var(--text-primary)] border-b-2 border-[var(--accent)] bg-[rgba(138,123,174,0.05)]" } else { "flex-1 py-2 px-0 text-[13px] text-[var(--text-muted)] border-b-2 border-transparent hover:text-[var(--text-secondary)]" },
                     onclick: move |_| tab.set("spaces".into()),
                     "Spaces"
                 }
                 button {
-                    class: if tab() == "sessions" { "sidebar-tab active" } else { "sidebar-tab" },
+                    class: if tab() == "sessions" { "flex-1 py-2 px-0 text-[13px] font-medium text-[var(--text-primary)] border-b-2 border-[var(--accent)] bg-[rgba(138,123,174,0.05)]" } else { "flex-1 py-2 px-0 text-[13px] text-[var(--text-muted)] border-b-2 border-transparent hover:text-[var(--text-secondary)]" },
                     onclick: move |_| tab.set("sessions".into()),
                     "Sessions"
                 }
             }
 
             if tab() == "spaces" {
-                div { class: "sidebar-section sidebar-fill",
-                    div { class: "spaces-list",
+                div { class: "flex-1 min-h-0 flex flex-col overflow-hidden",
+                    div { class: "flex-1 overflow-y-auto flex flex-col gap-1 px-3 py-2",
                         for space in spaces {
                             {
                                 let is_active = space.id == active_space_id || space.path == active_space_id;
@@ -54,17 +54,17 @@ pub fn Sidebar(
                                 rsx! {
                                     div {
                                         key: "{space.id}",
-                                        class: if is_active { "space-card active" } else { "space-card" },
+                                        class: if is_active { "px-2.5 py-1.5 rounded-md bg-[var(--bg-surface)] border border-[var(--border-subtle)] border-l-2 border-l-[var(--accent)] cursor-pointer transition-colors" } else { "px-2.5 py-1.5 rounded-md border border-transparent hover:bg-[var(--bg-hover)] hover:border-[var(--border-subtle)] cursor-pointer transition-colors" },
                                         onclick: move |_| on_select_space.call(space_id.clone()),
-                                        div { class: "space-card-top",
-                                            span { class: "space-name", "{space.name}" }
-                                            if is_active { span { class: "space-badge", "active" } }
+                                        div { class: "flex items-center justify-between",
+                                            span { class: "text-xs font-medium text-[var(--text-primary)]", "{space.name}" }
+                                            if is_active { span { class: "font-mono text-[9px] px-1 rounded-sm bg-[rgba(138,123,174,0.12)] text-[var(--accent)]", "active" } }
                                         }
-                                        div { class: "space-branch", "{space.branch}" }
+                                        div { class: "font-mono text-[10px] text-[var(--text-secondary)]", "{space.branch}" }
                                         {
                                             let home = std::env::var("HOME").unwrap_or_default();
                                             let short = space.path.replacen(&home, "~", 1);
-                                            rsx! { span { class: "space-path", "{short}" } }
+                                            rsx! { div { class: "font-mono text-[10px] text-[var(--text-muted)] truncate", "{short}" } }
                                         }
                                     }
                                 }
@@ -73,8 +73,8 @@ pub fn Sidebar(
                     }
                 }
             } else {
-                div { class: "sidebar-section sidebar-fill",
-                    div { class: "agents-list",
+                div { class: "flex-1 min-h-0 flex flex-col overflow-hidden",
+                    div { class: "flex-1 overflow-y-auto flex flex-col gap-0.5 px-2 py-2",
                         for session in sessions.iter() {
                             SessionRow {
                                 key: "{session.id}",
@@ -92,47 +92,11 @@ pub fn Sidebar(
                             let id_for_archive = active.id.clone();
                             let id_for_delete = active.id.clone();
                             let active_is_archived = active.status == SessionStatus::Archived;
-                            let tab_now = tab();
                             rsx! {
-                                div { class: "sidebar-action-bar",
-                                    button {
-                                        class: if tab_now == "sessions" { "sidebar-action-icon primary" } else { "sidebar-action-icon" },
-                                        title: "新建会话",
-                                        onclick: move |_| on_create.call(()),
-                                        svg {
-                                            xmlns: "http://www.w3.org/2000/svg",
-                                            width: "14",
-                                            height: "14",
-                                            view_box: "0 0 24 24",
-                                            fill: "none",
-                                            stroke: "currentColor",
-                                            stroke_width: "1.8",
-                                            stroke_linecap: "round",
-                                            stroke_linejoin: "round",
-                                            path { d: "M12 5v14" }
-                                            path { d: "M5 12h14" }
-                                        }
-                                    }
-                                    button {
-                                        class: "sidebar-action-icon",
-                                        title: "打开工作区目录",
-                                        onclick: move |_| on_trigger_picker.call(()),
-                                        svg {
-                                            xmlns: "http://www.w3.org/2000/svg",
-                                            width: "14",
-                                            height: "14",
-                                            view_box: "0 0 24 24",
-                                            fill: "none",
-                                            stroke: "currentColor",
-                                            stroke_width: "1.8",
-                                            stroke_linecap: "round",
-                                            stroke_linejoin: "round",
-                                            path { d: "M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" }
-                                        }
-                                    }
+                                div { class: "flex items-center gap-1.5 px-2.5 py-2 border-t border-[var(--border-subtle)] bg-[rgba(0,0,0,0.22)] shrink-0",
                                     if rename_open() {
                                         input {
-                                            class: "sidebar-rename-input",
+                                            class: "flex-1 min-w-0 bg-[var(--bg-base)] border border-[var(--accent)] rounded-md text-[var(--text-primary)] px-2 py-1 text-xs outline-none",
                                             value: "{rename_val}",
                                             placeholder: "新名称",
                                             oninput: move |e| rename_val.set(e.value()),
@@ -143,9 +107,7 @@ pub fn Sidebar(
                                                 move |e: KeyboardEvent| {
                                                     if e.key() == Key::Enter {
                                                         let t = rename_val().trim().to_string();
-                                                        if !t.is_empty() {
-                                                            on_rename.call((id.clone(), t));
-                                                        }
+                                                        if !t.is_empty() { on_rename.call((id.clone(), t)); }
                                                         rename_open.set(false);
                                                     } else if e.key() == Key::Escape {
                                                         rename_open.set(false);
@@ -154,16 +116,14 @@ pub fn Sidebar(
                                             },
                                         }
                                         button {
-                                            class: "sidebar-action-icon",
+                                            class: "p-1.5 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] border border-[var(--border-subtle)]",
                                             title: "确认重命名",
                                             onclick: {
                                                 let id = id_for_rename.clone();
                                                 let on_rename = on_rename;
                                                 move |_| {
                                                     let t = rename_val().trim().to_string();
-                                                    if !t.is_empty() {
-                                                        on_rename.call((id.clone(), t));
-                                                    }
+                                                    if !t.is_empty() { on_rename.call((id.clone(), t)); }
                                                     rename_open.set(false);
                                                 }
                                             },
@@ -180,16 +140,7 @@ pub fn Sidebar(
                                                     rename_open.set(true);
                                                 }
                                             },
-                                            svg {
-                                                xmlns: "http://www.w3.org/2000/svg",
-                                                width: "14",
-                                                height: "14",
-                                                view_box: "0 0 24 24",
-                                                fill: "none",
-                                                stroke: "currentColor",
-                                                stroke_width: "1.8",
-                                                stroke_linecap: "round",
-                                                stroke_linejoin: "round",
+                                            svg { xmlns: "http://www.w3.org/2000/svg", width: "14", height: "14", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "1.8", stroke_linecap: "round", stroke_linejoin: "round",
                                                 path { d: "M12 20h9" }
                                                 path { d: "M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" }
                                             }
@@ -199,16 +150,7 @@ pub fn Sidebar(
                                         class: "sidebar-action-icon",
                                         title: if active_is_archived { "取消归档" } else { "归档会话" },
                                         onclick: move |_| on_archive.call(id_for_archive.clone()),
-                                        svg {
-                                            xmlns: "http://www.w3.org/2000/svg",
-                                            width: "14",
-                                            height: "14",
-                                            view_box: "0 0 24 24",
-                                            fill: "none",
-                                            stroke: "currentColor",
-                                            stroke_width: "1.8",
-                                            stroke_linecap: "round",
-                                            stroke_linejoin: "round",
+                                        svg { xmlns: "http://www.w3.org/2000/svg", width: "14", height: "14", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "1.8", stroke_linecap: "round", stroke_linejoin: "round",
                                             rect { x: "3", y: "3", width: "18", height: "5", rx: "1" }
                                             path { d: "M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" }
                                             if active_is_archived {
@@ -223,16 +165,7 @@ pub fn Sidebar(
                                         class: "sidebar-action-icon danger",
                                         title: "删除会话",
                                         onclick: move |_| on_delete.call(id_for_delete.clone()),
-                                        svg {
-                                            xmlns: "http://www.w3.org/2000/svg",
-                                            width: "14",
-                                            height: "14",
-                                            view_box: "0 0 24 24",
-                                            fill: "none",
-                                            stroke: "currentColor",
-                                            stroke_width: "1.8",
-                                            stroke_linecap: "round",
-                                            stroke_linejoin: "round",
+                                        svg { xmlns: "http://www.w3.org/2000/svg", width: "14", height: "14", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "1.8", stroke_linecap: "round", stroke_linejoin: "round",
                                             path { d: "M3 6h18" }
                                             path { d: "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" }
                                             path { d: "M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" }
@@ -240,6 +173,7 @@ pub fn Sidebar(
                                             path { d: "M14 11v6" }
                                         }
                                     }
+                                    span { class: "ml-auto text-[10px] text-[var(--text-muted)] font-mono truncate max-w-[100px]", "{active.title}" }
                                 }
                             }
                         } else {

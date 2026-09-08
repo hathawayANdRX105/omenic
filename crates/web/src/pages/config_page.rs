@@ -77,13 +77,13 @@ pub fn ConfigPage(
     });
 
     rsx! {
-        div { class: "config-page",
+        div { class: "flex-1 overflow-y-auto flex flex-col gap-6 px-12 pt-9 pb-14 max-w-[1000px] w-full mx-auto",
             // Header Section
-            div { class: "config-header",
+            div { class: "flex items-center justify-between pb-5 border-b border-[var(--border-subtle)]",
                 div { style: "display: flex; align-items: center; justify-content: space-between;",
                     div {
                         h1 { "模型与渠道配置" }
-                        p { class: "config-subtitle", "管理 LLM 渠道端点、安全凭证与默认模型，配置实时持久化至 .oi/config.toml" }
+                        p { class: "text-[13px] text-[var(--text-muted)] mt-1 m-0", "管理 LLM 渠道端点、安全凭证与默认模型，配置实时持久化至 .oi/config.toml" }
                     }
                     div {
                         style: if is_form_valid {
@@ -100,10 +100,10 @@ pub fn ConfigPage(
             if let Some(res) = save_status.read().as_ref() {
                 match res {
                     Ok(msg) => rsx! {
-                        div { class: "feedback-banner success", "{msg}" }
+                        div { class: "px-4 py-2.5 rounded-lg text-[13px] flex items-center gap-2 bg-emerald-500/10 text-emerald-300 border border-emerald-500/25", "{msg}" }
                     },
                     Err(err) => rsx! {
-                        div { class: "feedback-banner error", "{err}" }
+                        div { class: "px-4 py-2.5 rounded-lg text-[13px] flex items-center gap-2 bg-red-500/10 text-red-300 border border-red-500/25", "{err}" }
                     },
                 }
             }
@@ -112,12 +112,12 @@ pub fn ConfigPage(
             if let Some(res) = test_status.read().as_ref() {
                 match res {
                     Ok(list) => rsx! {
-                        div { class: "feedback-banner success",
+                        div { class: "px-4 py-2.5 rounded-lg text-[13px] flex items-center gap-2 bg-emerald-500/10 text-emerald-300 border border-emerald-500/25",
                             "连接成功：已探测到 {list.len()} 个可用模型"
                         }
                     },
                     Err(err) => rsx! {
-                        div { class: "feedback-banner error",
+                        div { class: "px-4 py-2.5 rounded-lg text-[13px] flex items-center gap-2 bg-red-500/10 text-red-300 border border-red-500/25",
                             "连接失败: {err}"
                         }
                     },
@@ -125,23 +125,23 @@ pub fn ConfigPage(
             }
 
             // Form Card
-            div { class: "config-card",
-                div { class: "config-card-header",
-                    div { class: "config-card-title", "LLM API 凭证与端点" }
+            div { class: "bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl px-7 py-6 flex flex-col gap-5 shadow-[0_4px_20px_rgba(0,0,0,0.2)]",
+                div { class: "flex items-center justify-between pb-3.5 border-b border-[rgba(255,255,255,0.05)]",
+                    div { class: "text-[15px] font-semibold text-white", "LLM API 凭证与端点" }
                     span { style: "font-size: 11.5px; color: var(--text-muted); font-family: ui-monospace, monospace;", "OpenAI-compatible" }
                 }
 
-                div { class: "form-grid",
+                div { class: "grid grid-cols-2 gap-4.5 gap-x-5",
                     // Base URL Field
-                    div { class: "form-group full",
+                    div { class: "flex flex-col gap-1.5 col-span-2",
                         div { style: "display: flex; justify-content: space-between;",
-                            label { class: "form-label", "Base URL (API 基地址)" }
+                            label { class: "text-xs font-medium text-[#c9cddb]", "Base URL (API 基地址)" }
                             if let Some(err) = url_error {
                                 span { style: "font-size: 11px; color: var(--accent-red);", "{err}" }
                             }
                         }
                         input {
-                            class: "form-input",
+                            class: "form-input w-full px-3.5 py-2.5 bg-[#0f1017] border border-[var(--border-subtle)] rounded-md text-white text-[13px] outline-none transition-all focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_rgba(162,138,199,0.2)] placeholder:text-[var(--text-muted)]",
                             value: "{base_url}",
                             oninput: move |e| base_url.set(e.value()),
                             placeholder: "http://127.0.0.1:3182",
@@ -149,17 +149,17 @@ pub fn ConfigPage(
                     }
 
                     // API Key Field
-                    div { class: "form-group full",
+                    div { class: "flex flex-col gap-1.5 col-span-2",
                         div { style: "display: flex; justify-content: space-between; align-items: center;",
-                            label { class: "form-label", "API Key / Bearer Token" }
+                            label { class: "text-xs font-medium text-[#c9cddb]", "API Key / Bearer Token" }
                             button {
-                                class: "action-pill-btn",
+                                class: "px-3 py-1 bg-[rgba(255,255,255,0.06)] border border-[var(--border-subtle)] rounded text-[var(--text-secondary)] text-[11px] cursor-pointer hover:text-white hover:bg-[rgba(255,255,255,0.12)] transition-colors",
                                 onclick: move |_| show_key.set(!show_key()),
                                 if show_key() { "隐藏" } else { "显示" }
                             }
                         }
                         input {
-                            class: "form-input",
+                            class: "form-input w-full px-3.5 py-2.5 bg-[#0f1017] border border-[var(--border-subtle)] rounded-md text-white text-[13px] outline-none transition-all focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_rgba(162,138,199,0.2)] placeholder:text-[var(--text-muted)]",
                             style: "font-family: ui-monospace, monospace;",
                             r#type: if show_key() { "text" } else { "password" },
                             value: "{api_key}",
@@ -172,15 +172,15 @@ pub fn ConfigPage(
                     }
 
                     // Default Model
-                    div { class: "form-group",
+                    div { class: "flex flex-col gap-1.5",
                         div { style: "display: flex; justify-content: space-between;",
-                            label { class: "form-label", "默认模型 (Model ID)" }
+                            label { class: "text-xs font-medium text-[#c9cddb]", "默认模型 (Model ID)" }
                             if let Some(err) = model_error {
                                 span { style: "font-size: 11px; color: var(--accent-red);", "{err}" }
                             }
                         }
                         input {
-                            class: "form-input",
+                            class: "form-input w-full px-3.5 py-2.5 bg-[#0f1017] border border-[var(--border-subtle)] rounded-md text-white text-[13px] outline-none transition-all focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_rgba(162,138,199,0.2)] placeholder:text-[var(--text-muted)]",
                             value: "{model}",
                             oninput: move |e| model.set(e.value()),
                             placeholder: "agnes-2.5-flash",
@@ -188,15 +188,15 @@ pub fn ConfigPage(
                     }
 
                     // Max Tokens
-                    div { class: "form-group",
+                    div { class: "flex flex-col gap-1.5",
                         div { style: "display: flex; justify-content: space-between;",
-                            label { class: "form-label", "Max Tokens" }
+                            label { class: "text-xs font-medium text-[#c9cddb]", "Max Tokens" }
                             if let Some(err) = tokens_error {
                                 span { style: "font-size: 11px; color: var(--accent-red);", "{err}" }
                             }
                         }
                         input {
-                            class: "form-input",
+                            class: "form-input w-full px-3.5 py-2.5 bg-[#0f1017] border border-[var(--border-subtle)] rounded-md text-white text-[13px] outline-none transition-all focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_rgba(162,138,199,0.2)] placeholder:text-[var(--text-muted)]",
                             r#type: "number",
                             value: "{max_tokens}",
                             oninput: move |e| max_tokens.set(e.value()),
@@ -205,15 +205,15 @@ pub fn ConfigPage(
                     }
 
                     // Data Directory
-                    div { class: "form-group full",
+                    div { class: "flex flex-col gap-1.5 col-span-2",
                         div { style: "display: flex; justify-content: space-between;",
-                            label { class: "form-label", "数据目录 (Data Directory)" }
+                            label { class: "text-xs font-medium text-[#c9cddb]", "数据目录 (Data Directory)" }
                             if let Some(err) = dir_error {
                                 span { style: "font-size: 11px; color: var(--accent-red);", "{err}" }
                             }
                         }
                         input {
-                            class: "form-input",
+                            class: "form-input w-full px-3.5 py-2.5 bg-[#0f1017] border border-[var(--border-subtle)] rounded-md text-white text-[13px] outline-none transition-all focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_rgba(162,138,199,0.2)] placeholder:text-[var(--text-muted)]",
                             value: "{data_dir}",
                             oninput: move |e| data_dir.set(e.value()),
                             placeholder: "./.oi",
@@ -222,9 +222,9 @@ pub fn ConfigPage(
                 }
 
                 // Action Buttons Row
-                div { class: "config-actions-row",
+                div { class: "flex items-center gap-3 pt-1.5",
                     button {
-                        class: "btn-primary-action",
+                        class: "px-5 py-2 bg-[var(--accent)] text-[#0b0c10] text-[13px] font-semibold rounded-md hover:bg-[var(--accent-hover)] transition-colors cursor-pointer",
                         style: if !is_form_valid { "opacity: 0.5; cursor: not-allowed;" } else { "" },
                         disabled: !is_form_valid,
                         onclick: move |_| {
@@ -251,7 +251,7 @@ pub fn ConfigPage(
                     }
 
                     button {
-                        class: "btn-secondary-action",
+                        class: "px-5 py-2 bg-[rgba(255,255,255,0.05)] text-[var(--text-primary)] text-[13px] font-medium rounded-md border border-[var(--border-subtle)] hover:bg-[rgba(255,255,255,0.1)] transition-colors cursor-pointer",
                         disabled: is_testing(),
                         onclick: move |_| {
                             is_testing.set(true);
@@ -272,13 +272,13 @@ pub fn ConfigPage(
             }
 
             // Online Models Card
-            div { class: "config-card",
-                div { class: "config-card-header",
-                    div { class: "config-card-title", "在线可用模型 ({models.len()})" }
+            div { class: "bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl px-7 py-6 flex flex-col gap-5 shadow-[0_4px_20px_rgba(0,0,0,0.2)]",
+                div { class: "flex items-center justify-between pb-3.5 border-b border-[rgba(255,255,255,0.05)]",
+                    div { class: "text-[15px] font-semibold text-white", "在线可用模型 ({models.len()})" }
                     span { style: "font-size: 11.5px; color: var(--text-muted);", "点击选用" }
                 }
 
-                div { class: "model-list-grid",
+                div { class: "grid grid-cols-2 gap-2.5",
                     for m in &models {
                         {
                             let m_str = m.clone();
@@ -295,7 +295,7 @@ pub fn ConfigPage(
                                         }
                                     }
                                     button {
-                                        class: "action-pill-btn",
+                                        class: "px-3 py-1 bg-[rgba(255,255,255,0.06)] border border-[var(--border-subtle)] rounded text-[var(--text-secondary)] text-[11px] cursor-pointer hover:text-white hover:bg-[rgba(255,255,255,0.12)] transition-colors",
                                         disabled: is_current,
                                         onclick: move |_| {
                                             model.set(m_str.clone());
