@@ -538,7 +538,7 @@ html, body {
 
 .session-row {
     padding: 0;
-    border-radius: 6px;
+    border-radius: 8px;
     background: transparent;
     border: 1px solid transparent;
     display: flex;
@@ -546,6 +546,7 @@ html, body {
     transition: all 0.15s ease;
     position: relative;
     overflow: hidden;
+    cursor: pointer;
 }
 
 .session-row:hover {
@@ -558,6 +559,7 @@ html, body {
     border-color: var(--border-subtle);
     border-left: 2px solid var(--accent);
 }
+
 
 .session-main-click {
     flex: 1;

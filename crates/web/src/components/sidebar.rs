@@ -162,20 +162,65 @@ pub fn Sidebar(
                                                     rename_open.set(true);
                                                 }
                                             },
-                                            "✎"
+                                            svg {
+                                                xmlns: "http://www.w3.org/2000/svg",
+                                                width: "14",
+                                                height: "14",
+                                                view_box: "0 0 24 24",
+                                                fill: "none",
+                                                stroke: "currentColor",
+                                                stroke_width: "1.8",
+                                                stroke_linecap: "round",
+                                                stroke_linejoin: "round",
+                                                path { d: "M12 20h9" }
+                                                path { d: "M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" }
+                                            }
                                         }
                                     }
                                     button {
                                         class: "sidebar-action-icon",
                                         title: if active_is_archived { "取消归档" } else { "归档会话" },
                                         onclick: move |_| on_archive.call(id_for_archive.clone()),
-                                        if active_is_archived { "📤" } else { "📥" }
+                                        svg {
+                                            xmlns: "http://www.w3.org/2000/svg",
+                                            width: "14",
+                                            height: "14",
+                                            view_box: "0 0 24 24",
+                                            fill: "none",
+                                            stroke: "currentColor",
+                                            stroke_width: "1.8",
+                                            stroke_linecap: "round",
+                                            stroke_linejoin: "round",
+                                            rect { x: "3", y: "3", width: "18", height: "5", rx: "1" }
+                                            path { d: "M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" }
+                                            if active_is_archived {
+                                                path { d: "M9 14l3-3 3 3" }
+                                                path { d: "M12 11v7" }
+                                            } else {
+                                                path { d: "M10 12h4" }
+                                            }
+                                        }
                                     }
                                     button {
                                         class: "sidebar-action-icon danger",
                                         title: "删除会话",
                                         onclick: move |_| on_delete.call(id_for_delete.clone()),
-                                        "🗑"
+                                        svg {
+                                            xmlns: "http://www.w3.org/2000/svg",
+                                            width: "14",
+                                            height: "14",
+                                            view_box: "0 0 24 24",
+                                            fill: "none",
+                                            stroke: "currentColor",
+                                            stroke_width: "1.8",
+                                            stroke_linecap: "round",
+                                            stroke_linejoin: "round",
+                                            path { d: "M3 6h18" }
+                                            path { d: "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" }
+                                            path { d: "M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" }
+                                            path { d: "M10 11v6" }
+                                            path { d: "M14 11v6" }
+                                        }
                                     }
                                     span { class: "sidebar-action-hint", "{active.title}" }
                                 }
