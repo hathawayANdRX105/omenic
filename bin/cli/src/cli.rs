@@ -1980,7 +1980,7 @@ fn pr_render_cmd(id: &str, json: bool) -> Result<u8, String> {
 
     // Children of a parent, in dependency-topological order (Kahn).
     fn children_of<'a>(all: &'a [Task], parent: &str) -> Vec<&'a Task> {
-        let mut kids: Vec<&Task> = all
+        let kids: Vec<&Task> = all
             .iter()
             .filter(|t| t.parent.as_deref() == Some(parent))
             .collect();

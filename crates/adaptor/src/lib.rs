@@ -6,7 +6,7 @@ pub mod openai;
 pub mod sse;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// Model configuration.
 #[derive(Debug, Clone, Deserialize)]

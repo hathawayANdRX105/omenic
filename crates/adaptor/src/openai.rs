@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde_json::{Value, json};
 
 use crate::sse::SseParser;
-use crate::{Block, Content, Context, Message, Model, Role, StopReason, StreamEvent, ToolDef};
+use crate::{Block, Content, Context, Model, Role, StopReason, StreamEvent, ToolDef};
 
 pub(crate) fn context_to_openai_messages(context: &Context) -> Vec<Value> {
     let mut messages = Vec::with_capacity(context.messages.len() + 1);

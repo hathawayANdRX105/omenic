@@ -1,4 +1,3 @@
-use spec::template::check::CheckFinding;
 use spec::template::check::check;
 use spec::template::init::*;
 use spec::template::parse::*;
