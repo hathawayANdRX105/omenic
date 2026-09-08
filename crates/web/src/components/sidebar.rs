@@ -30,19 +30,17 @@ pub fn Sidebar(
 
     rsx! {
         aside { class: "sidebar",
-            // 顶层 icon tab(可悬浮文字提示,跟随 Cursor/Claude 桌面习惯)
+            // 顶层标签 tab:文字清晰区分两个上下文
             div { class: "sidebar-tabs",
                 button {
                     class: if tab() == "spaces" { "sidebar-tab active" } else { "sidebar-tab" },
-                    title: "工作空间",
                     onclick: move |_| tab.set("spaces".into()),
-                    "◇"
+                    "Spaces"
                 }
                 button {
                     class: if tab() == "sessions" { "sidebar-tab active" } else { "sidebar-tab" },
-                    title: "会话",
                     onclick: move |_| tab.set("sessions".into()),
-                    "▦"
+                    "Sessions"
                 }
             }
 
@@ -50,11 +48,6 @@ pub fn Sidebar(
                 div { class: "sidebar-section sidebar-fill",
                     div { class: "sidebar-section-header",
                         span { class: "sidebar-title", "Spaces" }
-                        button {
-                            class: "btn-subtle",
-                            onclick: move |_| on_trigger_picker.call(()),
-                            "打开"
-                        }
                     }
                     div { class: "spaces-list",
                         for space in spaces {
@@ -86,11 +79,6 @@ pub fn Sidebar(
                 div { class: "sidebar-section sidebar-fill",
                     div { class: "sidebar-section-header",
                         span { class: "sidebar-title", "Sessions" }
-                        button {
-                            class: "btn-subtle-accent",
-                            onclick: move |_| on_create.call(()),
-                            "+ 新建"
-                        }
                     }
                     div { class: "agents-list",
                         for session in sessions.iter() {
@@ -110,8 +98,44 @@ pub fn Sidebar(
                             let id_for_archive = active.id.clone();
                             let id_for_delete = active.id.clone();
                             let active_is_archived = active.status == SessionStatus::Archived;
+                            let tab_now = tab();
                             rsx! {
                                 div { class: "sidebar-action-bar",
+                                    button {
+                                        class: if tab_now == "sessions" { "sidebar-action-icon primary" } else { "sidebar-action-icon" },
+                                        title: "新建会话",
+                                        onclick: move |_| on_create.call(()),
+                                        svg {
+                                            xmlns: "http://www.w3.org/2000/svg",
+                                            width: "14",
+                                            height: "14",
+                                            view_box: "0 0 24 24",
+                                            fill: "none",
+                                            stroke: "currentColor",
+                                            stroke_width: "1.8",
+                                            stroke_linecap: "round",
+                                            stroke_linejoin: "round",
+                                            path { d: "M12 5v14" }
+                                            path { d: "M5 12h14" }
+                                        }
+                                    }
+                                    button {
+                                        class: "sidebar-action-icon",
+                                        title: "打开工作区目录",
+                                        onclick: move |_| on_trigger_picker.call(()),
+                                        svg {
+                                            xmlns: "http://www.w3.org/2000/svg",
+                                            width: "14",
+                                            height: "14",
+                                            view_box: "0 0 24 24",
+                                            fill: "none",
+                                            stroke: "currentColor",
+                                            stroke_width: "1.8",
+                                            stroke_linecap: "round",
+                                            stroke_linejoin: "round",
+                                            path { d: "M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" }
+                                        }
+                                    }
                                     if rename_open() {
                                         input {
                                             class: "sidebar-rename-input",
@@ -222,7 +246,6 @@ pub fn Sidebar(
                                             path { d: "M14 11v6" }
                                         }
                                     }
-                                    span { class: "sidebar-action-hint", "{active.title}" }
                                 }
                             }
                         } else {

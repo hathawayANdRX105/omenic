@@ -254,23 +254,13 @@ html, body {
 }
 
 .session-actions {
-    position: absolute;
-    top: 6px;
-    right: 6px;
     display: flex;
     gap: 2px;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.12s ease;
-    background: rgba(15,15,20,0.6);
-    border-radius: 4px;
-    padding: 2px 4px;
 }
 
 .session-row:hover .session-actions,
 .session-row.active .session-actions {
     opacity: 1;
-    pointer-events: auto;
 }
 
 .session-action-btn {
@@ -538,15 +528,17 @@ html, body {
 
 .session-row {
     padding: 0;
-    border-radius: 8px;
+    border-radius: 6px;
     background: transparent;
     border: 1px solid transparent;
     display: flex;
-    align-items: center;
-    transition: all 0.15s ease;
+    align-items: flex-start;
+    transition: background 0.12s ease, border-color 0.12s ease;
     position: relative;
     overflow: hidden;
     cursor: pointer;
+    padding: 7px 10px 7px 0;
+    margin-bottom: 2px;
 }
 
 .session-row:hover {
@@ -576,30 +568,6 @@ html, body {
     align-items: center;
     justify-content: space-between;
     gap: 6px;
-}
-
-.btn-delete-session {
-    background: transparent;
-    border: none;
-    color: var(--text-muted);
-    font-size: 13px;
-    line-height: 1;
-    cursor: pointer;
-    padding: 2px 4px;
-    margin-right: 4px;
-    border-radius: 4px;
-    opacity: 0;
-    transition: opacity 0.12s ease, color 0.12s ease;
-    flex-shrink: 0;
-}
-
-.session-row:hover .btn-delete-session {
-    opacity: 0.6;
-}
-
-.btn-delete-session:hover {
-    opacity: 1 !important;
-    color: #f87171;
 }
 
 .status-dot {
