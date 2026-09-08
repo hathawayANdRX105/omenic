@@ -261,29 +261,29 @@ fn SessionRow(session: Session, active: bool, on_select: EventHandler<String>) -
     } else {
         "status-dot idle"
     };
-    let status_label = if is_run { "RUN" } else { "IDLE" };
     let id_for_select = session.id.clone();
+
+    let row_class = if is_archived {
+        if active {
+            "session-row active archived"
+        } else {
+            "session-row archived"
+        }
+    } else if active {
+        "session-row active"
+    } else {
+        "session-row"
+    };
 
     rsx! {
         div {
-            class: if is_archived {
-                if active { "session-row active archived" } else { "session-row archived" }
-            } else if active {
-                "session-row active"
-            } else {
-                "session-row"
-            },
+            class: "{row_class} flex items-start gap-2.5 px-2.5 py-1.5 mb-0.5 rounded-md cursor-pointer transition-colors border border-transparent hover:bg-[var(--bg-hover)]",
             onclick: move |_| on_select.call(id_for_select.clone()),
-            div { class: "session-dot-col",
-                span { class: "{dot_class}" }
-            }
-            div { class: "session-content",
-                div { class: "session-title-row",
-                    span { class: "session-title", "{session.title}" }
-                    span { class: "session-tag-chip", "{status_label}" }
-                }
-                div { class: "session-meta-row",
-                    span { class: "session-time", "{session.last_active}" }
+            span { class: "{dot_class} shrink-0 mt-[5px]" }
+            div { class: "flex-1 min-w-0 flex flex-col gap-0.5",
+                div { class: "flex items-center justify-between gap-2",
+                    span { class: "text-xs font-medium text-[var(--text-primary)] truncate flex-1", "{session.title}" }
+                    span { class: "text-[10px] text-[var(--text-muted)] font-mono shrink-0", "{session.last_active}" }
                 }
             }
         }

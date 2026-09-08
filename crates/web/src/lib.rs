@@ -27,7 +27,11 @@ pub fn App() -> Element {
     let mut current_tab = use_signal(|| Tab::Workspace);
     let mut runtime_config = use_signal(llm::LlmRuntimeConfig::load_from_system);
     let mut show_quick_switcher = use_signal(|| false);
-    let css_content = include_str!("../assets/main.css");
+    let css_content = format!(
+        "{}{}",
+        include_str!("../assets/tailwind.css"),
+        include_str!("../assets/main.css")
+    );
 
     rsx! {
         style { "{css_content}" }
@@ -105,7 +109,11 @@ pub async fn launch() {
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let view = dioxus_liveview::LiveViewPool::new();
     let glue = dioxus_liveview::interpreter_glue("/ws");
-    let css = include_str!("../assets/main.css");
+    let css = format!(
+        "{}{}",
+        include_str!("../assets/tailwind.css"),
+        include_str!("../assets/main.css")
+    );
 
     let index_html = format!(
         r#"<!DOCTYPE html>
