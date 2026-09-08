@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use daemon::protocol::{Command, Request, Response};
 use daemon::session_query::{SESSION_QUERY_NAME, session_query_def};
-use daemon::{AppendOutcome, ClientError, Daemon, DaemonClient, DaemonConfig};
+use daemon::{AppendOutcome, ClientError, DaemonClient, DaemonConfig};
 use serde_json::{Value, json};
 use session::{SessionMessage, SessionRole, SessionSummary};
 use tempfile::TempDir;

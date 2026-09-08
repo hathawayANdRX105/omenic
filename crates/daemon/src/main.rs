@@ -30,7 +30,7 @@ fn main() -> Result<(), DaemonError> {
     let cfg = DaemonConfig::from_config(&config)?;
 
     println!("Starting omenic daemon...");
-    let mut daemon = Daemon::start(cfg)?;
+    let daemon = Daemon::start(cfg)?;
 
     println!(
         "Daemon started on socket: {:?}",

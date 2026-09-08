@@ -173,10 +173,47 @@
 - gh pr comment → RV-01~06
 - git commit → CM-01、CM-02、CM-03、WS-01、WS-02、CD-01~06、checklist（每 yaml 自身 `hooks` 过滤）
 - git push → WS-01、WS-02、CD-01~06、checklist（同上）
-- gate merge 手动 → 全量（PR + reviews + cleanup：CL-01~03 + RV-07 + checklist）
+> 清单更新顺序：按文件名字典序（加 `00_`/`10_` 前缀可强制提前）。
+
+## 主题十：手动运行检查（gate check）
+
+`gate check [names...]` — 按名字或列出所有 checklist，强制忽略 yaml 的 `hooks:` 过滤，用于调试/CI/按需跑：
+
+- `gate check` → 列出当前 SLA 层级（默认 l1）下的检查项
+- `gate check clippy` → 只跑 clippy
+- `gate check --sla l2` / `l3` → 解锁更高 SLA 层
+
+每次加/删 checklist yaml，清单自动更新；新规则只需 `cp spec/xxx.yaml .githooks/spec/` 即可。
+
+| 名字 | SLA | 触发 | 严重度 | 检测内容 |
+|---|---|---|---|---|
+| `hardcoded_secret` | l1 | pre-commit, pre-push, merge | WARN | 硬编码密钥/密码/Token（PCRE, 5 语言） |
+| `stale_api` | l1 | pre-commit, pre-push, merge | WARN | 废弃 Rust API（uninitialized/try!/ONCE_INIT） |
+| `slop_comment` | l1 | pre-commit, pre-push, merge | WARN | AI 风格注释（Step 1:/This function/该函数…, 5 语言） |
+| `rust_no_process_cmd` | l1 | pre-commit, pre-push, merge | FAIL | HTTP 调用走 reqwest, 不要 subprocess curl/wget |
+| `rust_no_dead_code_allow` | l1 | pre-commit, pre-push, merge | WARN | 合并前清理 #[allow(dead_code)] |
+| `rust_no_empty_module` | l1 | pre-commit, pre-push, merge | WARN | 微型空文件, 考虑合并到上层 mod |
+| `rust_tests_in_tests_dir` | l1 | pre-commit, pre-push, merge | FAIL | 测试必须同层 tests/ 目录 |
+| `rust_todo_needs_issue` | l1 | pre-commit, pre-push, merge | WARN | 注释里 TODO/FIXME 必须关联 issue 号（例 `// TODO(#123):`；不扫字符串/测试） |
+| `rust_test_no_assert` | l1 | pre-commit, pre-push, merge | WARN | 测试函数必须含 assert |
+| `rust_no_cfg_test_in_tests_dir` | l1 | pre-commit, pre-push, merge | WARN | tests/ 目录里不要 #[cfg(test)] |
+| `clippy` | l1 | merge | FAIL/WARN | rustc 错误 + unused/dead_code → FAIL；collapsible_if 等风格 → WARN |
+| `dep_hygiene` | l1 | merge | WARN | `cargo-machete` 未使用依赖 |
+| `duplication` | l2 | merge | WARN | 跨文件 4+ 连续行重复块（sh+awk, 零依赖） |
+| `crg_impact` | l2 | merge | WARN | diff 跨 3+ crate 改动 → 警告耦合 |
+| `ferrite_oversize` | l3 | merge | INFO | 大文件/大函数参考分（wildtoken `fast-l`；score/confidence，不阻断） |
+
+### SLA 分层
+
+- **l1 结构层**：零 token，毫秒～分钟级（grep / clippy / 静态分析）。FAIL 硬门槛。
+- **l2 语义层**：轻量，秒级（影响面 / 重复检测）。FAIL 硬门槛。
+- **l3 LLM 层**：按需，分钟级（`ferrite_oversize` 用 wildtoken `fast-l`）。INFO + score，不阻断。深度审查自行 `ocr review --format json --audience agent`。
+
+`gate check` 默认只跑 l1；`--sla l2` 或 `l3` 解锁更高层。
+l3 默认 hooks: [merge]，本地用 `gate check <l3-name> --sla l3` 触发。
 
 ## 更新与校验
 
-- 新增/修改规则：只改 `.githooks/spec/*.yaml` 参数 + 对应校验器逻辑，更新本文档
-- gate 改动后：`cargo build --release -p gate` → `upx --best --lzma target/release/gate` → `gate init` 重部署 + `install` 复制为 `~/.local/bin/gh`
+- 新增/修改规则：只改 `.githooks/spec/*.yaml` 参数 + 相应校验器逻辑，更新本文档
+- gate 改动后：`cargo build --release -p gate-bin` → `upx --best --lzma target/release/gate` → `gate init` 重部署 + `install` 复制为 `~/.local/bin/gh`
 - 触发式按上表 lazy 执行，不全局扫描

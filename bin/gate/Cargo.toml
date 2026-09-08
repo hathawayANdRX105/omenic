@@ -9,4 +9,5 @@ path = "src/main.rs"
 
 [dependencies]
 spec = { path = "../../crates/spec" }
+serde_json = { workspace = true }
 clap = { workspace = true }

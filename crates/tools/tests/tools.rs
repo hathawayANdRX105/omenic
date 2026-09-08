@@ -2,7 +2,7 @@
 
 use std::sync::atomic::AtomicBool;
 
-use serde_json::{Value, json};
+use serde_json::json;
 use tools::bash::RunBash;
 use tools::delete::DeleteFile;
 use tools::edit::EditFile;

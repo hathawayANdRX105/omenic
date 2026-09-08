@@ -2,8 +2,6 @@
 
 use std::path::Path;
 
-use super::Spec;
-
 pub const DEFAULT_TEMPLATES: &[(&str, &str)] = &[
     (
         "issue",

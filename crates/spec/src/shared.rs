@@ -67,6 +67,10 @@ pub struct Finding {
     pub severity: Severity,
     pub msg: String,
     pub line_hint: Option<u32>,
+    /// Extra structured fields (score, confidence, category, evidence, ...)
+    /// 来自 yaml harness 输出, 提供给 --json 模式给开发 agent 解析.
+    /// 文本模式忽略.
+    pub extra: BTreeMap<String, String>,
 }
 
 impl Finding {
@@ -86,12 +90,45 @@ impl Finding {
             severity,
             msg: msg.to_string(),
             line_hint: None,
+            extra: BTreeMap::new(),
         }
     }
 
     pub fn with_line(mut self, line: u32) -> Self {
         self.line_hint = Some(line);
         self
+    }
+
+    /// Insert a structured extra field (score, confidence, evidence, ...).
+    /// Used by harness mode: grep / mode: diff yaml to carry review-agent
+    /// signals beyond the default severity/msg/line schema. --json mode
+    /// exposes these to the calling dev agent.
+    pub fn with_extra(mut self, key: &str, value: impl Into<String>) -> Self {
+        self.extra.insert(key.to_string(), value.into());
+        self
+    }
+
+    /// Serialize to JSON Value, including all extra fields as a flat object.
+    /// Used by gate check --json mode to emit machine-readable output for
+    /// dev agents that consume score / confidence / evidence.
+    pub fn to_json(&self) -> JsonValue {
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "rule_id".to_string(),
+            JsonValue::String(self.rule_id.clone()),
+        );
+        obj.insert(
+            "severity".to_string(),
+            JsonValue::String(self.severity.as_str().to_string()),
+        );
+        obj.insert("msg".to_string(), JsonValue::String(self.msg.clone()));
+        if let Some(line) = self.line_hint {
+            obj.insert("line".to_string(), JsonValue::Number(line.into()));
+        }
+        for (k, v) in &self.extra {
+            obj.insert(k.clone(), JsonValue::String(v.clone()));
+        }
+        JsonValue::Object(obj)
     }
 }
 
@@ -184,7 +221,8 @@ fn load_severity_overrides() -> Option<YamlValue> {
     }
 }
 
-/// Print FAIL/WARN findings; suppress INFO unless no issues found.
+/// Print FAIL/WARN findings, plus INFO that carries extra (score/confidence).
+/// Other INFO is suppressed unless nothing actionable fired.
 /// All output goes to **stderr** — matches the Python which writes every line
 /// to `sys.stderr`.
 pub fn print_findings(findings: &[Finding]) {
@@ -194,7 +232,7 @@ pub fn print_findings(findings: &[Finding]) {
 
     let actionable: Vec<&Finding> = findings
         .iter()
-        .filter(|f| f.severity <= Severity::Warn)
+        .filter(|f| f.severity <= Severity::Warn || !f.extra.is_empty())
         .collect();
     if !actionable.is_empty() {
         let mut sorted = actionable.clone();
