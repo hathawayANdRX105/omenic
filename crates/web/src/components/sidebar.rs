@@ -46,9 +46,6 @@ pub fn Sidebar(
 
             if tab() == "spaces" {
                 div { class: "sidebar-section sidebar-fill",
-                    div { class: "sidebar-section-header",
-                        span { class: "sidebar-title", "Spaces" }
-                    }
                     div { class: "spaces-list",
                         for space in spaces {
                             {
@@ -77,9 +74,6 @@ pub fn Sidebar(
                 }
             } else {
                 div { class: "sidebar-section sidebar-fill",
-                    div { class: "sidebar-section-header",
-                        span { class: "sidebar-title", "Sessions" }
-                    }
                     div { class: "agents-list",
                         for session in sessions.iter() {
                             SessionRow {
