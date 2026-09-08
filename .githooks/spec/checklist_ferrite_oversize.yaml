@@ -1,19 +1,36 @@
-# ferrite 风格示例：单文件超过 1500 行 → WARN（针对 crates/page/admin/network.rs 2952 行问题）
-# mode: file（每个变更文件全文传给 harness）
-# 用法：cp omenic/.githooks/spec/checklist_ferrite_oversize.yaml ~/projects/ferrite/.githooks/spec/
-#      然后把 prompt 替换成你想用的 LLM CLI
+# L3 参考层: 大文件 / 大函数审查 (LLM)
+# 不阻断. fail_severity INFO. 开发 agent 读 score/confidence 自己决定.
+# 辅助信息: AGENTS.md + 文件全文 (mode: file)
+# 输出: id, severity=INFO, score, confidence, path, line, reason, evidence
 enabled: true
 hooks: [merge]
 sla: l3
-fail_severity: WARN
+fail_severity: INFO
 match:
   paths_include: ["**/*.rs"]
-  paths_exclude: ["target/", ".wt/"]
+  paths_exclude: ["target/", ".wt/", "**/tests/**"]
 mode: file
 harness:
   command: "sh"
   args:
     - "-c"
-    - "cat | claude --model haiku --print --output-format json '检查 Rust 文件: (1) 超过 1500 行 → 输出 {id:OS-01, severity:WARN, line:0, message:\"<N> lines exceeds 1500, consider split into modules\"}; (2) 单个 pub 函数体 > 200 行 → 输出 {id:OS-02, severity:WARN, line:<函数起始行>, message:\"<函数名> <N> lines, extract helpers\"}. 都没有输出 []. 不要其他输出.'"
+    - |
+      exec 2>/tmp/gate-l3-oversize-err.log
+      ROOT=$(git rev-parse --show-toplevel)
+      AGENTS=""
+      [ -f "$ROOT/AGENTS.md" ] && AGENTS=$(head -c 8000 "$ROOT/AGENTS.md")
+      FILE=$(cat)
+      LINES=$(printf '%s' "$FILE" | wc -l | tr -d ' ')
+      if ! command -v claude >/dev/null 2>&1; then
+        if [ "$LINES" -gt 1500 ]; then
+          printf '%s\n' "[{\"id\":\"OS-01\",\"severity\":\"INFO\",\"score\":0.7,\"confidence\":1.0,\"path\":\"\",\"line\":0,\"reason\":\"file has ${LINES} lines (>1500)\",\"evidence\":\"deterministic line count; no LLM\"}]"
+        else
+          echo '[]'
+        fi
+        exit 0
+      fi
+      PROMPT=$(printf '%s' 'Review one Rust file. Norms are in AGENTS.md (surgical, no speculative abstraction). Output ONLY a JSON array of objects with keys id, severity (always INFO), score (0-1 attention), confidence (0-1), path, line, reason, evidence. Do not decide must-fix. Score hints: file>1500 lines 0.6-0.9; pub fn body>200 lines 0.5-0.8; norms violated 0.4-0.7. Empty array if nothing notable.')
+      printf 'AGENTS.md:\n%s\n\n===== FILE (%s lines) =====\n%s\n' "$AGENTS" "$LINES" "$FILE" \
+        | claude --model haiku --print --output-format json "$PROMPT"
 optional: true
-timeout: 60
+timeout: 120

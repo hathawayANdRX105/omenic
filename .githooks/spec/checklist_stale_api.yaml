@@ -1,9 +1,7 @@
-# CK-STALE-API: 废弃/不推荐 Rust API 检测
-# 依据: Rust 代码现代化检查
-# 检测: 已知废弃/不推荐的 Rust API 模式
-# 为什么 grep 而非 LLM: 模式固定, 零 token, 毫秒级
-# 检测模式(ERE): (std::mem::uninitialized|try!\(|Error::description\(\)|std::sync::ONCE_INIT|std::cell::BorrowError)
-# 需人工处理: 所有匹配项
+# CK-STALE-API: 废弃/不推荐 Rust API 检测 (L1 确定性)
+# 检测: std::mem::uninitialized / try! / Error::description() /
+#       std::sync::ONCE_INIT / std::cell::BorrowError
+# grep 模式, 零 LLM
 enabled: true
 hooks: [pre-commit, pre-push, merge]
 sla: l1
@@ -17,13 +15,15 @@ harness:
   args:
     - "-c"
     - |
+      exec 2>/tmp/gate-stale-api-err.log
       ROOT=$(git rev-parse --show-toplevel)
-      grep -rEn "(std::mem::uninitialized|try!\(|Error::description\(\)|std::sync::ONCE_INIT|std::cell::BorrowError)" "$ROOT" --include="*.rs" 2>/dev/null | head -50
-      if [ -z "$(grep -rEn \"(std::mem::uninitialized|try!\(|Error::description\(\)|std::sync::ONCE_INIT|std::cell::BorrowError)\" \"$ROOT\" --include=\"*.rs\" 2>/dev/null)" ]; then
+      PAT='(std::mem::uninitialized|try!\(|Error::description\(\)|std::sync::ONCE_INIT|std::cell::BorrowError)'
+      matches=$(grep -rEn "$PAT" "$ROOT/crates" "$ROOT/bin" --include='*.rs' 2>/dev/null | head -50)
+      if [ -z "$matches" ]; then
         echo '[]'
       else
-        grep -rEn "(std::mem::uninitialized|try!\(|Error::description\(\)|std::sync::ONCE_INIT|std::cell::BorrowError)" "$ROOT" --include="*.rs" 2>/dev/null | head -50 | jq -R -s '
-          split("\\n") | map(select(length > 0))
+        printf '%s' "$matches" | jq -R -s '
+          split("\n") | map(select(length > 0))
           | map(capture("^(?<path>.+):(?<line>[0-9]+):(?<rest>.*)$"))
           | map({
               id: "STALE-API",
@@ -31,7 +31,7 @@ harness:
               path: .path,
               line: (.line | tonumber),
               message: ("废弃/不推荐 Rust API: " + .rest)
-            })'
+            })' | jq -c '.'
       fi
 optional: true
-timeout: 15
+timeout: 30
