@@ -4,7 +4,7 @@
 # 例外: Cargo.toml [package.metadata.cargo-machete] ignored 列表
 enabled: true
 hooks: [merge]
-sla: l3
+sla: l1
 fail_severity: WARN
 match:
   paths_include: ["**/Cargo.toml", "**/*.rs"]

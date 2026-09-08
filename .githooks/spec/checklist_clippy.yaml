@@ -6,7 +6,7 @@
 # 注意: 慢(增量 ~2min 全新 ~7min), 放 pre-push / merge, 不放 pre-commit
 enabled: true
 hooks: [merge]
-sla: l3
+sla: l1
 fail_severity: FAIL
 match:
   paths_include: ["**/*.rs"]
