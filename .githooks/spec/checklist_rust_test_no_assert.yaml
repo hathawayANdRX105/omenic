@@ -16,8 +16,10 @@ harness:
     - "-c"
     - |
       ROOT=$(git rev-parse --show-toplevel)
-      # 用 awk 按 #[test] 边界分段, 每段看有没有 assert_ 系列宏
-      matches=$(awk '
+      # 收集测试文件, 用 awk 按 #[test] 边界分段看有没有 assert_ 系列宏
+      test_files=$(find "$ROOT" \( -name target -o -name .git -o -name .wt \) -prune -o -path '*/tests/*' -name '*.rs' -print 2>/dev/null)
+      [ -z "$test_files" ] && { echo '[]'; exit 0; }
+      matches=$(printf '%s\n' "$test_files" | xargs awk '
         /#\[test\]/ {
           if (in_test && !has_assert) {
             print test_file ":" test_line ":" test_fn
@@ -35,7 +37,7 @@ harness:
             print test_file ":" test_line ":" test_fn
           }
         }
-      ' "$ROOT"/crates/*/tests/*.rs "$ROOT"/bin/*/tests/*.rs 2>/dev/null | head -20)
+      ' 2>/dev/null | head -20)
       if [ -z "$matches" ]; then
         echo '[]'
       else

@@ -16,7 +16,9 @@ harness:
     - "-c"
     - |
       ROOT=$(git rev-parse --show-toplevel)
-      matches=$(grep -rEn '#\[allow\(dead_code\)\]' "$ROOT"/crates/ "$ROOT"/bin/ --include='*.rs' 2>/dev/null | grep -v '//' | head -20)
+      matches=$(grep -rEn '#\[allow\(dead_code\)\]' "$ROOT" --include='*.rs' \
+        --exclude-dir=target --exclude-dir=.wt --exclude-dir=.git 2>/dev/null \
+        | grep -v '//' | head -20)
       if [ -z "$matches" ]; then
         echo '[]'
       else
