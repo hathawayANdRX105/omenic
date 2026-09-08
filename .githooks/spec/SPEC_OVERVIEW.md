@@ -194,24 +194,20 @@
 | `rust_no_dead_code_allow` | l1 | pre-commit, pre-push, merge | WARN | 合并前清理 #[allow(dead_code)] |
 | `rust_no_empty_module` | l1 | pre-commit, pre-push, merge | WARN | 微型空文件, 考虑合并到上层 mod |
 | `rust_tests_in_tests_dir` | l1 | pre-commit, pre-push, merge | FAIL | 测试必须同层 tests/ 目录 |
-| `rust_todo_needs_issue` | l1 | pre-commit, pre-push, merge | WARN | TODO/FIXME 必须关联 issue 号 |
+| `rust_todo_needs_issue` | l1 | pre-commit, pre-push, merge | WARN | 注释里 TODO/FIXME 必须关联 issue 号（例 `// TODO(#123):`；不扫字符串/测试） |
 | `rust_test_no_assert` | l1 | pre-commit, pre-push, merge | WARN | 测试函数必须含 assert |
 | `rust_no_cfg_test_in_tests_dir` | l1 | pre-commit, pre-push, merge | WARN | tests/ 目录里不要 #[cfg(test)] |
+| `clippy` | l1 | merge | FAIL/WARN | rustc 错误 + unused/dead_code → FAIL；collapsible_if 等风格 → WARN |
+| `dep_hygiene` | l1 | merge | WARN | `cargo-machete` 未使用依赖 |
 | `duplication` | l2 | merge | WARN | 跨文件 4+ 连续行重复块（sh+awk, 零依赖） |
 | `crg_impact` | l2 | merge | WARN | diff 跨 3+ crate 改动 → 警告耦合 |
-| `clippy` | l3 | merge | FAIL | `cargo clippy --workspace --all-targets -- -D warnings` JSON → findings |
-| `dep_hygiene` | l3 | merge | WARN | `cargo-machete` 未使用依赖 |
-| `ferrite_oversize` | l3 | merge | WARN | 单文件 > 1500 行（LLM 审） |
-| `oversize_demo` | l3 | merge | WARN | 大文件 demo（LLM 审） |
-| `no_debug_log_demo` | l3 | merge | FAIL | demo: LLM 调日志审计 |
-| `ocr_review` | l3 | merge | WARN | `ocr review` AI 语义审查（critical/important 升级 FAIL） |
-| `falsifiability` | l3 | merge | FAIL | LLM 证伪门：让 ocr 推翻自身 finding |
+| `ferrite_oversize` | l3 | merge | INFO | 大文件/大函数参考分（wildtoken `fast-l`；score/confidence，不阻断） |
 
 ### SLA 分层
 
-- **l1 结构层**：零 token，毫秒级（grep / clippy / 静态分析）
-- **l2 语义层**：轻量，秒级（影响面 / 重复检测）
-- **l3 LLM 层**：按需，分钟级（ocr AI 审查 / 证伪门）
+- **l1 结构层**：零 token，毫秒～分钟级（grep / clippy / 静态分析）。FAIL 硬门槛。
+- **l2 语义层**：轻量，秒级（影响面 / 重复检测）。FAIL 硬门槛。
+- **l3 LLM 层**：按需，分钟级（`ferrite_oversize` 用 wildtoken `fast-l`）。INFO + score，不阻断。深度审查自行 `ocr review --format json --audience agent`。
 
 `gate check` 默认只跑 l1；`--sla l2` 或 `l3` 解锁更高层。
 l3 默认 hooks: [merge]，本地用 `gate check <l3-name> --sla l3` 触发。

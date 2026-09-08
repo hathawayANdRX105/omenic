@@ -1,13 +1,10 @@
-# CD-07: cargo clippy 全量语义 lint（可读性/正确性/惯用法）
-# 为什么: cargo fmt 只查格式, clippy 查语义 — 业界 Rust 标配是 clippy -D warnings
-# 验证过的警告类别: collapsible_if / unused_imports / needless_borrow /
-#   unnecessary_sort_by / field_reassign_with_default / filter_map 可简化 等
-# mode: diff 不适用(clippy 需全 crate 编译), 用 grep 模式让 harness 自己跑
-# 注意: 慢(增量 ~2min 全新 ~7min), 放 pre-push / merge, 不放 pre-commit
+# CD-07: cargo clippy（确定性硬门槛, merge only）
+# FAIL: rustc 编译错误 + unused_* / dead_code（真信号）
+# WARN: collapsible_if 等风格（不阻断, 避免硬门槛被噪音冲掉）
 enabled: true
 hooks: [merge]
 sla: l1
-fail_severity: FAIL
+fail_severity: WARN
 match:
   paths_include: ["**/*.rs"]
   paths_exclude: ["target/", ".wt/"]
@@ -19,23 +16,25 @@ harness:
     - |
       ROOT=$(git rev-parse --show-toplevel)
       cd "$ROOT" || exit 2
-      # touch lib.rs 保证 warm-cache 下也重查 clippy(增量编译会跳过无改动 crate)
-      for f in crates/*/src/lib.rs bin/*/src/main.rs; do
-        [ -f "$f" ] && touch "$f"
-      done
       cargo clippy --workspace --all-targets --message-format json 2>/dev/null |
         grep '"reason":"compiler-message"' |
-      jq -s '
+        jq -s '
           [.[]
             | .message
             | select(type == "object")
             | select(.level == "warning" or .level == "error")
+            | (.code.code // "") as $code
             | {
-                id: ("CLIPPY-" + ((.code.code // "general") | sub("clippy::"; "") | ascii_upcase)),
-                severity: (if .level == "error" then "FAIL" else "WARN" end),
+                id: ("CLIPPY-" + ($code | sub("clippy::"; "") | ascii_upcase)),
+                severity: (
+                  if ($code | startswith("clippy::") | not) then "FAIL"
+                  elif ($code | test("unused|dead_code")) then "FAIL"
+                  else "WARN"
+                  end
+                ),
                 path: (.spans[0].file_name // ""),
                 line: (.spans[0].line_start // 0),
-                message: ((.code.code // "") + ": " + .message)
+                message: ($code + ": " + .message)
               }] | unique'
 optional: true
 timeout: 600

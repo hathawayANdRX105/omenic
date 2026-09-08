@@ -776,6 +776,7 @@ name = "gate-bin"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "serde_json",
  "spec",
 ]
 

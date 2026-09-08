@@ -417,7 +417,11 @@ fn convert(spec: &ChecklistSpec, items: Vec<FindingJson>) -> Vec<Finding> {
             // Forward harness-provided extra fields (score, confidence, evidence)
             // as Finding.extra so --json mode can expose them to dev agents.
             for (k, v) in raw.extra {
-                f = f.with_extra(&k, v.to_string());
+                let s = match v {
+                    serde_json::Value::String(s) => s,
+                    other => other.to_string(),
+                };
+                f = f.with_extra(&k, s);
             }
             Some(f)
         })
@@ -636,6 +640,7 @@ mod tests {
             timeout_secs: 60,
             optional: true,
             base_severity: Severity::Warn,
+            sla: SlaLevel::L1,
         };
         let items = vec![FindingJson {
             id: "X-01".into(),
@@ -643,6 +648,7 @@ mod tests {
             path: Some("src/foo.rs".into()),
             line: Some(42),
             message: "boom".into(),
+            extra: Default::default(),
         }];
         let out = convert(&spec, items);
         assert_eq!(out.len(), 1);
@@ -667,6 +673,7 @@ mod tests {
             timeout_secs: 60,
             optional: true,
             base_severity: Severity::Info,
+            sla: SlaLevel::L1,
         };
         let out = convert(
             &spec,
@@ -676,6 +683,7 @@ mod tests {
                 path: None,
                 line: None,
                 message: "global".into(),
+                extra: Default::default(),
             }],
         );
         assert_eq!(out.len(), 1);
@@ -696,10 +704,16 @@ mod tests {
             timeout_secs: 60,
             optional: true,
             base_severity: Severity::Info,
+            sla: SlaLevel::L1,
         };
-        let out = findings_from_stdout(&spec, r#"[{"id":"A-1","severity":"WARN","message":"hi"}]"#);
+        let out = findings_from_stdout(
+            &spec,
+            r#"[{"id":"A-1","severity":"WARN","message":"hi","score":0.7,"confidence":1.0,"reason":"hi","evidence":"L1"}]"#,
+        );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].msg, "hi");
+        assert_eq!(out[0].extra.get("score").map(String::as_str), Some("0.7"));
+        assert_eq!(out[0].extra.get("reason").map(String::as_str), Some("hi"));
     }
 
     #[test]
@@ -716,6 +730,7 @@ mod tests {
             timeout_secs: 60,
             optional: true,
             base_severity: Severity::Info,
+            sla: SlaLevel::L1,
         };
         let out = findings_from_stdout(&spec, "[]");
         assert!(out.is_empty());
@@ -735,6 +750,7 @@ mod tests {
             timeout_secs: 60,
             optional: true,
             base_severity: Severity::Info,
+            sla: SlaLevel::L1,
         };
         let out = findings_from_stdout(&spec, "not json {");
         assert_eq!(out.len(), 1);
@@ -756,6 +772,7 @@ mod tests {
             timeout_secs: 60,
             optional: true,
             base_severity: Severity::Info,
+            sla: SlaLevel::L1,
         };
         assert!(file_matches(&spec, "crates/page/admin/src/network.rs"));
         assert!(!file_matches(&spec, "target/debug/foo.rs"));

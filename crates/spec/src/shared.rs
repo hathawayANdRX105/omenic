@@ -222,7 +222,8 @@ fn load_severity_overrides() -> Option<YamlValue> {
     }
 }
 
-/// Print FAIL/WARN findings; suppress INFO unless no issues found.
+/// Print FAIL/WARN findings, plus INFO that carries extra (score/confidence).
+/// Other INFO is suppressed unless nothing actionable fired.
 /// All output goes to **stderr** — matches the Python which writes every line
 /// to `sys.stderr`.
 pub fn print_findings(findings: &[Finding]) {
@@ -232,7 +233,7 @@ pub fn print_findings(findings: &[Finding]) {
 
     let actionable: Vec<&Finding> = findings
         .iter()
-        .filter(|f| f.severity <= Severity::Warn)
+        .filter(|f| f.severity <= Severity::Warn || !f.extra.is_empty())
         .collect();
     if !actionable.is_empty() {
         let mut sorted = actionable.clone();
