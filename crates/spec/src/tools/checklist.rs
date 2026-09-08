@@ -9,9 +9,10 @@
 //! See `.githooks/spec/CHECKLIST_SPEC.md` for the full yaml schema and
 //! harness protocol.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
@@ -40,6 +41,23 @@ impl HookScope {
     }
 }
 
+/// SLA tier for a checklist check.
+/// L1 = structural (zero token, milliseconds).
+/// L2 = semantic (lightweight, seconds).
+/// L3 = LLM-based (on-demand, minutes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SlaLevel {
+    L1,
+    L2,
+    L3,
+}
+
+impl Default for SlaLevel {
+    fn default() -> Self {
+        SlaLevel::L1
+    }
+}
+
 #[derive(Debug, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 struct RawSpec {
@@ -52,6 +70,7 @@ struct RawSpec {
     timeout: Option<u64>,
     optional: Option<bool>,
     fail_severity: Option<String>,
+    sla: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -81,6 +100,7 @@ struct ChecklistSpec {
     timeout_secs: u64,
     optional: bool,
     base_severity: Severity,
+    sla: SlaLevel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +129,10 @@ struct FindingJson {
     #[serde(default)]
     line: Option<u32>,
     message: String,
+    /// Catch-all extra fields (score, confidence, evidence, category, ...)
+    /// 来自 L3 审查 agent 输出, --json 模式暴露给 dev agent.
+    #[serde(default, flatten)]
+    extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -152,6 +176,11 @@ fn load_spec(path: &std::path::Path) -> Option<ChecklistSpec> {
         "grep" => Mode::Grep,
         _ => Mode::Diff,
     };
+    let sla = match raw.sla.as_deref().unwrap_or("l1").to_lowercase().as_str() {
+        "l2" => SlaLevel::L2,
+        "l3" => SlaLevel::L3,
+        _ => SlaLevel::L1,
+    };
     let base_severity = raw
         .fail_severity
         .as_deref()
@@ -173,6 +202,7 @@ fn load_spec(path: &std::path::Path) -> Option<ChecklistSpec> {
         timeout_secs: raw.timeout.unwrap_or(60),
         optional: raw.optional.unwrap_or(true),
         base_severity,
+        sla,
     })
 }
 
@@ -286,20 +316,43 @@ fn run_harness(spec: &ChecklistSpec, stdin_payload: &[u8]) -> (i32, String) {
         Ok(c) => c,
         Err(_) => return (127, String::new()),
     };
-    if let Some(mut sin) = child.stdin.take() {
-        let _ = sin.write_all(stdin_payload);
-    }
-    match child.wait_with_output() {
-        Ok(out) => {
-            let code = out.status.code().unwrap_or(-1);
-            let combined = format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            (code, combined)
+    // Feed stdin from a thread: a harness that never reads must not block
+    // the timeout loop below on a full pipe.
+    let payload = stdin_payload.to_vec();
+    let mut sin = child.stdin.take();
+    std::thread::spawn(move || {
+        if let Some(w) = &mut sin {
+            let _ = w.write_all(&payload);
         }
-        Err(_) => (1, String::new()),
+    });
+    wait_with_timeout(child, spec.timeout_secs)
+}
+
+/// Poll until the child exits or the deadline passes; kill on timeout.
+/// Timeout returns rc=2 (per CHECKLIST_SPEC: harness failed → WARN skip).
+fn wait_with_timeout(mut child: Child, timeout_secs: u64) -> (i32, String) {
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let code = status.code().unwrap_or(-1);
+                let mut combined = String::new();
+                if let Some(mut out) = child.stdout.take() {
+                    let _ = out.read_to_string(&mut combined);
+                }
+                if let Some(mut err) = child.stderr.take() {
+                    let _ = err.read_to_string(&mut combined);
+                }
+                return (code, combined);
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return (2, String::new());
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(_) => return (1, String::new()),
+        }
     }
 }
 
@@ -320,16 +373,12 @@ fn findings_from_stdout(spec: &ChecklistSpec, stdout: &str) -> Vec<Finding> {
         Ok(HarnessFinding::Single(s)) => vec![s],
         Err(_) => {
             // Maybe harness wrapped output — try the last JSON array on a line.
-            if let Some(start) = trimmed.rfind('[') {
-                if let Some(end) = trimmed.rfind(']') {
-                    if end > start {
-                        if let Ok(HarnessFinding::Many(v)) =
-                            serde_json::from_str(&trimmed[start..=end])
-                        {
-                            return convert(spec, v);
-                        }
-                    }
-                }
+            if let Some(start) = trimmed.rfind('[')
+                && let Some(end) = trimmed.rfind(']')
+                && end > start
+                && let Ok(HarnessFinding::Many(v)) = serde_json::from_str(&trimmed[start..=end])
+            {
+                return convert(spec, v);
             }
             eprintln!(
                 "checklist.{}: harness stdout not valid JSON; first 80 chars: {}",
@@ -365,6 +414,15 @@ fn convert(spec: &ChecklistSpec, items: Vec<FindingJson>) -> Vec<Finding> {
             if let Some(l) = raw.line {
                 f = f.with_line(l);
             }
+            // Forward harness-provided extra fields (score, confidence, evidence)
+            // as Finding.extra so --json mode can expose them to dev agents.
+            for (k, v) in raw.extra {
+                let s = match v {
+                    serde_json::Value::String(s) => s,
+                    other => other.to_string(),
+                };
+                f = f.with_extra(&k, s);
+            }
             Some(f)
         })
         .collect()
@@ -387,7 +445,15 @@ fn truncate(s: &str, max: usize) -> String {
 // Per-spec execution
 // ---------------------------------------------------------------------------
 
-fn run_one(spec: &ChecklistSpec, scope: HookScope) -> Vec<Finding> {
+fn run_one(
+    spec: &ChecklistSpec,
+    scope: HookScope,
+    ignore_hooks: bool,
+    max_sla: SlaLevel,
+) -> Vec<Finding> {
+    if spec.sla > max_sla {
+        return vec![];
+    }
     if !spec.enabled {
         return vec![Finding::new(
             &format!("checklist.{}", spec.name),
@@ -395,7 +461,7 @@ fn run_one(spec: &ChecklistSpec, scope: HookScope) -> Vec<Finding> {
             "disabled in config",
         )];
     }
-    if !spec.hooks.iter().any(|h| scope.matches_yaml(h)) {
+    if !ignore_hooks && !spec.hooks.iter().any(|h| scope.matches_yaml(h)) {
         return vec![]; // not in this hook's scope — silent skip
     }
     if spec.mode != Mode::Grep && !has_match(spec, scope) {
@@ -473,16 +539,54 @@ fn run_one(spec: &ChecklistSpec, scope: HookScope) -> Vec<Finding> {
 /// appends them to the global finding list and prints via the shared
 /// `print_findings`.
 pub fn run_all(scope: HookScope) -> Vec<Finding> {
-    let githooks = git::find_githooks_dir().unwrap_or_else(|| PathBuf::from(".githooks"));
-    let spec_dir = githooks.join("spec");
-    let specs = find_specs(&spec_dir);
+    let specs = find_specs(&spec_dir());
     if specs.is_empty() {
         return vec![];
     }
     let mut findings = Vec::new();
     for (_path, spec) in &specs {
         eprintln!("--- checklist: {} ---", spec.name);
-        findings.extend(run_one(spec, scope));
+        findings.extend(run_one(spec, scope, false, SlaLevel::L3));
+    }
+    findings
+}
+
+fn spec_dir() -> std::path::PathBuf {
+    let githooks = git::find_githooks_dir().unwrap_or_else(|| PathBuf::from(".githooks"));
+    githooks.join("spec")
+}
+
+/// `gate check [names...]` — run named checklists on Merge scope regardless
+/// of their `hooks:` filter, ignoring `enabled: false`. Manual invocation,
+/// not a gate: findings are advisory (exit 0 unless a FAIL fires, matching
+/// hook semantics).
+pub fn run_named(names: &[String], max_sla: SlaLevel) -> Vec<Finding> {
+    let specs = find_specs(&spec_dir());
+    if names.is_empty() {
+        for (_, s) in &specs {
+            if s.sla > max_sla {
+                continue;
+            }
+            eprintln!("{}", s.name);
+        }
+        return vec![];
+    }
+    let mut findings = Vec::new();
+    for name in names {
+        match specs.iter().find(|(_, s)| &s.name == name) {
+            Some((_, spec)) => {
+                eprintln!("--- checklist: {} ---", spec.name);
+                findings.extend(run_one(spec, HookScope::Merge, true, max_sla));
+            }
+            None => eprintln!(
+                "unknown checklist: {name} (available: {})",
+                specs
+                    .iter()
+                    .map(|(_, s)| s.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
     }
     findings
 }
@@ -536,6 +640,7 @@ mod tests {
             timeout_secs: 60,
             optional: true,
             base_severity: Severity::Warn,
+            sla: SlaLevel::L1,
         };
         let items = vec![FindingJson {
             id: "X-01".into(),
@@ -543,6 +648,7 @@ mod tests {
             path: Some("src/foo.rs".into()),
             line: Some(42),
             message: "boom".into(),
+            extra: Default::default(),
         }];
         let out = convert(&spec, items);
         assert_eq!(out.len(), 1);
@@ -567,6 +673,7 @@ mod tests {
             timeout_secs: 60,
             optional: true,
             base_severity: Severity::Info,
+            sla: SlaLevel::L1,
         };
         let out = convert(
             &spec,
@@ -576,6 +683,7 @@ mod tests {
                 path: None,
                 line: None,
                 message: "global".into(),
+                extra: Default::default(),
             }],
         );
         assert_eq!(out.len(), 1);
@@ -596,10 +704,16 @@ mod tests {
             timeout_secs: 60,
             optional: true,
             base_severity: Severity::Info,
+            sla: SlaLevel::L1,
         };
-        let out = findings_from_stdout(&spec, r#"[{"id":"A-1","severity":"WARN","message":"hi"}]"#);
+        let out = findings_from_stdout(
+            &spec,
+            r#"[{"id":"A-1","severity":"WARN","message":"hi","score":0.7,"confidence":1.0,"reason":"hi","evidence":"L1"}]"#,
+        );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].msg, "hi");
+        assert_eq!(out[0].extra.get("score").map(String::as_str), Some("0.7"));
+        assert_eq!(out[0].extra.get("reason").map(String::as_str), Some("hi"));
     }
 
     #[test]
@@ -616,6 +730,7 @@ mod tests {
             timeout_secs: 60,
             optional: true,
             base_severity: Severity::Info,
+            sla: SlaLevel::L1,
         };
         let out = findings_from_stdout(&spec, "[]");
         assert!(out.is_empty());
@@ -635,6 +750,7 @@ mod tests {
             timeout_secs: 60,
             optional: true,
             base_severity: Severity::Info,
+            sla: SlaLevel::L1,
         };
         let out = findings_from_stdout(&spec, "not json {");
         assert_eq!(out.len(), 1);
@@ -656,6 +772,7 @@ mod tests {
             timeout_secs: 60,
             optional: true,
             base_severity: Severity::Info,
+            sla: SlaLevel::L1,
         };
         assert!(file_matches(&spec, "crates/page/admin/src/network.rs"));
         assert!(!file_matches(&spec, "target/debug/foo.rs"));

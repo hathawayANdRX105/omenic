@@ -73,6 +73,7 @@ struct YamlTask {
     key: String,
     title: String,
     #[serde(default)]
+    #[allow(dead_code)] // 只为兼容既有 yaml schema 而反序列化, kind 实际取自模板
     kind: Option<String>,
     #[serde(default)]
     description: String,
@@ -981,44 +982,6 @@ mod tests {
             apply(&store, tmp.path(), "pdca", "t-pd", None).unwrap()
         };
         assert_eq!(apply_result.len(), 1 + 1 + 5, "{apply_result:?}");
-    }
-    fn apply_auto_sibling_chain_and_terminal_aggregation() {
-        let tmp = tempdir().unwrap();
-        let store = tmp_store(tmp.path());
-        // Template WITHOUT explicit deps: order + aggregation must be derived.
-        let no_deps = r#"tasks:
-  - key: a
-    title: "a"
-    kind: task
-    description: "a"
-    acceptance: "a"
-  - key: b
-    title: "b"
-    kind: task
-    description: "b"
-    acceptance: "b"
-  - key: c
-    title: "c"
-    kind: task
-    description: "c"
-    acceptance: "c"
-deps: []
-"#;
-        let tdir = tmp.path().join("templates").join("phases");
-        std::fs::create_dir_all(&tdir).unwrap();
-        std::fs::write(tdir.join("chain.yaml"), no_deps).unwrap();
-
-        apply(&store, tmp.path(), "chain", "t-x", None).unwrap();
-        let all = store.load_all().unwrap();
-        let map: std::collections::HashMap<String, Task> =
-            all.into_iter().map(|t| (t.id.clone(), t)).collect();
-
-        // Sibling chain: b deps a, c deps b.
-        assert_eq!(map["t-x-chain-a"].deps, Vec::<String>::new());
-        assert_eq!(map["t-x-chain-b"].deps, vec!["t-x-chain-a".to_string()]);
-        assert_eq!(map["t-x-chain-c"].deps, vec!["t-x-chain-b".to_string()]);
-        // Terminal aggregation: phase deps = c (the only terminal step).
-        assert_eq!(map["t-x-chain"].deps, vec!["t-x-chain-c".to_string()]);
     }
 
     #[test]

@@ -21,10 +21,22 @@ enum Commands {
     Merge(MergeArgs),
     /// Run CRG + ocr code review
     Review(ReviewArgs),
-    /// Audit issues/PRs for checkbox & linkage compliance
-    Audit(AuditArgs),
+    /// Run named quality checks: `gate check [names...]` (no args = list)
+    Check {
+        /// Checklist names (file name minus `checklist_` prefix and `.yaml`)
+        names: Vec<String>,
+        /// Maximum SLA tier to run (l1/l2/l3, default l1)
+        #[arg(long, default_value = "l1")]
+        sla: String,
+        /// Output machine-readable JSON with all finding extras (score,
+        /// confidence, evidence, ...). For dev agents to consume.
+        #[arg(long)]
+        json: bool,
+    },
     /// Validate issues
     Issue,
+    /// Audit issues/PRs for checkbox & linkage compliance
+    Audit(AuditArgs),
     /// Validate issues
     Pr,
 }
@@ -109,6 +121,34 @@ fn main() -> ExitCode {
             let args_vec: Vec<String> = build_review_args(&args);
             let rc = spec::tools::review::run(&args_vec);
             ExitCode::from(rc as u8)
+        }
+        Commands::Check { names, sla, json } => {
+            let max_sla = match sla.as_str() {
+                "l2" => spec::tools::checklist::SlaLevel::L2,
+                "l3" => spec::tools::checklist::SlaLevel::L3,
+                _ => spec::tools::checklist::SlaLevel::L1,
+            };
+            if !json {
+                eprintln!("══════════════════════════════════════════════════════");
+                eprintln!("⚠️  L3 质量关卡: 需开发 agent 自主判断 (非强制拦截, 仅参考)");
+                eprintln!("    L3 finding 带 score/confidence, agent 自行设阈值决定改不改");
+                eprintln!("    ocr 深度审查请自行调: ocr review --format json --audience agent");
+                eprintln!("✅  L1+L2 是硬门槛 (确定性检查): FAIL 必须修复才能 commit/push");
+                eprintln!("══════════════════════════════════════════════════════");
+            }
+            let mut findings = spec::tools::checklist::run_named(&names, max_sla);
+            spec::shared::apply_global_overrides(&mut findings);
+            if json {
+                let arr = serde_json::Value::Array(findings.iter().map(|f| f.to_json()).collect());
+                println!("{}", serde_json::to_string_pretty(&arr).unwrap_or_default());
+            } else {
+                spec::shared::print_findings(&findings);
+                eprintln!("══════════════════════════════════════════════════════");
+                eprintln!("ℹ️  L3 finding 仅供参考: 开发 agent 自主判断是否采纳");
+                eprintln!("    L1+L2 FAIL = 硬门槛, 必须修复. 深度审查请自行调 ocr.");
+                eprintln!("══════════════════════════════════════════════════════");
+            }
+            ExitCode::from(spec::shared::exit_code(&findings) as u8)
         }
         Commands::Audit(args) => {
             let args_vec: Vec<String> = build_audit_args(&args);

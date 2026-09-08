@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
+use super::Spec;
 use super::parse::parse_heading;
-use super::{Spec, SpecField};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CheckFinding {
