@@ -11,7 +11,7 @@ use ratatui::backend::TestBackend;
 fn screen_session_list_renders_title() {
     // TestBackend 80x24 模拟终端
     let backend = TestBackend::new(80, 24);
-    let mut terminal = Terminal::new(backend).unwrap();
+    let terminal = Terminal::new(backend).unwrap();
 
     // TODO(#ui-validation): 当 App::render 公开后，替换为真实渲染
     // terminal.draw(|f| app.render(f)).unwrap();
@@ -26,7 +26,7 @@ fn screen_session_list_renders_title() {
 #[test]
 fn screen_session_list_focus_initial() {
     let backend = TestBackend::new(80, 24);
-    let mut terminal = Terminal::new(backend).unwrap();
+    let terminal = Terminal::new(backend).unwrap();
     // TODO(#ui-validation): 验证初始 focus 是 Sessions
     // assert!(app.focus == Focus::Sessions);
     let _ = terminal;
