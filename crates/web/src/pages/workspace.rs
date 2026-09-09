@@ -1,7 +1,7 @@
 use crate::components::chat::Chat;
 use crate::components::sidebar::Sidebar;
 use crate::llm::LlmRuntimeConfig;
-use crate::mock::{self, ChatMessage, Session, SessionStatus, TaskItem, ToolCall};
+use crate::mock::{self, ChatMessage, MessagePart, Session, SessionStatus, TaskItem, ToolCall};
 use dioxus::prelude::*;
 use std::collections::HashMap;
 use std::path::Path;
@@ -51,6 +51,7 @@ pub fn db_load_sessions(
                                 role: role.into(),
                                 content: m.text,
                                 tool_calls: vec![],
+                                parts: vec![],
                                 timestamp: ts_rel,
                                 ts_epoch_ms: m.created_at_ms as u64,
                             }
@@ -397,6 +398,7 @@ pub fn Workspace(
             role: "user".into(),
             content: text.clone(),
             tool_calls: vec![],
+            parts: vec![],
             timestamp: "刚刚".into(),
             ts_epoch_ms: now_ms,
         };
@@ -406,6 +408,7 @@ pub fn Workspace(
             role: "assistant".into(),
             content: String::new(),
             tool_calls: vec![],
+            parts: vec![],
             timestamp: "刚刚".into(),
             ts_epoch_ms: now_ms,
         };
@@ -491,6 +494,12 @@ pub fn Workspace(
                         if let Some(list) = map.get_mut(&sid_for_events) {
                             if let Some(last) = list.last_mut() {
                                 last.content.push_str(&delta);
+                                // 保持发生顺序：追加到末尾文本段，否则新建一段
+                                if let Some(MessagePart::Text(existing)) = last.parts.last_mut() {
+                                    existing.push_str(&delta);
+                                } else {
+                                    last.parts.push(MessagePart::Text(delta.clone()));
+                                }
                             }
                         }
                         session_messages.set(map);
@@ -536,7 +545,8 @@ pub fn Workspace(
                         let mut map = session_messages();
                         if let Some(list) = map.get_mut(&sid_for_events) {
                             if let Some(last) = list.last_mut() {
-                                last.tool_calls.push(tool_call);
+                                last.tool_calls.push(tool_call.clone());
+                                last.parts.push(MessagePart::Tool(tool_call));
                             }
                         }
                         session_messages.set(map);
@@ -546,24 +556,34 @@ pub fn Workspace(
                         name: _,
                         result,
                     } => {
+                        let is_err = result.starts_with("error") || result.contains("[exit ");
+                        let new_status = if is_err {
+                            "error".to_string()
+                        } else {
+                            "success".to_string()
+                        };
+                        let new_summary = if is_err {
+                            "执行失败".to_string()
+                        } else {
+                            "执行完成".to_string()
+                        };
                         let mut map = session_messages();
                         if let Some(list) = map.get_mut(&sid_for_events) {
                             if let Some(last) = list.last_mut() {
                                 if let Some(target) =
                                     last.tool_calls.iter_mut().find(|t| t.id == id)
                                 {
-                                    let is_err =
-                                        result.starts_with("error") || result.contains("[exit ");
-                                    target.status = if is_err {
-                                        "error".to_string()
-                                    } else {
-                                        "success".to_string()
-                                    };
-                                    target.summary = if is_err {
-                                        "执行失败".to_string()
-                                    } else {
-                                        "执行完成".to_string()
-                                    };
+                                    target.status = new_status.clone();
+                                    target.summary = new_summary.clone();
+                                    target.detail = result.clone();
+                                }
+                                if let Some(MessagePart::Tool(target)) = last
+                                    .parts
+                                    .iter_mut()
+                                    .find(|p| matches!(p, MessagePart::Tool(tc) if tc.id == id))
+                                {
+                                    target.status = new_status;
+                                    target.summary = new_summary;
                                     target.detail = result;
                                 }
                             }
@@ -579,6 +599,7 @@ pub fn Workspace(
                                         "Agent 执行结束（原因: {:?}）。未能获取有效回复，请在「配置」页检查 API 凭证与端点地址。",
                                         stop_reason
                                     );
+                                    last.parts.push(MessagePart::Text(last.content.clone()));
                                 }
                             }
                         }

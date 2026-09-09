@@ -1,4 +1,4 @@
-use crate::mock::{ChatMessage, StatusLine, ToolCall};
+use crate::mock::{ChatMessage, MessagePart, StatusLine, ToolCall};
 use dioxus::prelude::*;
 use pulldown_cmark::{html, Options as MarkdownOptions, Parser};
 
@@ -13,6 +13,19 @@ fn markdown_to_html(input: &str) -> String {
     html::push_html(&mut output, parser);
     output
 }
+
+/// 不同工具类型对应的暗色徽标配色（无边框，靠颜色区分）。
+fn kind_badge(kind: &str) -> &'static str {
+    match kind {
+        "bash" => "text-sky-300/90 bg-sky-500/10",
+        "edit" | "write" => "text-emerald-300/90 bg-emerald-500/10",
+        "read" => "text-amber-300/90 bg-amber-500/10",
+        _ => "text-violet-300/90 bg-violet-500/10",
+    }
+}
+
+/// 缩略导航横条：静止时全部等宽一致；悬停时由客户端 JS 按鼠标位置
+/// 生成高斯“聚光”梯度（光标处最长最亮，向两端平滑收窄）。
 
 #[component]
 pub fn Chat(
@@ -43,16 +56,25 @@ pub fn Chat(
 
     let display_messages: Vec<_> = messages
         .iter()
-        .filter(|m| !m.content.is_empty() || !m.tool_calls.is_empty() || is_streaming)
+        .filter(|m| {
+            !m.content.is_empty() || !m.tool_calls.is_empty() || !m.parts.is_empty() || is_streaming
+        })
         .cloned()
         .collect();
 
     let last_idx = display_messages.len().saturating_sub(1);
 
+    let prompt_items: Vec<(String, String)> = display_messages
+        .iter()
+        .filter(|m| m.role == "user")
+        .map(|m| (format!("prompt-{}", m.id), m.content.clone()))
+        .collect();
+
     rsx! {
         div { class: "relative flex-1 min-h-0 overflow-hidden",
             // 单一滚动面板 = 整个聊天室（只有一个滚动条，位于房间最右侧）
             div { class: "absolute inset-0 overflow-y-auto",
+                id: "chat-scroll",
                 div { class: "max-w-[1360px] w-[96%] mx-auto px-6 pt-5 pb-[160px] flex flex-col gap-3.5 min-h-full",
                 if display_messages.is_empty() && !is_streaming {
                     div { class: "flex-1 flex flex-col items-center justify-center gap-2 text-muted text-center py-10 select-none",
@@ -61,21 +83,42 @@ pub fn Chat(
                     }
                 }
                 for (idx, msg) in display_messages.iter().enumerate() {
-                    if msg.content.is_empty() && msg.tool_calls.is_empty() {
-                        div { key: "streaming-{idx}", class: "self-start max-w-[88%] flex flex-col gap-1",
-                            div { class: "bg-surface border border-subtle rounded-[10px] px-3.5 py-2.5 text-[13px] text-muted italic",
-                                span { class: "inline-block w-3 h-3 border-2 border-[rgba(255,255,255,0.25)] border-t-accent rounded-full animate-spin" }
-                                span { "正在连接模型并思考生成回答..." }
-                            }
+                    // 用户的一次输入 + agent 的完整回答 = 一个完整过程；过程之间用清晰分界线隔开。
+                    if msg.role == "user" && idx > 0 {
+                        div { class: "h-px w-full bg-border-hover my-3 shrink-0" }
+                    }
+                    if msg.content.is_empty() && msg.tool_calls.is_empty() && msg.parts.is_empty() {
+                        div { key: "streaming-{idx}", class: "flex items-center gap-2 py-1 text-[12px] text-muted",
+                            Spinner {}
+                            span { "正在连接模型并思考生成回答..." }
                         }
                     } else {
-                        MessageBubble { key: "{msg.id}-{idx}", message: msg.clone() }
-                    }
-                    if msg.role == "agent" && idx != last_idx {
-                        div { class: "h-px w-full bg-subtle/40 my-2" }
+                        MessageBubble { key: "{msg.id}-{idx}", message: msg.clone(), active: is_streaming && idx == last_idx && msg.role == "assistant", id: if msg.role == "user" { Some(format!("prompt-{}", msg.id)) } else { None } }
                     }
                 }
                 div { id: "chat-scroll-anchor", class: "h-4 shrink-0" }
+                }
+            }
+
+            // 左侧缩略导航：每个用户 prompt 一个高亮横条作为锚点；悬停显示该次 prompt 的缩略面板。
+            // 整列垂直居中（中心向两边扩展），新增时重新居中。
+            if !prompt_items.is_empty() {
+                div { class: "absolute left-2 top-0 bottom-0 flex flex-col justify-center z-20 pointer-events-auto",
+                    id: "minimap",
+                    for (anchor_id, p) in prompt_items.clone().into_iter() {
+                        div { class: "relative flex items-center",
+                            style: "height:16px; width:56px;",
+                            "data-anchor": anchor_id.clone(),
+                            div { class: "rounded-full bg-subtle cursor-pointer transition-all duration-150 ease-out minimap-bar",
+                                style: "height:4px; width:12px;",
+                            }
+                            div { class: "absolute left-14 top-1/2 -translate-y-1/2 z-30 w-[230px] max-h-[150px] overflow-hidden rounded-lg border border-subtle bg-surface-elevated px-3 py-2.5 shadow-[0_8px_26px_rgba(0,0,0,0.42)] pointer-events-none",
+                                "data-tip": "",
+                                style: "display:none;",
+                                div { class: "text-[11px] leading-relaxed text-secondary whitespace-pre-wrap break-words line-clamp-6", "{p}" }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -184,7 +227,7 @@ pub fn Chat(
                                     class: if is_streaming { "flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-semibold bg-accent text-[#0b0c10] opacity-75 cursor-not-allowed" } else { "flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-semibold bg-accent text-[#0b0c10] hover:bg-accent-hover cursor-pointer transition-colors" },
                                     disabled: is_streaming,
                                     if is_streaming {
-                                        span { class: "inline-block w-3 h-3 border-2 border-[rgba(255,255,255,0.25)] border-t-accent rounded-full animate-spin" }
+                                        Spinner {}
                                         span { "发送中..." }
                                     } else {
                                         span { "发送 ↵" }
@@ -200,13 +243,14 @@ pub fn Chat(
 }
 
 #[component]
-fn MessageBubble(message: ChatMessage) -> Element {
+fn MessageBubble(message: ChatMessage, active: bool, id: Option<String>) -> Element {
     let is_user = message.role == "user";
 
     if is_user {
         // 用户消息：右侧消息气泡（无表头，模拟 zcode 风格）
         rsx! {
             div { class: "flex flex-col items-end gap-1 w-full",
+                id: id.clone().unwrap_or_default(),
                 if !message.content.is_empty() {
                     div { class: "markdown-body text-primary bg-surface-elevated border border-accent-subtle rounded-[10px] px-3 py-2 text-[13px] leading-[1.55] max-w-[82%]",
                         dangerous_inner_html: "{markdown_to_html(&message.content)}"
@@ -215,16 +259,52 @@ fn MessageBubble(message: ChatMessage) -> Element {
             }
         }
     } else {
-        // 助手消息：先「工作过程」(可折叠)，再最终结果（始终显示）
-        let has_tools = !message.tool_calls.is_empty();
+        // 助手消息：按真实发生顺序渲染。
+        // 最后一段文本作为「最终回复」始终展示；其之前的内容（中间输出 + 工具调用）
+        // 收进单个「过程」折叠块——运行时完全展开，最终回复到达后自动折叠。
+        // 只有真正的 reason chunk 才算「思考」，当前数据无此类内容。
+        let parts = if !message.parts.is_empty() {
+            message.parts.clone()
+        } else {
+            let mut v = Vec::new();
+            for tc in &message.tool_calls {
+                v.push(MessagePart::Tool(tc.clone()));
+            }
+            if !message.content.is_empty() {
+                v.push(MessagePart::Text(message.content.clone()));
+            }
+            v
+        };
+
+        let final_idx = parts
+            .iter()
+            .rposition(|p| matches!(p, MessagePart::Text(_)));
+        let (final_text, process, has_final) = match final_idx {
+            Some(fi) => {
+                let ft = match &parts[fi] {
+                    MessagePart::Text(s) => s.clone(),
+                    _ => String::new(),
+                };
+                (ft.clone(), parts[..fi].to_vec(), !ft.is_empty())
+            }
+            None => (String::new(), parts.clone(), false),
+        };
+
         rsx! {
-            div { class: "flex flex-col gap-3 w-full",
-                if has_tools {
-                    WorkProcessCollapsible { tools: message.tool_calls.clone() }
+            div { class: "flex flex-col gap-2 w-full",
+                id: id.clone().unwrap_or_default(),
+                if !process.is_empty() {
+                    ProcessBlock { parts: process, active }
                 }
-                if !message.content.is_empty() {
+                if has_final {
                     div { class: "markdown-body text-primary",
-                        dangerous_inner_html: "{markdown_to_html(&message.content)}"
+                        dangerous_inner_html: "{markdown_to_html(&final_text)}"
+                    }
+                }
+                if active {
+                    div { class: "flex items-center gap-2 py-1 text-[12px] text-muted",
+                        Spinner {}
+                        span { "正在生成回复..." }
                     }
                 }
             }
@@ -232,41 +312,34 @@ fn MessageBubble(message: ChatMessage) -> Element {
     }
 }
 
-/// 把工具调用按类型(kind)分组，保持类型首次出现顺序
-fn group_tools(tools: &[ToolCall]) -> Vec<(String, Vec<ToolCall>)> {
-    let mut groups: Vec<(String, Vec<ToolCall>)> = Vec::new();
-    for tc in tools {
-        if let Some(slot) = groups.iter_mut().find(|g| g.0 == tc.kind) {
-            slot.1.push(tc.clone());
-        } else {
-            groups.push((tc.kind.clone(), vec![tc.clone()]));
-        }
-    }
-    groups
-}
-
+/// 单个折叠块：包裹「最终回复」之前的所有内容（中间输出 + 工具调用）。
+/// 运行时（active）完全展开；最终回复到达后自动折叠，仅留最终回复可见。
 #[component]
-fn WorkProcessCollapsible(tools: Vec<ToolCall>) -> Element {
+fn ProcessBlock(parts: Vec<MessagePart>, active: bool) -> Element {
     let mut is_open = use_signal(|| false);
-    let groups = group_tools(&tools);
+    let open = active || is_open();
+    let count = parts.len();
 
     rsx! {
         div { class: "flex flex-col",
             div {
-                class: "flex items-center gap-1.5 cursor-pointer select-none text-[11px] text-muted hover:text-secondary transition-colors py-0.5",
+                class: "flex items-center gap-1.5 py-0.5 cursor-pointer select-none text-[11px] rounded hover:text-secondary",
                 onclick: move |e: MouseEvent| { e.stop_propagation(); is_open.set(!is_open()); },
-                span { class: "font-mono w-3.5 text-center shrink-0", if is_open() { "▾" } else { "▸" } }
-                span { class: "font-medium text-secondary", "工作过程" }
-                span { class: "text-muted", " · {tools.len()}" }
+                span { class: "font-medium text-muted", "过程" }
+                span { class: "text-muted/70", " · {count}" }
             }
-            if is_open() {
-                div { class: "flex flex-col gap-2 pl-3 mt-1",
-                    for (kind, group) in groups.iter() {
-                        div { class: "flex flex-col gap-0.5",
-                            div { class: "text-[10px] font-mono text-muted uppercase tracking-wide", "{kind} · {group.len()}" }
-                            for tool in group.iter() {
-                                ProcessToolRow { key: "{tool.id}", tool: tool.clone() }
-                            }
+            if open {
+                div { class: "flex flex-col gap-2 pl-1 mt-0.5",
+                    for (i, p) in parts.iter().enumerate() {
+                        match p {
+                            MessagePart::Text(s) => rsx! {
+                                div { key: "txt-{i}", class: "markdown-body text-primary/90",
+                                    dangerous_inner_html: "{markdown_to_html(s)}"
+                                }
+                            },
+                            MessagePart::Tool(tc) => rsx! {
+                                ToolLine { key: "{tc.id}-{i}", tool: tc.clone() }
+                            },
                         }
                     }
                 }
@@ -275,42 +348,41 @@ fn WorkProcessCollapsible(tools: Vec<ToolCall>) -> Element {
     }
 }
 
+/// 单次工具调用：在「过程」块内作为可折叠项展示（默认折叠，仅显示一行表头）。
+/// 点击表头展开其 summary + 完整输出；执行失败（status == "error"）时以红色「失败」标记提醒。
 #[component]
-fn ProcessToolRow(tool: ToolCall) -> Element {
-    let mut is_open = use_signal(|| false);
-
-    let (status_color, status_char) = match tool.status.as_str() {
-        "running" => ("text-accent animate-spin", "⋯"),
-        "error" => ("text-danger", "✕"),
-        _ => ("text-success", "✓"),
-    };
-
-    let kind_color = if tool.kind == "bash" {
-        "text-sky-300/90 bg-sky-500/10"
-    } else if tool.kind == "edit" || tool.kind == "write" {
-        "text-emerald-300/90 bg-emerald-500/10"
-    } else if tool.kind == "read" {
-        "text-amber-300/90 bg-amber-500/10"
+fn ToolLine(tool: ToolCall) -> Element {
+    let mut open = use_signal(|| false);
+    let is_err = tool.status == "error";
+    let badge = if is_err {
+        "text-danger bg-danger/10"
     } else {
-        "text-violet-300/90 bg-violet-500/10"
+        kind_badge(&tool.kind)
     };
+    let line_color = if is_err {
+        "border-danger/40"
+    } else {
+        "border-subtle/40"
+    };
+    let arrow = if open() { "▾" } else { "▸" };
 
     rsx! {
         div { class: "flex flex-col",
-            div {
-                class: "flex items-center gap-1.5 py-1 cursor-pointer select-none text-[11px] hover:bg-hover transition-colors rounded",
-                onclick: move |e: MouseEvent| { e.stop_propagation(); is_open.set(!is_open()); },
-                span { class: "{status_color} font-mono w-3.5 text-center shrink-0", "{status_char}" }
-                span { class: "{kind_color} font-mono text-[9px] font-bold uppercase px-1 py-px rounded-sm shrink-0", "{tool.kind}" }
+            div { class: "flex items-center gap-1.5 py-1 text-[11px] rounded cursor-pointer select-none hover:text-secondary",
+                onclick: move |e: MouseEvent| { e.stop_propagation(); open.set(!open()); },
+                span { class: "text-[10px] text-muted/70 w-3 text-center shrink-0", "{arrow}" }
+                span { class: "{badge} inline-flex items-center justify-center font-mono text-[9px] font-bold uppercase px-1.5 py-0.5 leading-none rounded-sm shrink-0", "{tool.kind}" }
+                if is_err {
+                    span { class: "text-danger font-mono text-[9px] font-bold uppercase px-1 py-px rounded-sm shrink-0", "失败" }
+                }
                 span { class: "font-mono text-[11px] text-secondary flex-1 truncate min-w-0", "{tool.title}" }
-                span { class: "text-[9px] text-muted shrink-0", if is_open() { "▾" } else { "▸" } }
             }
-            if is_open() {
-                div { class: "ml-3.5 mb-1.5 rounded bg-surface px-2.5 py-2",
+            if open() {
+                div { class: "ml-3.5 mb-1.5 border-l-2 {line_color} pl-3 py-0.5",
                     if !tool.summary.is_empty() {
-                        div { class: "text-[11px] text-secondary mb-1.5 leading-relaxed", "{tool.summary}" }
+                        div { class: "text-[11px] text-muted mb-1.5 leading-relaxed", "{tool.summary}" }
                     }
-                    div { class: "font-mono text-[11px] leading-[1.5] text-secondary whitespace-pre-wrap break-all",
+                    div { class: "font-mono text-[11px] leading-[1.5] text-secondary/70 whitespace-pre-wrap break-all",
                         for line in tool.detail.lines() {
                             if line.starts_with('+') && !line.starts_with("+++") {
                                 span { class: "text-success", "{line}\n" }
@@ -329,4 +401,10 @@ fn ProcessToolRow(tool: ToolCall) -> Element {
     }
 }
 
-// 旧的分组/工具折叠面板已由 WorkProcessCollapsible / ProcessToolRow（无边框、暗色区分）替代。
+/// 旋转加载图标：用于「正在连接模型」占位与发送按钮（运行时持续显示）。
+#[component]
+fn Spinner() -> Element {
+    rsx! {
+        span { class: "inline-block w-3 h-3 border-2 border-[rgba(255,255,255,0.25)] border-t-accent rounded-full animate-spin" }
+    }
+}
