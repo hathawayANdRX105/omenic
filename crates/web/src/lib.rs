@@ -27,23 +27,26 @@ pub fn App() -> Element {
     let mut current_tab = use_signal(|| Tab::Workspace);
     let mut runtime_config = use_signal(llm::LlmRuntimeConfig::load_from_system);
     let mut show_quick_switcher = use_signal(|| false);
-    let css_content = format!("{}", include_str!("../assets/main.css"));
+    let css_content = format!(
+        "{}",
+        include_str!(concat!(env!("OUT_DIR"), "/tailwind.gen.css"))
+    );
 
     rsx! {
         style { "{css_content}" }
 
-        nav { class: "top-nav",
-            div { class: "nav-left",
-                div { class: "nav-workspace",
-                    span { class: "workspace-title", "omenic" }
-                    span { class: "workspace-sep", "/" }
-                    span { class: "workspace-branch", "feat/web-agent-harness" }
-                    span { class: "workspace-status", "clean" }
+        nav { class: "flex items-center justify-between h-[46px] px-4 bg-sidebar border-b border-subtle sticky top-0 z-50 select-none",
+            div { class: "flex items-center gap-3",
+                div { class: "flex items-center gap-2 text-[12px] text-secondary",
+                    span { class: "font-semibold text-primary tracking-[-0.01em]", "omenic" }
+                    span { class: "text-muted", "/" }
+                    span { class: "font-mono text-[11.5px] text-secondary", "feat/web-agent-harness" }
+                    span { class: "font-mono text-[10.5px] px-1.5 py-0.5 rounded bg-accent-subtle text-accent border border-[rgba(162,138,199,0.2)]", "clean" }
                 }
             }
-            div { class: "nav-center",
+            div { class: "flex items-center",
                 button {
-                    class: "nav-search-bar",
+                    class: "flex items-center gap-2.5 px-3.5 py-1.5 bg-base border border-subtle rounded-md text-muted text-[12px] cursor-pointer transition-colors hover:border-hover",
                     onclick: move |_| {
                         if current_tab() != Tab::Workspace {
                             current_tab.set(Tab::Workspace);
@@ -54,25 +57,25 @@ pub fn App() -> Element {
                     kbd { "⌘K" }
                 }
             }
-            div { class: "nav-right",
-                div { class: "nav-tabs",
+            div { class: "flex items-center gap-2",
+                div { class: "flex gap-0.5",
                     button {
-                        class: if current_tab() == Tab::Workspace { "nav-tab active" } else { "nav-tab" },
+                        class: if current_tab() == Tab::Workspace { "px-3 py-1.5 text-[12px] font-medium text-primary bg-surface-elevated border-none rounded-md cursor-pointer transition-colors" } else { "px-3 py-1.5 text-[12px] font-medium text-secondary bg-transparent border-none rounded-md cursor-pointer transition-colors hover:text-primary" },
                         onclick: move |_| current_tab.set(Tab::Workspace),
                         "工作区"
                     }
                     button {
-                        class: if current_tab() == Tab::Stats { "nav-tab active" } else { "nav-tab" },
+                        class: if current_tab() == Tab::Stats { "px-3 py-1.5 text-[12px] font-medium text-primary bg-surface-elevated border-none rounded-md cursor-pointer transition-colors" } else { "px-3 py-1.5 text-[12px] font-medium text-secondary bg-transparent border-none rounded-md cursor-pointer transition-colors hover:text-primary" },
                         onclick: move |_| current_tab.set(Tab::Stats),
                         "数据统计"
                     }
                     button {
-                        class: if current_tab() == Tab::Config { "nav-tab active" } else { "nav-tab" },
+                        class: if current_tab() == Tab::Config { "px-3 py-1.5 text-[12px] font-medium text-primary bg-surface-elevated border-none rounded-md cursor-pointer transition-colors" } else { "px-3 py-1.5 text-[12px] font-medium text-secondary bg-transparent border-none rounded-md cursor-pointer transition-colors hover:text-primary" },
                         onclick: move |_| current_tab.set(Tab::Config),
                         "配置"
                     }
                 }
-                span { class: "nav-version", "v0.1.0" }
+                span { class: "font-mono text-[11px] text-muted ml-2", "v0.1.0" }
             }
         }
 
@@ -105,7 +108,10 @@ pub async fn launch() {
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let view = dioxus_liveview::LiveViewPool::new();
     let glue = dioxus_liveview::interpreter_glue("/ws");
-    let css = format!("{}", include_str!("../assets/main.css"));
+    let css = format!(
+        "{}",
+        include_str!(concat!(env!("OUT_DIR"), "/tailwind.gen.css"))
+    );
 
     let index_html = format!(
         r#"<!DOCTYPE html>

@@ -4,19 +4,19 @@ use dioxus::prelude::*;
 #[component]
 pub fn StatuslineBar(statusline: StatusLine) -> Element {
     rsx! {
-        div { class: "statusline",
-            span { class: "statusline-model", "🧠 {statusline.model}" }
-            span { class: "statusline-sep", "│" }
-            span { class: "statusline-thinking", "thinking: {statusline.thinking}" }
-            span { class: "statusline-sep", "│" }
-            span { class: "statusline-tokens", "📊 {statusline.tokens_in}→{statusline.tokens_out}" }
-            span { class: "statusline-sep", "│" }
-            span { class: "statusline-cost", "💰 ${statusline.cost_usd:.3}" }
-            span { class: "statusline-sep", "│" }
-            div { class: "statusline-context",
-                div { class: "context-bar-bg",
+        div { class: "flex items-center gap-3 px-4 py-1.5 bg-surface border-t border-subtle font-mono text-[11px] text-secondary",
+            span { class: "text-primary", "🧠 {statusline.model}" }
+            span { class: "text-muted", "│" }
+            span { class: "text-secondary", "thinking: {statusline.thinking}" }
+            span { class: "text-muted", "│" }
+            span { class: "text-secondary", "📊 {statusline.tokens_in}→{statusline.tokens_out}" }
+            span { class: "text-muted", "│" }
+            span { class: "text-secondary", "💰 ${statusline.cost_usd:.3}" }
+            span { class: "text-muted", "│" }
+            div { class: "flex items-center gap-2",
+                div { class: "w-24 h-1.5 rounded-full bg-base overflow-hidden",
                     div {
-                        class: "context-bar-fill",
+                        class: "h-full rounded-full bg-accent",
                         style: "width: {statusline.context_pct}%"
                     }
                 }

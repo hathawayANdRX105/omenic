@@ -231,6 +231,32 @@ pub fn Workspace(
     });
     let mut spaces = use_signal(|| discover_workspaces(&active_space_path()));
 
+    // Session count per worktree, recomputed only when the space list changes.
+    // DB access runs on a spawned thread because `SessionDb::open` builds its own
+    // tokio runtime and must not be called from within the LiveView async task.
+    let space_session_counts = use_memo(move || {
+        let paths: Vec<String> = spaces().iter().map(|s| s.path.clone()).collect();
+        std::thread::spawn(move || {
+            let mut map: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
+            for path in paths {
+                let db_path = std::path::Path::new(&path).join(".oi").join("sessions.db");
+                let count = if db_path.exists() {
+                    match session::SessionDb::open(db_path) {
+                        Ok(db) => db.list_sessions("%", 1000).map(|v| v.len()).unwrap_or(0),
+                        Err(_) => 0,
+                    }
+                } else {
+                    0
+                };
+                map.insert(path, count);
+            }
+            map
+        })
+        .join()
+        .unwrap_or_default()
+    });
+
     let initial_data = use_signal(|| db_load_sessions(&format!("{}/.oi", active_space_path())));
     let mut sessions = use_signal(|| {
         let mut list = initial_data.read().0.clone();
@@ -727,7 +753,7 @@ pub fn Workspace(
     };
 
     rsx! {
-        div { class: "workspace-layout",
+        div { class: "flex h-[calc(100vh-46px)] w-screen bg-base overflow-hidden relative",
             Sidebar {
                 spaces: spaces(),
                 active_space_id: active_space_path(),
@@ -740,6 +766,7 @@ pub fn Workspace(
                     show_space_picker.set(true);
                 },
                 sessions: sessions(),
+                space_session_counts: space_session_counts.read().clone(),
                 active_id: active_session_id(),
                 on_select: on_select_session,
                 on_create: on_create_session,
@@ -747,12 +774,12 @@ pub fn Workspace(
                 on_archive: on_archive_session,
                 on_rename: on_rename_session,
             }
-            div { class: "workspace-main",
-                div { class: "workspace-chat-area",
-                    div { class: "chat-header-bar",
-                        div { class: "chat-header-left",
-                            span { class: "chat-header-title", "{active_title}" }
-                            span { class: "chat-header-badge", "{config.model}" }
+            div { class: "flex-1 h-full flex flex-col bg-base relative overflow-hidden",
+                div { class: "flex-1 flex flex-col h-full overflow-hidden",
+                    div { class: "h-[44px] px-[24px] border-b border-subtle flex items-center justify-between bg-base flex-shrink-0",
+                        div { class: "flex items-center gap-[10px]",
+                            span { class: "text-[13px] font-semibold text-primary", "{active_title}" }
+                            span { class: "font-mono text-[11px] text-secondary px-[7px] py-[1px] bg-surface border border-subtle rounded-[4px]", "{config.model}" }
                         }
                     }
                     Chat {
@@ -766,19 +793,19 @@ pub fn Workspace(
                 }
                 if show_quick_switcher() {
                     div {
-                        class: "modal-backdrop",
+                        class: "fixed top-0 left-0 w-screen h-screen bg-[rgba(0,0,0,0.75)] backdrop-blur-[6px] flex items-start justify-center pt-[14vh] z-[200]",
                         onclick: move |_| show_quick_switcher.set(false),
                         div {
-                            class: "quick-switcher-modal",
+                            class: "w-[560px] bg-surface border border-accent rounded-[10px] shadow-[0_24px_64px_rgba(0,0,0,0.9)] p-[12px] flex flex-col gap-[8px]",
                             onclick: move |_| {},
                             input {
-                                class: "switcher-input",
+                                class: "w-full py-[12px] px-[14px] bg-base border border-subtle rounded-[6px] text-primary text-[13.5px] outline-none font-sans",
                                 r#type: "text",
                                 placeholder: "搜索会话名称或编号...",
                                 oninput: move |e| search_query.set(e.value().clone()),
                                 autofocus: true,
                             }
-                            div { class: "switcher-results",
+                            div { class: "max-h-[320px] overflow-y-auto flex flex-col gap-[2px]",
                                 for session in sessions()
                                     .iter()
                                     .filter(|s| {
@@ -789,7 +816,7 @@ pub fn Workspace(
                                 {
                                     div {
                                         key: "{session.id}",
-                                        class: if session.id == active_session_id() { "switcher-item selected" } else { "switcher-item" },
+                                        class: if session.id == active_session_id() { "flex items-center justify-between px-[10px] py-[8px] rounded-[6px] cursor-pointer transition-colors bg-surface-elevated border border-accent" } else { "flex items-center justify-between px-[10px] py-[8px] rounded-[6px] cursor-pointer transition-colors hover:bg-hover border border-transparent" },
                                         onclick: {
                                             let id = session.id.clone();
                                             let mut on_select = on_select_session.clone();
@@ -798,17 +825,17 @@ pub fn Workspace(
                                                 show_quick_switcher.set(false);
                                             }
                                         },
-                                        div { class: "switcher-item-left",
-                                            span { class: if session.status == SessionStatus::Active { "status-dot run" } else { "status-dot idle" } }
-                                            span { class: "switcher-title", "{session.title}" }
+                                        div { class: "flex items-center gap-[8px]",
+                                            span { class: if session.status == SessionStatus::Active { "inline-block w-2 h-2 rounded-full bg-accent shrink-0" } else { "inline-block w-2 h-2 rounded-full bg-muted shrink-0" } }
+                                            span { class: "text-[12.5px] text-primary", "{session.title}" }
                                         }
-                                        span { class: "switcher-id", "{session.id}" }
+                                        span { class: "font-mono text-[10.5px] text-muted", "{session.id}" }
                                     }
                                 }
                             }
-                            div { class: "switcher-footer",
+                            div { class: "pt-[8px] border-t border-subtle flex items-center justify-between text-[11px] text-muted",
                                 span { "选择会话快速切换" }
-                                div { style: "display: flex; gap: 6px; align-items: center;",
+                                div { class: "flex items-center gap-1.5",
                                     kbd { "ESC" }
                                     span { "退出" }
                                 }
@@ -817,21 +844,21 @@ pub fn Workspace(
                     }
                 }
                 if show_space_picker() {
-                    div { class: "modal-backdrop",
+                    div { class: "fixed top-0 left-0 w-screen h-screen bg-[rgba(0,0,0,0.75)] backdrop-blur-[6px] flex items-start justify-center pt-[14vh] z-[200]",
                         onclick: move |_| show_space_picker.set(false),
-                        div { class: "space-picker-modal",
+                        div { class: "w-[560px] bg-surface border border-accent rounded-[10px] shadow-[0_24px_64px_rgba(0,0,0,0.9)] p-[12px] flex flex-col gap-[8px]",
                             onclick: move |e: MouseEvent| e.stop_propagation(),
-                            div { class: "space-picker-header",
-                                span { class: "space-picker-title", "选择本地工作区目录" }
+                            div { class: "flex items-center justify-between",
+                                span { class: "text-[13px] font-semibold text-primary", "选择本地工作区目录" }
                                 button {
-                                    class: "floating-task-close",
+                                    class: "text-muted hover:text-primary cursor-pointer text-[14px] leading-none px-1.5 py-0.5 rounded hover:bg-hover transition-colors",
                                     onclick: move |_| show_space_picker.set(false),
                                     "✕"
                                 }
                             }
-                            div { class: "space-picker-path-row",
+                            div { class: "flex items-center gap-[8px]",
                                 input {
-                                    class: "space-picker-path-input",
+                                    class: "flex-1 min-w-0 px-[12px] py-[9px] bg-base border border-subtle rounded-[6px] text-primary text-[13px] outline-none font-mono",
                                     r#type: "text",
                                     value: "{picker_current_path()}",
                                     oninput: move |e| {
@@ -842,7 +869,7 @@ pub fn Workspace(
                                     }
                                 }
                                 button {
-                                    class: "btn-picker-nav",
+                                    class: "py-[7px] px-[12px] text-[11.5px] bg-surface-elevated border border-subtle rounded-[5px] text-secondary cursor-pointer whitespace-nowrap transition-all",
                                     onclick: move |_| {
                                         let par = Path::new(&picker_current_path()).parent().map(|sp| sp.to_path_buf());
                                         if let Some(pr) = par {
@@ -855,9 +882,9 @@ pub fn Workspace(
                                     ".. 上级目录"
                                 }
                             }
-                            div { class: "space-picker-folder-list",
+                            div { class: "flex flex-col gap-[2px] overflow-y-auto max-h-[280px]",
                                 if picker_subdirs().is_empty() {
-                                    div { style: "padding: 12px; color: var(--text-muted); font-size: 11.5px;", "（此路径下没有可见工作区子目录）" }
+                                    div { class: "p-3 text-[11.5px] text-muted", "（此路径下没有可见工作区子目录）" }
                                 }
                                 for dir_name in picker_subdirs() {
                                     {
@@ -868,18 +895,18 @@ pub fn Workspace(
                                         rsx! {
                                             div {
                                                 key: "{dir_name}",
-                                                class: "folder-item-row",
+                                                class: "flex items-center justify-between py-[7px] px-[10px] rounded-[4px] cursor-pointer transition-all select-none",
                                                 onclick: move |_| {
                                                     picker_current_path.set(dpath1.clone());
                                                     let sub = read_subdirectories(Path::new(&dpath1));
                                                     picker_subdirs.set(sub);
                                                 },
-                                                div { class: "folder-item-left",
-                                                    span { class: "folder-badge", "DIR" }
-                                                    span { class: "folder-name", "{d}" }
+                                                div { class: "flex items-center gap-[8px]",
+                                                    span { class: "font-mono text-[9.5px] py-[1px] px-[5px] rounded-[3px] bg-[#20222e] text-muted", "DIR" }
+                                                    span { class: "text-[12.5px] text-primary", "{d}" }
                                                 }
                                                 button {
-                                                    class: "btn-picker-nav",
+                                                    class: "py-[7px] px-[12px] text-[11.5px] bg-surface-elevated border border-subtle rounded-[5px] text-secondary cursor-pointer whitespace-nowrap transition-all",
                                                     onclick: move |e: MouseEvent| {
                                                         e.stop_propagation();
                                                         on_open_fn(dpath2.clone());
@@ -892,10 +919,10 @@ pub fn Workspace(
                                     }
                                 }
                             }
-                            div { class: "space-picker-footer",
-                                div { class: "space-picker-footer-info", span { "当前目录: {picker_current_path()}" } }
+                            div { class: "flex items-center justify-between pt-[8px] border-t border-subtle text-[11px] text-muted",
+                                div { class: "text-[11px] text-muted", span { "当前目录: {picker_current_path()}" } }
                                 button {
-                                    class: "btn-confirm-space",
+                                    class: "py-[7px] px-[16px] text-[12px] font-semibold bg-accent text-[#0c0d12] border-0 rounded-[5px] cursor-pointer transition-all",
                                     onclick: {
                                         let mut on_open_fn = on_open_space.clone();
                                         move |_| {

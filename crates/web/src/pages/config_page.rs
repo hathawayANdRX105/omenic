@@ -79,17 +79,17 @@ pub fn ConfigPage(
     rsx! {
         div { class: "flex-1 overflow-y-auto flex flex-col gap-6 px-12 pt-9 pb-14 max-w-[1000px] w-full mx-auto",
             // Header Section
-            div { class: "flex items-center justify-between pb-5 border-b border-[var(--border-subtle)]",
-                div { style: "display: flex; align-items: center; justify-content: space-between;",
+            div { class: "flex items-center justify-between pb-5 border-b border-subtle",
+                div { class: "flex items-center justify-between w-full",
                     div {
                         h1 { "模型与渠道配置" }
-                        p { class: "text-[13px] text-[var(--text-muted)] mt-1 m-0", "管理 LLM 渠道端点、安全凭证与默认模型，配置实时持久化至 .oi/config.toml" }
+                        p { class: "text-[13px] text-muted mt-1 m-0", "管理 LLM 渠道端点、安全凭证与默认模型，配置实时持久化至 .oi/config.toml" }
                     }
                     div {
-                        style: if is_form_valid {
-                            "padding: 3px 10px; border-radius: 4px; background: #11261d; border: 1px solid #1a4231; color: var(--accent-green); font-size: 11.5px; font-weight: 500;"
+                        class: if is_form_valid {
+                            "px-2.5 py-0.5 rounded text-[11.5px] font-medium bg-[#11261d] border border-[#1a4231] text-success"
                         } else {
-                            "padding: 3px 10px; border-radius: 4px; background: #2b1416; border: 1px solid #4a2125; color: var(--accent-red); font-size: 11.5px; font-weight: 500;"
+                            "px-2.5 py-0.5 rounded text-[11.5px] font-medium bg-[#2b1416] border border-[#4a2125] text-danger"
                         },
                         if is_form_valid { "校验通过" } else { "未通过校验" }
                     }
@@ -125,23 +125,23 @@ pub fn ConfigPage(
             }
 
             // Form Card
-            div { class: "bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl px-7 py-6 flex flex-col gap-5 shadow-[0_4px_20px_rgba(0,0,0,0.2)]",
+            div { class: "bg-surface border border-subtle rounded-xl px-7 py-6 flex flex-col gap-5 shadow-[0_4px_20px_rgba(0,0,0,0.2)]",
                 div { class: "flex items-center justify-between pb-3.5 border-b border-[rgba(255,255,255,0.05)]",
                     div { class: "text-[15px] font-semibold text-white", "LLM API 凭证与端点" }
-                    span { style: "font-size: 11.5px; color: var(--text-muted); font-family: ui-monospace, monospace;", "OpenAI-compatible" }
+                    span { class: "text-[11.5px] text-muted font-mono", "OpenAI-compatible" }
                 }
 
                 div { class: "grid grid-cols-2 gap-4.5 gap-x-5",
                     // Base URL Field
                     div { class: "flex flex-col gap-1.5 col-span-2",
-                        div { style: "display: flex; justify-content: space-between;",
+                        div { class: "flex justify-between",
                             label { class: "text-xs font-medium text-[#c9cddb]", "Base URL (API 基地址)" }
                             if let Some(err) = url_error {
-                                span { style: "font-size: 11px; color: var(--accent-red);", "{err}" }
+                                span { class: "text-[11px] text-danger", "{err}" }
                             }
                         }
                         input {
-                            class: "form-input w-full px-3.5 py-2.5 bg-[#0f1017] border border-[var(--border-subtle)] rounded-md text-white text-[13px] outline-none transition-all focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_rgba(162,138,199,0.2)] placeholder:text-[var(--text-muted)]",
+                            class: "w-full px-3.5 py-2.5 bg-[#0f1017] border border-subtle rounded-md text-white text-[13px] outline-none transition-all focus:border-accent focus:shadow-[0_0_0_3px_rgba(162,138,199,0.2)] placeholder:text-muted",
                             value: "{base_url}",
                             oninput: move |e| base_url.set(e.value()),
                             placeholder: "http://127.0.0.1:3182",
@@ -150,37 +150,36 @@ pub fn ConfigPage(
 
                     // API Key Field
                     div { class: "flex flex-col gap-1.5 col-span-2",
-                        div { style: "display: flex; justify-content: space-between; align-items: center;",
+                        div { class: "flex justify-between items-center",
                             label { class: "text-xs font-medium text-[#c9cddb]", "API Key / Bearer Token" }
                             button {
-                                class: "px-3 py-1 bg-[rgba(255,255,255,0.06)] border border-[var(--border-subtle)] rounded text-[var(--text-secondary)] text-[11px] cursor-pointer hover:text-white hover:bg-[rgba(255,255,255,0.12)] transition-colors",
+                                class: "px-3 py-1 bg-[rgba(255,255,255,0.06)] border border-subtle rounded text-secondary text-[11px] cursor-pointer hover:text-white hover:bg-[rgba(255,255,255,0.12)] transition-colors",
                                 onclick: move |_| show_key.set(!show_key()),
                                 if show_key() { "隐藏" } else { "显示" }
                             }
                         }
                         input {
-                            class: "form-input w-full px-3.5 py-2.5 bg-[#0f1017] border border-[var(--border-subtle)] rounded-md text-white text-[13px] outline-none transition-all focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_rgba(162,138,199,0.2)] placeholder:text-[var(--text-muted)]",
-                            style: "font-family: ui-monospace, monospace;",
+                            class: "w-full px-3.5 py-2.5 bg-[#0f1017] border border-subtle rounded-md text-white text-[13px] font-mono outline-none transition-all focus:border-accent focus:shadow-[0_0_0_3px_rgba(162,138,199,0.2)] placeholder:text-muted",
                             r#type: if show_key() { "text" } else { "password" },
                             value: "{api_key}",
                             oninput: move |e| api_key.set(e.value()),
                             placeholder: "sk-...",
                         }
                         if let Some(err) = key_error {
-                            span { style: "font-size: 11px; color: var(--accent-red);", "{err}" }
+                            span { class: "text-[11px] text-danger", "{err}" }
                         }
                     }
 
                     // Default Model
                     div { class: "flex flex-col gap-1.5",
-                        div { style: "display: flex; justify-content: space-between;",
+                        div { class: "flex justify-between",
                             label { class: "text-xs font-medium text-[#c9cddb]", "默认模型 (Model ID)" }
                             if let Some(err) = model_error {
-                                span { style: "font-size: 11px; color: var(--accent-red);", "{err}" }
+                                span { class: "text-[11px] text-danger", "{err}" }
                             }
                         }
                         input {
-                            class: "form-input w-full px-3.5 py-2.5 bg-[#0f1017] border border-[var(--border-subtle)] rounded-md text-white text-[13px] outline-none transition-all focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_rgba(162,138,199,0.2)] placeholder:text-[var(--text-muted)]",
+                            class: "w-full px-3.5 py-2.5 bg-[#0f1017] border border-subtle rounded-md text-white text-[13px] outline-none transition-all focus:border-accent focus:shadow-[0_0_0_3px_rgba(162,138,199,0.2)] placeholder:text-muted",
                             value: "{model}",
                             oninput: move |e| model.set(e.value()),
                             placeholder: "agnes-2.5-flash",
@@ -189,14 +188,14 @@ pub fn ConfigPage(
 
                     // Max Tokens
                     div { class: "flex flex-col gap-1.5",
-                        div { style: "display: flex; justify-content: space-between;",
+                        div { class: "flex justify-between",
                             label { class: "text-xs font-medium text-[#c9cddb]", "Max Tokens" }
                             if let Some(err) = tokens_error {
-                                span { style: "font-size: 11px; color: var(--accent-red);", "{err}" }
+                                span { class: "text-[11px] text-danger", "{err}" }
                             }
                         }
                         input {
-                            class: "form-input w-full px-3.5 py-2.5 bg-[#0f1017] border border-[var(--border-subtle)] rounded-md text-white text-[13px] outline-none transition-all focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_rgba(162,138,199,0.2)] placeholder:text-[var(--text-muted)]",
+                            class: "w-full px-3.5 py-2.5 bg-[#0f1017] border border-subtle rounded-md text-white text-[13px] outline-none transition-all focus:border-accent focus:shadow-[0_0_0_3px_rgba(162,138,199,0.2)] placeholder:text-muted",
                             r#type: "number",
                             value: "{max_tokens}",
                             oninput: move |e| max_tokens.set(e.value()),
@@ -206,14 +205,14 @@ pub fn ConfigPage(
 
                     // Data Directory
                     div { class: "flex flex-col gap-1.5 col-span-2",
-                        div { style: "display: flex; justify-content: space-between;",
+                        div { class: "flex justify-between",
                             label { class: "text-xs font-medium text-[#c9cddb]", "数据目录 (Data Directory)" }
                             if let Some(err) = dir_error {
-                                span { style: "font-size: 11px; color: var(--accent-red);", "{err}" }
+                                span { class: "text-[11px] text-danger", "{err}" }
                             }
                         }
                         input {
-                            class: "form-input w-full px-3.5 py-2.5 bg-[#0f1017] border border-[var(--border-subtle)] rounded-md text-white text-[13px] outline-none transition-all focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_rgba(162,138,199,0.2)] placeholder:text-[var(--text-muted)]",
+                            class: "w-full px-3.5 py-2.5 bg-[#0f1017] border border-subtle rounded-md text-white text-[13px] outline-none transition-all focus:border-accent focus:shadow-[0_0_0_3px_rgba(162,138,199,0.2)] placeholder:text-muted",
                             value: "{data_dir}",
                             oninput: move |e| data_dir.set(e.value()),
                             placeholder: "./.oi",
@@ -224,8 +223,7 @@ pub fn ConfigPage(
                 // Action Buttons Row
                 div { class: "flex items-center gap-3 pt-1.5",
                     button {
-                        class: "px-5 py-2 bg-[var(--accent)] text-[#0b0c10] text-[13px] font-semibold rounded-md hover:bg-[var(--accent-hover)] transition-colors cursor-pointer",
-                        style: if !is_form_valid { "opacity: 0.5; cursor: not-allowed;" } else { "" },
+                        class: if !is_form_valid { "px-5 py-2 bg-accent text-[#0b0c10] text-[13px] font-semibold rounded-md transition-colors opacity-50 cursor-not-allowed" } else { "px-5 py-2 bg-accent text-[#0b0c10] text-[13px] font-semibold rounded-md hover:bg-accent-hover transition-colors cursor-pointer" },
                         disabled: !is_form_valid,
                         onclick: move |_| {
                             if is_form_valid {
@@ -251,7 +249,7 @@ pub fn ConfigPage(
                     }
 
                     button {
-                        class: "px-5 py-2 bg-[rgba(255,255,255,0.05)] text-[var(--text-primary)] text-[13px] font-medium rounded-md border border-[var(--border-subtle)] hover:bg-[rgba(255,255,255,0.1)] transition-colors cursor-pointer",
+                        class: "px-5 py-2 bg-[rgba(255,255,255,0.05)] text-primary text-[13px] font-medium rounded-md border border-subtle hover:bg-[rgba(255,255,255,0.1)] transition-colors cursor-pointer",
                         disabled: is_testing(),
                         onclick: move |_| {
                             is_testing.set(true);
@@ -272,10 +270,10 @@ pub fn ConfigPage(
             }
 
             // Online Models Card
-            div { class: "bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl px-7 py-6 flex flex-col gap-5 shadow-[0_4px_20px_rgba(0,0,0,0.2)]",
+            div { class: "bg-surface border border-subtle rounded-xl px-7 py-6 flex flex-col gap-5 shadow-[0_4px_20px_rgba(0,0,0,0.2)]",
                 div { class: "flex items-center justify-between pb-3.5 border-b border-[rgba(255,255,255,0.05)]",
                     div { class: "text-[15px] font-semibold text-white", "在线可用模型 ({models.len()})" }
-                    span { style: "font-size: 11.5px; color: var(--text-muted);", "点击选用" }
+                    span { class: "text-[11.5px] text-muted", "点击选用" }
                 }
 
                 div { class: "grid grid-cols-2 gap-2.5",
@@ -283,19 +281,19 @@ pub fn ConfigPage(
                         {
                             let m_str = m.clone();
                             let is_current = *model.read() == *m;
-                            let card_class = if is_current { "model-item-card current" } else { "model-item-card" };
+                            let card_class = if is_current { "p-3 rounded-lg border border-accent bg-surface-elevated cursor-pointer transition-colors" } else { "p-3 rounded-lg border border-subtle bg-base cursor-pointer transition-colors hover:border-hover" };
                             rsx! {
                                 div {
                                     key: "{m}",
                                     class: "{card_class}",
-                                    div { style: "display: flex; align-items: center; gap: 8px;",
-                                        span { class: "model-name", "{m}" }
+                                    div { class: "flex items-center gap-2",
+                                        span { class: "text-[#c4b5fd] font-mono text-[13px] font-medium", "{m}" }
                                         if is_current {
-                                            span { class: "model-tag-badge", "默认" }
+                                            span { class: "bg-emerald-500/10 text-success border border-emerald-500/30 px-1.5 py-0.5 rounded text-[11px] font-semibold", "默认" }
                                         }
                                     }
                                     button {
-                                        class: "px-3 py-1 bg-[rgba(255,255,255,0.06)] border border-[var(--border-subtle)] rounded text-[var(--text-secondary)] text-[11px] cursor-pointer hover:text-white hover:bg-[rgba(255,255,255,0.12)] transition-colors",
+                                        class: "px-3 py-1 bg-[rgba(255,255,255,0.06)] border border-subtle rounded text-secondary text-[11px] cursor-pointer hover:text-white hover:bg-[rgba(255,255,255,0.12)] transition-colors",
                                         disabled: is_current,
                                         onclick: move |_| {
                                             model.set(m_str.clone());

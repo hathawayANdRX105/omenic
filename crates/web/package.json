@@ -7,7 +7,7 @@
     "test": "tests"
   },
   "scripts": {
-    "build:css": "npx @tailwindcss/cli -i assets/tailwind-input.css -o assets/tailwind.css"
+    "build:css": "node_modules/.bin/tailwindcss -i assets/tailwind-input.css -o assets/tailwind.gen.css"
   },
   "keywords": [],
   "type": "commonjs",
