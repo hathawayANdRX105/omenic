@@ -133,7 +133,31 @@ gate 根据 `mode` 给 harness 三种输入之一：
 |---|---|
 | 0 | 正常（无论有没有 finding） |
 | 2 | harness 自身报错（找不到 config、prompt 模板错等）→ WARN「harness failed」 |
-| 其它 | 视为工具缺失 → 走 `optional` 策略 |
+
+## mode: grep 规则编写标准（可移植 + worktree 安全）
+
+`mode: grep` 的 harness 自己扫仓库。为了让 `.githooks/spec/` 能整份拷到任意仓库直接跑，且在本仓的 `.wt/` worktree 检出里不误伤自身，统一遵守下面三条。**新加规则照抄，不要各写各的。**
+
+1. **扫仓库根，不写死目录层级。** 用 `"$ROOT"`（`git rev-parse --show-toplevel`）作起点，**禁止**硬编码 `crates/*/src`、`bin/*/src` 这种 omenic 专属布局——别的仓库代码不在那些路径下，规则会静默扫到 0 文件、输出 `[]`、gate 报 `ALL PASS`（假绿，比报错更危险）。
+
+2. **grep 用 `--exclude-dir`（按目录名匹配，worktree 安全）：**
+   ```sh
+   grep -rEn '<pat>' "$ROOT" --include='*.rs' \
+     --exclude-dir=target --exclude-dir=.wt --exclude-dir=.git \
+     --exclude-dir=tests 2>/dev/null | head -30
+   ```
+   `--exclude-dir=X` 只在**下行时**排除名为 `X` 的子目录，不影响"仓库本身以 `.wt/<x>` 检出"的情形。
+
+3. **find 用 `-prune`（按目录名剪枝），禁用 `-not -path '*/.wt/*'` 路径 glob：**
+   ```sh
+   find "$ROOT" \( -name target -o -name .git -o -name .wt \) -prune \
+     -o -name '*.rs' -size -100c -print 2>/dev/null
+   ```
+   反例 `-not -path "*/.wt/*"` 是**全路径** glob：当 `ROOT` 本身在 `.wt/` 下时，每个被列文件的完整路径都含 `.wt/`，于是把当前仓库自己的文件全排除、扫出 0 个。这是实测踩过的坑（worktree 里 test 规则假绿）。`-name X -prune` 按目录名判断，两情形都对。
+
+4. **跨语言测试文件命名一并排除**（`--exclude-dir=tests` 挡不住 Go/JS 同目录测试）：`--exclude='*_test.go' --exclude='*_test.py' --exclude='*.test.ts' --exclude='*.spec.ts'`。
+
+> 判据：拷到 3 种布局验证——(a) `crates/*/src` 单域，(b) `crates/<domain>/<crate>/src` 两域，(c) `apps/*` 非 cargo。三种都应扫到真实文件、且 `.wt/` worktree 检出下不虚报全绿。
 
 ## 触发点（hook 调度）
 
