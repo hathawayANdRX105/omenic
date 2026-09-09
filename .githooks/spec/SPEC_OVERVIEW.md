@@ -1,5 +1,7 @@
 # .githooks 规范总览
 
+> 人手查规则/阈值/怎么加规则的总入口见 `.githooks/GATE_HANDBOOK.md`。
+
 ```
 .githooks/
 ├── hooks/                     # git hooks 入口（core.hooksPath = .githooks/hooks）
