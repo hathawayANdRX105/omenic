@@ -72,6 +72,7 @@ fn test_e2e_session_deletion_and_creation_diff() {
                 on_select_space: move |_| {},
                 on_trigger_picker: move |_| {},
                 sessions: sessions(),
+                space_session_counts: std::collections::HashMap::new(),
                 active_id: active_id(),
                 on_select: move |_| {},
                 on_create: on_create,

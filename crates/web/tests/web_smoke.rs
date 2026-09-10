@@ -83,6 +83,7 @@ fn test_sidebar_render() {
                 on_select_space: move |_| {},
                 on_trigger_picker: move |_| {},
                 sessions: mock_sessions(),
+                space_session_counts: std::collections::HashMap::new(),
                 active_id: String::from("s1"),
                 on_select: move |_| {},
                 on_create: move |_| {},
