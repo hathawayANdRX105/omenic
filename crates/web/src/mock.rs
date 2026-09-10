@@ -17,6 +17,14 @@ pub struct ToolCall {
     pub status: String, // "success", "running", "error"
 }
 
+/// 消息体内的有序片段：文本段或一次工具调用。
+/// 用于按真实发生顺序渲染 agent 的工作过程（文本与工具调用交叉）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MessagePart {
+    Text(String),
+    Tool(ToolCall),
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub id: String,
@@ -24,7 +32,13 @@ pub struct ChatMessage {
     pub content: String,
     #[serde(default)]
     pub tool_calls: Vec<ToolCall>,
+    /// 真实发生顺序的有序片段；为空时回退到 content + tool_calls 渲染。
+    #[serde(default)]
+    pub parts: Vec<MessagePart>,
     pub timestamp: String,
+    /// Unix epoch milliseconds — 真实落库时间戳,用于渲染相对时间
+    #[serde(default)]
+    pub ts_epoch_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -34,6 +48,9 @@ pub struct Session {
     pub last_active: String,
     pub model: String,
     pub status: SessionStatus,
+    /// Unix epoch milliseconds for last activity (for real relative-time display)
+    #[serde(default)]
+    pub last_active_epoch: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -145,6 +162,35 @@ pub struct ConfigData {
 
 // ── Mock data generators ────────────────────────────────────────────────────
 
+/// 把毫秒时间戳转成相对时间："刚刚"/"X 分钟前"/"X 小时前"/"昨天 HH:MM"
+pub fn format_relative_time(epoch_ms: u64) -> String {
+    if epoch_ms == 0 {
+        return "刚刚".into();
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let age_ms = now.saturating_sub(epoch_ms);
+    let secs = age_ms / 1000;
+    if secs < 60 {
+        return "刚刚".into();
+    }
+    let mins = secs / 60;
+    if mins < 60 {
+        return format!("{mins} 分钟前");
+    }
+    let hrs = mins / 60;
+    if hrs < 24 {
+        return format!("{hrs} 小时前");
+    }
+    let days = hrs / 24;
+    match days {
+        1 => "昨天".into(),
+        _ => format!("{days} 天前"),
+    }
+}
+
 pub fn mock_sessions() -> Vec<Session> {
     vec![
         Session {
@@ -152,7 +198,8 @@ pub fn mock_sessions() -> Vec<Session> {
             title: "重构 orbit compaction".into(),
             last_active: "2 分钟前".into(),
             model: "qwen3-32b".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Idle,
+            last_active_epoch: 0,
         },
         Session {
             id: "s2".into(),
@@ -160,6 +207,7 @@ pub fn mock_sessions() -> Vec<Session> {
             last_active: "15 分钟前".into(),
             model: "qwen3-32b".into(),
             status: SessionStatus::Idle,
+            last_active_epoch: 0,
         },
         Session {
             id: "s3".into(),
@@ -167,6 +215,7 @@ pub fn mock_sessions() -> Vec<Session> {
             last_active: "1 小时前".into(),
             model: "agnes-2.5-flash".into(),
             status: SessionStatus::Idle,
+            last_active_epoch: 0,
         },
         Session {
             id: "s4".into(),
@@ -174,6 +223,7 @@ pub fn mock_sessions() -> Vec<Session> {
             last_active: "3 小时前".into(),
             model: "qwen3-32b".into(),
             status: SessionStatus::Archived,
+            last_active_epoch: 0,
         },
         Session {
             id: "s5".into(),
@@ -181,12 +231,37 @@ pub fn mock_sessions() -> Vec<Session> {
             last_active: "昨天".into(),
             model: "agnes-2.5-flash".into(),
             status: SessionStatus::Archived,
+            last_active_epoch: 0,
         },
     ]
 }
 
 pub fn mock_messages() -> Vec<ChatMessage> {
     mock_messages_for_session("s1")
+}
+
+// ── 构造助手 ────────────────────────────────────────────────────────────────
+
+fn tc_bash(id: &str, title: &str, summary: &str, detail: &str) -> ToolCall {
+    ToolCall {
+        id: id.to_string(),
+        title: title.to_string(),
+        kind: "bash".to_string(),
+        summary: summary.to_string(),
+        detail: detail.to_string(),
+        status: "success".to_string(),
+    }
+}
+
+fn tc_edit(id: &str, title: &str, summary: &str, detail: &str) -> ToolCall {
+    ToolCall {
+        id: id.to_string(),
+        title: title.to_string(),
+        kind: "edit".to_string(),
+        summary: summary.to_string(),
+        detail: detail.to_string(),
+        status: "success".to_string(),
+    }
 }
 
 pub fn mock_messages_for_session(session_id: &str) -> Vec<ChatMessage> {
@@ -197,7 +272,9 @@ pub fn mock_messages_for_session(session_id: &str) -> Vec<ChatMessage> {
                 role: "user".into(),
                 content: "我们需要将外部 MCP 服务的工具注册进 worker 的 runner 中。".into(),
                 tool_calls: vec![],
+                parts: vec![],
                 timestamp: "12:10".into(),
+                ts_epoch_ms: 0,
             },
             ChatMessage {
                 id: "s2-m2".into(),
@@ -213,7 +290,9 @@ pub fn mock_messages_for_session(session_id: &str) -> Vec<ChatMessage> {
                         status: "success".into(),
                     },
                 ],
+                parts: vec![],
                 timestamp: "12:12".into(),
+                ts_epoch_ms: 0,
             },
         ],
         "s3" => vec![
@@ -222,7 +301,9 @@ pub fn mock_messages_for_session(session_id: &str) -> Vec<ChatMessage> {
                 role: "user".into(),
                 content: "排查 memory store 在意外断电时可能发生的数据截断问题。".into(),
                 tool_calls: vec![],
+                parts: vec![],
                 timestamp: "10:05".into(),
+                ts_epoch_ms: 0,
             },
             ChatMessage {
                 id: "s3-m2".into(),
@@ -238,7 +319,9 @@ pub fn mock_messages_for_session(session_id: &str) -> Vec<ChatMessage> {
                         status: "success".into(),
                     },
                 ],
+                parts: vec![],
                 timestamp: "10:08".into(),
+                ts_epoch_ms: 0,
             },
         ],
         _ => vec![
@@ -247,45 +330,48 @@ pub fn mock_messages_for_session(session_id: &str) -> Vec<ChatMessage> {
                 role: "user".into(),
                 content: "帮我重构 orbit 的 compaction 策略，把固定 50 条改成字符预算模式".into(),
                 tool_calls: vec![],
+                parts: vec![],
                 timestamp: "14:30".into(),
+                ts_epoch_ms: 0,
             },
             ChatMessage {
                 id: "m2".into(),
                 role: "assistant".into(),
-                content: "好的，我来看一下当前的 compaction 实现。\n改动集中在 `crates/orbit/src/lib.rs`，关键变化：\n- COMPACT_CHAR_BUDGET = 120_000\n- 保留最近 KEEP_RECENT_MIN = 4 条消息\n- 跳过 orphan tool_results".into(),
+                content: "好的，我先看一下当前的 compaction 实现，并确认改动范围。\n\n改动集中在 `crates/orbit/src/lib.rs`：引入字符预算窗口，保留最近 KEEP_RECENT_MIN 条消息，跳过 orphan tool_results。\n\n完成。compaction 现在按字符预算（COMPACT_CHAR_BUDGET=120_000）动态滑动窗口截断，并保留最近 4 条消息。测试已通过。".into(),
                 tool_calls: vec![
-                    ToolCall {
-                        id: "tc-1".into(),
-                        title: "已运行 git diff main..HEAD -- crates/orbit/".into(),
-                        kind: "bash".into(),
-                        summary: "1 个文件变动，45 行新增，20 行删除".into(),
-                        detail: "diff --git a/crates/orbit/src/lib.rs b/crates/orbit/src/lib.rs\nindex 8666f2a..bd33257 100644\n--- a/crates/orbit/src/lib.rs\n+++ b/crates/orbit/src/lib.rs\n@@ -310,12 +310,24 @@ pub const COMPACT_CHAR_BUDGET: usize = 120_000;\n+    let mut char_count = 0;\n+    let mut kept_msgs = Vec::new();\n+    for msg in messages.iter().rev() {\n+        char_count += msg.content.len();\n+        if char_count > COMPACT_CHAR_BUDGET {\n+            break;\n+        }\n+        kept_msgs.push(msg.clone());\n+    }".into(),
-                        status: "success".into(),
-                    },
-                    ToolCall {
-                        id: "tc-2".into(),
-                        title: "已写入 crates/orbit/src/lib.rs +45 -20".into(),
-                        kind: "edit".into(),
-                        summary: "替换固定计数为按字符预算的动态滑动窗口".into(),
-                        detail: "@@ -319,10 +319,35 @@\n-    let slice = &messages[messages.len().saturating_sub(50)..];\n+    let kept_recent = messages.iter().rev().take(KEEP_RECENT_MIN).cloned().collect();\n+    // 字符预算窗口截断逻辑\n".into(),
-                        status: "success".into(),
-                    },
+                    tc_bash("tc-1", "git diff main..HEAD -- crates/orbit/", "1 个文件变动，45 行新增，20 行删除", "diff --git a/crates/orbit/src/lib.rs b/crates/orbit/src/lib.rs\nindex 8666f2a..bd33257 100644\n--- a/crates/orbit/src/lib.rs\n+++ b/crates/orbit/src/lib.rs\n@@ -310,12 +310,24 @@ pub const COMPACT_CHAR_BUDGET: usize = 120_000;\n+    let mut char_count = 0;\n+    let mut kept_msgs = Vec::new();\n+    for msg in messages.iter().rev() {\n+        char_count += msg.content.len();\n+        if char_count > COMPACT_CHAR_BUDGET { break; }\n+        kept_msgs.push(msg.clone());\n+    }"),
+                    tc_bash("tc-2", "grep -n 'COMPACT_CHAR_BUDGET' crates/orbit/src/lib.rs", "命中 1 处", "crates/orbit/src/lib.rs:310:pub const COMPACT_CHAR_BUDGET: usize = 120_000;"),
+                    tc_edit("tc-3", "已写入 crates/orbit/src/lib.rs +45 -20", "替换固定计数为按字符预算的动态滑动窗口", "@@ -319,10 +319,35 @@\n-    let slice = &messages[messages.len().saturating_sub(50)..];\n+    let kept_recent = messages.iter().rev().take(KEEP_RECENT_MIN).cloned().collect();\n+    // 字符预算窗口截断逻辑"),
+                ],
+                // 真实发生顺序：文本 → 连续 bash ×2 → 文本 → edit → 最终文本
+                parts: vec![
+                    MessagePart::Text("好的，我先看一下当前的 compaction 实现，并确认改动范围。".into()),
+                    MessagePart::Tool(tc_bash("tc-1", "git diff main..HEAD -- crates/orbit/", "1 个文件变动，45 行新增，20 行删除", "diff --git a/crates/orbit/src/lib.rs b/crates/orbit/src/lib.rs")),
+                    MessagePart::Tool(tc_bash("tc-2", "grep -n 'COMPACT_CHAR_BUDGET' crates/orbit/src/lib.rs", "命中 1 处", "crates/orbit/src/lib.rs:310")),
+                    MessagePart::Text("改动集中在 `crates/orbit/src/lib.rs`：引入字符预算窗口，保留最近 KEEP_RECENT_MIN 条消息，跳过 orphan tool_results。".into()),
+                    MessagePart::Tool(tc_edit("tc-3", "已写入 crates/orbit/src/lib.rs +45 -20", "替换固定计数为按字符预算的动态滑动窗口", "@@ -319,10 +319,35 @@")),
+                    MessagePart::Text("完成。compaction 现在按字符预算（COMPACT_CHAR_BUDGET=120_000）动态滑动窗口截断，并保留最近 4 条消息。测试已通过。".into()),
                 ],
                 timestamp: "14:31".into(),
+                ts_epoch_ms: 0,
             },
             ChatMessage {
                 id: "m3".into(),
                 role: "user".into(),
                 content: "kept_chars 的守卫逻辑有 bug，system_prompt 没算进去".into(),
                 tool_calls: vec![],
+                parts: vec![],
                 timestamp: "14:35".into(),
+                ts_epoch_ms: 0,
             },
             ChatMessage {
                 id: "m4".into(),
                 role: "assistant".into(),
                 content: "确认了。`compact()` 里 `kept_chars` 只统计了 `messages` 的字符，漏掉了 `system_prompt` 的长度。\n修复：在 `compact()` 开头把 `system_prompt.len()` 加入 `kept_chars` 初始值。\n测试通过。".into(),
                 tool_calls: vec![],
+                parts: vec![],
                 timestamp: "14:36".into(),
+                ts_epoch_ms: 0,
             },
         ],
     }

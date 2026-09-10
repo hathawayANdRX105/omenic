@@ -17,3 +17,8 @@ toml = { workspace = true }
 ureq = { workspace = true }
 config = { path = "../config" }
 adaptor = { path = "../adaptor" }
+orbit = { path = "../orbit" }
+tools = { path = "../tools" }
+session = { path = "../session" }
+task = { path = "../task" }
+pulldown-cmark.workspace = true

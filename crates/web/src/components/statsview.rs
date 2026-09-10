@@ -8,20 +8,21 @@ pub fn StatsView() -> Element {
     let ranges = ["1h", "24h", "7d", "30d", "90d", "All"];
 
     rsx! {
-        div { class: "stats-page",
-            div { class: "stats-header",
+        div { class: "flex-1 overflow-y-auto flex flex-col gap-6 px-12 pt-8 pb-14 max-w-[1400px] w-full mx-auto",
+            // Header
+            div { class: "flex items-center justify-between pb-5 border-b border-subtle",
                 div {
-                    h1 { "数据统计" }
-                    p { class: "stats-subtitle", "当前视图范围：最近 {selected_range()}" }
+                    h1 { class: "text-[22px] font-bold text-white tracking-tight m-0", "数据统计" }
+                    p { class: "text-[13px] text-muted mt-1 m-0", "当前视图范围：最近 {selected_range()}" }
                 }
-                div { class: "time-filter",
+                div { class: "flex gap-0.5 bg-[rgba(255,255,255,0.03)] border border-subtle rounded-lg p-0.5",
                     for r in ranges {
                         {
                             let r_str = r.to_string();
                             rsx! {
                                 button {
                                     key: "{r}",
-                                    class: if selected_range() == r { "time-btn active" } else { "time-btn" },
+                                    class: if selected_range() == r { "px-3.5 py-1 text-xs rounded-md font-semibold bg-surface-elevated text-white shadow-sm" } else { "px-3.5 py-1 text-xs rounded-md text-muted hover:text-primary transition-colors" },
                                     onclick: move |_| selected_range.set(r_str.clone()),
                                     "{r}"
                                 }
@@ -32,42 +33,39 @@ pub fn StatsView() -> Element {
             }
 
             // KPI Cards
-            div { class: "kpi-row",
+            div { class: "grid grid-cols-5 gap-3.5",
                 for kpi in &data.kpis {
                     KpiCardView { key: "{kpi.label}", kpi: kpi.clone() }
                 }
             }
 
-            // Sub-metrics
-            div { class: "sub-metrics",
+            // Sub-metrics ribbon
+            div { class: "grid grid-cols-7 gap-3 bg-[rgba(255,255,255,0.015)] border border-subtle rounded-lg px-4.5 py-3.5",
                 for sm in &data.sub_metrics {
-                    div { key: "{sm.label}", class: "sub-metric",
-                        div { class: "sub-metric-label", "{sm.label}" }
-                        div { class: "sub-metric-value", "{sm.value}" }
+                    div { key: "{sm.label}", class: "flex flex-col gap-1",
+                        div { class: "text-[10px] font-semibold text-muted font-mono uppercase tracking-wider", "{sm.label}" }
+                        div { class: "text-[15px] font-semibold text-[#e2e4ed] font-mono", "{sm.value}" }
                     }
                 }
             }
 
-            // Main content: bars + chart + feed
-            div { class: "stats-body",
-                // Left: agent token distribution
-                div { class: "agent-bar-section",
-                    h3 { "按 Agent 的 Token 分布" }
+            // Body: 3-column
+            div { class: "grid grid-cols-[320px_1fr_340px] gap-4 items-stretch",
+                div { class: "bg-surface border border-subtle rounded-[10px] p-5 flex flex-col gap-4",
+                    h3 { class: "text-sm font-semibold text-white m-0", "按 Agent 的 Token 分布" }
                     for bar in &data.agent_bars {
                         AgentBarRow { key: "{bar.agent}", bar: bar.clone() }
                     }
                 }
 
-                // Center: throughput chart
-                div { class: "throughput-section",
-                    h3 { "吞吐趋势 ({selected_range()})" }
+                div { class: "bg-surface border border-subtle rounded-[10px] p-5 flex flex-col gap-4",
+                    h3 { class: "text-sm font-semibold text-white m-0", "吞吐趋势 ({selected_range()})" }
                     ThroughputChart { points: data.throughput.clone() }
                 }
 
-                // Right: operational feed
-                div { class: "feed-section",
-                    h3 { "最近请求 Feed" }
-                    div { class: "feed-list",
+                div { class: "bg-surface border border-subtle rounded-[10px] p-5 flex flex-col gap-4",
+                    h3 { class: "text-sm font-semibold text-white m-0", "最近请求 Feed" }
+                    div { class: "flex flex-col gap-2 overflow-y-auto max-h-[320px]",
                         for item in &data.feed {
                             FeedRow { key: "{item.time_ago}", item: item.clone() }
                         }
@@ -81,15 +79,15 @@ pub fn StatsView() -> Element {
 #[component]
 fn KpiCardView(kpi: KpiCard) -> Element {
     let delta_class = if kpi.delta_positive {
-        "kpi-delta positive"
+        "bg-emerald-500/10 text-emerald-400 border border-emerald-500/25"
     } else {
-        "kpi-delta negative"
+        "bg-red-500/10 text-red-400 border border-red-500/25"
     };
     rsx! {
-        div { class: "kpi-card",
-            div { class: "kpi-label", "{kpi.label}" }
-            div { class: "kpi-value", "{kpi.value}" }
-            span { class: "{delta_class}", "{kpi.delta}" }
+        div { class: "bg-surface border border-subtle rounded-[10px] px-4 py-4 flex flex-col gap-2 hover:border-hover hover:-translate-y-px transition-all",
+            div { class: "text-xs text-secondary font-medium", "{kpi.label}" }
+            div { class: "text-[26px] font-bold text-white font-mono leading-none", "{kpi.value}" }
+            span { class: "{delta_class} text-[11px] font-semibold px-2 py-0.5 rounded w-fit font-mono", "{kpi.delta}" }
         }
     }
 }
@@ -97,17 +95,16 @@ fn KpiCardView(kpi: KpiCard) -> Element {
 #[component]
 fn AgentBarRow(bar: AgentTokenBar) -> Element {
     rsx! {
-        div { class: "agent-bar-row",
-            div { class: "agent-bar-header",
-                span { class: "agent-name", "{bar.agent}" }
-                span { class: "agent-tokens", "{bar.tokens}" }
-                span { class: "agent-pct", "{bar.pct:.1}%" }
-            }
-            div { class: "agent-bar-bg",
-                div {
-                    class: "agent-bar-fill",
-                    style: "width: {bar.pct}%; background: {bar.color}",
+        div { class: "flex flex-col gap-2 px-2.5 py-2 bg-base border border-subtle rounded-md",
+            div { class: "flex items-center justify-between text-xs",
+                span { class: "font-semibold text-white", "{bar.agent}" }
+                div { class: "flex items-center gap-2",
+                    span { class: "text-muted font-mono text-[11px]", "{bar.tokens}" }
+                    span { class: "font-semibold text-accent font-mono text-[11px]", "{bar.pct:.1}%" }
                 }
+            }
+            div { class: "h-1.5 bg-[rgba(255,255,255,0.08)] rounded-full overflow-hidden",
+                div { class: "h-full rounded-full", style: "width: {bar.pct}%; background: {bar.color}" }
             }
         }
     }
@@ -122,59 +119,35 @@ fn ThroughputChart(points: Vec<ThroughputPoint>) -> Element {
         .max(1.0);
     let width = 400.0_f64;
     let height = 180.0_f64;
-    let pad = 20.0;
-    let step = (width - pad * 2.0) / (points.len().max(2) - 1) as f64;
+    let pad = 12.0_f64;
+    let step = if points.len() > 1 {
+        (width - pad * 2.0) / (points.len() - 1) as f64
+    } else {
+        0.0
+    };
 
-    let path_data: String = points
+    let path_points: Vec<String> = points
         .iter()
         .enumerate()
         .map(|(i, p)| {
             let x = pad + i as f64 * step;
             let y = height - pad - (p.tokens / max_val) * (height - pad * 2.0);
-            if i == 0 {
-                format!("M {x:.1} {y:.1}")
-            } else {
-                format!("L {x:.1} {y:.1}")
-            }
+            format!("{x:.1},{y:.1}")
         })
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    let area_data = format!(
-        "{path_data} L {:.1} {:.1} L {:.1} {:.1} Z",
-        pad + (points.len().max(2) - 1) as f64 * step,
-        height - pad,
-        pad,
-        height - pad,
-    );
+        .collect();
+    let polyline = path_points.join(" ");
 
     rsx! {
         svg {
-            class: "throughput-chart",
+            class: "w-full h-[180px] overflow-visible",
             view_box: "0 0 {width} {height}",
-            path {
-                class: "chart-area",
-                d: "{area_data}",
-                fill: "url(#chartGrad)",
-                opacity: "0.3",
-            }
-            path {
-                class: "chart-line",
-                d: "{path_data}",
-                fill: "none",
-                stroke: "#e91e63",
-                stroke_width: "2",
-            }
-            defs {
-                linearGradient {
-                    id: "chartGrad",
-                    x1: "0",
-                    y1: "0",
-                    x2: "0",
-                    y2: "1",
-                    stop { offset: "0%", stop_color: "#e91e63", stop_opacity: "0.4" }
-                    stop { offset: "100%", stop_color: "#e91e63", stop_opacity: "0.0" }
-                }
+            fill: "none",
+            polyline {
+                points: "{polyline}",
+                stroke: "#a28ac7",
+                stroke_width: "1.5",
+                stroke_linecap: "round",
+                stroke_linejoin: "round",
             }
             for (i, p) in points.iter().enumerate() {
                 {
@@ -185,8 +158,8 @@ fn ThroughputChart(points: Vec<ThroughputPoint>) -> Element {
                             key: "pt-{i}",
                             cx: "{x:.1}",
                             cy: "{y:.1}",
-                            r: "3",
-                            fill: "#e91e63",
+                            r: "2.5",
+                            fill: "#a28ac7",
                         }
                     }
                 }
@@ -198,15 +171,15 @@ fn ThroughputChart(points: Vec<ThroughputPoint>) -> Element {
 #[component]
 fn FeedRow(item: FeedItem) -> Element {
     rsx! {
-        div { class: "feed-item",
-            div { class: "feed-main",
-                span { class: "feed-model", "{item.model}" }
-                span { class: "feed-provider", "{item.provider}" }
+        div { class: "flex items-center justify-between px-3 py-2 bg-base border border-subtle rounded-md text-xs hover:border-hover hover:bg-hover transition-colors",
+            div { class: "flex items-center gap-2",
+                span { class: "font-semibold text-[#c4b5fd] font-mono text-[11px]", "{item.model}" }
+                span { class: "text-[10px] text-muted bg-[rgba(255,255,255,0.05)] px-1.5 py-px rounded-sm", "{item.provider}" }
             }
-            div { class: "feed-meta",
-                span { class: "feed-time", "{item.time_ago}" }
-                span { class: "feed-duration", "{item.duration}" }
-                span { class: "feed-cost", "{item.cost}" }
+            div { class: "flex items-center gap-2.5 font-mono text-[11px]",
+                span { class: "text-muted text-[10px]", "{item.time_ago}" }
+                span { class: "text-muted", "{item.duration}" }
+                span { class: "text-emerald-400 font-medium", "{item.cost}" }
             }
         }
     }

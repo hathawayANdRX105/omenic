@@ -15,31 +15,71 @@ pub(crate) fn context_to_openai_messages(context: &Context) -> Vec<Value> {
         messages.push(json!({ "role": "system", "content": system }));
     }
     for m in &context.messages {
-        let content = match &m.content {
-            Content::Text(s) => json!(s),
-            Content::Blocks(blocks) => Value::Array(
-                blocks
-                    .iter()
-                    .map(|b| match b {
-                        Block::Text { text } => json!({ "type": "text", "text": text }),
-                        Block::ToolUse { id, name, input } => json!({
-                            "type": "tool_use", "id": id, "name": name, "input": input,
-                        }),
-                        Block::ToolResult {
-                            tool_use_id,
-                            content,
-                        } => json!({
-                            "type": "tool_result", "tool_use_id": tool_use_id, "content": content,
-                        }),
-                    })
-                    .collect(),
-            ),
-        };
         let role = match m.role {
             Role::User => "user",
             Role::Assistant => "assistant",
         };
-        messages.push(json!({ "role": role, "content": content }));
+        match &m.content {
+            Content::Text(s) => {
+                messages.push(json!({ "role": role, "content": s }));
+            }
+            Content::Blocks(blocks) => {
+                // OpenAI 规范协议(不是 Anthropic blocks 格式):
+                // - tool_use    → 并入 assistant 消息的 `tool_calls` 数组
+                // - tool_result → 独立的 role:"tool" 消息,必须排在 assistant tool_calls 之后
+                // 做法:先把 ToolUse/Text 收集为 pending assistant,碰到 ToolResult(或 blocks 末尾)就落盘。
+                let mut pending_text = String::new();
+                let mut pending_calls: Vec<Value> = Vec::new();
+                let mut flush_assistant =
+                    |text: &mut String, calls: &mut Vec<Value>, messages: &mut Vec<Value>| {
+                        if text.is_empty() && calls.is_empty() {
+                            return;
+                        }
+                        let mut msg = json!({ "role": role });
+                        msg["content"] = if text.is_empty() {
+                            Value::Null
+                        } else {
+                            json!(std::mem::take(text))
+                        };
+                        if !calls.is_empty() {
+                            msg["tool_calls"] = Value::Array(std::mem::take(calls));
+                        }
+                        messages.push(msg);
+                    };
+                for b in blocks {
+                    match b {
+                        Block::Text { text } => {
+                            if !pending_text.is_empty() {
+                                pending_text.push('\n');
+                            }
+                            pending_text.push_str(text);
+                        }
+                        Block::ToolUse { id, name, input } => {
+                            pending_calls.push(json!({
+                                "id": id,
+                                "type": "function",
+                                "function": {
+                                    "name": name,
+                                    "arguments": serde_json::to_string(input).unwrap_or_default(),
+                                }
+                            }));
+                        }
+                        Block::ToolResult {
+                            tool_use_id,
+                            content,
+                        } => {
+                            flush_assistant(&mut pending_text, &mut pending_calls, &mut messages);
+                            messages.push(json!({
+                                "role": "tool",
+                                "tool_call_id": tool_use_id,
+                                "content": content,
+                            }));
+                        }
+                    }
+                }
+                flush_assistant(&mut pending_text, &mut pending_calls, &mut messages);
+            }
+        }
     }
     messages
 }
@@ -100,7 +140,14 @@ pub fn stream_cb(
         .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
     let url = format!("{}/chat/completions", base.trim_end_matches('/'));
 
-    let response = match ureq::post(&url)
+    // Per-socket-read timeout so a stalled gateway fails instead of hanging the
+    // agent thread forever. 90s covers slow long-thinking models between deltas.
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(10))
+        .timeout_read(std::time::Duration::from_secs(90))
+        .build();
+    let response = match agent
+        .post(&url)
         .set("Authorization", &format!("Bearer {}", model.api_key))
         .send_json(request_body(model, context, tools))
     {
