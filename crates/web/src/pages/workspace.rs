@@ -232,33 +232,24 @@ pub fn Workspace(
     });
     let mut spaces = use_signal(|| discover_workspaces(&active_space_path()));
 
-    // Session count per worktree, recomputed only when the space list changes.
-    // DB access runs on a spawned thread because `SessionDb::open` builds its own
-    // tokio runtime and must not be called from within the LiveView async task.
-    let space_session_counts = use_memo(move || {
+    let initial_data = use_signal(|| db_load_sessions(&format!("{}/.oi", active_space_path())));
+    // Full session list per worktree, so the sidebar accordion can show each
+    // space's own sessions. Loaded once (off the LiveView task, via a thread);
+    // kept in sync in the mutation handlers below.
+    let mut space_sessions = use_signal(|| {
         let paths: Vec<String> = spaces().iter().map(|s| s.path.clone()).collect();
         std::thread::spawn(move || {
-            let mut map: std::collections::HashMap<String, usize> =
+            let mut map: std::collections::HashMap<String, Vec<Session>> =
                 std::collections::HashMap::new();
             for path in paths {
-                let db_path = std::path::Path::new(&path).join(".oi").join("sessions.db");
-                let count = if db_path.exists() {
-                    match session::SessionDb::open(db_path) {
-                        Ok(db) => db.list_sessions("%", 1000).map(|v| v.len()).unwrap_or(0),
-                        Err(_) => 0,
-                    }
-                } else {
-                    0
-                };
-                map.insert(path, count);
+                let (sess, _, _) = db_load_sessions(&format!("{}/.oi", path));
+                map.insert(path, sess);
             }
             map
         })
         .join()
         .unwrap_or_default()
     });
-
-    let initial_data = use_signal(|| db_load_sessions(&format!("{}/.oi", active_space_path())));
     let mut sessions = use_signal(|| {
         let mut list = initial_data.read().0.clone();
         let target_id = initial_data.read().2.clone();
@@ -298,11 +289,12 @@ pub fn Workspace(
         active_space_path.set(path.clone());
         let oi_dir = format!("{path}/.oi");
         let (new_sessions, new_msgs, first_id) = db_load_sessions(&oi_dir);
-        sessions.set(new_sessions);
+        sessions.set(new_sessions.clone());
+        space_sessions.write().insert(path.clone(), new_sessions);
         session_messages.set(new_msgs);
         active_session_id.set(first_id);
     };
-    let mut on_open_space = move |path: String| {
+    let on_open_space = move |path: String| {
         let name = std::path::Path::new(&path)
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -320,7 +312,8 @@ pub fn Workspace(
         active_space_path.set(path.clone());
         let oi_dir = format!("{path}/.oi");
         let (new_sessions, new_msgs, first_id) = db_load_sessions(&oi_dir);
-        sessions.set(new_sessions);
+        sessions.set(new_sessions.clone());
+        space_sessions.write().insert(path.clone(), new_sessions);
         session_messages.set(new_msgs);
         active_session_id.set(first_id);
     };
@@ -362,6 +355,9 @@ pub fn Workspace(
                 let mut list = sessions();
                 list.insert(0, new_session);
                 sessions.set(list);
+                space_sessions
+                    .write()
+                    .insert(active_space_path(), sessions().clone());
                 let mut map = session_messages();
                 map.insert(new_id.clone(), Vec::new());
                 session_messages.set(map);
@@ -675,6 +671,9 @@ pub fn Workspace(
         let mut current_sessions = sessions();
         current_sessions.insert(0, new_session);
         sessions.set(current_sessions);
+        space_sessions
+            .write()
+            .insert(active_space_path(), sessions().clone());
 
         // ponytail: 新会话不插欢迎气泡；空会话直挂活动工作区的 sessions.db
         let mut map = session_messages();
@@ -695,6 +694,9 @@ pub fn Workspace(
         let mut list = sessions();
         list.retain(|s| s.id != id);
         sessions.set(list.clone());
+        space_sessions
+            .write()
+            .insert(active_space_path(), sessions().clone());
 
         let mut map = session_messages();
         map.remove(&id);
@@ -728,6 +730,9 @@ pub fn Workspace(
             };
         }
         sessions.set(list);
+        space_sessions
+            .write()
+            .insert(active_space_path(), sessions().clone());
     };
 
     let on_rename_session = move |(id, new_title): (String, String)| {
@@ -740,6 +745,9 @@ pub fn Workspace(
             s.title = trimmed.to_string();
         }
         sessions.set(list);
+        space_sessions
+            .write()
+            .insert(active_space_path(), sessions().clone());
         let data_dir = format!("{}/.oi", active_space_path());
         let tid = id.clone();
         let new_t = trimmed.to_string();
@@ -786,8 +794,7 @@ pub fn Workspace(
                     picker_subdirs.set(read_subdirectories(Path::new(&p)));
                     show_space_picker.set(true);
                 },
-                sessions: sessions(),
-                space_session_counts: space_session_counts.read().clone(),
+                space_sessions: space_sessions.read().clone(),
                 active_id: active_session_id(),
                 on_select: on_select_session,
                 on_create: on_create_session,
@@ -797,11 +804,8 @@ pub fn Workspace(
             }
             div { class: "flex-1 h-full flex flex-col bg-base relative overflow-hidden",
                 div { class: "flex-1 flex flex-col h-full overflow-hidden",
-                    div { class: "h-[44px] px-[24px] border-b border-subtle flex items-center justify-between bg-base flex-shrink-0",
-                        div { class: "flex items-center gap-[10px]",
-                            span { class: "text-[13px] font-semibold text-primary", "{active_title}" }
-                            span { class: "font-mono text-[11px] text-secondary px-[7px] py-[1px] bg-surface border border-subtle rounded-[4px]", "{config.model}" }
-                        }
+                    div { class: "h-[44px] px-[24px] border-b border-subtle flex items-center bg-base flex-shrink-0",
+                        span { class: "text-[15px] font-semibold text-primary tracking-[-0.01em]", "omenic" }
                     }
                     Chat {
                         messages: current_messages,
