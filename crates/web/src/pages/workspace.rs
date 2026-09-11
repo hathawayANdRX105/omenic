@@ -288,6 +288,12 @@ pub fn Workspace(
         drag_start_width.set(sidebar_width());
     };
     let mut on_resize_move = move |e: MouseEvent| {
+        // 自愈：若此刻没有任何鼠标键按下（mouseup 在导航栏/窗口外被错过），
+        // 直接结束拖拽，避免状态卡死导致后续无法再拖
+        if e.held_buttons().is_empty() {
+            dragging.set(false);
+            return;
+        }
         if dragging() {
             let raw =
                 drag_start_width() as i32 + (e.client_coordinates().x as i32 - drag_start_x());
@@ -311,6 +317,11 @@ pub fn Workspace(
         preset_dragging.set(true);
     };
     let mut on_preset_move = move |e: MouseEvent| {
+        // 同样自愈：无按键按下即结束
+        if e.held_buttons().is_empty() {
+            preset_dragging.set(false);
+            return;
+        }
         if preset_dragging() {
             let target = 36_i32 + e.client_coordinates().x as i32;
             sidebar_width.set((target.max(220)).min(480) as usize);
@@ -326,6 +337,10 @@ pub fn Workspace(
     let on_root_mouseup = move |e: MouseEvent| {
         on_resize_up(e.clone());
         on_preset_up(e);
+    };
+    let on_root_mouseleave = move |_: MouseEvent| {
+        dragging.set(false);
+        preset_dragging.set(false);
     };
     // Space Directory Picker state
     let mut show_space_picker = use_signal(|| false);
@@ -842,6 +857,7 @@ pub fn Workspace(
         div { class: "flex h-[calc(100vh-46px)] w-screen bg-base overflow-hidden relative",
             onmousemove: on_root_mousemove,
             onmouseup: on_root_mouseup,
+            onmouseleave: on_root_mouseleave,
             Sidebar {
                 spaces: spaces(),
                 on_select_space: on_select_space,

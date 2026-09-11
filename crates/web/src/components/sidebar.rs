@@ -45,10 +45,11 @@ pub fn Sidebar(
         aside { class: "relative h-full bg-sidebar border-r border-subtle flex flex-col shrink-0 select-none",
             style: "{aside_style}",
             if collapsed {
-                // 收缩态：窄栏 = 展开按钮 + 各项目的文件夹缩略按钮
-                div { class: "pt-2 flex flex-col items-center gap-1.5 overflow-y-auto flex-1",
+                // 收缩态：顶部「展开」按钮 + 各项目的会话常驻显示（小圆点表示状态）
+                // 点会话只切换选中，保持折叠，不弹面板
+                div { class: "pt-2 flex flex-col items-center gap-1.5 overflow-y-auto flex-1 w-full",
                     button {
-                        class: "p-1.5 rounded-md text-muted-foreground hover:bg-hover hover:text-foreground transition-colors",
+                        class: "w-7 h-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground transition-colors",
                         title: "展开侧边栏",
                         onclick: move |_| on_expand.call(()),
                         PanelIcon {}
@@ -57,21 +58,50 @@ pub fn Sidebar(
                     for space in spaces {
                         {
                             let sp_name = space.name.clone();
-                            let sp_select = space.path.clone();
-                            let sp_active = space.id == active_id;
+                            let sp_sessions = space_sessions.get(&space.path).cloned().unwrap_or_default();
                             rsx! {
-                                button {
-                                    class: if sp_active {
-                                            "p-1.5 rounded-md hover:bg-hover hover:text-foreground transition-colors text-foreground"
+                                for s in sp_sessions {
+                                    {
+                                        let sid = s.id.clone();
+                                        let stitle = s.title.clone();
+                                        let slast = s.last_active.clone();
+                                        let is_selected = s.id == active_id;
+                                        let (dot_color, status_label) = if s.status == SessionStatus::Active {
+                                            ("bg-accent", "运行中")
+                                        } else if s.status == SessionStatus::Archived {
+                                            ("bg-destructive/70", "堵塞")
                                         } else {
-                                            "p-1.5 rounded-md hover:bg-hover hover:text-foreground transition-colors text-muted-foreground"
-                                        },
-                                    title: "{sp_name}",
-                                    onclick: move |_| {
-                                        on_select_space.call(sp_select.clone());
-                                        on_expand.call(());
-                                    },
-                                    FolderIcon { class: "w-4 h-4" }
+                                            ("bg-muted", "完成")
+                                        };
+                                        // 图标按钮：状态圆点；选中 = 与悬停一致的背景；悬停弹自绘信息面板；点击仅切换选中（保持折叠）
+                                        rsx! {
+                                            div { class: "relative group",
+                                                button {
+                                                    class: if is_selected {
+                                                        "w-7 h-7 flex items-center justify-center rounded-md cursor-pointer bg-hover transition-colors"
+                                                    } else {
+                                                        "w-7 h-7 flex items-center justify-center rounded-md cursor-pointer hover:bg-hover transition-colors"
+                                                    },
+                                                    onclick: move |_| {
+                                                        on_select.call(sid.clone());
+                                                    },
+                                                    span { class: "w-2.5 h-2.5 rounded-full {dot_color}" }
+                                                }
+                                                // 悬停信息面板（纯 CSS group-hover，pointer-events-none 防闪烁）
+                                                div { class: "absolute left-full top-1/2 -translate-y-1/2 ml-2 z-50 w-52 rounded-lg border border-subtle bg-surface-elevated px-3 py-2 shadow-[0_8px_26px_rgba(0,0,0,0.42)] opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-150",
+                                                    div { class: "text-[12px] font-medium text-foreground truncate", "{stitle}" }
+                                                    div { class: "mt-1 flex items-center justify-between gap-2",
+                                                        span { class: "text-[10px] text-muted-foreground truncate", "{sp_name}" }
+                                                        span { class: "text-[10px] text-muted font-mono shrink-0", "{slast}" }
+                                                    }
+                                                    div { class: "mt-1.5 flex items-center gap-1.5",
+                                                        span { class: "w-1.5 h-1.5 rounded-full {dot_color}" }
+                                                        span { class: "text-[10px] text-muted-foreground", "{status_label}" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -220,22 +250,24 @@ fn SessionRow(
     let id_for_select = session.id.clone();
     let id_for_delete = session.id.clone();
 
-    // 前导圆点：运行中 = accent；不运行 = 暗色(muted)。
-    let dot_class = if is_run {
-        "inline-block w-2 h-2 rounded-full bg-accent shrink-0"
+    // 前导圆点：运行中=accent，堵塞(归档)=暗红，完成=灰；选中时圆点下加下划线。
+    let dot_color = if is_run {
+        "bg-accent"
+    } else if is_archived {
+        "bg-destructive/70"
     } else {
-        "inline-block w-2 h-2 rounded-full bg-muted shrink-0"
+        "bg-muted"
     };
 
-    // 只有会话有选中背景变化；项目不选中变色。
+    // 选中态背景与悬停一致（bg-hover）；项目不选中变色。
     let row_class = if is_archived {
         if active {
-            "group flex items-center gap-2 px-2 py-1.5 mb-0.5 rounded-md cursor-pointer transition-colors bg-accent/15 opacity-60"
+            "group flex items-center gap-2 px-2 py-1.5 mb-0.5 rounded-md cursor-pointer transition-colors bg-hover opacity-60"
         } else {
             "group flex items-center gap-2 px-2 py-1.5 mb-0.5 rounded-md cursor-pointer transition-colors hover:bg-hover opacity-60"
         }
     } else if active {
-        "group flex items-center gap-2 px-2 py-1.5 mb-0.5 rounded-md cursor-pointer transition-colors bg-accent/15"
+        "group flex items-center gap-2 px-2 py-1.5 mb-0.5 rounded-md cursor-pointer transition-colors bg-hover"
     } else {
         "group flex items-center gap-2 px-2 py-1.5 mb-0.5 rounded-md cursor-pointer transition-colors hover:bg-hover"
     };
@@ -244,8 +276,8 @@ fn SessionRow(
         div {
             class: "{row_class}",
             onclick: move |_| on_select.call(id_for_select.clone()),
-            // 前导圆点
-            span { class: "{dot_class}" }
+            // 前导圆点（状态三色）
+            span { class: "w-2 h-2 rounded-full {dot_color} shrink-0" }
             // 标题垂直居中
             span { class: "text-xs font-medium text-foreground truncate flex-1", "{session.title}" }
             // hover 才出现的删除按钮（在时间左侧，不遮挡时间；无文字，带 tooltip）

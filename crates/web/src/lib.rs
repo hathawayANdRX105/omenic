@@ -43,15 +43,15 @@ pub fn App() -> Element {
             div { class: "flex items-center",
                 Button {
                     variant: ButtonVariant::Ghost,
-                    class: "border border-subtle",
+                    class: "border border-subtle h-9",
                     onclick: move |_| {
                         if current_tab() != Tab::Workspace {
                             current_tab.set(Tab::Workspace);
                         }
                         show_quick_switcher.set(true);
                     },
-                    span { "搜索会话" }
-                    kbd { "⌘K" }
+                    span { class: "leading-none", "搜索会话" }
+                    kbd { class: "leading-none inline-flex items-center justify-center", "⌘K" }
                 }
             }
             // 右侧：标签 + 版本号（右对齐）
