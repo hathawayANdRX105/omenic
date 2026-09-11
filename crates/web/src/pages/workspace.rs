@@ -287,7 +287,7 @@ pub fn Workspace(
         drag_start_x.set(x);
         drag_start_width.set(sidebar_width());
     };
-    let on_resize_move = move |e: MouseEvent| {
+    let mut on_resize_move = move |e: MouseEvent| {
         if dragging() {
             let raw =
                 drag_start_width() as i32 + (e.client_coordinates().x as i32 - drag_start_x());
@@ -296,7 +296,7 @@ pub fn Workspace(
             sidebar_width.set((raw.max(80) as usize).min(480));
         }
     };
-    let on_resize_up = move |_e: MouseEvent| dragging.set(false);
+    let mut on_resize_up = move |_e: MouseEvent| dragging.set(false);
     let on_toggle_sidebar = move |_| {
         sidebar_collapsed.set(!sidebar_collapsed());
     };
@@ -307,19 +307,26 @@ pub fn Workspace(
     };
     // 折叠态右边缘预设把手：拖拽设定「默认展开宽度」并立即展开（宽度在应用运行期间持续维护）
     let mut preset_dragging = use_signal(|| false);
-    let mut preset_drag_start_width = use_signal(|| 260usize);
-    let on_preset_start = move |x: i32| {
+    let on_preset_start = move |_x: i32| {
         preset_dragging.set(true);
-        preset_drag_start_width.set(sidebar_width());
     };
-    let on_preset_move = move |e: MouseEvent| {
+    let mut on_preset_move = move |e: MouseEvent| {
         if preset_dragging() {
             let target = 36_i32 + e.client_coordinates().x as i32;
             sidebar_width.set((target.max(220)).min(480) as usize);
             sidebar_collapsed.set(false);
         }
     };
-    let on_preset_up = move |_e: MouseEvent| preset_dragging.set(false);
+    let mut on_preset_up = move |_e: MouseEvent| preset_dragging.set(false);
+    // 拖拽根监听：两个 drag 状态各自独立，按哪个把手按下就走哪条路
+    let on_root_mousemove = move |e: MouseEvent| {
+        on_resize_move(e.clone());
+        on_preset_move(e);
+    };
+    let on_root_mouseup = move |e: MouseEvent| {
+        on_resize_up(e.clone());
+        on_preset_up(e);
+    };
     // Space Directory Picker state
     let mut show_space_picker = use_signal(|| false);
     let mut picker_current_path = use_signal(|| {
@@ -833,8 +840,8 @@ pub fn Workspace(
 
     rsx! {
         div { class: "flex h-[calc(100vh-46px)] w-screen bg-base overflow-hidden relative",
-            onmousemove: on_resize_move,
-            onmouseup: on_resize_up,
+            onmousemove: on_root_mousemove,
+            onmouseup: on_root_mouseup,
             Sidebar {
                 spaces: spaces(),
                 on_select_space: on_select_space,

@@ -30,7 +30,7 @@ pub(crate) fn context_to_openai_messages(context: &Context) -> Vec<Value> {
                 // 做法:先把 ToolUse/Text 收集为 pending assistant,碰到 ToolResult(或 blocks 末尾)就落盘。
                 let mut pending_text = String::new();
                 let mut pending_calls: Vec<Value> = Vec::new();
-                let mut flush_assistant =
+                let flush_assistant =
                     |text: &mut String, calls: &mut Vec<Value>, messages: &mut Vec<Value>| {
                         if text.is_empty() && calls.is_empty() {
                             return;
