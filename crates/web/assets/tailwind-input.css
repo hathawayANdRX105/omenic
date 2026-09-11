@@ -17,11 +17,30 @@
   --color-accent-hover: #b69fdb;
   --color-accent-dim: #322b3f;
   --color-accent-subtle: rgba(162, 138, 199, 0.12);
-  --color-primary: #ededed;
-  --color-secondary: #9aa0b0;
   --color-muted: #5e6375;
   --color-success: #34d399;
   --color-danger: #f87171;
+
+  /* ── shadcn/Tailwind-v4 tokens consumed by dioxus_components ──
+     Mapped onto the existing dark palette so dioxus_components'
+     Button/Badge/Accordion/Spinner render with our look. NOTE:
+     --color-accent is intentionally left as the brand purple
+     (used across the app + dc's Ghost/Outline hover). */
+  --color-background: #0a0a0d;
+  --color-foreground: #ededed;
+  --color-primary: #a28ac7;
+  --color-primary-foreground: #0a0a0d;
+  --color-secondary: #14151c;
+  --color-secondary-foreground: #ededed;
+  --color-accent-foreground: #0a0a0d;
+  --color-destructive: #f87171;
+  --color-input: #20222e;
+  --color-ring: #a28ac7;
+  --color-border: #20222e;
+  --color-muted: #5e6375;
+  --color-muted-foreground: #9aa0b0;
+  --color-card: #14151c;
+  --color-card-foreground: #ededed;
 
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter",
     "Helvetica Neue", sans-serif;
@@ -45,7 +64,7 @@
   body {
     height: 100%;
     background-color: var(--color-base);
-    color: var(--color-primary);
+    color: var(--color-foreground);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
   }
@@ -81,7 +100,7 @@
     background: var(--color-surface-elevated);
     border: 1px solid #2d3040;
     border-radius: 3px;
-    color: var(--color-secondary);
+    color: var(--color-muted-foreground);
   }
 }
 
@@ -159,7 +178,7 @@
     padding: 8px 14px;
     margin: 10px 0;
     border-radius: 0 5px 5px 0;
-    color: var(--color-secondary);
+    color: var(--color-muted-foreground);
   }
   .markdown-body table {
     width: 100%;
@@ -173,12 +192,12 @@
     background: #14151c;
     border-bottom: 2px solid var(--color-subtle);
     font-weight: 600;
-    color: var(--color-primary);
+    color: var(--color-foreground);
   }
   .markdown-body td {
     padding: 6px 10px;
     border-bottom: 1px solid var(--color-subtle);
-    color: var(--color-primary);
+    color: var(--color-foreground);
   }
   .markdown-body a { color: var(--color-accent-hover); text-decoration: underline; }
 }

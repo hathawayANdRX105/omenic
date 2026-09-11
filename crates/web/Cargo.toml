@@ -7,9 +7,9 @@ license = "MIT"
 publish = false
 
 [dependencies]
-dioxus = { version = "0.6", features = ["liveview"] }
-dioxus-liveview = { version = "0.6.2", features = ["axum"] }
-axum = { version = "0.7", features = ["ws"] }
+dioxus = { version = "0.7", features = ["liveview"] }
+dioxus-liveview = { version = "0.7", features = ["axum"] }
+axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -22,3 +22,4 @@ tools = { path = "../tools" }
 session = { path = "../session" }
 task = { path = "../task" }
 pulldown-cmark.workspace = true
+dioxus_components = "0.1.2"

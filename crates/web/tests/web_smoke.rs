@@ -79,17 +79,20 @@ fn test_sidebar_render() {
         rsx! {
             web::components::sidebar::Sidebar {
                 spaces: vec![],
-                active_space_id: String::new(),
                 on_select_space: move |_| {},
                 on_trigger_picker: move |_| {},
-                sessions: mock_sessions(),
-                space_session_counts: std::collections::HashMap::new(),
+                space_sessions: std::collections::HashMap::new(),
                 active_id: String::from("s1"),
                 on_select: move |_| {},
                 on_create: move |_| {},
-                on_delete: move |_| {},
-                on_archive: move |_| {},
-                on_rename: move |(_id, _t): (String, String)| {},
+                on_delete_session: move |_| {},
+                on_delete_space: move |_| {},
+                collapsed: false,
+                on_toggle: move |_| {},
+                on_expand: move |_| {},
+                width: 260,
+                on_resize_start: move |_| {},
+                on_preset_start: move |_| {},
             }
         }
     }
