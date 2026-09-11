@@ -1,3 +1,4 @@
+use crate::components::ui::Dropdown;
 use crate::mock::{ChatMessage, MessagePart, StatusLine, ToolCall};
 use dioxus::prelude::*;
 use pulldown_cmark::{html, Options as MarkdownOptions, Parser};
@@ -36,9 +37,6 @@ pub fn Chat(
     on_model_change: EventHandler<String>,
     on_toggle_thinking: EventHandler<()>,
 ) -> Element {
-    let mut show_model_menu = use_signal(|| false);
-    let mut show_thinking_menu = use_signal(|| false);
-
     let models = [
         "agnes-2.5-flash",
         "deepseek-v4-flash",
@@ -47,11 +45,11 @@ pub fn Chat(
         "kimi-k3",
     ];
 
-    let thinking_options = [
-        ("关闭", "off"),
-        ("轻量", "2k"),
-        ("标准", "8k"),
-        ("深度", "16k"),
+    let thinking_options: Vec<(String, String)> = vec![
+        ("关闭".into(), "off".into()),
+        ("轻量".into(), "2k".into()),
+        ("标准".into(), "8k".into()),
+        ("深度".into(), "16k".into()),
     ];
 
     let display_messages: Vec<_> = messages
@@ -149,75 +147,26 @@ pub fn Chat(
 
                         div { class: "flex items-center justify-between px-3 pt-2 pb-2.5 border-t border-[rgba(255,255,255,0.04)]",
                             div { class: "flex items-center gap-1",
-                                // Model pill
-                                div {
-                                    class: "relative",
-                                    button {
-                                        class: "text-[11px] px-2 py-1 rounded text-muted-foreground border border-subtle bg-transparent hover:border-hover transition-colors font-mono",
-                                        r#type: "button",
-                                        onclick: move |_| {
-                                            show_thinking_menu.set(false);
-                                            show_model_menu.set(!show_model_menu());
-                                        },
-                                        "{statusline.model} ▾"
-                                    }
-                                    if show_model_menu() {
-                                        div { class: "absolute bottom-full left-0 mb-1 min-w-[180px] bg-surface-elevated border border-subtle rounded-lg shadow-lg z-50 py-1",
-                                            div { class: "px-3 py-1.5 text-[10px] font-semibold text-muted uppercase tracking-wide", "选择模型" }
-                                            for m in models {
-                                                {
-                                                    let m_str = m.to_string();
-                                                    let is_active = statusline.model == m;
-                                                    rsx! {
-                                                        div {
-                                                            key: "{m}",
-                                                            class: if is_active { "px-3 py-1.5 text-xs cursor-pointer bg-hover text-foreground font-medium" } else { "px-3 py-1.5 text-xs cursor-pointer text-muted-foreground hover:bg-hover hover:text-foreground" },
-                                                            onclick: move |_| {
-                                                                on_model_change.call(m_str.clone());
-                                                                show_model_menu.set(false);
-                                                            },
-                                                            span { class: "font-mono", "{m}" }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                                // 模型下拉（复用 Dropdown，自带外点收起）
+                                Dropdown {
+                                    label: "{statusline.model} ▾",
+                                    header: "选择模型",
+                                    items: models.iter().map(|m| (m.to_string(), m.to_string())).collect(),
+                                    active_value: statusline.model.clone(),
+                                    mono: true,
+                                    on_select: move |m: String| {
+                                        on_model_change.call(m);
+                                    },
                                 }
-
-                                // Thinking pill
-                                div {
-                                    class: "relative",
-                                    button {
-                                        class: "text-[11px] px-2 py-1 rounded text-muted-foreground border border-subtle bg-transparent hover:border-hover transition-colors",
-                                        r#type: "button",
-                                        onclick: move |_| {
-                                            show_model_menu.set(false);
-                                            show_thinking_menu.set(!show_thinking_menu());
-                                        },
-                                        "思考 {statusline.thinking} ▾"
-                                    }
-                                    if show_thinking_menu() {
-                                        div { class: "absolute bottom-full left-0 mb-1 min-w-[160px] bg-surface-elevated border border-subtle rounded-lg shadow-lg z-50 py-1",
-                                            div { class: "px-3 py-1.5 text-[10px] font-semibold text-muted uppercase tracking-wide", "思考强度" }
-                                            for (label, value) in thinking_options {
-                                                {
-                                                    let is_active = statusline.thinking == value;
-                                                    rsx! {
-                                                        div {
-                                                            key: "{value}",
-                                                            class: if is_active { "px-3 py-1.5 text-xs cursor-pointer bg-hover text-foreground font-medium" } else { "px-3 py-1.5 text-xs cursor-pointer text-muted-foreground hover:bg-hover hover:text-foreground" },
-                                                            onclick: move |_| {
-                                                                show_thinking_menu.set(false);
-                                                                on_toggle_thinking.call(());
-                                                            },
-                                                            "{label}"
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                                // 思考下拉（复用 Dropdown，自带外点收起）
+                                Dropdown {
+                                    label: "思考 {statusline.thinking} ▾",
+                                    header: "思考强度",
+                                    items: thinking_options.clone(),
+                                    active_value: statusline.thinking.clone(),
+                                    on_select: move |_v: String| {
+                                        on_toggle_thinking.call(());
+                                    },
                                 }
                             }
 
@@ -237,17 +186,6 @@ pub fn Chat(
                             }
                         }
                     }
-                }
-            }
-            // 点击其他区域关闭模型/思考下拉菜单：overlay(z-20) 盖住全视口，
-            // 输入层(z-30) 与下拉菜单在其之上，点菜单内部有效、点别处命中 overlay 即收起。
-            if show_model_menu() || show_thinking_menu() {
-                div {
-                    class: "fixed inset-0 z-20",
-                    onclick: move |_| {
-                        show_model_menu.set(false);
-                        show_thinking_menu.set(false);
-                    },
                 }
             }
         }
