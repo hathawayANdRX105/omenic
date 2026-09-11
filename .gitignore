@@ -13,3 +13,6 @@ __pycache__/
 # oi
 /.oi/
 node_modules/
+
+# generated tailwind input (rewritten by build.rs each compile)
+crates/web/.tailwind.gen-input.css

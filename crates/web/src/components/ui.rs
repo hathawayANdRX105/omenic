@@ -1,13 +1,15 @@
 //! Reusable, style-unified UI primitives.
 //!
-//! These centralize the Tailwind class strings that were previously inlined all
-//! over the workspace/chat components, so button/panel styling stays consistent
-//! (and easy to retheme). They are the local stand-in for a shared component
-//! library: the `dioxus-components` crate can't be pulled into this sandbox
-//! (no outbound network) and its utility classes wouldn't be picked up by our
-//! Tailwind scan anyway, so we keep a single source of truth here.
+//! Thin wrappers over `dioxus_components` (the Dioxus 0.7 + Tailwind v4 component
+//! library) so the whole app shares one button implementation and its classes.
+//! Keeping a local `ButtonVariant` enum lets existing call sites stay unchanged
+//! while the underlying markup/classes come from `dioxus_components`.
 
 use dioxus::prelude::*;
+use dioxus_components::{
+    Badge as DcBadge, BadgeVariant as DcBadgeVariant, Button as DcButton, ButtonSize,
+    ButtonVariant as DcButtonVariant,
+};
 
 #[derive(Clone, PartialEq, Default)]
 pub enum ButtonVariant {
@@ -19,28 +21,57 @@ pub enum ButtonVariant {
 }
 
 impl ButtonVariant {
-    fn classes(&self) -> &'static str {
+    /// Map our semantic variant onto `dioxus_components`' palette. The tokens
+    /// (`--color-primary`, `--color-secondary`, `--color-destructive`,
+    /// `--color-accent`) are defined in `assets/tailwind-input.css` to match the
+    /// app's dark theme.
+    fn dc_variant(&self) -> DcButtonVariant {
         match self {
-            // Accent fill — the "primary action" look the user liked on the old
-            // Spaces tab, generalized into a real button.
-            ButtonVariant::Primary => {
-                "bg-accent text-[#0a0a0d] hover:bg-accent-hover border border-transparent"
-            }
-            ButtonVariant::Ghost => {
-                "bg-transparent border border-subtle text-muted hover:text-primary hover:border-hover hover:bg-hover"
-            }
-            ButtonVariant::Subtle => {
-                "bg-surface text-primary hover:bg-hover border border-subtle"
-            }
-            ButtonVariant::Danger => {
-                "bg-transparent border border-subtle text-muted hover:text-danger hover:border-[rgba(248,113,113,0.35)] hover:bg-[rgba(248,113,113,0.1)]"
-            }
+            // Brand purple fill (--color-primary).
+            ButtonVariant::Primary => DcButtonVariant::Default,
+            // Transparent; hover picks up --color-accent (brand purple).
+            ButtonVariant::Ghost => DcButtonVariant::Ghost,
+            // Subtle surface fill (--color-secondary).
+            ButtonVariant::Subtle => DcButtonVariant::Secondary,
+            // Red fill (--color-destructive).
+            ButtonVariant::Danger => DcButtonVariant::Destructive,
         }
     }
 }
 
-const BUTTON_BASE: &str =
-    "inline-flex items-center justify-center gap-1.5 rounded-md text-[13px] font-medium px-3 py-1.5 transition-colors cursor-pointer select-none whitespace-nowrap";
+/// Badge variants, mapped onto `dioxus_components`' palette.
+#[derive(Clone, PartialEq, Default)]
+pub enum BadgeVariant {
+    #[default]
+    Default,
+    Secondary,
+    Destructive,
+    Outline,
+}
+
+impl BadgeVariant {
+    fn dc_variant(&self) -> DcBadgeVariant {
+        match self {
+            BadgeVariant::Default => DcBadgeVariant::Default,
+            BadgeVariant::Secondary => DcBadgeVariant::Secondary,
+            BadgeVariant::Destructive => DcBadgeVariant::Destructive,
+            BadgeVariant::Outline => DcBadgeVariant::Outline,
+        }
+    }
+}
+
+#[component]
+pub fn Badge(children: Element, variant: Option<BadgeVariant>, class: Option<String>) -> Element {
+    let v = variant.unwrap_or_default();
+    let extra = class.unwrap_or_default();
+    rsx! {
+        DcBadge {
+            variant: v.dc_variant(),
+            class: "{extra}",
+            {children}
+        }
+    }
+}
 
 #[component]
 pub fn Button(
@@ -49,27 +80,30 @@ pub fn Button(
     variant: Option<ButtonVariant>,
     title: Option<String>,
     class: Option<String>,
+    disabled: Option<bool>,
 ) -> Element {
     let v = variant.unwrap_or_default();
     let extra = class.unwrap_or_default();
-    let cls = format!("{} {} {}", BUTTON_BASE, v.classes(), extra);
+    let title_attr = title.unwrap_or_default();
+    // `dioxus_components::Button` has no `title` prop, so the native tooltip is
+    // surfaced on a wrapping span (an empty title is a harmless no-op).
     rsx! {
-        button {
-            r#type: "button",
-            class: "{cls}",
-            title: title.unwrap_or_default(),
-            onclick: move |evt| {
-                if let Some(cb) = onclick {
-                    cb.call(evt);
-                }
-            },
-            {children}
+        span { title: "{title_attr}",
+            DcButton {
+                variant: v.dc_variant(),
+                size: ButtonSize::Sm,
+                disabled: disabled,
+                onclick: move |evt| {
+                    if let Some(cb) = onclick {
+                        cb.call(evt);
+                    }
+                },
+                class: "{extra}",
+                {children}
+            }
         }
     }
 }
-
-const ICON_BASE: &str =
-    "inline-flex items-center justify-center rounded-md transition-colors cursor-pointer select-none";
 
 #[component]
 pub fn IconButton(
@@ -78,22 +112,24 @@ pub fn IconButton(
     title: String,
     variant: Option<ButtonVariant>,
     class: Option<String>,
+    disabled: Option<bool>,
 ) -> Element {
     let v = variant.unwrap_or(ButtonVariant::Ghost);
     let extra = class.unwrap_or_default();
-    // p-1.5 keeps the ~28px hit target the inline icon buttons already had.
-    let cls = format!("{} p-1.5 {} {}", ICON_BASE, v.classes(), extra);
     rsx! {
-        button {
-            r#type: "button",
-            class: "{cls}",
-            title: "{title}",
-            onclick: move |evt| {
-                if let Some(cb) = onclick {
-                    cb.call(evt);
-                }
-            },
-            {children}
+        span { title: "{title}",
+            DcButton {
+                variant: v.dc_variant(),
+                size: ButtonSize::IconSm,
+                disabled: disabled,
+                onclick: move |evt| {
+                    if let Some(cb) = onclick {
+                        cb.call(evt);
+                    }
+                },
+                class: "{extra}",
+                {children}
+            }
         }
     }
 }

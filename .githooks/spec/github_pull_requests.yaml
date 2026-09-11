@@ -51,15 +51,18 @@ done_when_check_mode: "FAIL"  # 可选 FAIL / WARN
 
 # keyword_label_suggestions (WARN 级辅助)
 keyword_label_suggestions:
-  "bug": "bug"
   "修复": "bug"
   "新功能": "enhancement"
   "功能": "enhancement"
   "功能添加": "enhancement"
   "清理": "chore"
   "优化": "refactor"
-  "测试": "tests"
   "代码质量": "refactor"
+
+# 说明：曾命中 "bug" / "测试" 的关键词已改为只保留 修复 / 代码 两个稳定词：
+# 1. "bug" 作为英文单词出现在任何 PR 正文（"debug" 子串、"bug 修复"）都会误报；
+# 2. "测试" 在 Rust 项目 PR 中几乎必出现（cargo test 等），建议 测试 label 没有实际意义；
+# 3. "代码" 作为独立词比 "代码质量" 更通用，保留 refactor 建议。
 
 # 关键词建议 (WARN 级) — 标题/body 命中关键字但缺对应 label 时提示
 # 工作方式: 读取 keyword_label_suggestions, 若 title/body 命中某关键字但对应 label 缺失, 则 WARN 建议

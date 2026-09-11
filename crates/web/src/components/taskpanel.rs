@@ -1,3 +1,4 @@
+use crate::components::ui::IconButton;
 use crate::mock::TaskItem;
 use dioxus::prelude::*;
 
@@ -32,11 +33,11 @@ pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
         div { class: "absolute right-4 bottom-4 w-[420px] max-h-[80vh] bg-surface border border-subtle rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden z-40",
             div { class: "flex items-center justify-between px-3.5 py-2.5 border-b border-subtle",
                 div { class: "flex items-center gap-2",
-                    div { class: "text-[13px] font-semibold text-primary", "任务看板" }
+                    div { class: "text-[13px] font-semibold text-foreground", "任务看板" }
                     span { class: "font-mono text-[10.5px] text-muted", "{done_count}/{total_count} 完成 ({pct}%)" }
                 }
-                button {
-                    class: "ml-auto text-muted hover:text-primary cursor-pointer text-[14px] leading-none px-1.5 py-0.5 rounded hover:bg-hover transition-colors",
+                IconButton {
+                    title: "关闭",
                     onclick: move |_| on_close.call(()),
                     "✕"
                 }
@@ -48,28 +49,28 @@ pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
             div { class: "flex-1 min-h-0 overflow-y-auto flex flex-col",
                 div { class: "flex flex-wrap gap-1.5 px-3.5 py-2.5 border-b border-subtle",
                     button {
-                        class: if selected_filter() == "all" { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-primary bg-surface-elevated border border-accent transition-colors" } else { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-secondary bg-base border border-subtle hover:border-hover transition-colors" },
+                        class: if selected_filter() == "all" { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-foreground bg-surface-elevated border border-accent transition-colors" } else { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-muted-foreground bg-base border border-subtle hover:border-hover transition-colors" },
                         onclick: move |_| selected_filter.set("all".into()),
                         "全部 {total_count}"
                     }
                     button {
-                        class: if selected_filter() == "in_progress" { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-primary bg-surface-elevated border border-accent transition-colors" } else { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-secondary bg-base border border-subtle hover:border-hover transition-colors" },
+                        class: if selected_filter() == "in_progress" { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-foreground bg-surface-elevated border border-accent transition-colors" } else { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-muted-foreground bg-base border border-subtle hover:border-hover transition-colors" },
                         onclick: move |_| selected_filter.set("in_progress".into()),
                         "进行中 {in_prog_count}"
                     }
                     button {
-                        class: if selected_filter() == "open" { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-primary bg-surface-elevated border border-accent transition-colors" } else { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-secondary bg-base border border-subtle hover:border-hover transition-colors" },
+                        class: if selected_filter() == "open" { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-foreground bg-surface-elevated border border-accent transition-colors" } else { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-muted-foreground bg-base border border-subtle hover:border-hover transition-colors" },
                         onclick: move |_| selected_filter.set("open".into()),
                         "待办 {open_count}"
                     }
                     button {
-                        class: if selected_filter() == "done" { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-primary bg-surface-elevated border border-accent transition-colors" } else { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-secondary bg-base border border-subtle hover:border-hover transition-colors" },
+                        class: if selected_filter() == "done" { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-foreground bg-surface-elevated border border-accent transition-colors" } else { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-muted-foreground bg-base border border-subtle hover:border-hover transition-colors" },
                         onclick: move |_| selected_filter.set("done".into()),
                         "已完成 {done_count}"
                     }
                     if blocked_count > 0 {
                         button {
-                            class: if selected_filter() == "blocked" { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-primary bg-surface-elevated border border-accent transition-colors" } else { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-secondary bg-base border border-subtle hover:border-hover transition-colors" },
+                            class: if selected_filter() == "blocked" { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-foreground bg-surface-elevated border border-accent transition-colors" } else { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-muted-foreground bg-base border border-subtle hover:border-hover transition-colors" },
                             onclick: move |_| selected_filter.set("blocked".into()),
                             "阻塞 {blocked_count}"
                         }
@@ -115,19 +116,19 @@ pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
                                             span { class: "{priority_class}", "P{task.priority}" }
                                         }
                                     }
-                                    div { class: "text-[13px] font-medium text-primary", "{task.title}" }
+                                    div { class: "text-[13px] font-medium text-foreground", "{task.title}" }
                                     if is_selected {
                                         div { class: "mt-2 pt-2 border-t border-subtle flex flex-col gap-2",
                                             if !task.description.is_empty() {
                                                 div { class: "flex flex-col gap-0.5",
                                                     span { class: "text-[10px] uppercase tracking-wide text-muted font-semibold", "描述" }
-                                                    p { class: "text-[12px] text-secondary leading-relaxed", "{task.description}" }
+                                                    p { class: "text-[12px] text-muted-foreground leading-relaxed", "{task.description}" }
                                                 }
                                             }
                                             if !task.acceptance.is_empty() {
                                                 div { class: "flex flex-col gap-0.5",
                                                     span { class: "text-[10px] uppercase tracking-wide text-muted font-semibold", "验收标准" }
-                                                    p { class: "text-[12px] text-secondary leading-relaxed", "{task.acceptance}" }
+                                                    p { class: "text-[12px] text-muted-foreground leading-relaxed", "{task.acceptance}" }
                                                 }
                                             }
                                         }

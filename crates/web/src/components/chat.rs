@@ -78,7 +78,7 @@ pub fn Chat(
                 div { class: "max-w-[1360px] w-[96%] mx-auto px-6 pt-5 pb-[160px] flex flex-col gap-3.5 min-h-full",
                 if display_messages.is_empty() && !is_streaming {
                     div { class: "flex-1 flex flex-col items-center justify-center gap-2 text-muted text-center py-10 select-none",
-                        div { class: "text-base font-semibold text-secondary", "开始一个新的任务" }
+                        div { class: "text-base font-semibold text-muted-foreground", "开始一个新的任务" }
                         div { class: "text-xs max-w-[420px] leading-relaxed", "在下方输入指令，Agent 将使用文件读写、bash 与代码编辑工具协助你完成。" }
                     }
                 }
@@ -89,7 +89,7 @@ pub fn Chat(
                     }
                     if msg.content.is_empty() && msg.tool_calls.is_empty() && msg.parts.is_empty() {
                         div { key: "streaming-{idx}", class: "flex items-center gap-2 py-1 text-[12px] text-muted",
-                            Spinner {}
+                            dioxus_components::Spinner { size: dioxus_components::SpinnerSize::Small }
                             span { "正在连接模型并思考生成回答..." }
                         }
                     } else {
@@ -115,7 +115,7 @@ pub fn Chat(
                             div { class: "absolute left-14 top-1/2 -translate-y-1/2 z-30 w-[230px] max-h-[150px] overflow-hidden rounded-lg border border-subtle bg-surface-elevated px-3 py-2.5 shadow-[0_8px_26px_rgba(0,0,0,0.42)] pointer-events-none",
                                 "data-tip": "",
                                 style: "display:none;",
-                                div { class: "text-[11px] leading-relaxed text-secondary whitespace-pre-wrap break-words line-clamp-6", "{p}" }
+                                div { class: "text-[11px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words line-clamp-6", "{p}" }
                             }
                         }
                     }
@@ -123,16 +123,17 @@ pub fn Chat(
             }
 
             // 输入框悬浮在聊天室上方（pointer-events-none 让滚动穿透，仅输入框本身可交互）
-            div { class: "absolute bottom-0 left-1/2 -translate-x-1/2 w-[95%] max-w-[1260px] px-5 pb-4 z-10 pointer-events-none",
+            div { class: "absolute bottom-0 left-1/2 -translate-x-1/2 w-[95%] max-w-[1260px] px-5 pb-4 z-30 pointer-events-none",
                 div { class: "bg-surface border border-subtle rounded-xl shadow-[0_8px_26px_rgba(0,0,0,0.42)] flex flex-col transition-all focus-within:border-accent pointer-events-auto",
                     form {
                         class: "flex flex-col",
                         onsubmit: move |e: FormEvent| {
-                            let values = e.values();
-                            let text = values
-                                .get("message")
-                                .and_then(|v| v.first())
-                                .map(|s| s.trim().to_string())
+                            let text = e
+                                .get_first("message")
+                                .and_then(|v| match v {
+                                    FormValue::Text(s) => Some(s.trim().to_string()),
+                                    _ => None,
+                                })
                                 .unwrap_or_default();
                             if !text.is_empty() && !is_streaming {
                                 on_send.call(text);
@@ -142,7 +143,7 @@ pub fn Chat(
                         textarea {
                             id: "chat-input-area",
                             name: "message",
-                            class: "w-full min-h-[68px] max-h-[220px] bg-transparent border-none outline-none text-primary font-normal text-[13px] leading-[1.55] px-4 pt-3.5 pb-2 resize-none placeholder:text-muted",
+                            class: "w-full min-h-[68px] max-h-[220px] bg-transparent border-none outline-none text-foreground font-normal text-[13px] leading-[1.55] px-4 pt-3.5 pb-2 resize-none placeholder:text-muted",
                             placeholder: "输入指令，Enter 发送，Shift+Enter 换行...",
                         }
 
@@ -152,7 +153,7 @@ pub fn Chat(
                                 div {
                                     class: "relative",
                                     button {
-                                        class: "text-[11px] px-2 py-1 rounded text-secondary border border-subtle bg-transparent hover:border-hover transition-colors font-mono",
+                                        class: "text-[11px] px-2 py-1 rounded text-muted-foreground border border-subtle bg-transparent hover:border-hover transition-colors font-mono",
                                         r#type: "button",
                                         onclick: move |_| {
                                             show_thinking_menu.set(false);
@@ -170,7 +171,7 @@ pub fn Chat(
                                                     rsx! {
                                                         div {
                                                             key: "{m}",
-                                                            class: if is_active { "px-3 py-1.5 text-xs cursor-pointer bg-hover text-primary font-medium" } else { "px-3 py-1.5 text-xs cursor-pointer text-secondary hover:bg-hover hover:text-primary" },
+                                                            class: if is_active { "px-3 py-1.5 text-xs cursor-pointer bg-hover text-foreground font-medium" } else { "px-3 py-1.5 text-xs cursor-pointer text-muted-foreground hover:bg-hover hover:text-foreground" },
                                                             onclick: move |_| {
                                                                 on_model_change.call(m_str.clone());
                                                                 show_model_menu.set(false);
@@ -188,7 +189,7 @@ pub fn Chat(
                                 div {
                                     class: "relative",
                                     button {
-                                        class: "text-[11px] px-2 py-1 rounded text-secondary border border-subtle bg-transparent hover:border-hover transition-colors",
+                                        class: "text-[11px] px-2 py-1 rounded text-muted-foreground border border-subtle bg-transparent hover:border-hover transition-colors",
                                         r#type: "button",
                                         onclick: move |_| {
                                             show_model_menu.set(false);
@@ -205,7 +206,7 @@ pub fn Chat(
                                                     rsx! {
                                                         div {
                                                             key: "{value}",
-                                                            class: if is_active { "px-3 py-1.5 text-xs cursor-pointer bg-hover text-primary font-medium" } else { "px-3 py-1.5 text-xs cursor-pointer text-secondary hover:bg-hover hover:text-primary" },
+                                                            class: if is_active { "px-3 py-1.5 text-xs cursor-pointer bg-hover text-foreground font-medium" } else { "px-3 py-1.5 text-xs cursor-pointer text-muted-foreground hover:bg-hover hover:text-foreground" },
                                                             onclick: move |_| {
                                                                 show_thinking_menu.set(false);
                                                                 on_toggle_thinking.call(());
@@ -227,7 +228,7 @@ pub fn Chat(
                                     class: if is_streaming { "flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-semibold bg-accent text-[#0b0c10] opacity-75 cursor-not-allowed" } else { "flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-semibold bg-accent text-[#0b0c10] hover:bg-accent-hover cursor-pointer transition-colors" },
                                     disabled: is_streaming,
                                     if is_streaming {
-                                        Spinner {}
+                                        dioxus_components::Spinner { size: dioxus_components::SpinnerSize::Small }
                                         span { "发送中..." }
                                     } else {
                                         span { "发送 ↵" }
@@ -236,6 +237,17 @@ pub fn Chat(
                             }
                         }
                     }
+                }
+            }
+            // 点击其他区域关闭模型/思考下拉菜单：overlay(z-20) 盖住全视口，
+            // 输入层(z-30) 与下拉菜单在其之上，点菜单内部有效、点别处命中 overlay 即收起。
+            if show_model_menu() || show_thinking_menu() {
+                div {
+                    class: "fixed inset-0 z-20",
+                    onclick: move |_| {
+                        show_model_menu.set(false);
+                        show_thinking_menu.set(false);
+                    },
                 }
             }
         }
@@ -252,7 +264,7 @@ fn MessageBubble(message: ChatMessage, active: bool, id: Option<String>) -> Elem
             div { class: "flex flex-col items-end gap-1 w-full",
                 id: id.clone().unwrap_or_default(),
                 if !message.content.is_empty() {
-                    div { class: "markdown-body text-primary bg-surface-elevated border border-accent-subtle rounded-[10px] px-3 py-2 text-[13px] leading-[1.55] max-w-[82%]",
+                    div { class: "markdown-body text-foreground bg-surface-elevated border border-accent-subtle rounded-[10px] px-3 py-2 text-[13px] leading-[1.55] max-w-[82%]",
                         dangerous_inner_html: "{markdown_to_html(&message.content)}"
                     }
                 }
@@ -297,13 +309,13 @@ fn MessageBubble(message: ChatMessage, active: bool, id: Option<String>) -> Elem
                     ProcessBlock { parts: process, active }
                 }
                 if has_final {
-                    div { class: "markdown-body text-primary",
+                    div { class: "markdown-body text-foreground",
                         dangerous_inner_html: "{markdown_to_html(&final_text)}"
                     }
                 }
                 if active {
                     div { class: "flex items-center gap-2 py-1 text-[12px] text-muted",
-                        Spinner {}
+                                        dioxus_components::Spinner { size: dioxus_components::SpinnerSize::Small }
                         span { "正在生成回复..." }
                     }
                 }
@@ -323,7 +335,7 @@ fn ProcessBlock(parts: Vec<MessagePart>, active: bool) -> Element {
     rsx! {
         div { class: "flex flex-col",
             div {
-                class: "flex items-center gap-1.5 py-0.5 cursor-pointer select-none text-[11px] rounded hover:text-secondary",
+                class: "flex items-center gap-1.5 py-0.5 cursor-pointer select-none text-[11px] rounded hover:text-muted-foreground",
                 onclick: move |e: MouseEvent| { e.stop_propagation(); is_open.set(!is_open()); },
                 span { class: "font-medium text-muted", "过程" }
                 span { class: "text-muted/70", " · {count}" }
@@ -333,7 +345,7 @@ fn ProcessBlock(parts: Vec<MessagePart>, active: bool) -> Element {
                     for (i, p) in parts.iter().enumerate() {
                         match p {
                             MessagePart::Text(s) => rsx! {
-                                div { key: "txt-{i}", class: "markdown-body text-primary/90",
+                                div { key: "txt-{i}", class: "markdown-body text-foreground/90",
                                     dangerous_inner_html: "{markdown_to_html(s)}"
                                 }
                             },
@@ -368,21 +380,21 @@ fn ToolLine(tool: ToolCall) -> Element {
 
     rsx! {
         div { class: "flex flex-col",
-            div { class: "flex items-center gap-1.5 py-1 text-[11px] rounded cursor-pointer select-none hover:text-secondary",
+            div { class: "flex items-center gap-1.5 py-1 text-[11px] rounded cursor-pointer select-none hover:text-muted-foreground",
                 onclick: move |e: MouseEvent| { e.stop_propagation(); open.set(!open()); },
                 span { class: "text-[10px] text-muted/70 w-3 text-center shrink-0", "{arrow}" }
                 span { class: "{badge} inline-flex items-center justify-center font-mono text-[9px] font-bold uppercase px-1.5 py-0.5 leading-none rounded-sm shrink-0", "{tool.kind}" }
                 if is_err {
                     span { class: "text-danger font-mono text-[9px] font-bold uppercase px-1 py-px rounded-sm shrink-0", "失败" }
                 }
-                span { class: "font-mono text-[11px] text-secondary flex-1 truncate min-w-0", "{tool.title}" }
+                span { class: "font-mono text-[11px] text-muted-foreground flex-1 truncate min-w-0", "{tool.title}" }
             }
             if open() {
                 div { class: "ml-3.5 mb-1.5 border-l-2 {line_color} pl-3 py-0.5",
                     if !tool.summary.is_empty() {
                         div { class: "text-[11px] text-muted mb-1.5 leading-relaxed", "{tool.summary}" }
                     }
-                    div { class: "font-mono text-[11px] leading-[1.5] text-secondary/70 whitespace-pre-wrap break-all",
+                    div { class: "font-mono text-[11px] leading-[1.5] text-muted-foreground/70 whitespace-pre-wrap break-all",
                         for line in tool.detail.lines() {
                             if line.starts_with('+') && !line.starts_with("+++") {
                                 span { class: "text-success", "{line}\n" }
@@ -398,13 +410,5 @@ fn ToolLine(tool: ToolCall) -> Element {
                 }
             }
         }
-    }
-}
-
-/// 旋转加载图标：用于「正在连接模型」占位与发送按钮（运行时持续显示）。
-#[component]
-fn Spinner() -> Element {
-    rsx! {
-        span { class: "inline-block w-3 h-3 border-2 border-[rgba(255,255,255,0.25)] border-t-accent rounded-full animate-spin" }
     }
 }

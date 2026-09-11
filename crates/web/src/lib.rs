@@ -10,6 +10,7 @@ pub mod llm;
 pub mod mock;
 pub mod pages;
 
+use crate::components::ui::{Button, ButtonVariant};
 use dioxus::prelude::*;
 use pages::config_page::ConfigPage;
 use pages::stats::Stats;
@@ -35,18 +36,14 @@ pub fn App() -> Element {
     rsx! {
         style { "{css_content}" }
 
-        nav { class: "flex items-center justify-between h-[46px] px-4 bg-sidebar border-b border-subtle sticky top-0 z-50 select-none",
-            div { class: "flex items-center gap-3",
-                div { class: "flex items-center gap-2 text-[12px] text-secondary",
-                    span { class: "font-semibold text-primary tracking-[-0.01em]", "omenic" }
-                    span { class: "text-muted", "/" }
-                    span { class: "font-mono text-[11.5px] text-secondary", "feat/web-agent-harness" }
-                    span { class: "font-mono text-[10.5px] px-1.5 py-0.5 rounded bg-accent-subtle text-accent border border-[rgba(162,138,199,0.2)]", "clean" }
-                }
-            }
+        nav { class: "flex items-center h-[46px] px-4 bg-sidebar border-b border-subtle sticky top-0 z-50 select-none",
+            // 左侧占位，保证中间按钮真正水平居中
+            div { class: "flex-1" }
+            // 中间：搜索会话
             div { class: "flex items-center",
-                button {
-                    class: "flex items-center gap-2.5 px-3.5 py-1.5 bg-base border border-subtle rounded-md text-muted text-[12px] cursor-pointer transition-colors hover:border-hover",
+                Button {
+                    variant: ButtonVariant::Ghost,
+                    class: "border border-subtle",
                     onclick: move |_| {
                         if current_tab() != Tab::Workspace {
                             current_tab.set(Tab::Workspace);
@@ -57,20 +54,21 @@ pub fn App() -> Element {
                     kbd { "⌘K" }
                 }
             }
-            div { class: "flex items-center gap-2",
+            // 右侧：标签 + 版本号（右对齐）
+            div { class: "flex-1 flex items-center justify-end gap-2",
                 div { class: "flex gap-0.5",
                     button {
-                        class: if current_tab() == Tab::Workspace { "px-3 py-1.5 text-[12px] font-medium text-primary bg-surface-elevated border-none rounded-md cursor-pointer transition-colors" } else { "px-3 py-1.5 text-[12px] font-medium text-secondary bg-transparent border-none rounded-md cursor-pointer transition-colors hover:text-primary" },
+                        class: if current_tab() == Tab::Workspace { "px-3 py-1.5 text-[12px] font-medium text-foreground bg-surface-elevated border-none rounded-md cursor-pointer transition-colors" } else { "px-3 py-1.5 text-[12px] font-medium text-muted-foreground bg-transparent border-none rounded-md cursor-pointer transition-colors hover:text-foreground" },
                         onclick: move |_| current_tab.set(Tab::Workspace),
                         "工作区"
                     }
                     button {
-                        class: if current_tab() == Tab::Stats { "px-3 py-1.5 text-[12px] font-medium text-primary bg-surface-elevated border-none rounded-md cursor-pointer transition-colors" } else { "px-3 py-1.5 text-[12px] font-medium text-secondary bg-transparent border-none rounded-md cursor-pointer transition-colors hover:text-primary" },
+                        class: if current_tab() == Tab::Stats { "px-3 py-1.5 text-[12px] font-medium text-foreground bg-surface-elevated border-none rounded-md cursor-pointer transition-colors" } else { "px-3 py-1.5 text-[12px] font-medium text-muted-foreground bg-transparent border-none rounded-md cursor-pointer transition-colors hover:text-foreground" },
                         onclick: move |_| current_tab.set(Tab::Stats),
                         "数据统计"
                     }
                     button {
-                        class: if current_tab() == Tab::Config { "px-3 py-1.5 text-[12px] font-medium text-primary bg-surface-elevated border-none rounded-md cursor-pointer transition-colors" } else { "px-3 py-1.5 text-[12px] font-medium text-secondary bg-transparent border-none rounded-md cursor-pointer transition-colors hover:text-primary" },
+                        class: if current_tab() == Tab::Config { "px-3 py-1.5 text-[12px] font-medium text-foreground bg-surface-elevated border-none rounded-md cursor-pointer transition-colors" } else { "px-3 py-1.5 text-[12px] font-medium text-muted-foreground bg-transparent border-none rounded-md cursor-pointer transition-colors hover:text-foreground" },
                         onclick: move |_| current_tab.set(Tab::Config),
                         "配置"
                     }
@@ -415,5 +413,5 @@ pub async fn launch() {
         }
     };
     println!("omenic web server running on http://{addr}");
-    let _ = axum::serve(listener, app.into_make_service()).await;
+    let _ = axum::serve(listener, app).await;
 }
