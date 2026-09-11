@@ -1,3 +1,4 @@
+use crate::components::ui::{Button, ButtonVariant};
 use crate::llm::LlmRuntimeConfig;
 use dioxus::prelude::*;
 
@@ -152,8 +153,8 @@ pub fn ConfigPage(
                     div { class: "flex flex-col gap-1.5 col-span-2",
                         div { class: "flex justify-between items-center",
                             label { class: "text-xs font-medium text-[#c9cddb]", "API Key / Bearer Token" }
-                            button {
-                                class: "px-3 py-1 bg-[rgba(255,255,255,0.06)] border border-subtle rounded text-secondary text-[11px] cursor-pointer hover:text-white hover:bg-[rgba(255,255,255,0.12)] transition-colors",
+                            Button {
+                                variant: ButtonVariant::Subtle,
                                 onclick: move |_| show_key.set(!show_key()),
                                 if show_key() { "隐藏" } else { "显示" }
                             }
@@ -222,8 +223,8 @@ pub fn ConfigPage(
 
                 // Action Buttons Row
                 div { class: "flex items-center gap-3 pt-1.5",
-                    button {
-                        class: if !is_form_valid { "px-5 py-2 bg-accent text-[#0b0c10] text-[13px] font-semibold rounded-md transition-colors opacity-50 cursor-not-allowed" } else { "px-5 py-2 bg-accent text-[#0b0c10] text-[13px] font-semibold rounded-md hover:bg-accent-hover transition-colors cursor-pointer" },
+                    Button {
+                        variant: ButtonVariant::Primary,
                         disabled: !is_form_valid,
                         onclick: move |_| {
                             if is_form_valid {
@@ -248,8 +249,9 @@ pub fn ConfigPage(
                         "保存配置"
                     }
 
-                    button {
-                        class: "px-5 py-2 bg-[rgba(255,255,255,0.05)] text-primary text-[13px] font-medium rounded-md border border-subtle hover:bg-[rgba(255,255,255,0.1)] transition-colors cursor-pointer",
+                    Button {
+                        variant: ButtonVariant::Ghost,
+                        class: "border border-subtle",
                         disabled: is_testing(),
                         onclick: move |_| {
                             is_testing.set(true);
@@ -292,8 +294,8 @@ pub fn ConfigPage(
                                             span { class: "bg-emerald-500/10 text-success border border-emerald-500/30 px-1.5 py-0.5 rounded text-[11px] font-semibold", "默认" }
                                         }
                                     }
-                                    button {
-                                        class: "px-3 py-1 bg-[rgba(255,255,255,0.06)] border border-subtle rounded text-secondary text-[11px] cursor-pointer hover:text-white hover:bg-[rgba(255,255,255,0.12)] transition-colors",
+                                    Button {
+                                        variant: ButtonVariant::Subtle,
                                         disabled: is_current,
                                         onclick: move |_| {
                                             model.set(m_str.clone());

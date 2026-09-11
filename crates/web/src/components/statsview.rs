@@ -22,7 +22,7 @@ pub fn StatsView() -> Element {
                             rsx! {
                                 button {
                                     key: "{r}",
-                                    class: if selected_range() == r { "px-3.5 py-1 text-xs rounded-md font-semibold bg-surface-elevated text-white shadow-sm" } else { "px-3.5 py-1 text-xs rounded-md text-muted hover:text-primary transition-colors" },
+                                    class: if selected_range() == r { "px-3.5 py-1 text-xs rounded-md font-semibold bg-surface-elevated text-white shadow-sm" } else { "px-3.5 py-1 text-xs rounded-md text-muted hover:text-foreground transition-colors" },
                                     onclick: move |_| selected_range.set(r_str.clone()),
                                     "{r}"
                                 }
@@ -85,7 +85,7 @@ fn KpiCardView(kpi: KpiCard) -> Element {
     };
     rsx! {
         div { class: "bg-surface border border-subtle rounded-[10px] px-4 py-4 flex flex-col gap-2 hover:border-hover hover:-translate-y-px transition-all",
-            div { class: "text-xs text-secondary font-medium", "{kpi.label}" }
+            div { class: "text-xs text-muted-foreground font-medium", "{kpi.label}" }
             div { class: "text-[26px] font-bold text-white font-mono leading-none", "{kpi.value}" }
             span { class: "{delta_class} text-[11px] font-semibold px-2 py-0.5 rounded w-fit font-mono", "{kpi.delta}" }
         }

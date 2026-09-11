@@ -48,7 +48,7 @@ fn test_e2e_session_deletion_and_creation_diff() {
             sessions.set(list);
         };
 
-        let on_create = move |()| {
+        let on_create = move |_space: String| {
             let mut list = sessions();
             let new_id = format!("s-{}", list.len() + 100);
             list.insert(
@@ -68,17 +68,20 @@ fn test_e2e_session_deletion_and_creation_diff() {
         rsx! {
             Sidebar {
                 spaces: vec![],
-                active_space_id: String::new(),
                 on_select_space: move |_| {},
                 on_trigger_picker: move |_| {},
-                sessions: sessions(),
-                space_session_counts: std::collections::HashMap::new(),
+                space_sessions: std::collections::HashMap::new(),
                 active_id: active_id(),
                 on_select: move |_| {},
                 on_create: on_create,
-                on_delete: on_delete,
-                on_archive: move |_| {},
-                on_rename: move |(_id, _t): (String, String)| {},
+                on_delete_session: on_delete,
+                on_delete_space: move |_| {},
+                collapsed: false,
+                on_toggle: move |_| {},
+                on_expand: move |_| {},
+                width: 260,
+                on_resize_start: move |_| {},
+                on_preset_start: move |_| {},
             }
         }
     }

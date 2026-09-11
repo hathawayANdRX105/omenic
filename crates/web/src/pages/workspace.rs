@@ -1,5 +1,6 @@
 use crate::components::chat::Chat;
 use crate::components::sidebar::Sidebar;
+use crate::components::ui::{Button, ButtonVariant, IconButton};
 use crate::llm::LlmRuntimeConfig;
 use crate::mock::{self, ChatMessage, MessagePart, Session, SessionStatus, TaskItem, ToolCall};
 use dioxus::prelude::*;
@@ -274,6 +275,51 @@ pub fn Workspace(
 
     let mut is_streaming = use_signal(|| false);
     let mut search_query = use_signal(|| String::new());
+    // 侧边栏收起/展开 + 宽度：用全局信号，切换标签页(组件重建)后仍保持折叠/宽度
+    let mut sidebar_collapsed = GlobalSignal::<bool>::new(|| false).signal();
+    let mut sidebar_width = GlobalSignal::<usize>::new(|| 260).signal();
+    // 拖拽边界（右边缘）：mousedown 记录起点，mousemove 更新宽度，mouseup 结束
+    let mut dragging = use_signal(|| false);
+    let mut drag_start_x = use_signal(|| 0i32);
+    let mut drag_start_width = use_signal(|| 260usize);
+    let on_resize_start = move |x: i32| {
+        dragging.set(true);
+        drag_start_x.set(x);
+        drag_start_width.set(sidebar_width());
+    };
+    let on_resize_move = move |e: MouseEvent| {
+        if dragging() {
+            let raw =
+                drag_start_width() as i32 + (e.client_coordinates().x as i32 - drag_start_x());
+            // 拖到太窄 → 进入折叠(窄栏)状态
+            sidebar_collapsed.set(raw < 80);
+            sidebar_width.set((raw.max(80) as usize).min(480));
+        }
+    };
+    let on_resize_up = move |_e: MouseEvent| dragging.set(false);
+    let on_toggle_sidebar = move |_| {
+        sidebar_collapsed.set(!sidebar_collapsed());
+    };
+    // 展开按钮：恢复默认宽度并展开
+    let on_expand_sidebar = move |_| {
+        sidebar_width.set(260);
+        sidebar_collapsed.set(false);
+    };
+    // 折叠态右边缘预设把手：拖拽设定「默认展开宽度」并立即展开（宽度在应用运行期间持续维护）
+    let mut preset_dragging = use_signal(|| false);
+    let mut preset_drag_start_width = use_signal(|| 260usize);
+    let on_preset_start = move |x: i32| {
+        preset_dragging.set(true);
+        preset_drag_start_width.set(sidebar_width());
+    };
+    let on_preset_move = move |e: MouseEvent| {
+        if preset_dragging() {
+            let target = 36_i32 + e.client_coordinates().x as i32;
+            sidebar_width.set((target.max(220)).min(480) as usize);
+            sidebar_collapsed.set(false);
+        }
+    };
+    let on_preset_up = move |_e: MouseEvent| preset_dragging.set(false);
     // Space Directory Picker state
     let mut show_space_picker = use_signal(|| false);
     let mut picker_current_path = use_signal(|| {
@@ -479,7 +525,6 @@ pub fn Workspace(
         let db_dir_for_events = data_dir_for_send.clone();
 
         spawn(async move {
-            let total_in = 0u64;
             let mut total_out = 0u64;
 
             while let Some(ev) = rx.recv().await {
@@ -653,7 +698,7 @@ pub fn Workspace(
         active_session_id.set(id);
     };
 
-    let on_create_session = move |()| {
+    let on_create_session = move |space_path: String| {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -668,48 +713,66 @@ pub fn Workspace(
             status: SessionStatus::Idle,
             last_active_epoch: ts as u64,
         };
-        let mut current_sessions = sessions();
-        current_sessions.insert(0, new_session);
-        sessions.set(current_sessions);
+        let mut map = space_sessions.read().clone();
+        let mut list = map.get(&space_path).cloned().unwrap_or_default();
+        list.insert(0, new_session);
+        map.insert(space_path.clone(), list.clone());
         space_sessions
             .write()
-            .insert(active_space_path(), sessions().clone());
+            .insert(space_path.clone(), list.clone());
+        if space_path == active_space_path() {
+            sessions.set(list);
+        }
+        // ponytail: 新会话不插欢迎气泡；空会话直挂对应工作区的 sessions.db
+        let mut msgs = session_messages();
+        msgs.insert(new_id.clone(), Vec::new());
+        session_messages.set(msgs);
+        if space_path == active_space_path() {
+            active_session_id.set(new_id.clone());
+        }
 
-        // ponytail: 新会话不插欢迎气泡；空会话直挂活动工作区的 sessions.db
-        let mut map = session_messages();
-        map.insert(new_id.clone(), Vec::new());
-        session_messages.set(map);
-        active_session_id.set(new_id.clone());
-
-        let data_dir = format!("{}/.oi", active_space_path());
+        let data_dir = format!("{}/.oi", space_path);
         let sid = new_id.clone();
+        let title2 = title.clone();
         std::thread::spawn(move || {
             let path = std::path::PathBuf::from(data_dir).join("sessions.db");
             if let Ok(db) = session::SessionDb::open(path) {
-                let _ = db.create_session(&sid, &title);
+                let _ = db.create_session(&sid, &title2);
             }
         });
     };
+
     let on_delete_session = move |id: String| {
-        let mut list = sessions();
-        list.retain(|s| s.id != id);
-        sessions.set(list.clone());
-        space_sessions
-            .write()
-            .insert(active_space_path(), sessions().clone());
-
-        let mut map = session_messages();
-        map.remove(&id);
-        session_messages.set(map);
-
-        if active_session_id() == id {
-            if let Some(first) = list.first() {
-                active_session_id.set(first.id.clone());
-            } else {
-                active_session_id.set(String::new());
+        let mut map = space_sessions.read().clone();
+        let mut target_path = active_space_path();
+        for (p, list) in &map {
+            if list.iter().any(|s| s.id == id) {
+                target_path = p.clone();
+                break;
             }
         }
-        let data_dir = format!("{}/.oi", active_space_path());
+        if let Some(list) = map.get_mut(&target_path) {
+            list.retain(|s| s.id != id);
+        }
+        let new_list = map.get(&target_path).cloned().unwrap_or_default();
+        space_sessions
+            .write()
+            .insert(target_path.clone(), new_list.clone());
+        if target_path == active_space_path() {
+            sessions.set(new_list.clone());
+            if active_session_id() == id {
+                if let Some(first) = new_list.first() {
+                    active_session_id.set(first.id.clone());
+                } else {
+                    active_session_id.set(String::new());
+                }
+            }
+        }
+        let mut msgs = session_messages();
+        msgs.remove(&id);
+        session_messages.set(msgs);
+
+        let data_dir = format!("{}/.oi", target_path);
         let del_id = id.clone();
         std::thread::spawn(move || {
             let path = std::path::PathBuf::from(data_dir).join("sessions.db");
@@ -719,46 +782,33 @@ pub fn Workspace(
         });
     };
 
-    // 会话归档:仅前端状态切换(数据库还没有归档字段);Rename 单位入库
-    let on_archive_session = move |id: String| {
-        let mut list = sessions();
-        if let Some(s) = list.iter_mut().find(|s| s.id == id) {
-            s.status = if s.status == SessionStatus::Archived {
-                SessionStatus::Idle
+    let on_delete_space = move |space_path: String| {
+        let mut sp = spaces();
+        sp.retain(|s| s.path != space_path);
+        spaces.set(sp.clone());
+        space_sessions.write().remove(&space_path);
+        if active_space_path() == space_path {
+            if let Some(first) = sp.first() {
+                let first_path = first.path.clone();
+                active_space_path.set(first_path.clone());
+                let list = space_sessions
+                    .read()
+                    .get(&first_path)
+                    .cloned()
+                    .unwrap_or_default();
+                sessions.set(list.clone());
+                if let Some(f) = list.first() {
+                    active_session_id.set(f.id.clone());
+                } else {
+                    active_session_id.set(String::new());
+                }
             } else {
-                SessionStatus::Archived
-            };
-        }
-        sessions.set(list);
-        space_sessions
-            .write()
-            .insert(active_space_path(), sessions().clone());
-    };
-
-    let on_rename_session = move |(id, new_title): (String, String)| {
-        let trimmed = new_title.trim();
-        if trimmed.is_empty() {
-            return;
-        }
-        let mut list = sessions();
-        if let Some(s) = list.iter_mut().find(|s| s.id == id) {
-            s.title = trimmed.to_string();
-        }
-        sessions.set(list);
-        space_sessions
-            .write()
-            .insert(active_space_path(), sessions().clone());
-        let data_dir = format!("{}/.oi", active_space_path());
-        let tid = id.clone();
-        let new_t = trimmed.to_string();
-        std::thread::spawn(move || {
-            let path = std::path::PathBuf::from(data_dir).join("sessions.db");
-            if let Ok(db) = session::SessionDb::open(path) {
-                let _ = db.create_session(&tid, &new_t);
+                active_space_path.set(String::new());
+                sessions.set(Vec::new());
+                active_session_id.set(String::new());
             }
-        });
+        }
     };
-
     let on_model_change = move |m: String| {
         let mut st = statusline();
         st.model = m.clone();
@@ -783,9 +833,10 @@ pub fn Workspace(
 
     rsx! {
         div { class: "flex h-[calc(100vh-46px)] w-screen bg-base overflow-hidden relative",
+            onmousemove: on_resize_move,
+            onmouseup: on_resize_up,
             Sidebar {
                 spaces: spaces(),
-                active_space_id: active_space_path(),
                 on_select_space: on_select_space,
                 on_trigger_picker: move |_| {
                     let home = std::env::var("HOME").unwrap_or_else(|_| "/home/hathaway".to_string());
@@ -798,14 +849,24 @@ pub fn Workspace(
                 active_id: active_session_id(),
                 on_select: on_select_session,
                 on_create: on_create_session,
-                on_delete: on_delete_session,
-                on_archive: on_archive_session,
-                on_rename: on_rename_session,
+                on_delete_session: on_delete_session,
+                on_delete_space: on_delete_space,
+                collapsed: sidebar_collapsed(),
+                on_toggle: on_toggle_sidebar,
+                on_expand: on_expand_sidebar,
+                width: sidebar_width(),
+                on_resize_start: on_resize_start,
+                on_preset_start: on_preset_start,
             }
             div { class: "flex-1 h-full flex flex-col bg-base relative overflow-hidden",
                 div { class: "flex-1 flex flex-col h-full overflow-hidden",
-                    div { class: "h-[44px] px-[24px] border-b border-subtle flex items-center bg-base flex-shrink-0",
-                        span { class: "text-[15px] font-semibold text-primary tracking-[-0.01em]", "omenic" }
+                    div { class: "h-[44px] px-[24px] border-b border-subtle flex items-center gap-3 bg-base flex-shrink-0",
+                        div { class: "flex items-center gap-2 text-[12px] text-muted-foreground",
+                            span { class: "font-semibold text-foreground tracking-[-0.01em]", "omenic" }
+                            span { class: "text-muted", "/" }
+                            span { class: "font-mono text-[11.5px] text-muted-foreground", "feat/web-agent-harness" }
+                            span { class: "font-mono text-[10.5px] px-1.5 py-0.5 rounded bg-accent-subtle text-accent border border-[rgba(162,138,199,0.2)]", "clean" }
+                        }
                     }
                     Chat {
                         messages: current_messages,
@@ -824,7 +885,7 @@ pub fn Workspace(
                             class: "w-[560px] bg-surface border border-accent rounded-[10px] shadow-[0_24px_64px_rgba(0,0,0,0.9)] p-[12px] flex flex-col gap-[8px]",
                             onclick: move |_| {},
                             input {
-                                class: "w-full py-[12px] px-[14px] bg-base border border-subtle rounded-[6px] text-primary text-[13.5px] outline-none font-sans",
+                                class: "w-full py-[12px] px-[14px] bg-base border border-subtle rounded-[6px] text-foreground text-[13.5px] outline-none font-sans",
                                 r#type: "text",
                                 placeholder: "搜索会话名称或编号...",
                                 oninput: move |e| search_query.set(e.value().clone()),
@@ -852,7 +913,7 @@ pub fn Workspace(
                                         },
                                         div { class: "flex items-center gap-[8px]",
                                             span { class: if session.status == SessionStatus::Active { "inline-block w-2 h-2 rounded-full bg-accent shrink-0" } else { "inline-block w-2 h-2 rounded-full bg-muted shrink-0" } }
-                                            span { class: "text-[12.5px] text-primary", "{session.title}" }
+                                            span { class: "text-[12.5px] text-foreground", "{session.title}" }
                                         }
                                         span { class: "font-mono text-[10.5px] text-muted", "{session.id}" }
                                     }
@@ -874,16 +935,16 @@ pub fn Workspace(
                         div { class: "w-[560px] bg-surface border border-accent rounded-[10px] shadow-[0_24px_64px_rgba(0,0,0,0.9)] p-[12px] flex flex-col gap-[8px]",
                             onclick: move |e: MouseEvent| e.stop_propagation(),
                             div { class: "flex items-center justify-between",
-                                span { class: "text-[13px] font-semibold text-primary", "选择本地工作区目录" }
-                                button {
-                                    class: "text-muted hover:text-primary cursor-pointer text-[14px] leading-none px-1.5 py-0.5 rounded hover:bg-hover transition-colors",
+                                span { class: "text-[13px] font-semibold text-foreground", "选择本地工作区目录" }
+                                IconButton {
+                                    title: "关闭",
                                     onclick: move |_| show_space_picker.set(false),
                                     "✕"
                                 }
                             }
                             div { class: "flex items-center gap-[8px]",
                                 input {
-                                    class: "flex-1 min-w-0 px-[12px] py-[9px] bg-base border border-subtle rounded-[6px] text-primary text-[13px] outline-none font-mono",
+                                    class: "flex-1 min-w-0 px-[12px] py-[9px] bg-base border border-subtle rounded-[6px] text-foreground text-[13px] outline-none font-mono",
                                     r#type: "text",
                                     value: "{picker_current_path()}",
                                     oninput: move |e| {
@@ -893,8 +954,8 @@ pub fn Workspace(
                                         picker_subdirs.set(sub);
                                     }
                                 }
-                                button {
-                                    class: "py-[7px] px-[12px] text-[11.5px] bg-surface-elevated border border-subtle rounded-[5px] text-secondary cursor-pointer whitespace-nowrap transition-all",
+                                Button {
+                                    variant: ButtonVariant::Subtle,
                                     onclick: move |_| {
                                         let par = Path::new(&picker_current_path()).parent().map(|sp| sp.to_path_buf());
                                         if let Some(pr) = par {
@@ -928,10 +989,10 @@ pub fn Workspace(
                                                 },
                                                 div { class: "flex items-center gap-[8px]",
                                                     span { class: "font-mono text-[9.5px] py-[1px] px-[5px] rounded-[3px] bg-[#20222e] text-muted", "DIR" }
-                                                    span { class: "text-[12.5px] text-primary", "{d}" }
+                                                    span { class: "text-[12.5px] text-foreground", "{d}" }
                                                 }
-                                                button {
-                                                    class: "py-[7px] px-[12px] text-[11.5px] bg-surface-elevated border border-subtle rounded-[5px] text-secondary cursor-pointer whitespace-nowrap transition-all",
+                                                Button {
+                                                    variant: ButtonVariant::Subtle,
                                                     onclick: move |e: MouseEvent| {
                                                         e.stop_propagation();
                                                         on_open_fn(dpath2.clone());
@@ -946,8 +1007,8 @@ pub fn Workspace(
                             }
                             div { class: "flex items-center justify-between pt-[8px] border-t border-subtle text-[11px] text-muted",
                                 div { class: "text-[11px] text-muted", span { "当前目录: {picker_current_path()}" } }
-                                button {
-                                    class: "py-[7px] px-[16px] text-[12px] font-semibold bg-accent text-[#0c0d12] border-0 rounded-[5px] cursor-pointer transition-all",
+                                Button {
+                                    variant: ButtonVariant::Primary,
                                     onclick: {
                                         let mut on_open_fn = on_open_space.clone();
                                         move |_| {
