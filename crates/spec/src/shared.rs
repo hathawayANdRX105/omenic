@@ -340,31 +340,6 @@ pub fn gh_api(path: &str, params: Option<&BTreeMap<&str, &str>>) -> Result<JsonV
     serde_json::from_str(&raw).map_err(|e| format!("json decode: {}", e))
 }
 
-/// Run a GraphQL query via `gh api graphql`, returning the `data` payload.
-/// When `variables` is given it is serialized to JSON and passed as
-/// `-f variables=<json>` — the canonical way `gh api graphql` accepts them.
-pub fn gh_api_graphql(query: &str, variables: Option<&JsonValue>) -> Result<JsonValue, String> {
-    let field = format!("query={}", query);
-    let mut args: Vec<String> = vec!["graphql".to_string(), "-f".to_string(), field];
-    if let Some(vars) = variables {
-        let json =
-            serde_json::to_string(vars).map_err(|e| format!("json encode variables: {}", e))?;
-        args.push("-f".to_string());
-        args.push(format!("variables={}", json));
-    }
-    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let raw = run_gh_with_retry(&arg_refs)?;
-    if raw.is_empty() {
-        return Ok(JsonValue::Null);
-    }
-    let parsed: JsonValue =
-        serde_json::from_str(&raw).map_err(|e| format!("json decode: {}", e))?;
-    if let Some(errors) = parsed.get("errors") {
-        return Err(format!("GraphQL errors: {}", errors));
-    }
-    Ok(parsed.get("data").cloned().unwrap_or(JsonValue::Null))
-}
-
 /// Iterate a list endpoint by explicit cursor pagination.
 /// Uses `page=N&per_page=N`; stops when a page returns fewer than `page_size`.
 pub fn gh_api_paginate(path: &str, page_size: u32) -> Result<Vec<JsonValue>, String> {
