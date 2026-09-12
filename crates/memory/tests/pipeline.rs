@@ -319,3 +319,44 @@ fn similar_topic_is_not_a_change() {
     assert!(!t.should_extract(5, Some(similar.as_slice()), false));
     assert!(t.should_extract(12, Some(similar.as_slice()), false));
 }
+
+// ===== extraction parsing =====
+
+#[test]
+fn extract_lines_parses_strict_format() {
+    use memory::pipeline::extract_lines;
+    use memory::{Category, Trust};
+
+    let lines =
+        extract_lines("fact|deploy target is fly.io|high\ncorrection|端口是 8026 不是 3000|low");
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0].category, Category::Fact);
+    assert_eq!(lines[0].trust, Trust::High);
+    assert_eq!(lines[0].content, "deploy target is fly.io");
+    assert_eq!(lines[1].category, Category::Correction);
+    assert_eq!(lines[1].trust, Trust::Low);
+    assert_eq!(lines[1].content, "端口是 8026 不是 3000");
+}
+
+#[test]
+fn extract_lines_tolerates_numbering_and_missing_trust() {
+    use memory::Trust;
+    use memory::pipeline::extract_lines;
+
+    let lines = extract_lines("1. preference|likes tabs\n2. fact|deploys on friday|medium\n");
+    assert_eq!(lines.len(), 2);
+    // Missing trust defaults to medium.
+    assert_eq!(lines[0].trust, Trust::Medium);
+    assert_eq!(lines[0].category, memory::Category::Preference);
+    assert_eq!(lines[1].content, "deploys on friday");
+}
+
+#[test]
+fn extract_lines_skips_malformed_and_empty() {
+    use memory::pipeline::extract_lines;
+
+    let lines =
+        extract_lines("no pipes here\nfact||high\nunknown-kind|text|low\n\nfact|real content\n");
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].content, "real content");
+}

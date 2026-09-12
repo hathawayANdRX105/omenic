@@ -19,7 +19,11 @@ config = { path = "../config" }
 adaptor = { path = "../adaptor" }
 orbit = { path = "../orbit" }
 tools = { path = "../tools" }
+memory = { path = "../memory" }
 session = { path = "../session" }
 task = { path = "../task" }
 pulldown-cmark.workspace = true
 dioxus_components = "0.1.2"
+
+[dev-dependencies]
+tempfile = { workspace = true }
