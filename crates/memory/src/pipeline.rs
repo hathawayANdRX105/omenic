@@ -91,15 +91,15 @@ impl Memory {
             .filter_map(|e| cosine(&embedding, e.embedding.as_deref()?).map(|sim| (e, sim)))
             .max_by(|a, b| a.1.total_cmp(&b.1));
 
-        if let Some((mut existing, sim)) = best {
-            if sim >= DEDUP_COSINE {
-                let id = existing.id;
-                existing.ts = now_iso();
-                existing.strength += 1;
-                existing.embedding = Some(embedding);
-                self.remember_update(existing)?;
-                return Ok(RememberOutcome::Reinforced { id });
-            }
+        if let Some((mut existing, sim)) = best
+            && sim >= DEDUP_COSINE
+        {
+            let id = existing.id;
+            existing.ts = now_iso();
+            existing.strength += 1;
+            existing.embedding = Some(embedding);
+            self.remember_update(existing)?;
+            return Ok(RememberOutcome::Reinforced { id });
         }
 
         let mut entry = MemoryEntry::new(text);
@@ -181,4 +181,66 @@ impl ExtractionTriggers {
         self.last_turn = Some(turn_count);
         self.last_topic = topic.map(|t| t.to_vec());
     }
+}
+
+/// System prompt for transcript extraction. The sidecar-free version of
+/// jcode's extraction prompt: the MAIN model runs it on a bounded transcript
+/// window and answers in the strict `CATEGORY|CONTENT|TRUST` line format
+/// that [`extract_lines`] parses. Negative list lifted from jcode: no commit
+/// hashes, no compile errors, no per-line code diffs.
+pub const EXTRACTION_PROMPT: &str = "你是记忆抽取器。从对话中抽取值得跨会话记住的事实，每行一条，严格格式：\n\
+CATEGORY|CONTENT|TRUST\n\
+其中 CATEGORY ∈ fact|preference|entity|correction，TRUST ∈ high|medium|low（用户亲口说的为 high，观察到的 medium，推断的 low）。\n\
+不要抽取：commit hash、编译错误、逐行代码变更、一次性调试细节。\n\
+没有值得抽取的内容就什么都不输出。";
+
+/// One line parsed back from the extraction format.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtractedLine {
+    pub category: crate::Category,
+    pub content: String,
+    pub trust: crate::Trust,
+}
+
+/// Parse extractor output into lines. Malformed lines are skipped (the
+/// model is told the format, but gateways append whitespace, number the
+/// lines, or wrap them — tolerate all three); `trust` defaults to medium
+/// when missing.
+pub fn extract_lines(raw: &str) -> Vec<ExtractedLine> {
+    let mut out = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        // Tolerate "1. fact|...|high" numbering from an obedient model.
+        let line = line.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ' ');
+        let line = line.trim();
+        let Some((category, rest)) = line.split_once('|') else {
+            continue;
+        };
+        let (content, trust) = match rest.split_once('|') {
+            Some((content, trust)) => (content, trust),
+            None => (rest, "medium"),
+        };
+        let content = crate::inject::normalize_ws(content);
+        if content.is_empty() {
+            continue;
+        }
+        let category = match category.trim().to_lowercase().as_str() {
+            "fact" => crate::Category::Fact,
+            "preference" => crate::Category::Preference,
+            "entity" => crate::Category::Entity,
+            "correction" => crate::Category::Correction,
+            _ => continue,
+        };
+        let trust = match trust.trim().to_lowercase().as_str() {
+            "high" => crate::Trust::High,
+            "low" => crate::Trust::Low,
+            _ => crate::Trust::Medium,
+        };
+        out.push(ExtractedLine {
+            category,
+            content,
+            trust,
+        });
+    }
+    out
 }

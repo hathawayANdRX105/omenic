@@ -232,6 +232,6 @@ fn overlaps_enough(last: &HashSet<String>, next: &HashSet<String>) -> bool {
 
 /// Collapse every whitespace run to one space and trim the ends — the one
 /// normalization applied to entry text for rendering and dedup alike.
-fn normalize_ws(text: &str) -> String {
+pub(crate) fn normalize_ws(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }

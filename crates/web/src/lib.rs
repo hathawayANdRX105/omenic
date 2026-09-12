@@ -7,6 +7,7 @@
 
 pub mod components;
 pub mod llm;
+pub mod memory_link;
 pub mod mock;
 pub mod pages;
 
