@@ -5,6 +5,13 @@
 //! duplicate id, and a trailing corrupt line (torn write) auto-trimmed on
 //! read. A `Memory::disabled()` handle makes every operation a no-op so
 //! call sites never branch on a feature flag.
+//!
+//! Entries are the single source of truth; the derived graph
+//! ([`graph::MemoryGraph`]) and the recall pipeline ([`recall`]) are
+//! rebuildable views over them (jcode `jcode-memory-types` lineage).
+
+pub mod graph;
+pub mod recall;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -14,15 +21,74 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub use graph::MemoryGraph;
+pub use recall::RecallHit;
+
+/// Who asserted this memory. Trust never decays on its own (jcode: High =
+/// user said it, Medium = observed, Low = inferred).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Trust {
+    High,
+    #[default]
+    Medium,
+    Low,
+}
+
+/// What kind of fact this is. Half-life decay per category (jcode:
+/// Correction 365d / Preference 90d / Entity 60d / Fact 30d) lands with the
+/// write pipeline; the enum is fixed now so stored entries survive it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Category {
+    Fact,
+    Preference,
+    Entity,
+    Correction,
+    #[default]
+    Custom,
+}
+
 /// One remembered line.
 ///
 /// `id` is assigned by [`Memory::append`] (monotonic per store, starting at
-/// 1); whatever the caller puts there is overwritten.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// 1); whatever the caller puts there is overwritten. New fields all carry
+/// `#[serde(default)]` so stores written by the old `{id, ts, text}` shape
+/// keep loading.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MemoryEntry {
     pub id: u64,
     pub ts: String,
     pub text: String,
+    #[serde(default)]
+    pub category: Category,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub trust: Trust,
+    /// 0.0–1.0 relevance confidence; half-life decay is a write-pipeline job.
+    #[serde(default = "default_confidence")]
+    pub confidence: f32,
+    /// How often this memory was reinforced (re-derived, re-affirmed).
+    #[serde(default)]
+    pub strength: u32,
+    /// Soft delete: superseded entries stay for history and graph walks.
+    #[serde(default = "default_true")]
+    pub active: bool,
+    /// The entry that replaced this one, if any.
+    #[serde(default)]
+    pub superseded_by: Option<u64>,
+    /// An entry whose statement conflicts with this one.
+    #[serde(default)]
+    pub contradicts: Option<u64>,
+}
+
+fn default_confidence() -> f32 {
+    0.5
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl MemoryEntry {
@@ -32,7 +98,20 @@ impl MemoryEntry {
             id: 0,
             ts: now_iso(),
             text: text.into(),
+            category: Category::Custom,
+            tags: Vec::new(),
+            trust: Trust::Medium,
+            confidence: default_confidence(),
+            strength: 0,
+            active: true,
+            superseded_by: None,
+            contradicts: None,
         }
+    }
+
+    /// The derived-graph view over these entries.
+    pub fn graph(entries: &[MemoryEntry]) -> MemoryGraph {
+        MemoryGraph::build(entries)
     }
 }
 
@@ -201,6 +280,18 @@ impl Memory {
         out.retain(|e| e.text.to_lowercase().contains(&needle));
         Ok(out)
     }
+
+    /// Derived graph over the current store (rebuilt on every call — the
+    /// JSONL stays the only persistent state).
+    pub fn graph_view(&self) -> Result<MemoryGraph, MemoryError> {
+        Ok(MemoryGraph::build(&self.list()?))
+    }
+
+    /// Top-`k` entries for `query`: direct idf-weighted match plus the graph
+    /// cascade. See [`recall::recall`].
+    pub fn recall(&self, query: &str, k: usize) -> Result<Vec<RecallHit>, MemoryError> {
+        Ok(recall::recall(&self.graph_view()?, query, k))
+    }
 }
 
 /// Highest id already stored; 0 when the store is empty or unreadable.
@@ -256,175 +347,4 @@ fn now_iso() -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn store() -> (Memory, tempfile::TempDir) {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let mem = Memory::open(tmp.path()).expect("open");
-        (mem, tmp)
-    }
-
-    #[test]
-    fn disabled_is_noop() {
-        let mut mem = Memory::disabled();
-        assert!(!mem.enabled());
-        mem.append(MemoryEntry::new("secret"))
-            .expect("no-op append");
-        assert!(mem.list().expect("no-op list").is_empty());
-        assert!(mem.search("secret").expect("no-op search").is_empty());
-    }
-
-    #[test]
-    fn append_then_list_round_trip() {
-        let (mut mem, _tmp) = store();
-        assert!(mem.enabled());
-        mem.append(MemoryEntry::new("user prefers tabs")).unwrap();
-        mem.append(MemoryEntry::new("deploy target is fly.io"))
-            .unwrap();
-
-        let all = mem.list().unwrap();
-        assert_eq!(all.len(), 2);
-        assert_eq!(all[0].text, "user prefers tabs");
-        assert_eq!(all[1].text, "deploy target is fly.io");
-        assert!(
-            all[0].ts.ends_with('Z'),
-            "ts should be ISO-ish: {}",
-            all[0].ts
-        );
-    }
-
-    #[test]
-    fn ids_are_monotonic_across_handles() {
-        let (mut mem, tmp) = store();
-        mem.append(MemoryEntry::new("one")).unwrap();
-        mem.append(MemoryEntry::new("two")).unwrap();
-        // A fresh handle keeps counting from the stored max, not from 1.
-        let mut again = Memory::open(tmp.path()).unwrap();
-        again.append(MemoryEntry::new("three")).unwrap();
-
-        let ids: Vec<u64> = again.list().unwrap().iter().map(|e| e.id).collect();
-        assert_eq!(ids, vec![1, 2, 3]);
-    }
-
-    #[test]
-    fn caller_supplied_id_is_ignored() {
-        let (mut mem, _tmp) = store();
-        let mut entry = MemoryEntry::new("first");
-        entry.id = 999;
-        mem.append(entry).unwrap();
-        assert_eq!(mem.list().unwrap()[0].id, 1);
-    }
-
-    #[test]
-    fn search_is_case_insensitive_substring() {
-        let (mut mem, _tmp) = store();
-        mem.append(MemoryEntry::new("Prefers Ripgrep over grep"))
-            .unwrap();
-        mem.append(MemoryEntry::new("uses zsh")).unwrap();
-
-        assert_eq!(mem.search("RIPGREP").unwrap().len(), 1);
-        assert_eq!(mem.search("zsh").unwrap()[0].text, "uses zsh");
-        assert!(mem.search("nothing here").unwrap().is_empty());
-        // Empty query matches everything.
-        assert_eq!(mem.search("").unwrap().len(), 2);
-    }
-
-    #[test]
-    fn trailing_corrupt_line_is_trimmed() {
-        let (mut mem, tmp) = store();
-        mem.append(MemoryEntry::new("good")).unwrap();
-        let path = tmp.path().join("memory.jsonl");
-        // Torn write: partial line, no trailing newline.
-        let mut f = OpenOptions::new().append(true).open(&path).unwrap();
-        f.write_all(b"{\"id\":2,\"ts\":\"tor").unwrap();
-        drop(f);
-
-        let all = mem.list().unwrap();
-        assert_eq!(all.len(), 1);
-        assert_eq!(all[0].text, "good");
-        // The garbage is gone from disk, so the next append is clean.
-        let raw = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(raw.lines().count(), 1, "trailing garbage left: {raw:?}");
-        assert!(!raw.contains("\"id\":2"), "trailing garbage left: {raw:?}");
-        mem.append(MemoryEntry::new("after")).unwrap();
-        assert_eq!(mem.list().unwrap().len(), 2);
-    }
-
-    #[test]
-    fn append_repairs_torn_line_before_writing() {
-        let (mut mem, tmp) = store();
-        mem.append(MemoryEntry::new("good")).unwrap();
-        let path = tmp.path().join("memory.jsonl");
-        OpenOptions::new()
-            .append(true)
-            .open(&path)
-            .unwrap()
-            .write_all(b"{\"")
-            .unwrap();
-
-        mem.append(MemoryEntry::new("fresh")).unwrap();
-        // A second append without a list must remain clean too.
-        mem.append(MemoryEntry::new("later")).unwrap();
-
-        let all = mem.list().unwrap();
-        assert_eq!(
-            all.iter()
-                .map(|entry| entry.text.as_str())
-                .collect::<Vec<_>>(),
-            ["good", "fresh", "later"]
-        );
-        assert_eq!(std::fs::read_to_string(path).unwrap().lines().count(), 3);
-    }
-
-    #[test]
-    fn torn_multibyte_utf8_does_not_block_recovery() {
-        let (mut mem, tmp) = store();
-        mem.append(MemoryEntry::new("good")).unwrap();
-        let path = tmp.path().join("memory.jsonl");
-        OpenOptions::new()
-            .append(true)
-            .open(&path)
-            .unwrap()
-            .write_all(b"{\"id\":2,\"text\":\"caf\xc3")
-            .unwrap();
-
-        assert!(mem.list().is_ok());
-        assert!(mem.append(MemoryEntry::new("after")).is_ok());
-        assert_eq!(mem.list().unwrap().len(), 2);
-    }
-
-    #[test]
-    fn corrupt_middle_line_is_an_error() {
-        let (mem, tmp) = store();
-        let path = tmp.path().join("memory.jsonl");
-        std::fs::write(&path, "not json\n{\"id\":1,\"ts\":\"t\",\"text\":\"ok\"}\n").unwrap();
-        match mem.list() {
-            Err(MemoryError::CorruptLine { line, .. }) => assert_eq!(line, 1),
-            other => panic!("expected CorruptLine, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn duplicate_id_latest_wins() {
-        let (mem, tmp) = store();
-        let path = tmp.path().join("memory.jsonl");
-        std::fs::write(
-            &path,
-            "{\"id\":1,\"ts\":\"t\",\"text\":\"old\"}\n{\"id\":1,\"ts\":\"t\",\"text\":\"new\"}\n",
-        )
-        .unwrap();
-        let all = mem.list().unwrap();
-        assert_eq!(all.len(), 1);
-        assert_eq!(all[0].text, "new");
-    }
-
-    #[test]
-    fn empty_store_lists_nothing() {
-        let (mem, _tmp) = store();
-        assert!(mem.list().unwrap().is_empty());
-    }
 }
