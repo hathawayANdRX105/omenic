@@ -45,7 +45,7 @@ impl Semaphore {
     /// current holders finish and hand their permits back; grow wakes
     /// queued waiters immediately.
     pub fn resize(&self, permits: usize) {
-        let mut st = self.state.lock().unwrap();
+        let mut st = self.lock_state();
         let delta = permits as isize - st.permits as isize;
         st.permits = permits;
         st.available += delta;
@@ -56,11 +56,15 @@ impl Semaphore {
 
     /// Acquire one permit, or bail with [`Aborted`] once `abort` flips.
     /// Queued waiters are served FIFO.
+    ///
+    /// The abort flag's writer must store with `SeqCst` (or `Release`) so a
+    /// flip is observable to this `SeqCst` load; `Relaxed` writers would
+    /// leave the waiter unsynchronized on weak memory models.
     pub fn acquire(&self, abort: &AtomicBool) -> Result<SemaphoreGuard<'_>, Aborted> {
         let mut ticket = None;
-        let mut st = self.state.lock().unwrap();
+        let mut st = self.lock_state();
         loop {
-            if abort.load(Ordering::Relaxed) {
+            if abort.load(Ordering::SeqCst) {
                 if let Some(t) = ticket {
                     st.queue.retain(|&q| q != t);
                 }
@@ -91,18 +95,28 @@ impl Semaphore {
             // The abort signal is a plain AtomicBool flipped from another
             // thread — it cannot wake this condvar. Poll it on a short
             // wait_timeout so abort latency stays bounded.
-            let (next, _) = self.cv.wait_timeout(st, Duration::from_millis(25)).unwrap();
+            let (next, _) = self
+                .cv
+                .wait_timeout(st, Duration::from_millis(25))
+                .unwrap_or_else(|e| e.into_inner());
             st = next;
         }
     }
 
+    /// Lock that survives a panicking holder: a poisoned mutex still holds
+    /// consistent-enough state here (plain counters), and crashing every
+    /// subsequent waiter would turn one worker panic into a harness crash.
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, SemState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// Permits currently available (diagnostics/tests).
     pub fn available(&self) -> isize {
-        self.state.lock().unwrap().available
+        self.lock_state().available
     }
 
     fn release(&self) {
-        let mut st = self.state.lock().unwrap();
+        let mut st = self.lock_state();
         st.available += 1;
         self.cv.notify_all();
     }

@@ -135,7 +135,7 @@ impl Tool for TaskTool {
                 if grace_end.is_none() && (now >= deadline || signal.load(Ordering::Relaxed)) {
                     grace_end = Some(now + Duration::from_secs(2));
                     for l in &locals {
-                        l.store(true, Ordering::Relaxed);
+                        l.store(true, Ordering::SeqCst);
                     }
                 }
                 let end = grace_end.unwrap_or(deadline);

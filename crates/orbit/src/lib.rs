@@ -480,6 +480,10 @@ pub fn run_agent_streaming(
         backend.stream_cb(model, context, &tool_defs, signal, &mut |ev| match ev {
             StreamEvent::TextDelta(delta) => {
                 text.push_str(delta);
+                // The clone keeps AgentEvent lifetime-free (consumers store
+                // the event in channels and state); one small alloc per
+                // chunk is the price — a Cow<'a, str> would thread a
+                // lifetime through every AgentEvent consumer.
                 emit(AgentEvent::AssistantText {
                     delta: delta.clone(),
                 });

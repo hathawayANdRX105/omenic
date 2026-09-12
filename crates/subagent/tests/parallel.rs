@@ -42,7 +42,7 @@ fn acquire_aborts_while_queued() {
     let abort2 = Arc::clone(&abort);
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(30));
-        abort2.store(true, Ordering::Relaxed);
+        abort2.store(true, Ordering::SeqCst);
     });
     let started = Instant::now();
     assert!(matches!(sem.acquire(&abort), Err(Aborted)));
@@ -149,7 +149,7 @@ fn map_limited_aborts_queued_items() {
         while started2.load(Ordering::SeqCst) < 2 {
             std::thread::sleep(Duration::from_millis(5));
         }
-        abort2.store(true, Ordering::Relaxed);
+        abort2.store(true, Ordering::SeqCst);
     });
     let out: Vec<Result<usize, MapError<()>>> = map_limited(&items, 1, &abort, |&i| {
         started.fetch_add(1, Ordering::SeqCst);
