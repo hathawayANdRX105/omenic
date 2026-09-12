@@ -131,6 +131,17 @@ pub struct LoopConfig<'a> {
     /// here as a host policy (omp `SessionMaintenance`), not inside the
     /// loop; pass `None` for hosts that manage context themselves.
     pub maintain: Option<MaintainFn<'a>>,
+    /// Pull queued steering messages (user interjections). Drained at the
+    /// top of every LLM round and appended to the context as-is, so the
+    /// model sees them before its next call. Remaining messages stay in
+    /// the host queue when the loop stops.
+    pub get_steering: Option<&'a dyn Fn() -> Vec<Message>>,
+    /// Pull follow-up messages (async job delivery). Checked when the
+    /// model stops calling tools — a non-empty pull extends the run (the
+    /// drained messages enter the context and the loop makes another
+    /// round) instead of ending it. `TurnEnd` fires only when both the
+    /// model stopped and the queue is empty.
+    pub get_follow_up: Option<&'a dyn Fn() -> Vec<Message>>,
 }
 
 /// Conservative turn ceiling for callers that don't set one. A real
@@ -144,6 +155,8 @@ impl Default for LoopConfig<'_> {
             context_log: None,
             max_turns: DEFAULT_MAX_TURNS,
             maintain: None,
+            get_steering: None,
+            get_follow_up: None,
         }
     }
 }
@@ -448,6 +461,14 @@ pub fn run_agent_streaming(
         if let Some(maintain) = config.maintain {
             maintain(backend, model, context, signal);
         }
+
+        // 0.5. Drain steering queued since the last round (omp pulls
+        // steering at the inner-loop top, before the provider call).
+        if let Some(get_steering) = config.get_steering {
+            for msg in get_steering() {
+                record(context, config.context_log, msg);
+            }
+        }
         emit(AgentEvent::TurnStart);
 
         // 1. Stream one LLM turn, forwarding deltas live as they arrive.
@@ -523,13 +544,22 @@ pub fn run_agent_streaming(
             continue;
         }
 
-        // 5. No tool calls → done. A tool_use stop without call deltas is malformed;
-        // treat it as a clean end of turn like llm.ts does.
+        // 5. No tool calls → model wants to stop. Follow-ups (async job
+        // delivery) extend the run; with an empty queue the turn ends for
+        // real. A tool_use stop without call deltas is malformed; treat it
+        // as a clean end of turn like llm.ts does.
         if tool_calls.is_empty() {
-            emit(AgentEvent::TurnEnd {
-                stop_reason: turn_stop(stop_reason),
-            });
-            return;
+            let follow_ups = config.get_follow_up.map(|get| get()).unwrap_or_default();
+            if follow_ups.is_empty() {
+                emit(AgentEvent::TurnEnd {
+                    stop_reason: turn_stop(stop_reason),
+                });
+                return;
+            }
+            for msg in follow_ups {
+                record(context, config.context_log, msg);
+            }
+            continue;
         }
 
         // 6. Execute serially; unknown tools and panics-free errors become error strings.

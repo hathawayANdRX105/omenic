@@ -713,3 +713,125 @@ fn compaction_summary_is_logged_for_replay() {
     assert_eq!(ctx.messages[1..=kept], initial[200 - kept..]);
     assert_eq!(ctx.messages[kept + 1], replayed[201]);
 }
+
+#[test]
+fn steering_drains_into_the_next_round() {
+    let backend = Shared(RefCell::new(Scripted::new(vec![
+        vec![
+            call("t1", "echo_tool"),
+            StreamEvent::Done {
+                stop_reason: StopReason::ToolUse,
+            },
+        ],
+        vec![
+            StreamEvent::TextDelta("done".into()),
+            StreamEvent::Done {
+                stop_reason: StopReason::EndTurn,
+            },
+        ],
+    ])));
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
+    // Steering queue: one message delivered from the second drain onwards —
+    // the user interjected while the tool batch was running. The first
+    // drain (loop entry) must come back empty.
+    let queue = RefCell::new(vec![Message::user_text("keep it short")]);
+    let round = std::cell::Cell::new(0usize);
+    let dir = tempfile::tempdir().unwrap();
+    let log = ContextLog::new(dir.path().join("ctx.jsonl"));
+    let mut ctx = Context {
+        system_prompt: Some("sys".into()),
+        messages: vec![Message::user_text("start")],
+    };
+    let get = || {
+        round.set(round.get() + 1);
+        if round.get() >= 2 {
+            std::mem::take(&mut *queue.borrow_mut())
+        } else {
+            vec![]
+        }
+    };
+    run_agent_streaming(
+        &backend,
+        &model(),
+        &mut ctx,
+        &tools,
+        &sig(),
+        LoopConfig {
+            context_log: Some(&log),
+            get_steering: Some(&get),
+            ..LoopConfig::default()
+        },
+        &mut |_| {},
+    );
+
+    let seen = backend.0.borrow();
+    // Round 1 saw only the initial prompt; round 2 saw the steering message
+    // appended after the round-1 exchange (assistant reply + tool results).
+    assert_eq!(seen.seen_contexts[0].messages.len(), 1);
+    assert_eq!(seen.seen_contexts[1].messages.len(), 4);
+    assert_eq!(
+        seen.seen_contexts[1].messages[3],
+        Message::user_text("keep it short")
+    );
+    // The drained message is part of the final context and the evidence log.
+    assert!(ctx.messages.contains(&Message::user_text("keep it short")));
+    let replayed = ContextLog::load(dir.path().join("ctx.jsonl")).unwrap();
+    assert!(replayed.contains(&Message::user_text("keep it short")));
+}
+
+#[test]
+fn follow_up_extends_the_run_past_model_endturn() {
+    let backend = Shared(RefCell::new(Scripted::new(vec![
+        // Model says "first" and stops; an async job result lands right after.
+        vec![
+            StreamEvent::TextDelta("first".into()),
+            StreamEvent::Done {
+                stop_reason: StopReason::EndTurn,
+            },
+        ],
+        vec![
+            StreamEvent::TextDelta("second".into()),
+            StreamEvent::Done {
+                stop_reason: StopReason::EndTurn,
+            },
+        ],
+    ])));
+    let queue = RefCell::new(vec![Message::user_text("job result: ok")]);
+    let mut ctx = Context {
+        system_prompt: Some("sys".into()),
+        messages: vec![Message::user_text("start")],
+    };
+    let mut events = Vec::new();
+    let get = || std::mem::take(&mut *queue.borrow_mut());
+    run_agent_streaming(
+        &backend,
+        &model(),
+        &mut ctx,
+        &[],
+        &sig(),
+        LoopConfig {
+            get_follow_up: Some(&get),
+            ..LoopConfig::default()
+        },
+        &mut |e| events.push(e),
+    );
+
+    let seen = backend.0.borrow();
+    assert_eq!(seen.calls_made, 2, "follow-up must trigger a second round");
+    assert_eq!(
+        seen.seen_contexts[1].messages.last(),
+        Some(&Message::user_text("job result: ok"))
+    );
+    // Exactly one TurnEnd, only after the queue drained.
+    let ends: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::TurnEnd { .. }))
+        .collect();
+    assert_eq!(ends.len(), 1);
+    assert_eq!(
+        events.last(),
+        Some(&AgentEvent::TurnEnd {
+            stop_reason: TurnStop::EndTurn
+        })
+    );
+}

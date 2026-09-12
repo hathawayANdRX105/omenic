@@ -18,6 +18,7 @@
 //! across calls.
 
 pub mod config;
+pub mod parallel;
 pub mod runner;
 pub mod task_tool;
 

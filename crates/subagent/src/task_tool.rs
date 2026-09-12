@@ -1,10 +1,12 @@
 //! The `task` tool: parallel read-only subagent exploration.
 //!
-//! One prompt → run inline. Multiple prompts → spawn one `std::thread` per
-//! prompt and join via a channel. Wall-clock is capped at
-//! `SUBAGENT_TIMEOUT_SECS`; on timeout the signal is flipped so all live
-//! subagents abort together and the partial outputs are returned.
+//! One prompt → run inline. Multiple prompts → bounded fan-out: at most
+//! `MAX_CONCURRENT_SUBAGENTS` run at once, the rest queue on the semaphore.
+//! Wall-clock is capped at `SUBAGENT_TIMEOUT_SECS`; on timeout (or parent
+//! abort) every live subagent's signal is flipped so loops stop and partial
+//! outputs are collected during a short grace window.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
@@ -15,7 +17,8 @@ use orbit::HttpLlm;
 use serde_json::{Value, json};
 use tools::{Tool, ToolError};
 
-use crate::config::{MAX_TURNS_DEFAULT, SUBAGENT_TIMEOUT_SECS};
+use crate::config::{MAX_CONCURRENT_SUBAGENTS, MAX_TURNS_DEFAULT, SUBAGENT_TIMEOUT_SECS};
+use crate::parallel::Semaphore;
 use crate::runner::{SubagentError, run_subagent};
 
 /// The `task` tool, registered opt-in by callers that want parallel
@@ -30,7 +33,7 @@ impl Tool for TaskTool {
     fn description(&self) -> String {
         "并行运行多个只读子 agent 探索 prompt。每个子 agent 只能调用 read/grep/glob。\
          适用于「X 文件在哪」「Y 函数清单」类只读查询，替代主 agent 直接 read 大文件。\
-         多 prompt 走 std::thread 并行，受 5min wall-clock 限制。"
+         多 prompt 有界并行（同时最多 4 个，其余排队），受 5min wall-clock 限制。"
             .into()
     }
 
@@ -57,22 +60,7 @@ impl Tool for TaskTool {
     }
 
     fn execute(&self, args: &Value, signal: &AtomicBool) -> Result<String, ToolError> {
-        let prompts: Vec<String> = args
-            .get("prompts")
-            .and_then(Value::as_array)
-            .ok_or_else(|| ToolError::Message("missing array argument: prompts".into()))?
-            .iter()
-            .map(|v| {
-                v.as_str()
-                    .ok_or_else(|| ToolError::Message("prompts entries must be strings".into()))
-                    .map(str::to_string)
-            })
-            .collect::<Result<_, _>>()?;
-
-        if prompts.is_empty() {
-            return Err(ToolError::Message("prompts must not be empty".into()));
-        }
-
+        let prompts = preflight(args)?;
         let max_turns: usize = args
             .get("max_turns")
             .and_then(Value::as_u64)
@@ -99,60 +87,69 @@ impl Tool for TaskTool {
             return Ok(format!("## Task 1:\n{out}"));
         }
 
-        // N>1: parallel via std::thread::scope; join at a wall-clock deadline.
+        // N>1: bounded fan-out via scoped threads, joined at a wall-clock
+        // deadline. Each child owns its signal; the collector flips them
+        // all when the deadline hits or the parent aborts, so live loops
+        // stop instead of leaking past the tool call.
         let wall = Duration::from_secs(SUBAGENT_TIMEOUT_SECS);
-        let started = Instant::now();
-        let deadline = started + wall;
+        let deadline = Instant::now() + wall;
         let (tx, rx) = mpsc::channel::<(u32, Result<String, SubagentError>)>();
-        let cancel = AtomicBool::new(false);
+        let sem = Semaphore::new(MAX_CONCURRENT_SUBAGENTS);
+        let locals: Vec<Arc<AtomicBool>> = (0..prompts.len())
+            .map(|_| Arc::new(AtomicBool::new(false)))
+            .collect();
 
         let results: Vec<(u32, Result<String, SubagentError>)> = thread::scope(|s| {
-            let backend_ref = &backend;
-            let tools_ref: &[Box<dyn Tool>] = &tools;
+            let backend = &backend;
             for (idx, prompt) in prompts.iter().enumerate() {
                 let tx = tx.clone();
                 let model = model.clone();
                 let prompt = prompt.as_str();
+                let local = Arc::clone(&locals[idx]);
+                let sem = &sem;
+                let tools = &tools;
                 s.spawn(move || {
-                    let local = AtomicBool::new(false);
-                    let outcome = run_subagent(
-                        backend_ref,
-                        &model,
-                        prompt,
-                        max_turns,
-                        tools_ref,
-                        &local,
-                        idx as u32,
-                        None,
-                    );
+                    // Admission is bounded; a queued child bails out as soon
+                    // as its signal flips (deadline or parent abort).
+                    let outcome = match sem.acquire(&local) {
+                        Ok(_guard) => run_subagent(
+                            backend, &model, prompt, max_turns, tools, &local, idx as u32, None,
+                        ),
+                        Err(_) => Err(SubagentError::Aborted {
+                            partial: String::new(),
+                        }),
+                    };
                     let _ = tx.send((idx as u32, outcome));
                 });
             }
             drop(tx);
 
+            // Wait for a result from every slot. Poll the parent signal on
+            // short recv timeouts; on deadline/abort flip all child signals
+            // and drain their partial results during a 2s grace window.
             let mut acc: Vec<(u32, Result<String, SubagentError>)> =
                 Vec::with_capacity(prompts.len());
+            let mut grace_end: Option<Instant> = None;
             while acc.len() < prompts.len() {
                 let now = Instant::now();
-                if now >= deadline {
-                    cancel.store(true, Ordering::Relaxed);
-                    signal.store(true, Ordering::Relaxed);
+                if grace_end.is_none() && (now >= deadline || signal.load(Ordering::Relaxed)) {
+                    grace_end = Some(now + Duration::from_secs(2));
+                    for l in &locals {
+                        l.store(true, Ordering::Relaxed);
+                    }
+                }
+                let end = grace_end.unwrap_or(deadline);
+                if now >= end {
                     break;
                 }
-                let remaining = deadline - now;
-                match rx.recv_timeout(remaining) {
+                match rx.recv_timeout((end - now).min(Duration::from_millis(50))) {
                     Ok(item) => acc.push(item),
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
-                        cancel.store(true, Ordering::Relaxed);
-                        signal.store(true, Ordering::Relaxed);
-                        break;
-                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 }
             }
             acc
         });
-        let _ = cancel; // suppress unused warning if all prompts return early
 
         // Index-stable ordering: fill missing slots with a synthetic timeout
         // error so the caller can still render "Task N: <error>".
@@ -174,6 +171,34 @@ impl Tool for TaskTool {
         }
         Ok(out)
     }
+}
+
+/// Validate the request before any subagent gets a thread or a permit
+/// (omp preflight pattern: everything checked up front, no partial spawns).
+fn preflight(args: &Value) -> Result<Vec<String>, ToolError> {
+    let prompts: Vec<String> = args
+        .get("prompts")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ToolError::Message("missing array argument: prompts".into()))?
+        .iter()
+        .map(|v| {
+            v.as_str()
+                .ok_or_else(|| ToolError::Message("prompts entries must be strings".into()))
+                .map(str::to_string)
+        })
+        .collect::<Result<_, _>>()?;
+    if prompts.is_empty() {
+        return Err(ToolError::Message("prompts must not be empty".into()));
+    }
+    let max_turns = args
+        .get("max_turns")
+        .and_then(Value::as_u64)
+        .map(|n| n as usize)
+        .unwrap_or(MAX_TURNS_DEFAULT);
+    if max_turns == 0 {
+        return Err(ToolError::Message("max_turns must be at least 1".into()));
+    }
+    Ok(prompts)
 }
 
 /// Build the read-only tool set: read / grep / glob only. Bounded to keep
