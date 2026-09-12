@@ -7,10 +7,12 @@
 //! call sites never branch on a feature flag.
 //!
 //! Entries are the single source of truth; the derived graph
-//! ([`graph::MemoryGraph`]) and the recall pipeline ([`recall`]) are
-//! rebuildable views over them (jcode `jcode-memory-types` lineage).
+//! ([`graph::MemoryGraph`]), the recall pipeline ([`recall`]) and the
+//! injection pipeline ([`inject`]) are rebuildable views over them (jcode
+//! `jcode-memory-types` lineage).
 
 pub mod graph;
+pub mod inject;
 pub mod recall;
 
 use std::collections::BTreeMap;
@@ -22,6 +24,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub use graph::MemoryGraph;
+pub use inject::{InjectionBuffer, format_injection};
 pub use recall::RecallHit;
 
 /// Who asserted this memory. Trust never decays on its own (jcode: High =
@@ -51,10 +54,11 @@ pub enum Category {
 
 /// One remembered line.
 ///
-/// `id` is assigned by [`Memory::append`] (monotonic per store, starting at
-/// 1); whatever the caller puts there is overwritten. New fields all carry
-/// `#[serde(default)]` so stores written by the old `{id, ts, text}` shape
-/// keep loading.
+/// [`Memory::append`] assigns `id` (monotonic per store, starting at 1) and
+/// overwrites whatever the caller put there; [`Memory::remember_update`]
+/// keeps the caller's id so its line shadows the older one it corrects.
+/// New fields all carry `#[serde(default)]` so stores written by the old
+/// `{id, ts, text}` shape keep loading.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MemoryEntry {
     pub id: u64,
@@ -120,7 +124,14 @@ impl MemoryEntry {
 pub enum MemoryError {
     Io(std::io::Error),
     Json(serde_json::Error),
-    CorruptLine { line: usize, msg: String },
+    CorruptLine {
+        line: usize,
+        msg: String,
+    },
+    /// [`Memory::supersede`] was given an id that is not in the store.
+    UnknownId {
+        id: u64,
+    },
 }
 
 impl fmt::Display for MemoryError {
@@ -129,6 +140,7 @@ impl fmt::Display for MemoryError {
             MemoryError::Io(e) => write!(f, "IO error: {e}"),
             MemoryError::Json(e) => write!(f, "JSON error: {e}"),
             MemoryError::CorruptLine { line, msg } => write!(f, "corrupt line {line}: {msg}"),
+            MemoryError::UnknownId { id } => write!(f, "no memory entry with id {id}"),
         }
     }
 }
@@ -138,7 +150,7 @@ impl std::error::Error for MemoryError {
         match self {
             MemoryError::Io(e) => Some(e),
             MemoryError::Json(e) => Some(e),
-            MemoryError::CorruptLine { .. } => None,
+            MemoryError::CorruptLine { .. } | MemoryError::UnknownId { .. } => None,
         }
     }
 }
@@ -187,9 +199,52 @@ impl Memory {
     /// Append one entry. Exclusive lock held across id assignment, torn-line
     /// repair, write and fsync, so concurrent writers cannot collide on an id
     /// nor glue a new entry onto a half-written one.
-    pub fn append(&mut self, mut entry: MemoryEntry) -> Result<(), MemoryError> {
+    pub fn append(&mut self, entry: MemoryEntry) -> Result<(), MemoryError> {
+        self.write_line(entry, true).map(|_| ())
+    }
+
+    /// Correct one entry in place by appending a replacement line that keeps
+    /// the caller's `entry.id`: `list()` is latest-wins on duplicate ids, so
+    /// the new line shadows the old one while the file stays append-only.
+    /// The id is written as given, never overwritten.
+    pub fn remember_update(&mut self, entry: MemoryEntry) -> Result<(), MemoryError> {
+        self.write_line(entry, false).map(|_| ())
+    }
+
+    /// Replace the entry `old_id` points at: `new` is appended with a
+    /// store-assigned id (plain [`Memory::append`] semantics), then the old
+    /// row is re-written with `active = false` and `superseded_by` pointing
+    /// at the new id — every other field is kept, so history and graph walks
+    /// survive the swap. Returns the new entry's id.
+    pub fn supersede(&mut self, old_id: u64, new: MemoryEntry) -> Result<u64, MemoryError> {
+        if self.path.is_none() {
+            return Ok(0);
+        }
+
+        // The old row must exist: checked before anything is written, so a
+        // bad id cannot leave a replacement dangling without its target.
+        let Some(mut old) = self.list()?.into_iter().find(|e| e.id == old_id) else {
+            return Err(MemoryError::UnknownId { id: old_id });
+        };
+
+        // New row first, then retire the old one in place (same id written
+        // back; latest-wins in `list()` does the swap on read).
+        let new_id = self.write_line(new, true)?;
+        old.active = false;
+        old.superseded_by = Some(new_id);
+        self.write_line(old, false)?;
+        Ok(new_id)
+    }
+
+    /// Shared write path for [`Memory::append`], [`Memory::remember_update`]
+    /// and [`Memory::supersede`]: exclusive lock across id scan, torn-line
+    /// repair, write and fsync. With `assign_id` the store overwrites the
+    /// caller's id with max+1; otherwise the caller's id is written as given
+    /// and latest-wins in `list()` shadows the older line. Returns the id
+    /// stored.
+    fn write_line(&mut self, mut entry: MemoryEntry, assign_id: bool) -> Result<u64, MemoryError> {
         let Some(path) = self.path.clone() else {
-            return Ok(());
+            return Ok(entry.id);
         };
 
         // O_APPEND + read: writes always land at EOF, reads start at offset 0,
@@ -215,7 +270,9 @@ impl Memory {
             buf.truncate(pos);
         }
 
-        entry.id = max_id(&String::from_utf8_lossy(&buf)) + 1;
+        if assign_id {
+            entry.id = max_id(&String::from_utf8_lossy(&buf)) + 1;
+        }
 
         let mut line = serde_json::to_string(&entry)?;
         line.push('\n');
@@ -224,7 +281,7 @@ impl Memory {
         file.sync_all()?;
 
         // Lock released on drop.
-        Ok(())
+        Ok(entry.id)
     }
 
     /// All entries, id-sorted, latest-wins on duplicate id.
