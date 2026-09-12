@@ -200,3 +200,16 @@ fn contradict_pair_stays_queryable_for_triage() {
         assert!(live < stale, "contradicted claim must not outrank live");
     }
 }
+
+#[test]
+fn recall_hits_carry_the_entry_text() {
+    let graph = MemoryGraph::build(&corpus());
+    let hits = memory::recall::recall(&graph, "web 默认端口", 3);
+    assert!(!hits.is_empty());
+    for h in &hits {
+        assert_eq!(
+            h.text, graph.memories[&h.id].text,
+            "hit text must match the stored entry verbatim"
+        );
+    }
+}

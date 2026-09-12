@@ -196,11 +196,13 @@ impl Memory {
         self.path.is_some()
     }
 
-    /// Append one entry. Exclusive lock held across id assignment, torn-line
-    /// repair, write and fsync, so concurrent writers cannot collide on an id
-    /// nor glue a new entry onto a half-written one.
-    pub fn append(&mut self, entry: MemoryEntry) -> Result<(), MemoryError> {
-        self.write_line(entry, true).map(|_| ())
+    /// Append one entry, returning the id the store assigned it (monotonic
+    /// per store). Exclusive lock held across id assignment, torn-line
+    /// repair, write and fsync, so concurrent writers cannot collide on an
+    /// id nor glue a new entry onto a half-written one. The disabled handle
+    /// is a no-op and returns `0`.
+    pub fn append(&mut self, entry: MemoryEntry) -> Result<u64, MemoryError> {
+        self.write_line(entry, true)
     }
 
     /// Correct one entry in place by appending a replacement line that keeps

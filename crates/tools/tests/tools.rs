@@ -125,7 +125,10 @@ fn defs_expose_schema_and_names() {
             "run_bash",
             "grep",
             "glob",
-            "delete_file"
+            "delete_file",
+            "memory_append",
+            "memory_search",
+            "memory_list"
         ]
     );
     for t in &tools {

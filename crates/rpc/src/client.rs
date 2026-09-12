@@ -252,15 +252,36 @@ impl Client {
     }
 
     /// Spawn omp, read `ready` frame. If `connect_timeout` is set, the
-    /// read is raced against the deadline in a separate thread.
+    /// read is raced against the deadline in a separate thread. A transient
+    /// ETXTBSY on a just-written script is retried (see loop).
     fn spawn_omp(omp_path: &str, connect_timeout: Option<Duration>) -> Result<Self, RpcError> {
-        let mut process = Command::new(omp_path)
-            .args(["--mode", "rpc"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .process_group(0)
-            .spawn()?;
+        // A freshly written/copied executable can transiently fail exec
+        // with ETXTBSY while its image is still under writeback; retry that
+        // one error for ~250ms, surface everything else immediately.
+        let mut last_err = None;
+        let mut process = None;
+        for attempt in 0..6 {
+            match Command::new(omp_path)
+                .args(["--mode", "rpc"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .process_group(0)
+                .spawn()
+            {
+                Ok(p) => {
+                    process = Some(p);
+                    break;
+                }
+                Err(e) if e.raw_os_error() == Some(libc::ETXTBSY) && attempt < 5 => {
+                    last_err = Some(e);
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(e) => return Err(RpcError::Io(e)),
+            }
+        }
+        let mut process = process
+            .ok_or_else(|| RpcError::Io(last_err.expect("a failed attempt stores its err")))?;
 
         let stdin = process
             .stdin

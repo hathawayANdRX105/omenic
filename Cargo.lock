@@ -4465,6 +4465,7 @@ name = "tools"
 version = "0.1.0"
 dependencies = [
  "adaptor",
+ "memory",
  "serde_json",
  "tempfile",
 ]
