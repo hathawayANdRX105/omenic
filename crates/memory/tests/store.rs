@@ -171,3 +171,20 @@ fn empty_store_lists_nothing() {
     let (mem, _tmp) = store();
     assert!(mem.list().unwrap().is_empty());
 }
+
+#[test]
+fn append_returns_the_assigned_id() {
+    let (mut mem, tmp) = store();
+    assert_eq!(mem.append(MemoryEntry::new("one")).unwrap(), 1);
+    assert_eq!(mem.append(MemoryEntry::new("two")).unwrap(), 2);
+    // A fresh handle continues from the stored max.
+    let mut again = Memory::open(tmp.path()).unwrap();
+    assert_eq!(again.append(MemoryEntry::new("three")).unwrap(), 3);
+}
+
+#[test]
+fn disabled_append_returns_zero_without_writing() {
+    let mut mem = Memory::disabled();
+    assert_eq!(mem.append(MemoryEntry::new("x")).unwrap(), 0);
+    assert!(mem.list().unwrap().is_empty());
+}

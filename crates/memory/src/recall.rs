@@ -61,6 +61,9 @@ pub struct RecallHit {
     pub score: f32,
     /// How the entry was reached: direct match, or via which entry/kind.
     pub via: RecallPath,
+    /// The entry's text, cloned for the returned top-k only — consumers
+    /// (tools, injection formatting) need it and must not re-read the store.
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,12 +185,21 @@ pub fn recall(graph: &MemoryGraph, query: &str, k: usize) -> Vec<RecallHit> {
         frontier = next;
     }
 
-    let mut hits: Vec<RecallHit> = scores
+    let mut scored: Vec<(u64, f32, RecallPath)> = scores
         .into_iter()
         .filter(|(id, _)| graph.memories.contains_key(id))
-        .map(|(id, (score, via))| RecallHit { id, score, via })
+        .map(|(id, (score, via))| (id, score, via))
         .collect();
-    hits.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.id.cmp(&b.id)));
-    hits.truncate(k);
-    hits
+    scored.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    scored.truncate(k);
+    // Clone texts only for the returned slice.
+    scored
+        .into_iter()
+        .map(|(id, score, via)| RecallHit {
+            id,
+            score,
+            via,
+            text: graph.memories[&id].text.clone(),
+        })
+        .collect()
 }
