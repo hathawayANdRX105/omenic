@@ -102,6 +102,9 @@ enum Command {
 
 #[derive(Subcommand)]
 enum DaemonCmd {
+    /// Start the daemon if it is not already running (spawns the sibling
+    /// `daemon` binary; override its location with OMENIC_DAEMON_PATH).
+    Start,
     /// Show daemon liveness and process information.
     Status,
     /// Ask the daemon to shut down cleanly.
@@ -249,6 +252,21 @@ enum SessionCmd {
         /// Maximum rows (default 50)
         #[arg(long, default_value_t = 50)]
         limit: u32,
+    },
+    /// Attach to a session: show its summary and recent messages
+    Attach {
+        /// Session id
+        id: String,
+        /// Maximum messages to show (default 50)
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// Resume a session: send a follow-up prompt to the daemon worker
+    Resume {
+        /// Session id
+        id: String,
+        /// Message to send to the worker
+        message: String,
     },
 }
 
@@ -2115,6 +2133,8 @@ fn session_cmd_dispatch(sub: SessionCmd, json: bool) -> Result<u8, String> {
             limit,
             json,
         ),
+        SessionCmd::Attach { id, limit } => session_attach_cmd(&client, &id, limit, json),
+        SessionCmd::Resume { id, message } => session_resume_cmd(&client, &id, &message, json),
     }
 }
 
@@ -2143,6 +2163,78 @@ fn session_list_cmd(
             row.id, row.title, row.message_count, row.updated_at_ms
         );
     }
+    Ok(0)
+}
+
+/// `oi session attach <id> [--limit N]` — session summary + recent messages.
+fn session_attach_cmd(
+    client: &daemon::DaemonClient,
+    id: &str,
+    limit: u32,
+    json: bool,
+) -> Result<u8, String> {
+    let sess = client
+        .session_get(id)
+        .map_err(|e| format!("daemon error: {e}"))?;
+    let Some(sess) = sess else {
+        return Err(format!("session not found: {id}"));
+    };
+    let msgs = client
+        .session_load_messages(id, limit)
+        .map_err(|e| format!("daemon error: {e}"))?;
+    if json {
+        print_json(&serde_json::json!({ "session": sess, "messages": msgs }));
+        return Ok(0);
+    }
+    println!(
+        "session {} | {} | {} msgs | updated {}",
+        sess.id, sess.title, sess.message_count, sess.updated_at_ms
+    );
+    for m in &msgs {
+        let text: String = m.text.chars().take(120).collect();
+        println!("  #{} [{:?}] {}", m.seq, m.role, text);
+    }
+    Ok(0)
+}
+
+/// `oi session resume <id> <message>` — route a follow-up prompt to the
+/// daemon worker. The run is recorded in the ledger (correlatable across
+/// reconnects via run.list); a failed worker spawn surfaces as an error and
+/// the ledger keeps the `spawn_failed` record.
+fn session_resume_cmd(
+    client: &daemon::DaemonClient,
+    id: &str,
+    message: &str,
+    json: bool,
+) -> Result<u8, String> {
+    if client
+        .session_get(id)
+        .map_err(|e| format!("daemon error: {e}"))?
+        .is_none()
+    {
+        return Err(format!("session not found: {id}"));
+    }
+    let run_id = format!(
+        "r-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+    let result: serde_json::Value = client
+        .call(
+            daemon::Command::WorkerPrompt,
+            serde_json::json!({
+                "message": message,
+                "session_id": id,
+                "run_id": run_id,
+            }),
+        )
+        .map_err(|e| format!("daemon error: {e}"))?;
+    if !json {
+        println!("resumed session {id} (run {run_id})");
+    }
+    print_json(&result);
     Ok(0)
 }
 
@@ -2251,6 +2343,58 @@ fn session_query_cmd(
 fn daemon_cmd_dispatch(sub: DaemonCmd, json: bool) -> Result<u8, String> {
     let client = daemon_client_from_config()?;
     match sub {
+        DaemonCmd::Start => {
+            if client.ping().unwrap_or(false) {
+                let info = client.info().map_err(|e| format!("daemon error: {e}"))?;
+                if json {
+                    print_json(&serde_json::json!({
+                        "running": true, "already_running": true, "pid": info.pid,
+                    }));
+                } else {
+                    println!("daemon already running (pid {})", info.pid);
+                }
+                return Ok(0);
+            }
+            // Locate the daemon binary: explicit override first, then the
+            // sibling of this executable (workspace layout: target/debug/{oi,daemon}).
+            let bin = match std::env::var_os("OMENIC_DAEMON_PATH") {
+                Some(p) => std::path::PathBuf::from(p),
+                None => {
+                    let exe = std::env::current_exe()
+                        .map_err(|e| format!("cannot resolve own path: {e}"))?;
+                    exe.parent()
+                        .map(|d| d.join("daemon"))
+                        .ok_or_else(|| "no executable directory".to_string())?
+                }
+            };
+            if !bin.is_file() {
+                return Err(format!(
+                    "daemon binary not found at {} (set OMENIC_DAEMON_PATH to override)",
+                    bin.display()
+                ));
+            }
+            std::process::Command::new(&bin)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .map_err(|e| format!("failed to spawn {}: {e}", bin.display()))?;
+            for _ in 0..250 {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                if client.ping().unwrap_or(false) {
+                    let info = client.info().map_err(|e| format!("daemon error: {e}"))?;
+                    if json {
+                        print_json(&serde_json::json!({
+                            "running": true, "started": true, "pid": info.pid,
+                        }));
+                    } else {
+                        println!("daemon started (pid {})", info.pid);
+                    }
+                    return Ok(0);
+                }
+            }
+            Err("daemon did not come up within 5s".to_string())
+        }
         DaemonCmd::Status => {
             let info = client.info().map_err(|e| format!("daemon error: {e}"))?;
             if json {
