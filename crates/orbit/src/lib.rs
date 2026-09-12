@@ -1,12 +1,15 @@
 //! Agent loop: stream → tool_calls → execute → backfill → repeat.
 //!
-//! Port of pi-from-scratch `src/agent.ts`. The four invariants:
+//! Port of pi-from-scratch `src/agent.ts`, aligned with oh-my-pi's loop
+//! semantics (pure loop + host config). The invariants:
 //! 1. Every tool_call gets a matching tool_result (API hard constraint).
 //! 2. max_tokens truncation → tools NOT executed; error results backfilled
 //!    so the model resends complete args.
 //! 3. Abort → pending tool_calls dropped and the assistant message recorded
 //!    without them, so a restored session never trips the API.
 //! 4. Compaction failure → original context kept untouched.
+//! 5. The loop never trusts the model to stop: `LoopConfig::max_turns`
+//!    bounds LLM round-trips and compaction is a host-provided policy.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,9 +25,9 @@ use tools::{Tool, def};
 /// it from provider metadata once one exists.
 const COMPACT_CHAR_BUDGET: usize = 120_000;
 /// Characters of the newest messages kept verbatim during compaction.
-const KEEP_RECENT_CHARS: usize = 30_000;
+pub const KEEP_RECENT_CHARS: usize = 30_000;
 /// Newest messages always kept verbatim, even when oversized on their own.
-const KEEP_RECENT_MIN: usize = 2;
+pub const KEEP_RECENT_MIN: usize = 2;
 
 /// LLM backend abstraction: the only seam between loop and network,
 /// so invariants are testable offline with scripted streams.
@@ -72,12 +75,22 @@ impl LlmBackend for HttpLlm {
 }
 
 /// Events emitted by the agent loop, for UI/evidence consumption.
+/// Turn shape mirrors oh-my-pi's AgentEvent (agent-loop.ts): per-LLM-round
+/// `TurnStart`, streamed text deltas, tool dispatch start/end, turn end.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AgentEvent {
+    /// One LLM round-trip begins (before the stream, after maintenance).
+    TurnStart,
     AssistantText {
         delta: String,
     },
+    /// Tool call parsed from the stream (not yet executed).
     ToolCall(ToolCallSpec),
+    /// Tool dispatch begins (OMP `tool_execution_start`).
+    ToolStart {
+        id: String,
+        name: String,
+    },
     ToolResult {
         id: String,
         name: String,
@@ -88,7 +101,7 @@ pub enum AgentEvent {
     },
 }
 
-/// Loop-level stop reasons (`error` added on top of the stream set).
+/// Loop-level stop reasons (`error`/`max_turns` added on top of the stream set).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnStop {
@@ -96,6 +109,43 @@ pub enum TurnStop {
     MaxTokens,
     Aborted,
     Error,
+    /// [`LoopConfig::max_turns`] LLM round-trips exhausted.
+    MaxTurns,
+}
+
+/// Host context-maintenance hook (compaction etc.), run before each model call.
+pub type MaintainFn<'a> = &'a dyn Fn(&dyn LlmBackend, &Model, &mut Context, &AtomicBool);
+
+/// Host-provided loop configuration, the omp `AgentLoopConfig` seam: the
+/// loop stays pure — every policy knob arrives through this struct, and the
+/// loop imports nothing from app layers.
+pub struct LoopConfig<'a> {
+    /// Evidence log; assistant/tool_result/summary messages are appended
+    /// as the loop produces them.
+    pub context_log: Option<&'a ContextLog>,
+    /// Hard cap on LLM round-trips per run. When exceeded the loop emits
+    /// `TurnEnd { MaxTurns }` and returns instead of trusting the model to
+    /// stop. Default [`DEFAULT_MAX_TURNS`].
+    pub max_turns: usize,
+    /// Context maintenance run before each model call. Compaction lives
+    /// here as a host policy (omp `SessionMaintenance`), not inside the
+    /// loop; pass `None` for hosts that manage context themselves.
+    pub maintain: Option<MaintainFn<'a>>,
+}
+
+/// Conservative turn ceiling for callers that don't set one. A real
+/// tool-loop rarely exceeds ~20 round-trips; 64 leaves headroom without
+/// letting a runaway model burn a provider budget silently.
+pub const DEFAULT_MAX_TURNS: usize = 64;
+
+impl Default for LoopConfig<'_> {
+    fn default() -> Self {
+        LoopConfig {
+            context_log: None,
+            max_turns: DEFAULT_MAX_TURNS,
+            maintain: None,
+        }
+    }
 }
 
 // ===== context JSONL persistence =====
@@ -189,7 +239,7 @@ impl ContextLog {
 /// block content through its JSON encoding (what the wire actually carries).
 /// ponytail: role/framing overhead uncounted — a rounding error next to
 /// message bodies.
-fn message_chars(m: &Message) -> usize {
+pub fn message_chars(m: &Message) -> usize {
     match &m.content {
         adaptor::Content::Text(s) => s.len(),
         blocks => serde_json::to_string(blocks).unwrap_or_default().len(),
@@ -219,7 +269,7 @@ fn is_tool_result_only(m: &Message) -> bool {
 /// First index to keep verbatim: walks newest → oldest spending `budget`
 /// characters, always keeping at least [`KEEP_RECENT_MIN`] messages. `0`
 /// means the whole context fits the recent window — nothing to compact.
-fn select_compaction_cut(messages: &[Message], budget: usize) -> usize {
+pub fn select_compaction_cut(messages: &[Message], budget: usize) -> usize {
     let mut used = 0usize;
     let mut cut = messages.len();
     for (i, m) in messages.iter().enumerate().rev() {
@@ -241,13 +291,20 @@ fn select_compaction_cut(messages: &[Message], budget: usize) -> usize {
     cut
 }
 
-/// Summarize old messages when the context grows too large.
+/// Summarize old messages when the context grows too large. The default
+/// host policy for [`LoopConfig::maintain`]; hosts may substitute their own.
 /// Invariant 4: on any failure the context is left untouched.
-fn compact_context(
+///
+/// Traceability (EC-7): the injected summary goes through `context_log` too,
+/// so a replay of the log shows the full pre-compaction conversation (every
+/// original message was logged as it was appended) followed by the summary
+/// marker in its actual position.
+pub fn compact_context(
     backend: &dyn LlmBackend,
     model: &Model,
     context: &mut Context,
     signal: &AtomicBool,
+    context_log: Option<&ContextLog>,
 ) {
     if signal.load(Ordering::Relaxed) || context_chars(context) < COMPACT_CHAR_BUDGET {
         return;
@@ -317,7 +374,11 @@ fn compact_context(
         return; // invariant 4: keep original messages over a broken summary
     }
 
-    let mut replaced = vec![Message::user_text(format!("[context summary]\n{summary}"))];
+    let summary_msg = Message::user_text(format!("[context summary]\n{summary}"));
+    if let Some(log) = context_log {
+        let _ = log.append(&summary_msg);
+    }
+    let mut replaced = vec![summary_msg];
     replaced.extend(recent);
     context.messages = replaced;
 }
@@ -347,13 +408,16 @@ fn record(context: &mut Context, log: Option<&ContextLog>, msg: Message) {
 
 /// Run the agent loop, forwarding every event to `emit` as it happens
 /// (live text deltas, tool calls/results). Returns when the turn ends.
+///
+/// The LLM round-trip is driven through `stream_cb` — deltas are forwarded
+/// the moment the backend produces them, not after the whole turn buffers.
 pub fn run_agent_streaming(
     backend: &dyn LlmBackend,
     model: &Model,
     context: &mut Context,
     tools: &[Box<dyn Tool>],
     signal: &AtomicBool,
-    context_log: Option<&ContextLog>,
+    config: LoopConfig<'_>,
     emit: &mut dyn FnMut(AgentEvent),
 ) {
     let tool_defs: Vec<ToolDef> = tools.iter().map(|t| def(t.as_ref())).collect();
@@ -370,37 +434,51 @@ pub fn run_agent_streaming(
         context.system_prompt = Some(prompts::agents::TASK.to_string());
     }
 
+    let mut turns_used = 0usize;
     loop {
-        // 0. Compact oversized contexts before the next call.
-        compact_context(backend, model, context, signal);
+        turns_used += 1;
+        if turns_used > config.max_turns {
+            emit(AgentEvent::TurnEnd {
+                stop_reason: TurnStop::MaxTurns,
+            });
+            return;
+        }
 
-        // 1. Stream one LLM turn, collecting text + tool calls.
+        // 0. Host context maintenance before the next call (compaction etc.).
+        if let Some(maintain) = config.maintain {
+            maintain(backend, model, context, signal);
+        }
+        emit(AgentEvent::TurnStart);
+
+        // 1. Stream one LLM turn, forwarding deltas live as they arrive.
         let mut text = String::new();
         let mut stop_reason = StopReason::EndTurn;
         let mut tool_calls: Vec<ToolCallSpec> = Vec::new();
+        let mut stream_failed = false;
 
-        for ev in backend.stream(model, context, &tool_defs, signal) {
-            match ev {
-                StreamEvent::TextDelta(delta) => {
-                    text.push_str(&delta);
-                    emit(AgentEvent::AssistantText { delta });
-                }
-                StreamEvent::ToolCall(tc) => {
-                    emit(AgentEvent::ToolCall(tc.clone()));
-                    tool_calls.push(tc);
-                }
-                StreamEvent::Done { stop_reason: r } => stop_reason = r,
-                StreamEvent::Error(e) => {
-                    // Invariant 3 analog: record assistant text without dangling calls.
-                    let msg = Message::assistant(text, &[]);
-                    record(context, context_log, msg);
-                    emit(AgentEvent::TurnEnd {
-                        stop_reason: TurnStop::Error,
-                    });
-                    let _ = e;
-                    return;
-                }
+        backend.stream_cb(model, context, &tool_defs, signal, &mut |ev| match ev {
+            StreamEvent::TextDelta(delta) => {
+                text.push_str(delta);
+                emit(AgentEvent::AssistantText {
+                    delta: delta.clone(),
+                });
             }
+            StreamEvent::ToolCall(tc) => {
+                emit(AgentEvent::ToolCall(tc.clone()));
+                tool_calls.push(tc.clone());
+            }
+            StreamEvent::Done { stop_reason: r } => stop_reason = *r,
+            StreamEvent::Error(_) => stream_failed = true,
+        });
+
+        if stream_failed {
+            // Invariant 3 analog: record assistant text without dangling calls.
+            let msg = Message::assistant(text, &[]);
+            record(context, config.context_log, msg);
+            emit(AgentEvent::TurnEnd {
+                stop_reason: TurnStop::Error,
+            });
+            return;
         }
 
         // 3. Abort mid-stream (invariant 3): record the assistant message
@@ -408,7 +486,7 @@ pub fn run_agent_streaming(
         // session must never trip the API's pairing constraint.
         if stop_reason == StopReason::Aborted {
             let msg = Message::assistant(text, &[]);
-            record(context, context_log, msg);
+            record(context, config.context_log, msg);
             emit(AgentEvent::TurnEnd {
                 stop_reason: TurnStop::Aborted,
             });
@@ -417,7 +495,7 @@ pub fn run_agent_streaming(
 
         // 2. Backfill the assistant reply.
         let assistant_msg = Message::assistant(text, &tool_calls);
-        record(context, context_log, assistant_msg);
+        record(context, config.context_log, assistant_msg);
 
         // 4. Truncated args must not execute (invariant 2): backfill errors instead.
         if stop_reason == StopReason::MaxTokens && !tool_calls.is_empty() {
@@ -441,7 +519,7 @@ pub fn run_agent_streaming(
                 });
             }
             let msg = Message::tool_results(&results);
-            record(context, context_log, msg);
+            record(context, config.context_log, msg);
             continue;
         }
 
@@ -460,6 +538,10 @@ pub fn run_agent_streaming(
             if signal.load(Ordering::Relaxed) {
                 break;
             }
+            emit(AgentEvent::ToolStart {
+                id: tc.id.clone(),
+                name: tc.name.clone(),
+            });
             let result = match find_tool(&tc.name) {
                 None => Err(tools::ToolError::Message(format!(
                     "tool \"{}\" not found",
@@ -490,12 +572,14 @@ pub fn run_agent_streaming(
         }
 
         let msg = Message::tool_results(&results);
-        record(context, context_log, msg);
+        record(context, config.context_log, msg);
     }
 }
 
 /// Run the agent loop and collect all events. Convenience wrapper over
-/// [`run_agent_streaming`] for callers without a live consumer.
+/// [`run_agent_streaming`] for callers without a live consumer. Uses the
+/// default compaction policy; hosts with custom maintenance should call
+/// [`run_agent_streaming`] directly.
 pub fn run_agent(
     backend: &dyn LlmBackend,
     model: &Model,
@@ -505,592 +589,23 @@ pub fn run_agent(
     context_log: Option<&ContextLog>,
 ) -> Vec<AgentEvent> {
     let mut events = Vec::new();
+    let maintain = |b: &dyn LlmBackend, m: &Model, c: &mut Context, s: &AtomicBool| {
+        compact_context(b, m, c, s, context_log)
+    };
     run_agent_streaming(
         backend,
         model,
         context,
         tools,
         signal,
-        context_log,
+        LoopConfig {
+            context_log,
+            maintain: Some(&maintain),
+            ..LoopConfig::default()
+        },
         &mut |e| {
             events.push(e);
         },
     );
     events
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use adaptor::Content;
-    use serde_json::json;
-
-    fn model() -> Model {
-        Model {
-            api_key: "k".into(),
-            model: "test".into(),
-            base_url: None,
-            max_tokens: None,
-        }
-    }
-
-    fn sig() -> AtomicBool {
-        AtomicBool::new(false)
-    }
-
-    fn call(id: &str, name: &str) -> StreamEvent {
-        StreamEvent::ToolCall(ToolCallSpec {
-            id: id.into(),
-            name: name.into(),
-            args: json!({}),
-        })
-    }
-
-    struct EchoTool;
-
-    impl Tool for EchoTool {
-        fn name(&self) -> &'static str {
-            "echo_tool"
-        }
-        fn description(&self) -> String {
-            "echoes".into()
-        }
-        fn parameters(&self) -> serde_json::Value {
-            json!({"type": "object"})
-        }
-        fn execute(
-            &self,
-            _args: &serde_json::Value,
-            signal: &AtomicBool,
-        ) -> Result<String, tools::ToolError> {
-            if signal.load(Ordering::Relaxed) {
-                return Ok("aborted".into());
-            }
-            Ok("echo!".into())
-        }
-    }
-
-    /// Trait takes `&self`; tests mutate through RefCell.
-    struct Shared(std::cell::RefCell<Scripted>);
-    impl LlmBackend for Shared {
-        fn stream_cb(
-            &self,
-            _model: &Model,
-            context: &Context,
-            _tools: &[ToolDef],
-            _signal: &AtomicBool,
-            emit: &mut dyn FnMut(&StreamEvent),
-        ) {
-            let s = &mut *self.0.borrow_mut();
-            s.seen_contexts.push(context.clone());
-            let t = match s.turns.get(s.calls_made) {
-                Some(t) => t.clone(),
-                // Turns exhausted: end cleanly so the loop terminates.
-                None => vec![StreamEvent::Done {
-                    stop_reason: StopReason::EndTurn,
-                }],
-            };
-            s.calls_made += 1;
-            for ev in &t {
-                emit(ev);
-            }
-        }
-    }
-
-    #[test]
-    fn plain_answer_ends_loop() {
-        let backend = Shared(std::cell::RefCell::new(Scripted::new(vec![vec![
-            StreamEvent::TextDelta("hello ".into()),
-            StreamEvent::TextDelta("world".into()),
-            StreamEvent::Done {
-                stop_reason: StopReason::EndTurn,
-            },
-        ]])));
-        let mut ctx = Context::default();
-        ctx.system_prompt = Some("sys".into());
-        let events = run_agent(&backend, &model(), &mut ctx, &[], &sig(), None);
-
-        assert_eq!(
-            events,
-            vec![
-                AgentEvent::AssistantText {
-                    delta: "hello ".into()
-                },
-                AgentEvent::AssistantText {
-                    delta: "world".into()
-                },
-                AgentEvent::TurnEnd {
-                    stop_reason: TurnStop::EndTurn
-                },
-            ]
-        );
-        assert_eq!(ctx.messages.len(), 1);
-        assert_eq!(
-            ctx.messages[0],
-            Message::assistant("hello world".into(), &[])
-        );
-    }
-
-    #[test]
-    fn tool_call_executes_and_result_is_backfilled() {
-        let backend = Shared(std::cell::RefCell::new(Scripted::new(vec![
-            vec![
-                call("t1", "echo_tool"),
-                StreamEvent::Done {
-                    stop_reason: StopReason::ToolUse,
-                },
-            ],
-            vec![
-                StreamEvent::TextDelta("done".into()),
-                StreamEvent::Done {
-                    stop_reason: StopReason::EndTurn,
-                },
-            ],
-        ])));
-        let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
-        let mut ctx = Context::default();
-        let events = run_agent(&backend, &model(), &mut ctx, &tools, &sig(), None);
-
-        assert!(events.contains(&AgentEvent::ToolResult {
-            id: "t1".into(),
-            name: "echo_tool".into(),
-            result: "echo!".into(),
-        }));
-        // assistant(tool_use) then user(tool_result) then assistant(final).
-        assert_eq!(ctx.messages.len(), 3);
-        assert_eq!(
-            ctx.messages[1],
-            Message::tool_results(&[("t1".into(), "echo!".into())])
-        );
-    }
-
-    #[test]
-    fn invariant_2_max_tokens_truncation_skips_execution() {
-        let backend = Shared(std::cell::RefCell::new(Scripted::new(vec![
-            vec![
-                call("t1", "echo_tool"),
-                StreamEvent::Done {
-                    stop_reason: StopReason::MaxTokens,
-                },
-            ],
-            // Retry turn succeeds.
-            vec![StreamEvent::Done {
-                stop_reason: StopReason::EndTurn,
-            }],
-        ])));
-        let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
-        let mut ctx = Context::default();
-        let events = run_agent(&backend, &model(), &mut ctx, &tools, &sig(), None);
-
-        assert!(events.contains(&AgentEvent::ToolResult {
-            id: "t1".into(),
-            name: "echo_tool".into(),
-            result: "error: output truncated by max_tokens, tool \"echo_tool\" args may be incomplete.".into(),
-        }));
-        // The tool never executed; the retry saw exactly one backfilled user message.
-        assert_eq!(ctx.messages.len(), 3);
-        assert_eq!(
-            ctx.messages[1],
-            Message::tool_results(&[(
-                "t1".into(),
-                "error: output truncated by max_tokens, tool \"echo_tool\" args may be incomplete."
-                    .into()
-            )])
-        );
-    }
-
-    #[test]
-    fn invariant_3_abort_drops_pending_tool_calls() {
-        let backend = Shared(std::cell::RefCell::new(Scripted::new(vec![vec![
-            StreamEvent::TextDelta("partial".into()),
-            call("t1", "echo_tool"),
-            StreamEvent::Done {
-                stop_reason: StopReason::Aborted,
-            },
-        ]])));
-        let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
-        let mut ctx = Context::default();
-        let events = run_agent(&backend, &model(), &mut ctx, &tools, &sig(), None);
-
-        assert_eq!(
-            events.last(),
-            Some(&AgentEvent::TurnEnd {
-                stop_reason: TurnStop::Aborted
-            })
-        );
-        // Assistant message recorded WITHOUT the tool_use block.
-        assert_eq!(ctx.messages.len(), 1);
-        assert_eq!(ctx.messages[0], Message::assistant("partial".into(), &[]));
-    }
-
-    #[test]
-    fn invariant_1_abort_mid_execution_still_backfills_every_result() {
-        /// First execute succeeds and flips the shared signal, so the loop
-        /// breaks before reaching t2 — t2 must still get a result.
-        struct FlipOnSecond<'a>(&'a AtomicBool, AtomicBool);
-        impl Tool for FlipOnSecond<'_> {
-            fn name(&self) -> &'static str {
-                "echo_tool"
-            }
-            fn description(&self) -> String {
-                "echoes".into()
-            }
-            fn parameters(&self) -> serde_json::Value {
-                json!({"type": "object"})
-            }
-            fn execute(
-                &self,
-                _args: &serde_json::Value,
-                _signal: &AtomicBool,
-            ) -> Result<String, tools::ToolError> {
-                let _ = self.1.load(Ordering::Relaxed);
-                self.0.store(true, Ordering::Relaxed);
-                Ok("echo!".into())
-            }
-        }
-
-        let backend = Shared(std::cell::RefCell::new(Scripted::new(vec![vec![
-            call("t1", "echo_tool"),
-            call("t2", "echo_tool"),
-            StreamEvent::Done {
-                stop_reason: StopReason::ToolUse,
-            },
-        ]])));
-        // Leak so the tool satisfies Box<dyn Tool>'s 'static bound.
-        let signal: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
-        let tools: Vec<Box<dyn Tool>> =
-            vec![Box::new(FlipOnSecond(signal, AtomicBool::new(false)))];
-        let mut ctx = Context::default();
-        let events = run_agent(&backend, &model(), &mut ctx, &tools, &signal, None);
-
-        let results: Vec<_> = events
-            .iter()
-            .filter_map(|e| match e {
-                AgentEvent::ToolResult { id, result, .. } => Some((id.as_str(), result.as_str())),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(results, [("t1", "echo!"), ("t2", "error: aborted")]);
-    }
-
-    /// A user message of exactly 1000 chars, tagged by index so a retained
-    /// window is identifiable. 1000 divides the char budgets evenly, which
-    /// makes every cut in these tests exact rather than approximate.
-    fn filler(tag: usize) -> Message {
-        Message::user_text(format!("{tag:04}{}", "x".repeat(996)))
-    }
-
-    fn bulk(n: usize) -> Vec<Message> {
-        (0..n).map(filler).collect()
-    }
-
-    #[test]
-    fn compaction_cut_spends_the_recent_char_budget() {
-        let msgs = bulk(200);
-        // 1000 chars per message: a 30_000-char window is the newest 30.
-        assert_eq!(select_compaction_cut(&msgs, 30_000), 170);
-        // 2_500 buys two whole messages; the third would overflow.
-        assert_eq!(select_compaction_cut(&msgs, 2_500), 198);
-        // Whole context fits the window → nothing eligible to compact.
-        assert_eq!(select_compaction_cut(&msgs, 1_000_000), 0);
-        // Newest messages larger than the budget still keep the floor.
-        assert_eq!(
-            select_compaction_cut(&msgs, 0),
-            msgs.len() - KEEP_RECENT_MIN
-        );
-        // Degenerate inputs stay no-ops instead of panicking.
-        assert_eq!(select_compaction_cut(&[], 30_000), 0);
-        assert_eq!(select_compaction_cut(&msgs[..1], 0), 0);
-    }
-
-    #[test]
-    fn compaction_cut_skips_orphan_tool_results() {
-        // Invariant 1: a kept window may not start on tool_results whose
-        // tool_use blocks are about to be summarized away.
-        let calls = [ToolCallSpec {
-            id: "t1".into(),
-            name: "echo_tool".into(),
-            args: json!({}),
-        }];
-        let msgs = vec![
-            filler(0),
-            Message::assistant("thinking".into(), &calls),
-            Message::tool_results(&[("t1".into(), "done".into())]),
-            filler(3),
-            filler(4),
-        ];
-        // Budget buys the two fillers plus exactly the tool_results message,
-        // so the raw cut lands on index 2 and must advance to 3.
-        let budget = 2_000 + message_chars(&msgs[2]);
-        assert_eq!(select_compaction_cut(&msgs, budget), 3);
-    }
-
-    #[test]
-    fn compaction_skipped_below_char_threshold() {
-        let backend = Shared(std::cell::RefCell::new(Scripted::new(vec![vec![
-            StreamEvent::TextDelta("hi".into()),
-            StreamEvent::Done {
-                stop_reason: StopReason::EndTurn,
-            },
-        ]])));
-        // 100 messages = 100_000 chars: far past the old 50-message trigger,
-        // still under the char budget → no summary call at all.
-        // Caller-provided prompt must win — see run_agent_streaming contract:
-        // only fills system_prompt when caller left it None.
-        let caller_prompt = "test caller prompt";
-        let mut ctx = Context {
-            system_prompt: Some(caller_prompt.into()),
-            messages: bulk(100),
-        };
-        let before = ctx.messages.clone();
-        let _ = run_agent(&backend, &model(), &mut ctx, &[], &sig(), None);
-
-        let seen = backend.0.borrow();
-        assert_eq!(seen.seen_contexts.len(), 1, "summary stream was issued");
-        assert_eq!(
-            seen.seen_contexts[0].system_prompt.as_deref(),
-            Some(caller_prompt),
-            "caller-provided prompt must not be overwritten by run_agent_streaming"
-        );
-        assert_eq!(ctx.messages.len(), before.len() + 1);
-        assert!(ctx.messages.iter().take(before.len()).eq(before.iter()));
-    }
-
-    #[test]
-    fn invariant_4_compaction_failure_keeps_context() {
-        // First call = oversized context triggers compaction which errors;
-        // second call = the normal turn must see ALL original messages intact.
-        let turns = vec![
-            vec![StreamEvent::Error("summary backend down".into())],
-            vec![
-                StreamEvent::TextDelta("ok".into()),
-                StreamEvent::Done {
-                    stop_reason: StopReason::EndTurn,
-                },
-            ],
-        ];
-        let backend = Shared(std::cell::RefCell::new(Scripted::new(turns)));
-
-        // 200_000 chars: above the char budget.
-        let mut ctx = Context {
-            system_prompt: None,
-            messages: bulk(200),
-        };
-        let before = ctx.clone();
-        let _ = run_agent(&backend, &model(), &mut ctx, &[], &sig(), None);
-
-        // Compaction failed → no summary message injected; originals intact.
-        assert_eq!(ctx.messages.len(), before.messages.len() + 1); // + final assistant msg
-        assert!(ctx.messages.iter().take(200).eq(before.messages.iter()));
-    }
-    #[test]
-    fn run_agent_injects_default_system_prompt_when_caller_leaves_none() {
-        // run_agent_streaming contract: when caller doesn't set
-        // `Context.system_prompt`, orbit fills it with the main-agent
-        // profile lifted from `crates/prompts/prompts/agents/main.md`
-        // (oh-my-pi `prompts/agents/task.md`). The whole file —
-        // frontmatter included — is the prompt; no concatenation.
-        let backend = Shared(std::cell::RefCell::new(Scripted::new(vec![vec![
-            StreamEvent::TextDelta("hi".into()),
-            StreamEvent::Done {
-                stop_reason: StopReason::EndTurn,
-            },
-        ]])));
-        let mut ctx = Context {
-            system_prompt: None,
-            messages: vec![Message::user_text("hi")],
-        };
-        let tools: Vec<Box<dyn tools::Tool>> = vec![Box::new(tools::read::ReadFile)];
-        let _ = run_agent_streaming(
-            &backend,
-            &model(),
-            &mut ctx,
-            &tools,
-            &sig(),
-            None,
-            &mut |_| {},
-        );
-
-        let seen = backend.0.borrow();
-        assert_eq!(seen.seen_contexts.len(), 1);
-        let prompt = seen.seen_contexts[0]
-            .system_prompt
-            .as_deref()
-            .expect("system_prompt should be filled when caller left None");
-        // omp-style profile: task.md has no YAML frontmatter (only
-        // scout/librarian/reviewer/etc. do). The signal that this is
-        // a real role profile is the `<directives>` block, which
-        // task.md ships.
-        assert!(prompt.starts_with("Worker agent:"));
-        assert!(prompt.contains("<directives>"));
-    }
-    #[test]
-    fn compaction_broken_summary_leaves_context_identical() {
-        // Error, abort, and empty-summary paths are each a pure no-op.
-        let failures = vec![
-            vec![StreamEvent::Error("backend down".into())],
-            vec![
-                StreamEvent::TextDelta("partial".into()),
-                StreamEvent::Done {
-                    stop_reason: StopReason::Aborted,
-                },
-            ],
-            vec![StreamEvent::Done {
-                stop_reason: StopReason::EndTurn,
-            }],
-        ];
-        for turn in failures {
-            let backend = Shared(std::cell::RefCell::new(Scripted::new(vec![turn])));
-            let mut ctx = Context {
-                system_prompt: Some("sys".into()),
-                messages: bulk(200),
-            };
-            let before = ctx.clone();
-            compact_context(&backend, &model(), &mut ctx, &sig());
-            assert_eq!(ctx, before);
-        }
-    }
-
-    #[test]
-    fn compaction_keeps_newest_window_on_success() {
-        let turns = vec![
-            vec![
-                StreamEvent::TextDelta("the gist".into()),
-                StreamEvent::Done {
-                    stop_reason: StopReason::EndTurn,
-                },
-            ],
-            vec![StreamEvent::Done {
-                stop_reason: StopReason::EndTurn,
-            }],
-        ];
-        let backend = Shared(std::cell::RefCell::new(Scripted::new(turns)));
-
-        let mut ctx = Context {
-            system_prompt: None,
-            messages: bulk(200),
-        };
-        let before = ctx.messages.clone();
-        let _ = run_agent(&backend, &model(), &mut ctx, &[], &sig(), None);
-
-        // [summary] + newest window + final assistant msg.
-        let kept = KEEP_RECENT_CHARS / 1000;
-        assert_eq!(ctx.messages.len(), 1 + kept + 1);
-        assert_eq!(
-            ctx.messages[0],
-            Message::user_text("[context summary]\nthe gist")
-        );
-        assert!(
-            ctx.messages[1..=kept]
-                .iter()
-                .eq(before[200 - kept..].iter())
-        );
-
-        // The summary request carried the old prefix and none of the window.
-        let seen = backend.0.borrow();
-        let sent = match &seen.seen_contexts[0].messages[0].content {
-            Content::Text(s) => s.as_str(),
-            other => panic!("summary request should be plain text: {other:?}"),
-        };
-        assert!(sent.contains("0169"), "oldest prefix must be summarized");
-        assert!(!sent.contains("0170"), "kept window must not be summarized");
-    }
-
-    #[test]
-    fn compaction_skipped_when_kept_window_alone_exceeds_budget() {
-        // Two newest messages of 200_000 chars each: KEEP_RECENT_MIN pins them
-        // in place, so no prefix summary can bring the context under budget.
-        // Compacting anyway would summarize the previous summary every turn.
-        let backend = Shared(std::cell::RefCell::new(Scripted::new(vec![vec![
-            StreamEvent::TextDelta("ok".into()),
-            StreamEvent::Done {
-                stop_reason: StopReason::EndTurn,
-            },
-        ]])));
-        let mut msgs = bulk(5);
-        msgs.push(Message::user_text("A".repeat(200_000)));
-        msgs.push(Message::user_text("B".repeat(200_000)));
-        // The cut is nonzero — the guard, not `keep_at == 0`, must stop this.
-        assert_eq!(
-            select_compaction_cut(&msgs, KEEP_RECENT_CHARS),
-            msgs.len() - KEEP_RECENT_MIN
-        );
-
-        let mut ctx = Context {
-            system_prompt: None,
-            messages: msgs,
-        };
-        let before = ctx.messages.clone();
-        let _ = run_agent(&backend, &model(), &mut ctx, &[], &sig(), None);
-
-        // Exactly one backend call: the regular turn, never a summary request.
-        let seen = backend.0.borrow();
-        assert_eq!(seen.seen_contexts.len(), 1, "summary stream was issued");
-        assert_eq!(seen.seen_contexts[0].messages, before);
-        // Originals untouched; only the final assistant reply was appended.
-        assert_eq!(ctx.messages.len(), before.len() + 1);
-        assert!(ctx.messages.iter().take(before.len()).eq(before.iter()));
-    }
-
-    #[test]
-    fn compaction_skipped_when_system_prompt_alone_exceeds_budget() {
-        let backend = Shared(std::cell::RefCell::new(Scripted::new(vec![vec![
-            StreamEvent::TextDelta("summary should not be requested".into()),
-            StreamEvent::Done {
-                stop_reason: StopReason::EndTurn,
-            },
-        ]])));
-        let mut ctx = Context {
-            system_prompt: Some("s".repeat(110_000)),
-            messages: vec![Message::user_text("m".repeat(25_000))],
-        };
-        let before = ctx.messages.clone();
-
-        compact_context(&backend, &model(), &mut ctx, &sig());
-
-        assert!(backend.0.borrow().seen_contexts.is_empty());
-        assert_eq!(ctx.messages, before);
-    }
-
-    /// Scripted backend replays canned event lists per call.
-    struct Scripted {
-        turns: Vec<Vec<StreamEvent>>,
-        calls_made: usize,
-        seen_contexts: Vec<Context>,
-    }
-
-    impl Scripted {
-        fn new(turns: Vec<Vec<StreamEvent>>) -> Self {
-            Scripted {
-                turns,
-                calls_made: 0,
-                seen_contexts: vec![],
-            }
-        }
-    }
-
-    #[test]
-    fn context_log_round_trip() {
-        let dir = tempfile::tempdir().unwrap();
-        let log_path = dir.path().join("sub/ctx.jsonl");
-        let backend = Shared(std::cell::RefCell::new(Scripted::new(vec![
-            vec![
-                call("t1", "echo_tool"),
-                StreamEvent::Done {
-                    stop_reason: StopReason::ToolUse,
-                },
-            ],
-            vec![StreamEvent::Done {
-                stop_reason: StopReason::EndTurn,
-            }],
-        ])));
-        let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
-        let mut ctx = Context::default();
-        let log = ContextLog::new(&log_path);
-        let _ = run_agent(&backend, &model(), &mut ctx, &tools, &sig(), Some(&log));
-
-        let replayed = ContextLog::load(&log_path).unwrap();
-        assert_eq!(replayed.len(), ctx.messages.len());
-        assert_eq!(replayed, ctx.messages);
-    }
 }
