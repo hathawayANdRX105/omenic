@@ -30,7 +30,7 @@ impl From<memory::MemoryError> for ToolError {
 /// short of `OMENIC_MEMORY=1` plus an *existing* `OMENIC_MEMORY_DIR`
 /// yields a disabled handle, so no tool call can ever create the
 /// directory implicitly.
-pub(crate) fn memory_store() -> memory::Memory {
+pub fn memory_store() -> memory::Memory {
     if std::env::var("OMENIC_MEMORY").as_deref() != Ok("1") {
         return memory::Memory::disabled();
     }

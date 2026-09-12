@@ -511,6 +511,10 @@ pub fn Workspace(
             }
         }
 
+        // 注入接缝：新用户 turn 开始时排空待注入记忆（jcode system-reminder 落点）
+        let sid_for_injection = sid.clone();
+        crate::memory_link::drain_injection(&sid_for_injection, &mut context, unix_now());
+
         let clean_base = config_send.base_url.trim_end_matches('/');
         let base_url = if clean_base.ends_with("/v1") {
             clean_base.to_string()
@@ -527,8 +531,10 @@ pub fn Workspace(
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<orbit::AgentEvent>();
         let abort_signal = Arc::new(AtomicBool::new(false));
 
+        let sid_for_recorder = sid.clone();
         std::thread::spawn(move || {
             let backend = orbit::HttpLlm;
+            let mut turns_used = 0usize;
             let tools = tools::builtin_tools();
             let maintain = |b: &dyn orbit::LlmBackend,
                             m: &adaptor::Model,
@@ -547,8 +553,22 @@ pub fn Workspace(
                     ..orbit::LoopConfig::default()
                 },
                 &mut |ev| {
+                    if matches!(ev, orbit::AgentEvent::TurnStart) {
+                        turns_used += 1;
+                    }
                     let _ = tx.send(ev);
                 },
+            );
+
+            // 触发抽取：回合数/会话结束驱动，走同一模型把对话切片记忆化
+            crate::memory_link::extract_and_remember(
+                &backend,
+                &model,
+                &sid_for_recorder,
+                turns_used as u32,
+                false,
+                &context.messages,
+                unix_now(),
             );
         });
 
@@ -1061,4 +1081,13 @@ pub fn Workspace(
             }
         }
     }
+}
+
+/// Current unix time in seconds — the one clock the injection/extraction
+/// wiring reads (buffers and triggers take time as a parameter).
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
