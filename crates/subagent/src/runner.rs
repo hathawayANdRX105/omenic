@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
 use adaptor::{Context, Message, StopReason};
-use orbit::{AgentEvent, LlmBackend, TurnStop, run_agent_streaming};
+use orbit::{AgentEvent, LlmBackend, LoopConfig, TurnStop, run_agent_streaming};
 use serde_json::Value;
 use tools::Tool;
 
@@ -89,11 +89,18 @@ pub fn run_subagent(
     // Cell so the FnMut closure can write without capturing a unique borrow
     // that would conflict with reading `last_stop` after the call returns.
     let last_stop: std::cell::Cell<Option<TurnStop>> = std::cell::Cell::new(None);
+    // LLM round-trips consumed by the most recent orbit call — the real
+    // budget unit, since one orbit call may internally run a whole
+    // tool-loop of round-trips.
+    let turns_used = std::cell::Cell::new(0usize);
 
     // We call run_agent_streaming and re-feed the loop manually so we can
-    // enforce max_turns and short-circuit on signal — orbit's own loop is
-    // bound only by the model emitting EndTurn/MaxTokens, not by a turn cap.
+    // enforce max_turns and short-circuit on signal — orbit's own loop ends
+    // a turn whenever the model stops calling tools; the subagent re-feeds
+    // MaxTokens turns so a truncated answer keeps going until the budget or
+    // the wall clock cuts it off.
     let mut emitter = |ev: AgentEvent| match ev {
+        AgentEvent::TurnStart => turns_used.set(turns_used.get() + 1),
         AgentEvent::AssistantText { delta } => {
             text.push_str(&delta);
         }
@@ -106,14 +113,16 @@ pub fn run_subagent(
                 });
             }
         }
+        AgentEvent::ToolStart { .. } => {}
         AgentEvent::ToolResult { .. } => {}
         AgentEvent::TurnEnd { stop_reason } => {
             last_stop.set(Some(stop_reason));
         }
     };
 
-    // Turn-budget loop: each orbit call = one round-trip. We cap at max_turns
-    // so a runaway model can't burn the 5-min wall clock.
+    // Turn-budget loop: re-feed while the model keeps wanting more, handing
+    // orbit the remaining budget as its own internal cap so neither an
+    // in-call tool-loop nor the re-feed itself can outrun max_turns.
     loop {
         if signal.load(Ordering::Relaxed) {
             return Err(SubagentError::Aborted {
@@ -123,16 +132,21 @@ pub fn run_subagent(
         if turn_count >= max_turns {
             break;
         }
-        turn_count += 1;
+        let budget = max_turns - turn_count;
+        turns_used.set(0);
         run_agent_streaming(
             backend,
             model,
             &mut context,
             tools,
             signal,
-            None,
+            LoopConfig {
+                max_turns: budget,
+                ..LoopConfig::default()
+            },
             &mut emitter,
         );
+        turn_count += turns_used.get();
         // Even if the model returned EndTurn, an external abort must win —
         // the signal flips from another thread and we can't keep churning
         // the loop once the caller has given up.
@@ -142,7 +156,7 @@ pub fn run_subagent(
             });
         }
         match last_stop.get() {
-            Some(TurnStop::EndTurn) | Some(TurnStop::Error) => break,
+            Some(TurnStop::EndTurn) | Some(TurnStop::Error) | Some(TurnStop::MaxTurns) => break,
             Some(TurnStop::MaxTokens) | Some(TurnStop::Aborted) | None => {
                 // Continue until turn budget or signal fires.
             }
