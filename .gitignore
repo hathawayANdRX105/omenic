@@ -21,3 +21,6 @@ node_modules/
 
 # generated tailwind input (rewritten by build.rs each compile)
 crates/web/.tailwind.gen-input.css
+
+# Per-session agent control directory (ZCode plans, session logs).
+.zcode/
