@@ -11,8 +11,10 @@
 //! injection pipeline ([`inject`]) are rebuildable views over them (jcode
 //! `jcode-memory-types` lineage).
 
+pub mod embed;
 pub mod graph;
 pub mod inject;
+pub mod pipeline;
 pub mod recall;
 
 use std::collections::BTreeMap;
@@ -23,8 +25,13 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub use embed::{EmbedError, Embedder, OpenAIEmbeddings, cosine};
 pub use graph::MemoryGraph;
 pub use inject::{InjectionBuffer, format_injection};
+pub use pipeline::{
+    DEDUP_COSINE, ExtractionTriggers, PERIODIC_TURNS, RememberOutcome, TOPIC_CHANGE_COSINE,
+    TOPIC_MIN_TURNS,
+};
 pub use recall::RecallHit;
 
 /// Who asserted this memory. Trust never decays on its own (jcode: High =
@@ -85,6 +92,12 @@ pub struct MemoryEntry {
     /// An entry whose statement conflicts with this one.
     #[serde(default)]
     pub contradicts: Option<u64>,
+    /// Dense vector for cosine dedup / similarity, computed by the write
+    /// pipeline ([`pipeline::Memory::remember`]). `None` on entries written
+    /// before embeddings existed or by a plain append without an embedder;
+    /// old stores keep loading either way.
+    #[serde(default)]
+    pub embedding: Option<Vec<f32>>,
 }
 
 fn default_confidence() -> f32 {
@@ -110,6 +123,7 @@ impl MemoryEntry {
             active: true,
             superseded_by: None,
             contradicts: None,
+            embedding: None,
         }
     }
 
@@ -132,6 +146,8 @@ pub enum MemoryError {
     UnknownId {
         id: u64,
     },
+    /// The embedding backend failed while running the write pipeline.
+    Embed(EmbedError),
 }
 
 impl fmt::Display for MemoryError {
@@ -141,6 +157,7 @@ impl fmt::Display for MemoryError {
             MemoryError::Json(e) => write!(f, "JSON error: {e}"),
             MemoryError::CorruptLine { line, msg } => write!(f, "corrupt line {line}: {msg}"),
             MemoryError::UnknownId { id } => write!(f, "no memory entry with id {id}"),
+            MemoryError::Embed(e) => write!(f, "embedding backend error: {e}"),
         }
     }
 }
@@ -150,6 +167,7 @@ impl std::error::Error for MemoryError {
         match self {
             MemoryError::Io(e) => Some(e),
             MemoryError::Json(e) => Some(e),
+            MemoryError::Embed(e) => Some(e),
             MemoryError::CorruptLine { .. } | MemoryError::UnknownId { .. } => None,
         }
     }
@@ -164,6 +182,12 @@ impl From<std::io::Error> for MemoryError {
 impl From<serde_json::Error> for MemoryError {
     fn from(e: serde_json::Error) -> MemoryError {
         MemoryError::Json(e)
+    }
+}
+
+impl From<EmbedError> for MemoryError {
+    fn from(e: EmbedError) -> MemoryError {
+        MemoryError::Embed(e)
     }
 }
 
@@ -384,9 +408,9 @@ fn trim_trailing_line(path: &Path) -> Result<(), MemoryError> {
 }
 
 /// ISO-8601-ish UTC timestamp, seconds precision.
-/// ponytail: duplicated from `task::now_iso` on purpose — this crate stays
-/// dependency-free apart from serde; fold both into one crate if a third
-/// caller needs it.
+/// ponytail: duplicated from `task::now_iso` on purpose — this crate's only
+/// deps are serde and the embed HTTP client (ureq); fold both into one crate
+/// if a third caller needs it.
 fn now_iso() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
