@@ -530,13 +530,22 @@ pub fn Workspace(
         std::thread::spawn(move || {
             let backend = orbit::HttpLlm;
             let tools = tools::builtin_tools();
+            let maintain = |b: &dyn orbit::LlmBackend,
+                            m: &adaptor::Model,
+                            c: &mut adaptor::Context,
+                            s: &std::sync::atomic::AtomicBool| {
+                orbit::compact_context(b, m, c, s, None)
+            };
             orbit::run_agent_streaming(
                 &backend,
                 &model,
                 &mut context,
                 &tools,
                 &abort_signal,
-                None,
+                orbit::LoopConfig {
+                    maintain: Some(&maintain),
+                    ..orbit::LoopConfig::default()
+                },
                 &mut |ev| {
                     let _ = tx.send(ev);
                 },
@@ -653,6 +662,10 @@ pub fn Workspace(
                         }
                         session_messages.set(map);
                     }
+                    // 回合开始：GW-2 阶段用它驱动「思考中」状态，暂无 UI 消费
+                    orbit::AgentEvent::TurnStart => {}
+                    // 工具真正开始执行；ToolCall 臂已在流解析时置 running，这里无需变更
+                    orbit::AgentEvent::ToolStart { .. } => {}
                     orbit::AgentEvent::TurnEnd { stop_reason } => {
                         let mut map = session_messages();
                         if let Some(list) = map.get_mut(&sid_for_events) {

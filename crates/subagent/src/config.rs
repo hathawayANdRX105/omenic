@@ -12,6 +12,11 @@ pub const MAX_SUBAGENT_RESPONSE_BYTES: usize = 128 * 1024;
 /// Default cap on agent loop turns when the caller doesn't specify one.
 pub const MAX_TURNS_DEFAULT: usize = 10;
 
+/// Cap on subagents exploring in parallel at once (omp fan-out cap-4).
+/// Extra prompts queue on the semaphore; queued ones give up when the
+/// parent aborts or the wall clock expires.
+pub const MAX_CONCURRENT_SUBAGENTS: usize = 4;
+
 /// Spill location for truncated output, matching tools::SPILL_DIR style.
 pub const SPILL_DIR: &str = "/tmp";
 

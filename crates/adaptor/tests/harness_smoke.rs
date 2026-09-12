@@ -101,14 +101,24 @@ fn http_stream_end_to_end() {
 
 #[test]
 fn http_error_status_yields_error_event() {
+    // The retry loop keeps hitting the endpoint until attempts are
+    // exhausted, so the server answers every connection with 429 and the
+    // final surfaced error is still the rate limit.
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let server = std::thread::spawn(move || {
-        let (mut sock, _) = listener.accept().unwrap();
-        let mut buf = [0u8; 4096];
-        let _ = sock.read(&mut buf);
-        sock.write_all(b"HTTP/1.1 429 Too Many Requests\r\ncontent-length: 9\r\n\r\nrate hit!")
-            .unwrap();
+        for _ in 0..4 {
+            let Ok((mut sock, _)) = listener.accept() else {
+                break;
+            };
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf);
+            // connection: close forces a fresh TCP connection per retry —
+            // without it ureq reuses a pooled socket the server already dropped.
+            let _ = sock.write_all(
+                b"HTTP/1.1 429 Too Many Requests\r\ncontent-length: 9\r\nconnection: close\r\n\r\nrate hit!",
+            );
+        }
     });
     let model = Model {
         api_key: "k".into(),
@@ -198,11 +208,17 @@ fn stream_cb_error_emits_error_event() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let server = std::thread::spawn(move || {
-        let (mut sock, _) = listener.accept().unwrap();
-        let mut buf = [0u8; 4096];
-        let _ = sock.read(&mut buf);
-        sock.write_all(b"HTTP/1.1 500 Internal Server Error\r\ncontent-length: 3\r\n\r\nbad")
-            .unwrap();
+        for _ in 0..4 {
+            let Ok((mut sock, _)) = listener.accept() else {
+                break;
+            };
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf);
+            // connection: close — see http_error_status_yields_error_event.
+            let _ = sock.write_all(
+                b"HTTP/1.1 500 Internal Server Error\r\ncontent-length: 3\r\nconnection: close\r\n\r\nbad",
+            );
+        }
     });
 
     let model = Model {
