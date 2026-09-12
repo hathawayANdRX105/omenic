@@ -8,6 +8,7 @@ pub mod delete;
 pub mod edit;
 pub mod glob;
 pub mod grep;
+pub mod memory_tool;
 pub mod read;
 pub mod write;
 
@@ -332,6 +333,13 @@ pub fn builtin_tools_with_policy(policy: Policy) -> Vec<Box<dyn Tool>> {
         Box::new(Guarded::new(grep::Grep, policy.clone())),
         Box::new(Guarded::new(glob::Glob, policy.clone())),
         Box::new(Guarded::new(delete::DeleteFile, policy)),
+        // Memory tools skip the policy layer on purpose: they run no
+        // commands, and memory_append only writes the local memory JSONL.
+        // Their gate is the default-off env switch resolved once per call
+        // in memory_tool::memory_store.
+        Box::new(memory_tool::MemoryAppendTool),
+        Box::new(memory_tool::MemorySearchTool),
+        Box::new(memory_tool::MemoryListTool),
     ]
 }
 

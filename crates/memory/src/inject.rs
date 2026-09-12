@@ -227,7 +227,7 @@ fn overlaps_enough(last: &HashSet<String>, next: &HashSet<String>) -> bool {
     let shared = last.intersection(next).count();
     let baseline = last.len().max(next.len());
     // u64 math: usize overflow is theoretical here but the widening is free.
-    (shared as u64) * 100 >= u64::from(OVERLAP_MIN_PCT) * baseline as u64
+    (shared as u64) * 100 >= OVERLAP_MIN_PCT * baseline as u64
 }
 
 /// Collapse every whitespace run to one space and trim the ends — the one
