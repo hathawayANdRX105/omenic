@@ -53,24 +53,6 @@ fn is_cjk(c: char) -> bool {
         0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0xF900..=0xFAFF)
 }
 
-/// Token → log-idf weight over the corpus.
-fn idf_map(graph: &MemoryGraph) -> HashMap<String, f32> {
-    let n = graph.memories.len().max(1) as f32;
-    let mut df: HashMap<String, u32> = HashMap::new();
-    for entry in graph.memories.values() {
-        let mut seen: Vec<String> = Vec::new();
-        for tok in tokenize(&entry.text) {
-            if !seen.contains(&tok) {
-                seen.push(tok.clone());
-                *df.entry(tok).or_default() += 1;
-            }
-        }
-    }
-    df.into_iter()
-        .map(|(tok, df)| (tok, ((n + 1.0) / (df as f32 + 0.5)).ln().max(0.05)))
-        .collect()
-}
-
 /// One retrieval result.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecallHit {
@@ -91,36 +73,80 @@ pub enum RecallPath {
     },
 }
 
+/// Per-entry token frequency, computed once per recall pass: both the IDF
+/// table and the direct scoring read from this, instead of re-tokenizing
+/// per query term.
+struct Tokenized {
+    id: u64,
+    active: bool,
+    tf: HashMap<String, u32>,
+}
+
+fn tokenize_entries(graph: &MemoryGraph) -> Vec<Tokenized> {
+    graph
+        .memories
+        .values()
+        .map(|entry| {
+            let mut tf: HashMap<String, u32> = HashMap::new();
+            for tok in tokenize(&entry.text) {
+                *tf.entry(tok).or_default() += 1;
+            }
+            Tokenized {
+                id: entry.id,
+                active: entry.active,
+                tf,
+            }
+        })
+        .collect()
+}
+
 /// Top-`k` entries for `query`. Direct matches ranked by idf-weighted token
 /// overlap, then one graph cascade: neighbors inherit
 /// `score × edge_weight × 0.7^depth` and compete for the same slots.
+///
+/// An empty query yields no direct seeds, and the cascade only runs from
+/// seeds, so the result is empty — callers that want "recent" should use
+/// [`crate::Memory::list`].
 pub fn recall(graph: &MemoryGraph, query: &str, k: usize) -> Vec<RecallHit> {
-    let idf = idf_map(graph);
+    let docs = tokenize_entries(graph);
     let query_tokens = tokenize(query);
     let mut scores: HashMap<u64, (f32, RecallPath)> = HashMap::new();
 
-    for entry in graph.memories.values() {
-        if query_tokens.is_empty() {
-            break;
+    if query_tokens.is_empty() {
+        return Vec::new();
+    }
+
+    // IDF over the deduplicated document frequency of every token.
+    let n = docs.len().max(1) as f32;
+    let mut df: HashMap<&str, u32> = HashMap::new();
+    for doc in &docs {
+        for tok in doc.tf.keys() {
+            *df.entry(tok).or_default() += 1;
         }
+    }
+    let idf = |tok: &str| {
+        df.get(tok)
+            .map(|d| ((n + 1.0) / (*d as f32 + 0.5)).ln().max(0.05))
+            .unwrap_or(0.05)
+    };
+
+    for doc in &docs {
         // Inactive entries are dead content (superseded/contradicted):
         // jcode keeps them out of the direct path and reachable only
         // through the graph walk, so a dead claim never outranks its
         // live replacement on its old wording.
-        if !entry.active {
+        if !doc.active {
             continue;
         }
-        let text_tokens = tokenize(&entry.text);
         let mut overlap = 0f32;
         for q in &query_tokens {
-            let idf_w = idf.get(q).copied().unwrap_or(0.05);
-            let tf = text_tokens.iter().filter(|t| *t == q).count() as f32;
+            let tf = doc.tf.get(q).copied().unwrap_or(0) as f32;
             if tf > 0.0 {
-                overlap += idf_w * (1.0 + tf.ln());
+                overlap += idf(q) * (1.0 + tf.ln());
             }
         }
         if overlap > 0.0 {
-            scores.insert(entry.id, (overlap, RecallPath::Direct));
+            scores.insert(doc.id, (overlap, RecallPath::Direct));
         }
     }
 

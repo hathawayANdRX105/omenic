@@ -44,13 +44,16 @@ pub struct Edge {
 }
 
 /// Adjacency view over the entry store. Rebuildable by deleting it.
+///
+/// `forward` holds the edges as derived (old → replacement, entry →
+/// contradiction target, tag match → peer); `reverse` holds the same edges
+/// mirrored with their kind, so walks in either direction see weights
+/// without re-scanning.
 #[derive(Debug, Default, Clone)]
 pub struct MemoryGraph {
     pub memories: HashMap<u64, MemoryEntry>,
-    /// Forward adjacency: entry → outgoing edges.
     pub forward: HashMap<u64, Vec<Edge>>,
-    /// Reverse adjacency (entry → incoming edge sources) for backlink walks.
-    pub reverse: HashMap<u64, Vec<u64>>,
+    pub reverse: HashMap<u64, Vec<Edge>>,
 }
 
 impl MemoryGraph {
@@ -66,26 +69,28 @@ impl MemoryGraph {
         for e in entries {
             graph.forward.entry(e.id).or_default();
         }
+        // Tag → entries index, built once: the pairwise tag match would be
+        // O(n²) over the store otherwise.
+        let mut tag_index: HashMap<&str, Vec<u64>> = HashMap::new();
         for e in entries {
-            // Tag edges are undirected in spirit; one mirrored edge per tag
-            // match, sorted by id so the built graph is deterministic. Tags
-            // are cloned out first: `link` needs `&mut graph` and the scan
-            // borrows it.
-            let mut by_tag: HashMap<String, Vec<u64>> = HashMap::new();
-            for (other_id, other) in graph.memories.iter() {
-                if *other_id == e.id {
-                    continue;
-                }
-                for tag in &other.tags {
-                    if e.tags.contains(tag) {
-                        by_tag.entry(tag.clone()).or_default().push(*other_id);
+            for tag in &e.tags {
+                tag_index.entry(tag.as_str()).or_default().push(e.id);
+            }
+        }
+        for e in entries {
+            let mut matches: Vec<(String, u64)> = Vec::new();
+            for tag in &e.tags {
+                for other in tag_index
+                    .get(tag.as_str())
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[])
+                {
+                    if *other != e.id {
+                        matches.push((tag.clone(), *other));
                     }
                 }
             }
-            let mut matches: Vec<(String, u64)> = by_tag
-                .into_iter()
-                .flat_map(|(tag, targets)| targets.into_iter().map(move |t| (tag.clone(), t)))
-                .collect();
+            // Deterministic edge order regardless of index iteration order.
             matches.sort();
             matches.dedup();
             for (tag, to) in matches {
@@ -102,35 +107,25 @@ impl MemoryGraph {
     }
 
     fn link(&mut self, from: u64, to: u64, kind: EdgeKind) {
-        self.forward
-            .entry(from)
+        self.forward.entry(from).or_default().push(Edge {
+            to,
+            kind: kind.clone(),
+        });
+        self.reverse
+            .entry(to)
             .or_default()
-            .push(Edge { to, kind });
-        self.reverse.entry(to).or_default().push(from);
+            .push(Edge { to: from, kind });
     }
 
-    /// Neighbors reachable in one hop from `id`, both directions.
+    /// Neighbors reachable in one hop from `id`, both directions, with the
+    /// edge kind of each crossing.
     pub fn neighbors(&self, id: u64) -> Vec<(u64, &EdgeKind)> {
         let mut out: Vec<(u64, &EdgeKind)> = Vec::new();
-        if let Some(edges) = self.forward.get(&id) {
-            for e in edges {
-                out.push((e.to, &e.kind));
-            }
+        for e in self.forward.get(&id).map(|v| v.as_slice()).unwrap_or(&[]) {
+            out.push((e.to, &e.kind));
         }
-        // Reverse-walk kind: rebuilt from the source's forward edge.
-        for src in self
-            .reverse
-            .get(&id)
-            .map(|v| v.as_slice())
-            .unwrap_or_default()
-        {
-            if let Some(edges) = self.forward.get(src) {
-                for e in edges {
-                    if e.to == id {
-                        out.push((*src, &e.kind));
-                    }
-                }
-            }
+        for e in self.reverse.get(&id).map(|v| v.as_slice()).unwrap_or(&[]) {
+            out.push((e.to, &e.kind));
         }
         out
     }

@@ -51,7 +51,9 @@ fn supersedes_marks_and_links() {
     old.superseded_by = Some(2);
     let g = memory::MemoryGraph::build(&[old, new]);
 
-    assert!(!g.memories[&1].active || true, "active is caller-owned");
+    // active is caller-owned: the graph layer never flips it, the recall
+    // pipeline only reads it (see recall.rs direct-path skip).
+    assert!(g.memories[&1].active);
     // Old → new carries the Supersedes edge; the reverse walk mirrors it.
     let fwd: Vec<_> = g.neighbors(1);
     assert!(
