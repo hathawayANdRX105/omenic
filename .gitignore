@@ -1,7 +1,12 @@
 .codegraph/
 .code-review-graph/
 .wt/
-todo/
+todo/archive/
+todo/issue-temp/
+todo/spike/
+todo/handoff/
+todo/omennn/
+todo/enhancement-roadmap-v2.md
 /target
 # Python
 __pycache__/
