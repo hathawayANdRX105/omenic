@@ -9,3 +9,8 @@ publish = false
 [dependencies]
 daemon = { path = "../infra/daemon" }
 orbit = { path = "../agent/orbit" }
+serde_json = { workspace = true }
+omenic-harness-plugin = { path = "../harness/plugin" }
+omenic-harness-prompt = { path = "../harness/prompt" }
+omenic-harness-tools = { path = "../harness/tools" }
+omenic-harness-runtime = { path = "../harness/runtime" }

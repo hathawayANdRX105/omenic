@@ -643,3 +643,15 @@ pub fn run_agent(
     );
     events
 }
+
+// ===== plugin face (C6) =====
+
+/// Register orbit's loop defaults as harness services in a plugin context.
+///
+/// Thin layer over [`run_agent`]-adjacent constants only: the loop logic is
+/// untouched, and hosts that don't use the plugin surface simply never call
+/// this. The composition root invokes it after the container is built.
+pub fn register(ctx: &mut omenic_harness_plugin::PluginContext) {
+    ctx.provide("orbit.max_turns", DEFAULT_MAX_TURNS);
+    ctx.provide("orbit.backend", HttpLlm);
+}

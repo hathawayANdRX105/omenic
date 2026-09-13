@@ -2490,7 +2490,12 @@ name = "omenic-composition"
 version = "0.1.0"
 dependencies = [
  "daemon",
+ "omenic-harness-plugin",
+ "omenic-harness-prompt",
+ "omenic-harness-runtime",
+ "omenic-harness-tools",
  "orbit",
+ "serde_json",
 ]
 
 [[package]]
@@ -2498,6 +2503,16 @@ name = "omenic-harness-core"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "omenic-harness-plugin"
+version = "0.1.0"
+dependencies = [
+ "omenic-harness-core",
+ "omenic-harness-runtime",
+ "parking_lot",
  "serde_json",
 ]
 
@@ -2633,6 +2648,7 @@ version = "0.1.0"
 dependencies = [
  "adaptor",
  "fs2",
+ "omenic-harness-plugin",
  "prompts",
  "serde",
  "serde_json",
