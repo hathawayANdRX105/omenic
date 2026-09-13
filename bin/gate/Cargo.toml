@@ -8,6 +8,6 @@ name = "gate"
 path = "src/main.rs"
 
 [dependencies]
-spec = { path = "../../crates/spec" }
+spec = { path = "../../crates/evidence/spec" }
 serde_json = { workspace = true }
 clap = { workspace = true }

@@ -1,10 +1,11 @@
 [workspace]
 members = [
   "bin/cli", "bin/gate", "bin/web",
-  "crates/adaptor", "crates/orbit", "crates/tools", "crates/rpc",
-  "crates/task", "crates/spec", "crates/config", "crates/tui",
-  "crates/subagent", "crates/mcp", "crates/memory", "crates/prompts",
-  "crates/session", "crates/daemon", "crates/web",
+  "crates/agent/adaptor", "crates/agent/orbit", "crates/agent/tools", "crates/agent/mcp",
+  "crates/agent/task", "crates/evidence/spec", "crates/infra/config", "crates/ui/tui",
+  "crates/agent/subagent", "crates/infra/memory", "crates/infra/prompts",
+  "crates/infra/session", "crates/infra/daemon", "crates/ui/web",
+  "crates/composition",
 ]
 resolver = "2"
 

@@ -1,0 +1,11 @@
+[package]
+name = "omenic-composition"
+version = "0.1.0"
+edition = "2024"
+description = "Composition root: assembles domain crates (daemon Worker + SessionDb wiring placeholder)"
+license = "MIT"
+publish = false
+
+[dependencies]
+daemon = { path = "../infra/daemon" }
+orbit = { path = "../agent/orbit" }

@@ -10,6 +10,5 @@ publish = false
 name = "oi-web"
 path = "src/main.rs"
 
-[dependencies]
-web = { path = "../../crates/web" }
+web = { path = "../../crates/ui/web" }
 tokio = { version = "1", features = ["full"] }
