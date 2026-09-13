@@ -8,3 +8,4 @@ publish = false
 omenic-web-state = { path = "../state" }
 dioxus = { version = "0.7" }
 pulldown-cmark = { workspace = true }
+ammonia = { workspace = true }

@@ -64,6 +64,16 @@ fn create_session_in(
     new_id
 }
 
+/// 会话是否仍存在于任一 space。流式期间会话可能被用户删除
+/// （`on_delete_session` 会同时清掉消息），孤儿 entry 不能写回。
+fn session_exists_in(space_sessions: Signal<HashMap<String, Vec<Session>>>, sid: &str) -> bool {
+    space_sessions
+        .read()
+        .values()
+        .flatten()
+        .any(|s| s.id == sid)
+}
+
 #[component]
 pub fn Workspace(
     config: LlmRuntimeConfig,
@@ -325,6 +335,11 @@ pub fn Workspace(
                 if matches!(ev, AgentEvent::AssistantText { .. }) {
                     total_out += 1;
                 }
+                // 流式期间会话可能已被删除：事件照常消费，但消息不写回，
+                // 避免把已删会话的孤儿 entry 重新写进 session_messages
+                if !session_exists_in(space_sessions, &sid) {
+                    continue;
+                }
                 let mut map = session_messages.write();
                 let mut ui = UiState {
                     messages: map.get(&sid).cloned().unwrap_or_default(),
@@ -333,16 +348,20 @@ pub fn Workspace(
                 map.insert(sid.clone(), ui.messages);
             }
 
-            // TurnEnd：占位文案 + 状态收尾
-            let mut map = session_messages.write();
-            let mut ui = UiState {
-                messages: map.get(&sid).cloned().unwrap_or_default(),
-            };
-            ui.apply(&AgentEvent::TurnEnd {
-                stop_reason: "end_turn".into(),
-            });
-            map.insert(sid.clone(), ui.messages);
-            drop(map);
+            // TurnEnd：占位文案 + 状态收尾。会话已删除则跳过消息写回
+            // 与会话状态更新（写回去等于复活已删会话），但 statusline
+            // 结算与 is_streaming 复位必须照常执行。
+            let deleted = !session_exists_in(space_sessions, &sid);
+            if !deleted {
+                let mut map = session_messages.write();
+                let mut ui = UiState {
+                    messages: map.get(&sid).cloned().unwrap_or_default(),
+                };
+                ui.apply(&AgentEvent::TurnEnd {
+                    stop_reason: "end_turn".into(),
+                });
+                map.insert(sid.clone(), ui.messages);
+            }
 
             let mut st = statusline();
             st.tokens_out += total_out;
@@ -357,16 +376,18 @@ pub fn Workspace(
                 ((st.tokens_in + st.tokens_out) as f64 / st.context_max as f64 * 100.0).min(100.0);
             statusline.set(st);
 
-            let mut map = space_sessions.read().clone();
-            for list in map.values_mut() {
-                for s in list.iter_mut() {
-                    if s.id == sid {
-                        s.status = SessionStatus::Idle;
-                        s.last_active = format_relative_time(now);
+            if !deleted {
+                let mut map = space_sessions.read().clone();
+                for list in map.values_mut() {
+                    for s in list.iter_mut() {
+                        if s.id == sid {
+                            s.status = SessionStatus::Idle;
+                            s.last_active = format_relative_time(now);
+                        }
                     }
                 }
+                space_sessions.set(map);
             }
-            space_sessions.set(map);
             is_streaming.set(false);
         });
     };
