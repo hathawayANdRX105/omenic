@@ -10,7 +10,7 @@ members = [
   "crates/web/page-config",
   "crates/composition",
   "crates/harness/core", "crates/harness/prompt", "crates/harness/tools",
-  "crates/harness/runtime",
+  "crates/harness/runtime", "crates/harness/plugin",
 ]
 resolver = "2"
 

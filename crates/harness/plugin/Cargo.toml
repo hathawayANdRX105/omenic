@@ -1,0 +1,15 @@
+[package]
+name = "omenic-harness-plugin"
+version = "0.1.0"
+edition = "2024"
+description = "Plugin surface: service registry, event bus, lifecycle fiber, plugin registry"
+license = "MIT"
+publish = false
+
+[dependencies]
+serde_json = { workspace = true }
+omenic-harness-core = { path = "../core" }
+omenic-harness-runtime = { path = "../runtime" }
+
+[dev-dependencies]
+parking_lot = "0.12"
