@@ -17,7 +17,7 @@ rpc = { path = "../../crates/infra/rpc" }
 task = { path = "../../crates/agent/task" }
 spec = { path = "../../crates/evidence/spec" }
 config = { path = "../../crates/infra/config" }
-tui = { path = "../../crates/ui/tui" }
+
 subagent = { path = "../../crates/agent/subagent" }
 mcp = { path = "../../crates/agent/mcp" }
 daemon = { path = "../../crates/infra/daemon" }

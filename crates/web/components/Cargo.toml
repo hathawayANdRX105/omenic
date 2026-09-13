@@ -1,0 +1,12 @@
+[package]
+name = "omenic-web-components"
+edition = "2024"
+version = "0.1.0"
+publish = false
+
+[dependencies]
+omenic-web-client = { path = "../client" }
+dioxus = { version = "0.7" }
+dioxus_components = "0.1.2"
+serde = { workspace = true }
+pulldown-cmark = { workspace = true }

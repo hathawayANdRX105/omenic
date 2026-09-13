@@ -1,5 +1,5 @@
-use crate::mock::StatusLine;
 use dioxus::prelude::*;
+use omenic_web_client::mock::StatusLine;
 
 #[component]
 pub fn StatuslineBar(statusline: StatusLine) -> Element {

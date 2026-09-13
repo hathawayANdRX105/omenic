@@ -1,6 +1,6 @@
-use crate::components::ui::{Button, ButtonVariant};
-use crate::llm::LlmRuntimeConfig;
 use dioxus::prelude::*;
+use omenic_web_client::llm::LlmRuntimeConfig;
+use omenic_web_components::ui::{Button, ButtonVariant};
 
 #[component]
 pub fn ConfigPage(

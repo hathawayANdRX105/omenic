@@ -22,10 +22,6 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
-    /// Run non-interactive TUI smoke test (no subcommand mode only)
-    #[arg(long)]
-    test: bool,
-
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -335,18 +331,13 @@ pub fn run() -> ExitCode {
 fn dispatch(cli: Cli) -> Result<u8, String> {
     let json = cli.json;
     match cli.command {
-        // No subcommand: launch interactive TUI (or smoke test).
+        // No subcommand: interactive TUI removed; print usage hint.
         None => {
-            let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-            if cli.test {
-                tui::test_mode(&config)
-                    .map(|_| 0)
-                    .map_err(|e| format!("tui error: {e}"))
-            } else {
-                tui::run(&config)
-                    .map(|_| 0)
-                    .map_err(|e| format!("tui error: {e}"))
-            }
+            println!(
+                "omenic: no subcommand. Available: oi init / oi task add / oi web / oi daemon ..."
+            );
+            eprintln!("(interactive TUI removed; use subcommands or web UI)");
+            Ok(0)
         }
         Some(command) => dispatch_sub(command, json),
     }

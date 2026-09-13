@@ -5,17 +5,12 @@
 //!   - `/stats`   Observability dashboard with time range filtering
 //!   - `/config`  Model / channel configuration
 
-pub mod components;
-pub mod llm;
-pub mod memory_link;
-pub mod mock;
-pub mod pages;
-
-use crate::components::ui::{Button, ButtonVariant};
 use dioxus::prelude::*;
-use pages::config_page::ConfigPage;
-use pages::stats::Stats;
-use pages::workspace::Workspace;
+use omenic_web_client::llm;
+use omenic_web_components::ui::{Button, ButtonVariant};
+use omenic_web_page_config::ConfigPage;
+use omenic_web_page_stats::Stats;
+use omenic_web_page_workspace::Workspace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {

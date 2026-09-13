@@ -1,5 +1,5 @@
-use crate::mock::*;
 use dioxus::prelude::*;
+use omenic_web_client::mock::*;
 
 #[component]
 pub fn StatsView() -> Element {

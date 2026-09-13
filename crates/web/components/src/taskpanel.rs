@@ -1,6 +1,6 @@
-use crate::components::ui::IconButton;
-use crate::mock::TaskItem;
+use crate::ui::IconButton;
 use dioxus::prelude::*;
+use omenic_web_client::mock::TaskItem;
 
 #[component]
 pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {

@@ -1,6 +1,6 @@
-use crate::components::ui::{Badge, BadgeVariant};
-use crate::mock::{Session, SessionStatus};
+use crate::ui::{Badge, BadgeVariant};
 use dioxus::prelude::*;
+use omenic_web_client::mock::{Session, SessionStatus};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

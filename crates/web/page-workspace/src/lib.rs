@@ -1,13 +1,15 @@
-use crate::components::chat::Chat;
-use crate::components::sidebar::Sidebar;
-use crate::components::ui::{Button, ButtonVariant, IconButton};
-use crate::llm::LlmRuntimeConfig;
-use crate::mock::{self, ChatMessage, MessagePart, Session, SessionStatus, TaskItem, ToolCall};
 use dioxus::prelude::*;
+use omenic_web_client::llm::LlmRuntimeConfig;
+use omenic_web_client::mock::{
+    self, ChatMessage, MessagePart, Session, SessionStatus, TaskItem, ToolCall,
+};
+use omenic_web_components::chat::Chat;
+use omenic_web_components::sidebar::Sidebar;
+use omenic_web_components::ui::{Button, ButtonVariant, IconButton};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 pub fn db_load_sessions(
     data_dir: &str,
@@ -27,7 +29,7 @@ pub fn db_load_sessions(
             sessions.push(Session {
                 id: s.id.clone(),
                 title: s.title.clone(),
-                last_active: crate::mock::format_relative_time(last_ms),
+                last_active: omenic_web_client::mock::format_relative_time(last_ms),
                 model: "default".into(),
                 status: SessionStatus::Idle,
                 last_active_epoch: last_ms,
@@ -40,7 +42,8 @@ pub fn db_load_sessions(
                             session::SessionRole::User => "user",
                             _ => "assistant",
                         };
-                        let ts_rel = crate::mock::format_relative_time(m.created_at_ms as u64);
+                        let ts_rel =
+                            omenic_web_client::mock::format_relative_time(m.created_at_ms as u64);
                         if let Ok(mut parsed) = serde_json::from_str::<ChatMessage>(&m.text) {
                             parsed.id = format!("{}-{}-{}", s.id, parsed.id, m.seq);
                             parsed.timestamp = ts_rel.clone();
@@ -112,8 +115,8 @@ pub fn read_subdirectories(parent: &Path) -> Vec<String> {
 pub fn parse_worktree_porcelain(
     porcelain: &str,
     active_path: &str,
-) -> Vec<crate::components::sidebar::WorkspaceSpace> {
-    use crate::components::sidebar::WorkspaceSpace;
+) -> Vec<omenic_web_components::sidebar::WorkspaceSpace> {
+    use omenic_web_components::sidebar::WorkspaceSpace;
     let mut list: Vec<WorkspaceSpace> = Vec::new();
     let mut cur_path = String::new();
     let mut cur_branch = String::new();
@@ -160,8 +163,10 @@ pub fn parse_worktree_porcelain(
     list
 }
 
-pub fn discover_workspaces(active_path: &str) -> Vec<crate::components::sidebar::WorkspaceSpace> {
-    use crate::components::sidebar::WorkspaceSpace;
+pub fn discover_workspaces(
+    active_path: &str,
+) -> Vec<omenic_web_components::sidebar::WorkspaceSpace> {
+    use omenic_web_components::sidebar::WorkspaceSpace;
     let mut list: Vec<WorkspaceSpace> = Vec::new();
 
     if let Ok(output) = std::process::Command::new("git")
@@ -367,7 +372,7 @@ pub fn Workspace(
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| path.clone());
-        let new_space = crate::components::sidebar::WorkspaceSpace {
+        let new_space = omenic_web_components::sidebar::WorkspaceSpace {
             id: path.clone(),
             name,
             path: path.clone(),
@@ -513,7 +518,11 @@ pub fn Workspace(
 
         // 注入接缝：新用户 turn 开始时排空待注入记忆（jcode system-reminder 落点）
         let sid_for_injection = sid.clone();
-        crate::memory_link::drain_injection(&sid_for_injection, &mut context, unix_now());
+        omenic_web_state::memory_link::drain_injection(
+            &sid_for_injection,
+            &mut context,
+            unix_now(),
+        );
 
         let clean_base = config_send.base_url.trim_end_matches('/');
         let base_url = if clean_base.ends_with("/v1") {
@@ -561,7 +570,7 @@ pub fn Workspace(
             );
 
             // 触发抽取：回合数/会话结束驱动，走同一模型把对话切片记忆化
-            crate::memory_link::extract_and_remember(
+            omenic_web_state::memory_link::extract_and_remember(
                 &backend,
                 &model,
                 &sid_for_recorder,

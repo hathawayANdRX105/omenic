@@ -1,7 +1,7 @@
-use crate::components::ui::Dropdown;
-use crate::mock::{ChatMessage, MessagePart, StatusLine, ToolCall};
+use crate::ui::Dropdown;
 use dioxus::prelude::*;
-use pulldown_cmark::{html, Options as MarkdownOptions, Parser};
+use omenic_web_client::mock::{ChatMessage, MessagePart, StatusLine, ToolCall};
+use pulldown_cmark::{Options as MarkdownOptions, Parser, html};
 
 /// 将 Agent/用户消息渲染为 Markdown HTML。
 fn markdown_to_html(input: &str) -> String {
