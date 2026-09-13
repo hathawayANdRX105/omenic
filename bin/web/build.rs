@@ -18,10 +18,22 @@ fn main() {
     let mut css = std::fs::read_to_string(&input).unwrap_or_default();
     let my_src = manifest.join("src").to_string_lossy().replace('\\', "/");
     let my_src_directive = format!("@source \"{my_src}/**/*.rs\";");
-    if let Some(idx) = css.find("@source") {
+    // Match a real directive line (anchored at line start), never prose that
+    // merely mentions the directive name.
+    let idx = css.find("\n@source").map(|i| i + 1).or_else(|| {
+        if css.starts_with("@source") {
+            Some(0)
+        } else {
+            None
+        }
+    });
+    if let Some(idx) = idx {
         // Replace the existing relative source directive with an absolute one.
         let line_end = css[idx..].find('\n').map(|e| idx + e).unwrap_or(css.len());
-        css.replace_range(idx..line_end, &my_src_directive);
+        // Guard: only rewrite a line that really is the directive.
+        if css[idx..line_end].contains("@source") {
+            css.replace_range(idx..line_end, &my_src_directive);
+        }
     } else {
         css.push_str(&format!("\n{my_src_directive}\n"));
     }

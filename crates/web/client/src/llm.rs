@@ -1,6 +1,6 @@
 //! Real LLM integration and configuration persistence for omenic web.
 
-use crate::mock::ChatMessage;
+use omenic_web_state::types::ChatMessage;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 

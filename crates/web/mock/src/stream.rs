@@ -18,7 +18,7 @@ pub fn stream_reply(user_text: String) -> UnboundedReceiver<AgentEvent> {
         } else {
             topic.to_string()
         };
-        let mut send = |ev: AgentEvent| {
+        let send = |ev: AgentEvent| {
             let _ = tx.send(ev);
         };
 
@@ -44,7 +44,10 @@ pub fn stream_reply(user_text: String) -> UnboundedReceiver<AgentEvent> {
             result: "crates/web/page-workspace/src/lib.rs\ncrates/web/components/src/chat.rs\n2 个文件命中".into(),
         });
 
-        stream_text(&send, "相关逻辑集中在 `page-workspace` 与 `chat` 组件里。我先对输入入口做一次小改动，把事件处理收敛到转译层。");
+        stream_text(
+            &send,
+            "相关逻辑集中在 `page-workspace` 与 `chat` 组件里。我先对输入入口做一次小改动，把事件处理收敛到转译层。",
+        );
         sleep_ms(250);
 
         // 第二件工具：edit（带 diff 输出）
@@ -63,9 +66,15 @@ pub fn stream_reply(user_text: String) -> UnboundedReceiver<AgentEvent> {
             result: "@@ -12,6 +12,10 @@\n+    let mut ui = UiState::default();\n+    ui.apply(&ev);\n-    // TODO: 接线后删除\n patch applied".into(),
         });
 
-        stream_text(&send, "改完了。事件现在统一走 `UiState::apply`，后面接 daemon 事件流时只需要替换 transport。");
+        stream_text(
+            &send,
+            "改完了。事件现在统一走 `UiState::apply`，后面接 daemon 事件流时只需要替换 transport。",
+        );
         sleep_ms(200);
-        stream_text(&send, "总结：\n\n1. 输入 → `AgentEvent` 模拟流\n2. 转译层逐事件更新 UI 状态\n3. 渲染按发生顺序展开\n\n如需继续，可以直接说下一步要调整的地方。");
+        stream_text(
+            &send,
+            "总结：\n\n1. 输入 → `AgentEvent` 模拟流\n2. 转译层逐事件更新 UI 状态\n3. 渲染按发生顺序展开\n\n如需继续，可以直接说下一步要调整的地方。",
+        );
 
         send(AgentEvent::TurnEnd {
             stop_reason: "end_turn".into(),

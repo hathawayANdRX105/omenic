@@ -55,18 +55,66 @@ pub fn spaces() -> Vec<WorkspaceSpace> {
 pub fn sessions_for_space(space_path: &str) -> Vec<Session> {
     if space_path.ends_with("web-dsh") {
         vec![
-            session("s-dsh-1", "dsh 视觉规格提取", 18, SessionStatus::Idle, "deepseek-v4-flash"),
-            session("s-dsh-2", "composer 折叠卡对齐", 95, SessionStatus::Archived, "qwen3-32b"),
+            session(
+                "s-dsh-1",
+                "dsh 视觉规格提取",
+                18,
+                SessionStatus::Idle,
+                "deepseek-v4-flash",
+            ),
+            session(
+                "s-dsh-2",
+                "composer 折叠卡对齐",
+                95,
+                SessionStatus::Archived,
+                "qwen3-32b",
+            ),
         ]
     } else if space_path.ends_with("harness-plugin") {
-        vec![session("s-plug-1", "6.1 服务注册容器", 240, SessionStatus::Active, "claude-opus-4-7")]
+        vec![session(
+            "s-plug-1",
+            "6.1 服务注册容器",
+            240,
+            SessionStatus::Active,
+            "claude-opus-4-7",
+        )]
     } else {
         vec![
-            session("s-compaction", "重构 orbit compaction 预算窗口", 3, SessionStatus::Idle, "qwen3-32b"),
-            session("s-mcp", "MCP 工具接线", 22, SessionStatus::Idle, "qwen3-32b"),
-            session("s-memory", "memory store 断电修复", 65, SessionStatus::Idle, "agnes-2.5-flash"),
-            session("s-sidebar", "sidebar 三级树复刻", 190, SessionStatus::Archived, "agnes-2.5-flash"),
-            session("s-minimap", "minimap 提示词导航", 1_500, SessionStatus::Archived, "agnes-2.5-flash"),
+            session(
+                "s-compaction",
+                "重构 orbit compaction 预算窗口",
+                3,
+                SessionStatus::Idle,
+                "qwen3-32b",
+            ),
+            session(
+                "s-mcp",
+                "MCP 工具接线",
+                22,
+                SessionStatus::Idle,
+                "qwen3-32b",
+            ),
+            session(
+                "s-memory",
+                "memory store 断电修复",
+                65,
+                SessionStatus::Idle,
+                "agnes-2.5-flash",
+            ),
+            session(
+                "s-sidebar",
+                "sidebar 三级树复刻",
+                190,
+                SessionStatus::Archived,
+                "agnes-2.5-flash",
+            ),
+            session(
+                "s-minimap",
+                "minimap 提示词导航",
+                1_500,
+                SessionStatus::Archived,
+                "agnes-2.5-flash",
+            ),
         ]
     }
 }
@@ -303,110 +351,418 @@ pub fn stats_for_range(range: &str) -> StatsData {
     match range {
         "1h" => StatsData {
             kpis: vec![
-                KpiCard { label: "费用估算".into(), value: "$14.20".into(), delta: "+2.1%".into(), delta_positive: false },
-                KpiCard { label: "请求数".into(), value: "342".into(), delta: "+8.4%".into(), delta_positive: true },
-                KpiCard { label: "缓存节省".into(), value: "$5.10".into(), delta: "+1.2%".into(), delta_positive: true },
-                KpiCard { label: "缓存率".into(), value: "92.1%".into(), delta: "+2.5%".into(), delta_positive: true },
-                KpiCard { label: "错误率".into(), value: "1.2%".into(), delta: "-0.5%".into(), delta_positive: true },
+                KpiCard {
+                    label: "费用估算".into(),
+                    value: "$14.20".into(),
+                    delta: "+2.1%".into(),
+                    delta_positive: false,
+                },
+                KpiCard {
+                    label: "请求数".into(),
+                    value: "342".into(),
+                    delta: "+8.4%".into(),
+                    delta_positive: true,
+                },
+                KpiCard {
+                    label: "缓存节省".into(),
+                    value: "$5.10".into(),
+                    delta: "+1.2%".into(),
+                    delta_positive: true,
+                },
+                KpiCard {
+                    label: "缓存率".into(),
+                    value: "92.1%".into(),
+                    delta: "+2.5%".into(),
+                    delta_positive: true,
+                },
+                KpiCard {
+                    label: "错误率".into(),
+                    value: "1.2%".into(),
+                    delta: "-0.5%".into(),
+                    delta_positive: true,
+                },
             ],
             sub_metrics: vec![
-                SubMetric { label: "UNCACHED INPUT".into(), value: "4.8M".into() },
-                SubMetric { label: "CACHE READ".into(), value: "41M".into() },
-                SubMetric { label: "OUTPUT TOKENS".into(), value: "110K".into() },
-                SubMetric { label: "CONVERSATION TOTAL".into(), value: "46M".into() },
-                SubMetric { label: "TOKENS/S".into(), value: "28.4".into() },
-                SubMetric { label: "AVG LATENCY".into(), value: "11.2s".into() },
-                SubMetric { label: "AVG TTFT".into(), value: "8.5s".into() },
+                SubMetric {
+                    label: "UNCACHED INPUT".into(),
+                    value: "4.8M".into(),
+                },
+                SubMetric {
+                    label: "CACHE READ".into(),
+                    value: "41M".into(),
+                },
+                SubMetric {
+                    label: "OUTPUT TOKENS".into(),
+                    value: "110K".into(),
+                },
+                SubMetric {
+                    label: "CONVERSATION TOTAL".into(),
+                    value: "46M".into(),
+                },
+                SubMetric {
+                    label: "TOKENS/S".into(),
+                    value: "28.4".into(),
+                },
+                SubMetric {
+                    label: "AVG LATENCY".into(),
+                    value: "11.2s".into(),
+                },
+                SubMetric {
+                    label: "AVG TTFT".into(),
+                    value: "8.5s".into(),
+                },
             ],
             agent_bars: vec![
-                AgentTokenBar { agent: "Main agent".into(), tokens: "38M".into(), pct: 82.6, color: "#679efe".into() },
-                AgentTokenBar { agent: "Subagents".into(), tokens: "8M".into(), pct: 17.4, color: "#4ed17e".into() },
+                AgentTokenBar {
+                    agent: "Main agent".into(),
+                    tokens: "38M".into(),
+                    pct: 82.6,
+                    color: "#679efe".into(),
+                },
+                AgentTokenBar {
+                    agent: "Subagents".into(),
+                    tokens: "8M".into(),
+                    pct: 17.4,
+                    color: "#4ed17e".into(),
+                },
             ],
             throughput: vec![
-                ThroughputPoint { time: "15:00".into(), requests: 28.0, tokens: 95.0 },
-                ThroughputPoint { time: "15:10".into(), requests: 45.0, tokens: 160.0 },
-                ThroughputPoint { time: "15:20".into(), requests: 62.0, tokens: 230.0 },
-                ThroughputPoint { time: "15:30".into(), requests: 58.0, tokens: 210.0 },
-                ThroughputPoint { time: "15:40".into(), requests: 75.0, tokens: 280.0 },
-                ThroughputPoint { time: "15:50".into(), requests: 74.0, tokens: 275.0 },
+                ThroughputPoint {
+                    time: "15:00".into(),
+                    requests: 28.0,
+                    tokens: 95.0,
+                },
+                ThroughputPoint {
+                    time: "15:10".into(),
+                    requests: 45.0,
+                    tokens: 160.0,
+                },
+                ThroughputPoint {
+                    time: "15:20".into(),
+                    requests: 62.0,
+                    tokens: 230.0,
+                },
+                ThroughputPoint {
+                    time: "15:30".into(),
+                    requests: 58.0,
+                    tokens: 210.0,
+                },
+                ThroughputPoint {
+                    time: "15:40".into(),
+                    requests: 75.0,
+                    tokens: 280.0,
+                },
+                ThroughputPoint {
+                    time: "15:50".into(),
+                    requests: 74.0,
+                    tokens: 275.0,
+                },
             ],
             feed: vec![
-                FeedItem { model: "qwen3-32b".into(), provider: "AGNES".into(), time_ago: "1 分钟前".into(), duration: "4.2s".into(), cost: "$0.002".into() },
-                FeedItem { model: "agnes-2.5-flash".into(), provider: "AGNES".into(), time_ago: "3 分钟前".into(), duration: "1.8s".into(), cost: "$0.001".into() },
-                FeedItem { model: "qwen3-32b".into(), provider: "AGNES".into(), time_ago: "7 分钟前".into(), duration: "6.5s".into(), cost: "$0.003".into() },
+                FeedItem {
+                    model: "qwen3-32b".into(),
+                    provider: "AGNES".into(),
+                    time_ago: "1 分钟前".into(),
+                    duration: "4.2s".into(),
+                    cost: "$0.002".into(),
+                },
+                FeedItem {
+                    model: "agnes-2.5-flash".into(),
+                    provider: "AGNES".into(),
+                    time_ago: "3 分钟前".into(),
+                    duration: "1.8s".into(),
+                    cost: "$0.001".into(),
+                },
+                FeedItem {
+                    model: "qwen3-32b".into(),
+                    provider: "AGNES".into(),
+                    time_ago: "7 分钟前".into(),
+                    duration: "6.5s".into(),
+                    cost: "$0.003".into(),
+                },
             ],
         },
         "7d" => StatsData {
             kpis: vec![
-                KpiCard { label: "费用估算".into(), value: "$2,410.80".into(), delta: "+9.8%".into(), delta_positive: false },
-                KpiCard { label: "请求数".into(), value: "59,200".into(), delta: "+14.3%".into(), delta_positive: true },
-                KpiCard { label: "缓存节省".into(), value: "$890.00".into(), delta: "+4.2%".into(), delta_positive: true },
-                KpiCard { label: "缓存率".into(), value: "88.2%".into(), delta: "-0.4%".into(), delta_positive: true },
-                KpiCard { label: "错误率".into(), value: "3.5%".into(), delta: "-0.3%".into(), delta_positive: true },
+                KpiCard {
+                    label: "费用估算".into(),
+                    value: "$2,410.80".into(),
+                    delta: "+9.8%".into(),
+                    delta_positive: false,
+                },
+                KpiCard {
+                    label: "请求数".into(),
+                    value: "59,200".into(),
+                    delta: "+14.3%".into(),
+                    delta_positive: true,
+                },
+                KpiCard {
+                    label: "缓存节省".into(),
+                    value: "$890.00".into(),
+                    delta: "+4.2%".into(),
+                    delta_positive: true,
+                },
+                KpiCard {
+                    label: "缓存率".into(),
+                    value: "88.2%".into(),
+                    delta: "-0.4%".into(),
+                    delta_positive: true,
+                },
+                KpiCard {
+                    label: "错误率".into(),
+                    value: "3.5%".into(),
+                    delta: "-0.3%".into(),
+                    delta_positive: true,
+                },
             ],
             sub_metrics: vec![
-                SubMetric { label: "UNCACHED INPUT".into(), value: "840M".into() },
-                SubMetric { label: "CACHE READ".into(), value: "6.8B".into() },
-                SubMetric { label: "OUTPUT TOKENS".into(), value: "18.2M".into() },
-                SubMetric { label: "CONVERSATION TOTAL".into(), value: "7.9B".into() },
-                SubMetric { label: "TOKENS/S".into(), value: "16.8".into() },
-                SubMetric { label: "AVG LATENCY".into(), value: "21.4s".into() },
-                SubMetric { label: "AVG TTFT".into(), value: "17.9s".into() },
+                SubMetric {
+                    label: "UNCACHED INPUT".into(),
+                    value: "840M".into(),
+                },
+                SubMetric {
+                    label: "CACHE READ".into(),
+                    value: "6.8B".into(),
+                },
+                SubMetric {
+                    label: "OUTPUT TOKENS".into(),
+                    value: "18.2M".into(),
+                },
+                SubMetric {
+                    label: "CONVERSATION TOTAL".into(),
+                    value: "7.9B".into(),
+                },
+                SubMetric {
+                    label: "TOKENS/S".into(),
+                    value: "16.8".into(),
+                },
+                SubMetric {
+                    label: "AVG LATENCY".into(),
+                    value: "21.4s".into(),
+                },
+                SubMetric {
+                    label: "AVG TTFT".into(),
+                    value: "17.9s".into(),
+                },
             ],
             agent_bars: vec![
-                AgentTokenBar { agent: "Main agent".into(), tokens: "6.5B".into(), pct: 82.3, color: "#679efe".into() },
-                AgentTokenBar { agent: "Subagents".into(), tokens: "1.4B".into(), pct: 17.7, color: "#4ed17e".into() },
+                AgentTokenBar {
+                    agent: "Main agent".into(),
+                    tokens: "6.5B".into(),
+                    pct: 82.3,
+                    color: "#679efe".into(),
+                },
+                AgentTokenBar {
+                    agent: "Subagents".into(),
+                    tokens: "1.4B".into(),
+                    pct: 17.7,
+                    color: "#4ed17e".into(),
+                },
             ],
             throughput: vec![
-                ThroughputPoint { time: "周一".into(), requests: 7200.0, tokens: 950.0 },
-                ThroughputPoint { time: "周二".into(), requests: 8900.0, tokens: 1200.0 },
-                ThroughputPoint { time: "周三".into(), requests: 8400.0, tokens: 1100.0 },
-                ThroughputPoint { time: "周四".into(), requests: 9300.0, tokens: 1320.0 },
-                ThroughputPoint { time: "周五".into(), requests: 10200.0, tokens: 1450.0 },
-                ThroughputPoint { time: "周六".into(), requests: 7800.0, tokens: 1020.0 },
-                ThroughputPoint { time: "周日".into(), requests: 7400.0, tokens: 960.0 },
+                ThroughputPoint {
+                    time: "周一".into(),
+                    requests: 7200.0,
+                    tokens: 950.0,
+                },
+                ThroughputPoint {
+                    time: "周二".into(),
+                    requests: 8900.0,
+                    tokens: 1200.0,
+                },
+                ThroughputPoint {
+                    time: "周三".into(),
+                    requests: 8400.0,
+                    tokens: 1100.0,
+                },
+                ThroughputPoint {
+                    time: "周四".into(),
+                    requests: 9300.0,
+                    tokens: 1320.0,
+                },
+                ThroughputPoint {
+                    time: "周五".into(),
+                    requests: 10200.0,
+                    tokens: 1450.0,
+                },
+                ThroughputPoint {
+                    time: "周六".into(),
+                    requests: 7800.0,
+                    tokens: 1020.0,
+                },
+                ThroughputPoint {
+                    time: "周日".into(),
+                    requests: 7400.0,
+                    tokens: 960.0,
+                },
             ],
             feed: vec![
-                FeedItem { model: "qwen3-32b".into(), provider: "AGNES".into(), time_ago: "10 分钟前".into(), duration: "12.3s".into(), cost: "$0.004".into() },
-                FeedItem { model: "kimi-k3".into(), provider: "new-api".into(), time_ago: "35 分钟前".into(), duration: "8.1s".into(), cost: "$0.003".into() },
-                FeedItem { model: "agnes-2.5-flash".into(), provider: "AGNES".into(), time_ago: "2 小时前".into(), duration: "3.2s".into(), cost: "$0.001".into() },
+                FeedItem {
+                    model: "qwen3-32b".into(),
+                    provider: "AGNES".into(),
+                    time_ago: "10 分钟前".into(),
+                    duration: "12.3s".into(),
+                    cost: "$0.004".into(),
+                },
+                FeedItem {
+                    model: "kimi-k3".into(),
+                    provider: "new-api".into(),
+                    time_ago: "35 分钟前".into(),
+                    duration: "8.1s".into(),
+                    cost: "$0.003".into(),
+                },
+                FeedItem {
+                    model: "agnes-2.5-flash".into(),
+                    provider: "AGNES".into(),
+                    time_ago: "2 小时前".into(),
+                    duration: "3.2s".into(),
+                    cost: "$0.001".into(),
+                },
             ],
         },
         _ => StatsData {
             kpis: vec![
-                KpiCard { label: "费用估算".into(), value: "$361.37".into(), delta: "+12.3%".into(), delta_positive: false },
-                KpiCard { label: "请求数".into(), value: "8,541".into(), delta: "+5.2%".into(), delta_positive: true },
-                KpiCard { label: "缓存节省".into(), value: "$128.40".into(), delta: "0.0%".into(), delta_positive: true },
-                KpiCard { label: "缓存率".into(), value: "89.6%".into(), delta: "+2.1%".into(), delta_positive: true },
-                KpiCard { label: "错误率".into(), value: "4.0%".into(), delta: "-0.8%".into(), delta_positive: true },
+                KpiCard {
+                    label: "费用估算".into(),
+                    value: "$361.37".into(),
+                    delta: "+12.3%".into(),
+                    delta_positive: false,
+                },
+                KpiCard {
+                    label: "请求数".into(),
+                    value: "8,541".into(),
+                    delta: "+5.2%".into(),
+                    delta_positive: true,
+                },
+                KpiCard {
+                    label: "缓存节省".into(),
+                    value: "$128.40".into(),
+                    delta: "0.0%".into(),
+                    delta_positive: true,
+                },
+                KpiCard {
+                    label: "缓存率".into(),
+                    value: "89.6%".into(),
+                    delta: "+2.1%".into(),
+                    delta_positive: true,
+                },
+                KpiCard {
+                    label: "错误率".into(),
+                    value: "4.0%".into(),
+                    delta: "-0.8%".into(),
+                    delta_positive: true,
+                },
             ],
             sub_metrics: vec![
-                SubMetric { label: "UNCACHED INPUT".into(), value: "121M".into() },
-                SubMetric { label: "CACHE READ".into(), value: "1B".into() },
-                SubMetric { label: "OUTPUT TOKENS".into(), value: "2.6M".into() },
-                SubMetric { label: "CONVERSATION TOTAL".into(), value: "1.2B".into() },
-                SubMetric { label: "TOKENS/S".into(), value: "15.5".into() },
-                SubMetric { label: "AVG LATENCY".into(), value: "23.6s".into() },
-                SubMetric { label: "AVG TTFT".into(), value: "19.3s".into() },
+                SubMetric {
+                    label: "UNCACHED INPUT".into(),
+                    value: "121M".into(),
+                },
+                SubMetric {
+                    label: "CACHE READ".into(),
+                    value: "1B".into(),
+                },
+                SubMetric {
+                    label: "OUTPUT TOKENS".into(),
+                    value: "2.6M".into(),
+                },
+                SubMetric {
+                    label: "CONVERSATION TOTAL".into(),
+                    value: "1.2B".into(),
+                },
+                SubMetric {
+                    label: "TOKENS/S".into(),
+                    value: "15.5".into(),
+                },
+                SubMetric {
+                    label: "AVG LATENCY".into(),
+                    value: "23.6s".into(),
+                },
+                SubMetric {
+                    label: "AVG TTFT".into(),
+                    value: "19.3s".into(),
+                },
             ],
             agent_bars: vec![
-                AgentTokenBar { agent: "Main agent".into(), tokens: "970M".into(), pct: 83.2, color: "#679efe".into() },
-                AgentTokenBar { agent: "Subagents".into(), tokens: "196M".into(), pct: 16.8, color: "#4ed17e".into() },
+                AgentTokenBar {
+                    agent: "Main agent".into(),
+                    tokens: "970M".into(),
+                    pct: 83.2,
+                    color: "#679efe".into(),
+                },
+                AgentTokenBar {
+                    agent: "Subagents".into(),
+                    tokens: "196M".into(),
+                    pct: 16.8,
+                    color: "#4ed17e".into(),
+                },
             ],
             throughput: vec![
-                ThroughputPoint { time: "00:00".into(), requests: 12.0, tokens: 45.0 },
-                ThroughputPoint { time: "04:00".into(), requests: 5.0, tokens: 18.0 },
-                ThroughputPoint { time: "08:00".into(), requests: 42.0, tokens: 180.0 },
-                ThroughputPoint { time: "12:00".into(), requests: 55.0, tokens: 230.0 },
-                ThroughputPoint { time: "16:00".into(), requests: 48.0, tokens: 195.0 },
-                ThroughputPoint { time: "20:00".into(), requests: 28.0, tokens: 95.0 },
-                ThroughputPoint { time: "22:00".into(), requests: 18.0, tokens: 58.0 },
+                ThroughputPoint {
+                    time: "00:00".into(),
+                    requests: 12.0,
+                    tokens: 45.0,
+                },
+                ThroughputPoint {
+                    time: "04:00".into(),
+                    requests: 5.0,
+                    tokens: 18.0,
+                },
+                ThroughputPoint {
+                    time: "08:00".into(),
+                    requests: 42.0,
+                    tokens: 180.0,
+                },
+                ThroughputPoint {
+                    time: "12:00".into(),
+                    requests: 55.0,
+                    tokens: 230.0,
+                },
+                ThroughputPoint {
+                    time: "16:00".into(),
+                    requests: 48.0,
+                    tokens: 195.0,
+                },
+                ThroughputPoint {
+                    time: "20:00".into(),
+                    requests: 28.0,
+                    tokens: 95.0,
+                },
+                ThroughputPoint {
+                    time: "22:00".into(),
+                    requests: 18.0,
+                    tokens: 58.0,
+                },
             ],
             feed: vec![
-                FeedItem { model: "qwen3-32b".into(), provider: "AGNES".into(), time_ago: "2 分钟前".into(), duration: "12.3s".into(), cost: "$0.004".into() },
-                FeedItem { model: "agnes-2.5-flash".into(), provider: "AGNES".into(), time_ago: "5 分钟前".into(), duration: "3.1s".into(), cost: "$0.001".into() },
-                FeedItem { model: "qwen3-32b".into(), provider: "AGNES".into(), time_ago: "8 分钟前".into(), duration: "18.7s".into(), cost: "$0.007".into() },
-                FeedItem { model: "kimi-k3".into(), provider: "new-api".into(), time_ago: "12 分钟前".into(), duration: "8.2s".into(), cost: "$0.003".into() },
+                FeedItem {
+                    model: "qwen3-32b".into(),
+                    provider: "AGNES".into(),
+                    time_ago: "2 分钟前".into(),
+                    duration: "12.3s".into(),
+                    cost: "$0.004".into(),
+                },
+                FeedItem {
+                    model: "agnes-2.5-flash".into(),
+                    provider: "AGNES".into(),
+                    time_ago: "5 分钟前".into(),
+                    duration: "3.1s".into(),
+                    cost: "$0.001".into(),
+                },
+                FeedItem {
+                    model: "qwen3-32b".into(),
+                    provider: "AGNES".into(),
+                    time_ago: "8 分钟前".into(),
+                    duration: "18.7s".into(),
+                    cost: "$0.007".into(),
+                },
+                FeedItem {
+                    model: "kimi-k3".into(),
+                    provider: "new-api".into(),
+                    time_ago: "12 分钟前".into(),
+                    duration: "8.2s".into(),
+                    cost: "$0.003".into(),
+                },
             ],
         },
     }

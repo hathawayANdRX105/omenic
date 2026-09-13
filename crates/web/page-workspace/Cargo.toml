@@ -5,17 +5,11 @@ version = "0.1.0"
 publish = false
 
 [dependencies]
-dioxus = { version = "0.7" }
-dioxus_components = "0.1.2"
-serde = { workspace = true }
-serde_json = { workspace = true }
-tokio = { version = "1", features = ["full"] }
-pulldown-cmark = { workspace = true }
 omenic-web-client = { path = "../client" }
 omenic-web-components = { path = "../components" }
 omenic-web-state = { path = "../state" }
-session = { path = "../../infra/session" }
-task = { path = "../../agent/task" }
-adaptor = { path = "../../agent/adaptor" }
-orbit = { path = "../../agent/orbit" }
-tools = { path = "../../agent/tools" }
+omenic-web-mock = { path = "../mock" }
+omenic-web-page-stats = { path = "../page-stats" }
+omenic-web-page-config = { path = "../page-config" }
+dioxus = { version = "0.7" }
+tokio = { version = "1", default-features = false, features = ["sync"] }

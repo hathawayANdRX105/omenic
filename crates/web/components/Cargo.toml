@@ -5,8 +5,6 @@ version = "0.1.0"
 publish = false
 
 [dependencies]
-omenic-web-client = { path = "../client" }
+omenic-web-state = { path = "../state" }
 dioxus = { version = "0.7" }
-dioxus_components = "0.1.2"
-serde = { workspace = true }
 pulldown-cmark = { workspace = true }
