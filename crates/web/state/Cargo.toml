@@ -5,10 +5,9 @@ version = "0.1.0"
 publish = false
 
 [dependencies]
-dioxus = { version = "0.7" }
-dioxus_components = "0.1.2"
 serde = { workspace = true }
-orbit = { path = "../../agent/orbit" }
+serde_json = { workspace = true }
 memory = { path = "../../infra/memory" }
 tools = { path = "../../agent/tools" }
 adaptor = { path = "../../agent/adaptor" }
+orbit = { path = "../../agent/orbit" }

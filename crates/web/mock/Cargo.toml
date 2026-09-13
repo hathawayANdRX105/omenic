@@ -1,0 +1,11 @@
+[package]
+name = "omenic-web-mock"
+edition = "2024"
+version = "0.1.0"
+publish = false
+description = "G4 前的假数据源：fixture 会话/消息/任务/统计 + AgentEvent 模拟流"
+
+[dependencies]
+omenic-web-state = { path = "../state" }
+serde_json = { workspace = true }
+tokio = { version = "1", default-features = false, features = ["sync"] }

@@ -2607,11 +2607,10 @@ name = "omenic-web-state"
 version = "0.1.0"
 dependencies = [
  "adaptor",
- "dioxus",
- "dioxus_components",
  "memory",
  "orbit",
  "serde",
+ "serde_json",
  "tools",
 ]
 
