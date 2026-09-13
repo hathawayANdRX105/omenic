@@ -71,6 +71,11 @@ impl AbortSignal {
     pub fn is_aborted(&self) -> bool {
         self.flag.load(Ordering::SeqCst)
     }
+    /// Shared flag clone: lets adapters hand the same `AtomicBool` to
+    /// `omenic tools::Tool::execute`, which polls it directly.
+    pub fn flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.flag)
+    }
 }
 
 /// A single LLM conversation message. Mirrors `adaptor::Message` shape
@@ -193,11 +198,12 @@ impl std::error::Error for ToolError {}
 /// Constraint: `Run` must start with zero steps; `RunStatus` is set by
 /// the first `run_agent_loop` call.
 /// Non-goal: no persistence here; `SessionStore` handles that separately.
-pub fn new_run(_run_id: RunId) -> Run {
-    todo!(
-        "TODO(#1): new_run — reference: omenic/crates/agent/orbit/src/lib.rs:617, \
-         dsh packages/core/session/src/index.ts:792; \
-         constraint: returns empty Run with given id; \
-         non-goal: no persistence, no step population"
-    )
+pub fn new_run(run_id: RunId) -> Run {
+    // Reference: orbit `run_agent` starts from an empty context; status is
+    // derived from the last step (`RunState::status`), so a fresh run
+    // reports `EndTurn` with zero steps.
+    Run {
+        id: run_id,
+        steps: Vec::new(),
+    }
 }

@@ -59,6 +59,11 @@ impl Default for ToolCatalog {
 /// support cooperative cancellation.
 /// Non-goal: no parallel tool dispatch; no schema validation here.
 pub trait ToolExecutor {
+    /// Tool specs advertised to the provider. Default: none, so
+    /// implementors that expose a fixed tool set override this.
+    fn specs(&self) -> Vec<ToolSpec> {
+        Vec::new()
+    }
     fn execute(
         &self,
         spec: &ToolSpec,
@@ -67,16 +72,54 @@ pub trait ToolExecutor {
     ) -> Result<ToolResult, ToolError>;
 }
 
-/// Default catalog built from the omenic built-in tools.
+impl ToolExecutor for ToolCatalog {
+    fn specs(&self) -> Vec<ToolSpec> {
+        ToolCatalog::specs(self)
+    }
+    fn execute(
+        &self,
+        spec: &ToolSpec,
+        args: &Value,
+        abort: &AbortSignal,
+    ) -> Result<ToolResult, ToolError> {
+        self.find(&spec.name)
+            .ok_or_else(|| ToolError::Execute(format!("unknown tool: {}", spec.name)))?
+            .execute(args, abort)
+    }
+}
+
+/// Adapter: omenic `tools::Tool` -> harness `Tool`.
+struct Builtin(Box<dyn tools::Tool>);
+
+impl Tool for Builtin {
+    fn spec(&self) -> ToolSpec {
+        let def = tools::def(self.0.as_ref());
+        ToolSpec {
+            name: def.name,
+            description: def.description,
+            params_schema: def.parameters,
+        }
+    }
+    fn execute(&self, args: &Value, abort: &AbortSignal) -> Result<ToolResult, ToolError> {
+        let flag = abort.flag();
+        self.0
+            .execute(args, &flag)
+            .map(|output| ToolResult {
+                output,
+                is_error: false,
+            })
+            .map_err(|e| ToolError::Execute(e.to_string()))
+    }
+}
+
+/// Default catalog: one entry per omenic built-in tool.
 ///
 /// Reference: `omenic agent/tools/src/lib.rs:319` (`builtin_tools`).
-/// Constraint: returns a `ToolCatalog` with one entry per built-in tool.
-/// Non-goal: no MCP tools here; no policy wrapping
-/// (`Guarded`/`Policy` is omenic-specific, not part of the harness contract).
+/// Non-goal: no MCP tools; no `Guarded`/`Policy` wrapping (omenic-specific).
 pub fn default_catalog() -> ToolCatalog {
-    todo!(
-        "TODO(#TBD): default_catalog — reference: omenic/crates/agent/tools/src/lib.rs:319; \
-         constraint: one ToolCatalog entry per built-in tool; \
-         non-goal: no MCP tools, no Policy wrapping"
-    )
+    let mut catalog = ToolCatalog::new();
+    for tool in tools::builtin_tools() {
+        catalog.register(Arc::new(Builtin(tool)));
+    }
+    catalog
 }

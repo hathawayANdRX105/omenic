@@ -1,4 +1,18 @@
-use omenic_harness_core::{AbortSignal, RunId, RunStatus, StepId, ToolResult, ToolSpec};
+use omenic_harness_core::{
+    AbortSignal, RunId, RunState, RunStatus, StepId, ToolResult, ToolSpec, new_run,
+};
+
+#[test]
+fn new_run_is_empty_with_given_id() {
+    let run = new_run(RunId::new("run-7"));
+    assert_eq!(run.id, RunId::new("run-7"));
+    assert!(run.steps().is_empty(), "new_run must start with zero steps");
+    assert_eq!(
+        run.status(),
+        RunStatus::EndTurn,
+        "a stepless run reports EndTurn"
+    );
+}
 
 #[test]
 fn abort_signal_starts_unset() {

@@ -57,10 +57,12 @@ pub trait PromptRenderer {
 /// Constraint: placeholders are literal `{{key}}`; no other syntax.
 /// Non-goal: no conditional branching, no loop constructs, no
 /// frontmatter stripping.
-pub fn render_with_template(_template: &str, _input: &PromptInput) -> String {
-    todo!(
-        "TODO(#1): render_with_template — reference: omenic/crates/infra/prompts/src/lib.rs; \
-         constraint: replace {{system}}/{{user}}/{{history}} with input fields; \
-         non-goal: no conditional fragments, no frontmatter"
-    )
+pub fn render_with_template(template: &str, input: &PromptInput) -> String {
+    // `Message` serializes to `{"role":...,"content":...}` — the same shape
+    // `adaptor::Message` puts on the wire, so `{{history}}` is OpenAI JSON.
+    let history = serde_json::to_string(&input.history).unwrap_or_else(|_| "[]".to_string());
+    template
+        .replace("{{system}}", &input.system)
+        .replace("{{user}}", &input.user)
+        .replace("{{history}}", &history)
 }
