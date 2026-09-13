@@ -10,18 +10,18 @@ name = "oi"
 path = "src/main.rs"
 
 [dependencies]
-adaptor = { path = "../../crates/adaptor" }
-orbit = { path = "../../crates/orbit" }
-tools = { path = "../../crates/tools" }
-rpc = { path = "../../crates/rpc" }
-task = { path = "../../crates/task" }
-spec = { path = "../../crates/spec" }
-config = { path = "../../crates/config" }
-tui = { path = "../../crates/tui" }
-subagent = { path = "../../crates/subagent" }
-mcp = { path = "../../crates/mcp" }
-daemon = { path = "../../crates/daemon" }
-session = { path = "../../crates/session" }
+adaptor = { path = "../../crates/agent/adaptor" }
+orbit = { path = "../../crates/agent/orbit" }
+tools = { path = "../../crates/agent/tools" }
+rpc = { path = "../../crates/infra/rpc" }
+task = { path = "../../crates/agent/task" }
+spec = { path = "../../crates/evidence/spec" }
+config = { path = "../../crates/infra/config" }
+
+subagent = { path = "../../crates/agent/subagent" }
+mcp = { path = "../../crates/agent/mcp" }
+daemon = { path = "../../crates/infra/daemon" }
+session = { path = "../../crates/infra/session" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 clap = { workspace = true }
