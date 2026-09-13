@@ -123,7 +123,7 @@ pub fn Workspace(
     let mut show_quick_switcher = use_signal(|| false);
     let mut show_settings = use_signal(|| false);
     let mut show_tasks = use_signal(|| false);
-    let mut search_query = use_signal(|| String::new());
+    let mut search_query = use_signal(String::new);
 
     // 侧栏宽度/折叠：全局信号，切视图后仍保持
     let mut sidebar_collapsed = GlobalSignal::<bool>::new(|| false).signal();
@@ -162,7 +162,7 @@ pub fn Workspace(
         }
         if preset_dragging() {
             let target = 56_i32 + e.client_coordinates().x as i32;
-            sidebar_width.set((target.max(264)).min(420) as usize);
+            sidebar_width.set(target.clamp(264, 420) as usize);
             sidebar_collapsed.set(false);
         }
     };
@@ -573,6 +573,6 @@ fn all_sessions_sorted(
             list.extend(items.iter().cloned());
         }
     }
-    list.sort_by(|a, b| b.last_active_epoch.cmp(&a.last_active_epoch));
+    list.sort_by_key(|s| std::cmp::Reverse(s.last_active_epoch));
     list
 }

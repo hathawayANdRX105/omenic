@@ -231,7 +231,7 @@ pub fn messages_for_session(session_id: &str) -> Vec<ChatMessage> {
                 68,
             ),
         ],
-        "s-compaction" | _ => vec![
+        _ => vec![
             user_msg("s-c-1", "帮我重构 orbit 的 compaction 策略，把固定 50 条改成字符预算模式", 6),
             assistant_msg(
                 "s-c-2",

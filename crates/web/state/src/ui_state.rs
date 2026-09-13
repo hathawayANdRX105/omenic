@@ -82,12 +82,12 @@ impl UiState {
                     t.detail = result.clone();
                 }
                 for p in msg.parts.iter_mut() {
-                    if let MessagePart::Tool(t) = p {
-                        if t.id == *id {
-                            t.status = status.to_string();
-                            t.summary = summary.to_string();
-                            t.detail = result.clone();
-                        }
+                    if let MessagePart::Tool(t) = p
+                        && t.id == *id
+                    {
+                        t.status = status.to_string();
+                        t.summary = summary.to_string();
+                        t.detail = result.clone();
                     }
                 }
             }

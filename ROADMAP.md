@@ -46,7 +46,7 @@
 | 4.6 AGENTS.md 向上查找 + 状态缓存 | `crates/harness/instruction/src/`（新 crate） | `packages/context/agent-instructions/src/{files.ts,state.ts}` |
 | 4.7 指令 digest 去重 + 渲染 `PromptTemplate` | 同上（`render.rs`） | `packages/context/agent-instructions/src/{render.ts,digest.ts,config.ts}` |
 
-### C5 web 页面跑真数据 ⬜ 全 mock
+### C5 web 页面跑真数据 🟡 视觉层完成（dsh 复刻 + 自研 atoms + mock 数据面），5.2–5.9 等 G4
 
 | 小功能 | omenic 文件（拆后 crate） | dsh 参考 |
 |---|---|---|
