@@ -1,11 +1,13 @@
 //! 工作区页：dsh AppFrame 三列布局（侧栏 280 / 中栏）。
 //!
-//! 数据源 = `omenic-web-mock`（假数据 + AgentEvent 模拟流）；G4 时把
-//! `mock::stream_reply` 换成 daemon `event.subscribe` 接收端即可，页面零改动。
+//! 数据源双后端：启动时探测本机 daemon（C5.2a 读侧真数据），连接失败
+//! 静默回退 `omenic-web-mock`（假数据 + AgentEvent 模拟流）。assistant
+//! 流仍走 `mock::stream_reply`，G4 时换 daemon `event.subscribe` 接收端。
 
 use std::collections::HashMap;
 
 use dioxus::prelude::*;
+use omenic_web_client::daemon::WebDaemon;
 use omenic_web_client::llm::LlmRuntimeConfig;
 use omenic_web_components::chat::Chat;
 use omenic_web_components::sidebar::Sidebar;
@@ -32,8 +34,33 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-/// 新建会话（mock 版；G4 后替换为 RPC 调用）。独立成自由函数：
-/// Signal 是 Copy，任意闭包都可以直接调用，避免处理器闭包被多处 move。
+/// 数据后端：Daemon = 本机 omenic daemon（读侧真数据）；Mock = fixture 假数据。
+/// 初始化连接失败（无 daemon / ping 不通）静默回退 Mock，行为与现状一致。
+#[derive(Debug, Clone)]
+enum DataBackend {
+    Daemon(WebDaemon),
+    Mock,
+}
+
+/// Daemon 模式下的唯一真实项目行：名字取 data_dir 的文件名。
+fn daemon_space(data_dir: &str) -> WorkspaceSpace {
+    let name = std::path::Path::new(data_dir)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| "omenic".into());
+    WorkspaceSpace {
+        id: data_dir.to_string(),
+        name,
+        path: data_dir.to_string(),
+        branch: String::new(),
+        is_active: true,
+    }
+}
+
+/// 新建会话（内存版；Daemon 模式下调用方再追加 daemon 持久化）。
+/// 独立成自由函数：Signal 是 Copy，任意闭包都可以直接调用，避免处理器
+/// 闭包被多处 move。返回 (会话 id, 标题) 供 daemon 侧 create 使用。
 #[allow(clippy::too_many_arguments)]
 fn create_session_in(
     space_path: String,
@@ -42,12 +69,13 @@ fn create_session_in(
     mut session_messages: Signal<HashMap<String, Vec<ChatMessage>>>,
     mut active_space_path: Signal<String>,
     mut active_session_id: Signal<String>,
-) -> String {
+) -> (String, String) {
     let ts = now_ms();
     let new_id = format!("s-{}", ts);
+    let title = format!("会话 {}", ts % 1_000_000);
     let new_session = Session {
         id: new_id.clone(),
-        title: format!("会话 {}", ts % 1_000_000),
+        title: title.clone(),
         last_active: "刚刚".into(),
         model,
         status: SessionStatus::Idle,
@@ -61,7 +89,7 @@ fn create_session_in(
     session_messages.write().insert(new_id.clone(), Vec::new());
     active_space_path.set(space_path);
     active_session_id.set(new_id.clone());
-    new_id
+    (new_id, title)
 }
 
 /// 会话是否仍存在于任一 space。流式期间会话可能被用户删除
@@ -79,7 +107,28 @@ pub fn Workspace(
     config: LlmRuntimeConfig,
     on_update_config: EventHandler<LlmRuntimeConfig>,
 ) -> Element {
-    let mut spaces = use_signal(store::spaces);
+    // ── 数据后端：先探测 daemon，失败静默回退 Mock ────────────────────────
+    // 连接 + ping 放线程内执行（线程 + join，仿旧 db_load_sessions 的做法）；
+    // UDS 往返耗时极短，不显著拖慢首帧。ping 不通（无 daemon / 陈旧 socket
+    // 文件）→ None → Mock，保持现有行为，不 panic、不阻塞渲染。
+    let config_backend = config.clone();
+    let backend = use_signal(move || {
+        std::thread::spawn(move || {
+            WebDaemon::from_data_dir(&config_backend.data_dir).filter(|d| d.ping())
+        })
+        .join()
+        .ok()
+        .flatten()
+        .map(DataBackend::Daemon)
+        .unwrap_or(DataBackend::Mock)
+    });
+
+    let data_dir = config.data_dir.clone();
+    let mut spaces = use_signal(move || match backend() {
+        // Daemon 模式：项目行 = 单行真实项目（名字取 data_dir 文件名）
+        DataBackend::Daemon(_) => vec![daemon_space(&data_dir)],
+        DataBackend::Mock => store::spaces(),
+    });
     let mut active_space_path = use_signal(|| {
         spaces
             .read()
@@ -88,12 +137,25 @@ pub fn Workspace(
             .map(|s| s.path.clone())
             .unwrap_or_default()
     });
-    let mut space_sessions: Signal<HashMap<String, Vec<Session>>> = use_signal(|| {
-        let mut map = HashMap::new();
-        for space in store::spaces() {
-            map.insert(space.path.clone(), store::sessions_for_space(&space.path));
+    let data_dir = config.data_dir.clone();
+    let mut space_sessions: Signal<HashMap<String, Vec<Session>>> = use_signal(move || {
+        match backend() {
+            // Daemon 模式：sidebar 会话列表 = list_sessions(50)，挂到唯一真实项目下
+            DataBackend::Daemon(d) => {
+                let path = daemon_space(&data_dir).path;
+                let list = std::thread::spawn(move || d.list_sessions(50).unwrap_or_default())
+                    .join()
+                    .unwrap_or_default();
+                HashMap::from([(path, list)])
+            }
+            DataBackend::Mock => {
+                let mut map = HashMap::new();
+                for space in store::spaces() {
+                    map.insert(space.path.clone(), store::sessions_for_space(&space.path));
+                }
+                map
+            }
         }
-        map
     });
     let mut active_session_id = use_signal(|| {
         space_sessions
@@ -103,15 +165,34 @@ pub fn Workspace(
             .unwrap_or_default()
     });
     let mut session_messages: Signal<HashMap<String, Vec<ChatMessage>>> = use_signal(HashMap::new);
-    // 打开即有内容：预填当前会话的 fixture 消息
+    // 选中会话 → 填充消息：Mock 读 fixture，Daemon 线程内 load_messages(100)
+    //（线程 + join，仿旧 db_load_sessions 模式）；已缓存的会话不重复拉取
     use_effect(move || {
         let sid = active_session_id();
-        if !sid.is_empty() && !session_messages.read().contains_key(&sid) {
-            session_messages
-                .write()
-                .insert(sid.clone(), store::messages_for_session(&sid));
+        if sid.is_empty() || session_messages.read().contains_key(&sid) {
+            return;
+        }
+        match backend() {
+            DataBackend::Mock => {
+                session_messages
+                    .write()
+                    .insert(sid.clone(), store::messages_for_session(&sid));
+            }
+            DataBackend::Daemon(d) => {
+                let sid_loaded = sid.clone();
+                let msgs = std::thread::spawn(move || {
+                    d.load_messages(&sid_loaded, 100).unwrap_or_default()
+                })
+                .join()
+                .unwrap_or_default();
+                session_messages.write().insert(sid, msgs);
+            }
         }
     });
+
+    // ⌘K 快速切换的 Daemon 搜索结果信号（Daemon 模式由下方 effect 维护；
+    // Mock 模式渲染时内存过滤，不消费该信号）
+    let mut switcher_sessions: Signal<Vec<Session>> = use_signal(Vec::new);
 
     let mut statusline = use_signal(|| {
         let mut st = store::statusline();
@@ -124,6 +205,28 @@ pub fn Workspace(
     let mut show_settings = use_signal(|| false);
     let mut show_tasks = use_signal(|| false);
     let mut search_query = use_signal(String::new);
+
+    // ⌘K 打开/输入时：Daemon 模式优先 search_sessions（空 query 列 daemon
+    // 全量）。异步化 + 代际 token：渲染线程不被阻塞 RPC 拖住，慢返回的旧
+    // 查询不会覆盖新输入的结果（gen 不匹配即丢弃）
+    let mut switcher_generation = use_signal(|| 0u64);
+    use_effect(move || {
+        if !show_quick_switcher() {
+            return;
+        }
+        let DataBackend::Daemon(d) = backend() else {
+            return;
+        };
+        let q = search_query();
+        let gen_id = switcher_generation() + 1;
+        switcher_generation.set(gen_id);
+        spawn(async move {
+            let list = d.search_sessions(&q, 50).unwrap_or_default();
+            if switcher_generation() == gen_id {
+                switcher_sessions.set(list);
+            }
+        });
+    });
 
     // 侧栏宽度/折叠：全局信号，切视图后仍保持
     let mut sidebar_collapsed = GlobalSignal::<bool>::new(|| false).signal();
@@ -199,19 +302,34 @@ pub fn Workspace(
         .cloned()
         .unwrap_or_default();
 
+    // ⌘K 候选列表：Mock 沿用内存过滤（行为不变）；Daemon 消费
+    // search_sessions 的结果（空 query 时 effect 已列 daemon 全量）
+    let quick_switcher_list = match backend() {
+        DataBackend::Mock => all_sessions_sorted(&spaces(), space_sessions.read().clone())
+            .into_iter()
+            .filter(|s| {
+                let q = search_query().to_lowercase();
+                q.is_empty()
+                    || s.title.to_lowercase().contains(&q)
+                    || s.id.to_lowercase().contains(&q)
+            })
+            .collect(),
+        DataBackend::Daemon(_) => switcher_sessions(),
+    };
+
     // 各 move 闭包各自的 config 克隆（LlmRuntimeConfig 非 Copy）
     let config_create = config.clone();
     let config_model = config.clone();
     let config_send = config.clone();
 
-    // ── 数据操作（mock 版；G4 后替换为 RPC 调用）───────────────────────────
+    // ── 数据操作（内存即时生效；Daemon 模式再追加 daemon 持久化）──────────
 
     let on_select_space = move |path: String| {
         active_space_path.set(path);
     };
 
     let on_create_session = move |space_path: String| {
-        create_session_in(
+        let (new_id, title) = create_session_in(
             space_path,
             config_create.model.clone(),
             space_sessions,
@@ -219,10 +337,23 @@ pub fn Workspace(
             active_space_path,
             active_session_id,
         );
+        // Daemon 模式：内存建会话的同时持久化到 daemon（线程内）
+        if let DataBackend::Daemon(d) = backend() {
+            std::thread::spawn(move || {
+                let _ = d.create_session(&new_id, &title);
+            });
+        }
         view.set(View::Chat);
     };
 
     let on_delete_session = move |id: String| {
+        // Daemon 模式：daemon 侧删除（线程内，连带消息），内存清理照旧
+        if let DataBackend::Daemon(d) = backend() {
+            let id_daemon = id.clone();
+            std::thread::spawn(move || {
+                let _ = d.delete_session(&id_daemon);
+            });
+        }
         let mut map = space_sessions.read().clone();
         for list in map.values_mut() {
             list.retain(|s| s.id != id);
@@ -273,26 +404,40 @@ pub fn Workspace(
         statusline.set(st);
     };
 
-    // ── 发送：mock 模拟流 → 转译层 ─────────────────────────────────────────
+    // ── 发送：内存即时上屏 + mock 模拟流；Daemon 模式追加持久化 ───────────
 
     let on_send = move |text: String| {
         // 无会话时先建一个
+        let mut created: Option<(String, String)> = None;
         if active_session_id().is_empty()
             || !space_sessions
                 .read()
                 .values()
                 .any(|list| list.iter().any(|s| s.id == active_session_id()))
         {
-            create_session_in(
+            created = Some(create_session_in(
                 active_space_path(),
                 config_send.model.clone(),
                 space_sessions,
                 session_messages,
                 active_space_path,
                 active_session_id,
-            );
+            ));
         }
         let sid = active_session_id();
+
+        // Daemon 模式：用户消息持久化（线程内）；刚自建的会话在同一个
+        // 线程里先 create 再 append，保证持久化顺序
+        if let DataBackend::Daemon(d) = backend() {
+            let sid_daemon = sid.clone();
+            let text_daemon = text.clone();
+            std::thread::spawn(move || {
+                if let Some((id, title)) = created {
+                    let _ = d.create_session(&id, &title);
+                }
+                let _ = d.append_message(&sid_daemon, true, &text_daemon);
+            });
+        }
 
         let now = now_ms();
         let user_msg = ChatMessage {
@@ -360,6 +505,24 @@ pub fn Workspace(
                 ui.apply(&AgentEvent::TurnEnd {
                     stop_reason: "end_turn".into(),
                 });
+                // Daemon 模式：TurnEnd 收尾后最后一条 assistant 消息即
+                // 最终回复文本，持久化到 daemon（线程内；空文本跳过，
+                // 存储侧拒绝空消息）
+                if let DataBackend::Daemon(d) = backend() {
+                    let final_text = ui
+                        .messages
+                        .iter()
+                        .rev()
+                        .find(|m| m.role == "assistant")
+                        .map(|m| m.content.clone())
+                        .unwrap_or_default();
+                    if !final_text.is_empty() {
+                        let sid_daemon = sid.clone();
+                        std::thread::spawn(move || {
+                            let _ = d.append_message(&sid_daemon, false, &final_text);
+                        });
+                    }
+                }
                 map.insert(sid.clone(), ui.messages);
             }
 
@@ -491,14 +654,7 @@ pub fn Workspace(
                             autofocus: true,
                         }
                         div { class: "max-h-[320px] overflow-y-auto flex flex-col gap-px",
-                            for session in all_sessions_sorted(&spaces(), space_sessions.read().clone())
-                                .iter()
-                                .filter(|s| {
-                                    let q = search_query().to_lowercase();
-                                    q.is_empty()
-                                        || s.title.to_lowercase().contains(&q)
-                                        || s.id.to_lowercase().contains(&q)
-                                })
+                            for session in quick_switcher_list.iter()
                             {
                                 {
                                     let id = session.id.clone();
