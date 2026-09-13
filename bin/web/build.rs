@@ -1,53 +1,41 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-/// Locate the dioxus_components crate source so Tailwind can scan its utility
-/// classes. The crate lives under CARGO_HOME/registry/src/<hash>/...; we walk the
-/// registry cache and return the first matching `src` directory.
-fn find_dioxus_components_src() -> Option<PathBuf> {
-    let cargo_home = std::env::var("CARGO_HOME")
-        .ok()
-        .or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.cargo")))
-        .unwrap_or_default();
-    let registry = PathBuf::from(cargo_home).join("registry/src");
-    if let Ok(entries) = std::fs::read_dir(&registry) {
-        for outer in entries.flatten() {
-            let candidate = outer.path().join("dioxus_components-0.1.2/src");
-            if candidate.exists() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
 /// Compile the Tailwind v4 input (`assets/tailwind-input.css`) into a static
-/// stylesheet that is embedded into the binary via `include_str!` in `lib.rs`.
+/// stylesheet that is embedded into the binary via `include_str!` in `app.rs`.
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let input = manifest.join("assets/tailwind-input.css");
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let output = out_dir.join("tailwind.gen.css");
 
-    // Build the effective input: clone the project CSS, point its `@source` at an
-    // absolute path, and add dioxus_components' `src` so its component utility
-    // classes are scanned and emitted. Tailwind v4 resolves `@import "tailwindcss"`
-    // from the INPUT FILE's directory hierarchy, so this generated input must live
-    // inside the crate (under node_modules) — we drop it next to the real input
-    // and it is gitignored.
+    // Build the effective input: clone the project CSS, point its first `@source`
+    // (bin/web/src) at an absolute path, and keep the crates/web line so every
+    // web crate's rsx classes are scanned. Tailwind v4 resolves
+    // `@import "tailwindcss"` from the INPUT FILE's directory hierarchy, so this
+    // generated input must live inside the crate — we drop it next to the real
+    // input and it is gitignored.
     let mut css = std::fs::read_to_string(&input).unwrap_or_default();
     let my_src = manifest.join("src").to_string_lossy().replace('\\', "/");
     let my_src_directive = format!("@source \"{my_src}/**/*.rs\";");
-    if let Some(idx) = css.find("@source") {
+    // Match a real directive line (anchored at line start), never prose that
+    // merely mentions the directive name.
+    let idx = css.find("\n@source").map(|i| i + 1).or_else(|| {
+        if css.starts_with("@source") {
+            Some(0)
+        } else {
+            None
+        }
+    });
+    if let Some(idx) = idx {
         // Replace the existing relative source directive with an absolute one.
         let line_end = css[idx..].find('\n').map(|e| idx + e).unwrap_or(css.len());
-        css.replace_range(idx..line_end, &my_src_directive);
+        // Guard: only rewrite a line that really is the directive.
+        if css[idx..line_end].contains("@source") {
+            css.replace_range(idx..line_end, &my_src_directive);
+        }
     } else {
         css.push_str(&format!("\n{my_src_directive}\n"));
-    }
-    if let Some(dc_src) = find_dioxus_components_src() {
-        let dc = dc_src.to_string_lossy().replace('\\', "/");
-        css.push_str(&format!("@source \"{dc}/**/*.rs\";\n"));
     }
     let gen_input = manifest.join(".tailwind.gen-input.css");
     let _ = std::fs::write(&gen_input, &css);
@@ -96,4 +84,6 @@ fn main() {
     println!("cargo:rerun-if-changed=assets/tailwind-input.css");
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=build.rs");
+    // rsx classes live in the web crates; their edits must re-run this script.
+    println!("cargo:rerun-if-changed=../../crates/web");
 }

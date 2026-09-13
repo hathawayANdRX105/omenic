@@ -1,6 +1,10 @@
-use crate::ui::IconButton;
+//! 任务 dock 卡片（dsh composer 上方 dock 形态）：宽随消息列，r16 浮层。
+
 use dioxus::prelude::*;
-use omenic_web_client::mock::TaskItem;
+use omenic_web_state::types::TaskItem;
+
+use crate::icons::X;
+use crate::ui::IconButton;
 
 #[component]
 pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
@@ -17,7 +21,7 @@ pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
         0
     };
 
-    let filtered_tasks: Vec<_> = tasks
+    let filtered_tasks: Vec<&TaskItem> = tasks
         .iter()
         .filter(|t| match selected_filter().as_str() {
             "all" => true,
@@ -30,106 +34,103 @@ pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
         .collect();
 
     rsx! {
-        div { class: "absolute right-4 bottom-4 w-[420px] max-h-[80vh] bg-surface border border-subtle rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden z-40",
-            div { class: "flex items-center justify-between px-3.5 py-2.5 border-b border-subtle",
-                div { class: "flex items-center gap-2",
-                    div { class: "text-[13px] font-semibold text-foreground", "任务看板" }
-                    span { class: "font-mono text-[10.5px] text-muted", "{done_count}/{total_count} 完成 ({pct}%)" }
+        div { class: "w-full rounded-2xl border border-binv bg-layer-2 shadow-lv2 overflow-hidden pointer-events-auto",
+            // 头部
+            div { class: "flex items-center justify-between pl-4 pr-2 py-1.5 border-b border-b1",
+                div { class: "flex items-center gap-2.5",
+                    span { class: "text-[14px] leading-5 font-medium text-label", "任务看板" }
+                    span { class: "text-[12px] leading-5 text-label-3", "{done_count}/{total_count} 完成" }
                 }
-                IconButton {
-                    title: "关闭",
-                    onclick: move |_| on_close.call(()),
-                    "✕"
+                IconButton { title: "关闭", onclick: move |_| on_close.call(()), X { size: 14 } }
+            }
+            // 进度条
+            div { class: "h-1 bg-layer-3",
+                div { class: "h-full bg-brand transition-all", style: "width: {pct}%;" }
+            }
+            // 过滤 chips（dsh compact：h26 r7）
+            div { class: "flex flex-wrap gap-1 px-3 py-2 border-b border-b1",
+                FilterChip {
+                    label: "全部 {total_count}",
+                    active: selected_filter() == "all",
+                    onclick: move |_| selected_filter.set("all".into()),
+                }
+                FilterChip {
+                    label: "进行中 {in_prog_count}",
+                    active: selected_filter() == "in_progress",
+                    onclick: move |_| selected_filter.set("in_progress".into()),
+                }
+                FilterChip {
+                    label: "待办 {open_count}",
+                    active: selected_filter() == "open",
+                    onclick: move |_| selected_filter.set("open".into()),
+                }
+                FilterChip {
+                    label: "已完成 {done_count}",
+                    active: selected_filter() == "done",
+                    onclick: move |_| selected_filter.set("done".into()),
+                }
+                if blocked_count > 0 {
+                    FilterChip {
+                        label: "阻塞 {blocked_count}",
+                        active: selected_filter() == "blocked",
+                        onclick: move |_| selected_filter.set("blocked".into()),
+                    }
                 }
             }
-            div { class: "h-1.5 rounded-full bg-base overflow-hidden",
-                div { class: "h-full rounded-full bg-accent transition-all", style: "width: {pct}%;" }
-            }
-
-            div { class: "flex-1 min-h-0 overflow-y-auto flex flex-col",
-                div { class: "flex flex-wrap gap-1.5 px-3.5 py-2.5 border-b border-subtle",
-                    button {
-                        class: if selected_filter() == "all" { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-foreground bg-surface-elevated border border-accent transition-colors" } else { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-muted-foreground bg-base border border-subtle hover:border-hover transition-colors" },
-                        onclick: move |_| selected_filter.set("all".into()),
-                        "全部 {total_count}"
-                    }
-                    button {
-                        class: if selected_filter() == "in_progress" { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-foreground bg-surface-elevated border border-accent transition-colors" } else { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-muted-foreground bg-base border border-subtle hover:border-hover transition-colors" },
-                        onclick: move |_| selected_filter.set("in_progress".into()),
-                        "进行中 {in_prog_count}"
-                    }
-                    button {
-                        class: if selected_filter() == "open" { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-foreground bg-surface-elevated border border-accent transition-colors" } else { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-muted-foreground bg-base border border-subtle hover:border-hover transition-colors" },
-                        onclick: move |_| selected_filter.set("open".into()),
-                        "待办 {open_count}"
-                    }
-                    button {
-                        class: if selected_filter() == "done" { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-foreground bg-surface-elevated border border-accent transition-colors" } else { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-muted-foreground bg-base border border-subtle hover:border-hover transition-colors" },
-                        onclick: move |_| selected_filter.set("done".into()),
-                        "已完成 {done_count}"
-                    }
-                    if blocked_count > 0 {
-                        button {
-                            class: if selected_filter() == "blocked" { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-foreground bg-surface-elevated border border-accent transition-colors" } else { "px-2.5 py-1 rounded-md text-[11px] cursor-pointer text-muted-foreground bg-base border border-subtle hover:border-hover transition-colors" },
-                            onclick: move |_| selected_filter.set("blocked".into()),
-                            "阻塞 {blocked_count}"
-                        }
-                    }
-                }
-
-                div { class: "flex flex-col gap-1.5 p-3 overflow-y-auto",
-                    for task in filtered_tasks {
-                        {
-                            let is_selected = selected_task_id() == Some(task.id.clone());
-                            let (status_label, status_chip_class) = match task.status.as_str() {
-                                "in_progress" => ("进行中", "px-1.5 py-0.5 rounded text-[10px] font-medium bg-[rgba(162,138,199,0.15)] text-accent border border-[rgba(162,138,199,0.3)]"),
-                                "done" => ("已完成", "px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-success border border-emerald-500/30"),
-                                "blocked" => ("已阻塞", "px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-500/10 text-danger border border-red-500/30"),
-                                _ => ("待办", "px-1.5 py-0.5 rounded text-[10px] font-medium bg-[rgba(255,255,255,0.06)] text-muted border border-[rgba(255,255,255,0.1)]"),
-                            };
-                            let priority_class = match task.priority {
-                                0 => "px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-red-500/10 text-danger",
-                                1 => "px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/10 text-amber-300",
-                                _ => "px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-[rgba(255,255,255,0.06)] text-muted",
-                            };
-                            let kind_class = if task.kind == "bug" { "px-1.5 py-0.5 rounded text-[10px] font-mono uppercase font-bold bg-red-500/10 text-danger" } else { "px-1.5 py-0.5 rounded text-[10px] font-mono uppercase font-bold bg-violet-500/10 text-violet-300" };
-                            let task_id = task.id.clone();
-
-                            rsx! {
-                                div {
-                                    key: "{task.id}",
-                                    class: if is_selected { "rounded-lg border border-accent bg-surface-elevated px-3 py-2.5 cursor-pointer transition-colors" } else { "rounded-lg border border-subtle bg-base px-3 py-2.5 cursor-pointer transition-colors hover:border-hover" },
-                                    onclick: move |_| {
-                                        if is_selected {
-                                            selected_task_id.set(None);
-                                        } else {
-                                            selected_task_id.set(Some(task_id.clone()));
-                                        }
-                                    },
-                                    div { class: "flex items-center justify-between mb-1.5",
-                                        div { class: "flex items-center gap-1.5",
-                                            span { class: "{status_chip_class}", "{status_label}" }
-                                            span { class: "font-mono text-[10px] text-muted", "#{task.id}" }
-                                        }
-                                        div { class: "flex items-center gap-1.5",
-                                            span { class: "{kind_class}", "{task.kind}" }
-                                            span { class: "{priority_class}", "P{task.priority}" }
-                                        }
-                                    }
-                                    div { class: "text-[13px] font-medium text-foreground", "{task.title}" }
+            // 列表
+            div { class: "max-h-[300px] overflow-y-auto p-2 flex flex-col gap-1.5",
+                for task in filtered_tasks {
+                    {
+                        let is_selected = selected_task_id() == Some(task.id.clone());
+                        let (status_label, status_chip) = match task.status.as_str() {
+                            "in_progress" => ("进行中", "bg-chip-brand text-brand-300"),
+                            "done" => ("已完成", "bg-chip-success text-success-2"),
+                            "blocked" => ("已阻塞", "bg-chip-danger text-danger"),
+                            _ => ("待办", "bg-layer-2 text-label-3"),
+                        };
+                        let priority_class = match task.priority {
+                            0 => "bg-chip-danger text-danger",
+                            1 => "bg-chip-warn text-warn-2",
+                            _ => "bg-layer-2 text-label-3",
+                        };
+                        let card_class = if is_selected {
+                            "rounded-[10px] border border-brand bg-layer-1 px-3 py-2.5 cursor-pointer transition-colors"
+                        } else {
+                            "rounded-[10px] border border-b1 bg-layer-1 px-3 py-2.5 cursor-pointer transition-colors hover:border-b2"
+                        };
+                        let task_id = task.id.clone();
+                        rsx! {
+                            div { class: "{card_class}",
+                                onclick: move |_| {
                                     if is_selected {
-                                        div { class: "mt-2 pt-2 border-t border-subtle flex flex-col gap-2",
-                                            if !task.description.is_empty() {
-                                                div { class: "flex flex-col gap-0.5",
-                                                    span { class: "text-[10px] uppercase tracking-wide text-muted font-semibold", "描述" }
-                                                    p { class: "text-[12px] text-muted-foreground leading-relaxed", "{task.description}" }
-                                                }
+                                        selected_task_id.set(None);
+                                    } else {
+                                        selected_task_id.set(Some(task_id.clone()));
+                                    }
+                                },
+                                div { class: "flex items-center justify-between mb-1",
+                                    div { class: "flex items-center gap-1.5",
+                                        span { class: "{status_chip} px-1.5 py-px rounded-md text-[10px] leading-4 font-medium", "{status_label}" }
+                                        span { class: "font-mono text-[10px] leading-4 text-caption", "#{task.id}" }
+                                    }
+                                    div { class: "flex items-center gap-1.5",
+                                        span { class: "font-mono text-[10px] leading-4 uppercase text-label-3", "{task.kind}" }
+                                        span { class: "{priority_class} px-1.5 py-px rounded-md font-mono text-[10px] leading-4 font-semibold", "P{task.priority}" }
+                                    }
+                                }
+                                div { class: "text-[14px] leading-5 text-label", "{task.title}" }
+                                if is_selected {
+                                    div { class: "mt-2 pt-2 border-t border-b1 flex flex-col gap-1.5",
+                                        if !task.description.is_empty() {
+                                            div { class: "flex flex-col gap-0.5",
+                                                span { class: "text-[10px] leading-4 uppercase tracking-wide text-caption font-semibold", "描述" }
+                                                p { class: "text-[12px] leading-[18px] text-label-2", "{task.description}" }
                                             }
-                                            if !task.acceptance.is_empty() {
-                                                div { class: "flex flex-col gap-0.5",
-                                                    span { class: "text-[10px] uppercase tracking-wide text-muted font-semibold", "验收标准" }
-                                                    p { class: "text-[12px] text-muted-foreground leading-relaxed", "{task.acceptance}" }
-                                                }
+                                        }
+                                        if !task.acceptance.is_empty() {
+                                            div { class: "flex flex-col gap-0.5",
+                                                span { class: "text-[10px] leading-4 uppercase tracking-wide text-caption font-semibold", "验收标准" }
+                                                p { class: "text-[12px] leading-[18px] text-label-2", "{task.acceptance}" }
                                             }
                                         }
                                     }
@@ -140,5 +141,17 @@ pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
                 }
             }
         }
+    }
+}
+
+#[component]
+fn FilterChip(label: String, active: bool, onclick: EventHandler<MouseEvent>) -> Element {
+    let class = if active {
+        "h-[26px] px-[7px] rounded-[7px] text-[12px] leading-[18px] bg-ihover text-label cursor-pointer transition-colors border-none"
+    } else {
+        "h-[26px] px-[7px] rounded-[7px] text-[12px] leading-[18px] text-label-3 hover:bg-ihover hover:text-label cursor-pointer transition-colors border-none bg-transparent"
+    };
+    rsx! {
+        button { r#type: "button", class: "{class}", onclick: onclick, "{label}" }
     }
 }
