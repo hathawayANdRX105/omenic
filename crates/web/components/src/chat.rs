@@ -1,10 +1,18 @@
-use crate::ui::Dropdown;
+//! 会话区（dsh ConversationRoot 复刻）：748px 消息列、用户右气泡 r22、
+//! assistant 全宽 16/28、工作过程折叠行、浮动 composer（r22 胶囊卡）。
+
 use dioxus::prelude::*;
-use omenic_web_client::mock::{ChatMessage, MessagePart, StatusLine, ToolCall};
+use omenic_web_state::types::{ChatMessage, MessagePart, StatusLine, ToolCall};
 use pulldown_cmark::{Options as MarkdownOptions, Parser, html};
 
-/// 将 Agent/用户消息渲染为 Markdown HTML。
-fn markdown_to_html(input: &str) -> String {
+use crate::icons::{ArrowUp, ChevronRight, Paperclip, SquareCheck};
+use crate::ui::{Dropdown, IconButton, Spinner};
+
+/// Markdown → HTML。CommonMark 会透传原始 HTML（经 `dangerous_inner_html`
+/// 注入 DOM，是真实 XSS 面），所以生成后必须过 ammonia 白名单清洗：
+/// 剥离 script/事件属性/javascript: URL，只留安全标签。
+/// `pub` 供 `tests/markdown_sanitize.rs` 集成测试直接断言。
+pub fn markdown_to_html(input: &str) -> String {
     let mut opts = MarkdownOptions::empty();
     opts.insert(MarkdownOptions::ENABLE_STRIKETHROUGH);
     opts.insert(MarkdownOptions::ENABLE_TASKLISTS);
@@ -12,55 +20,63 @@ fn markdown_to_html(input: &str) -> String {
     let parser = Parser::new_ext(input, opts);
     let mut output = String::new();
     html::push_html(&mut output, parser);
-    output
+    ammonia::clean(&output)
 }
 
-/// 不同工具类型对应的暗色徽标配色（无边框，靠颜色区分）。
-fn kind_badge(kind: &str) -> &'static str {
+/// 工具类型的 chip 配色（dsh 状态色 chip：900 底 + 400 字）。
+fn kind_chip(kind: &str) -> &'static str {
     match kind {
-        "bash" => "text-sky-300/90 bg-sky-500/10",
-        "edit" | "write" => "text-emerald-300/90 bg-emerald-500/10",
-        "read" => "text-amber-300/90 bg-amber-500/10",
-        _ => "text-violet-300/90 bg-violet-500/10",
+        "bash" => "bg-chip-brand text-brand-300",
+        "edit" | "write" => "bg-chip-success text-success-2",
+        "read" | "grep" | "glob" => "bg-chip-warn text-warn-2",
+        "delete" => "bg-chip-danger text-danger",
+        _ => "bg-layer-2 text-label-3",
     }
 }
 
-/// 缩略导航横条：静止时全部等宽一致；悬停时由客户端 JS 按鼠标位置
-/// 生成高斯“聚光”梯度（光标处最长最亮，向两端平滑收窄）。
+const MODELS: &[&str] = &[
+    "deepseek-v4-flash",
+    "qwen3-32b",
+    "agnes-2.5-flash",
+    "claude-opus-4-7",
+    "kimi-k3",
+];
+
+const THINKING_OPTIONS: &[(&str, &str)] = &[
+    ("关闭", "off"),
+    ("轻量", "2k"),
+    ("标准", "8k"),
+    ("深度", "16k"),
+];
 
 #[component]
 pub fn Chat(
     messages: Vec<ChatMessage>,
     statusline: StatusLine,
     is_streaming: bool,
+    /// 浮在 composer 上方的 dock 卡片（任务看板等），由页面层传入
+    dock: Option<Element>,
     on_send: EventHandler<String>,
     on_model_change: EventHandler<String>,
     on_toggle_thinking: EventHandler<()>,
+    on_toggle_tasks: EventHandler<()>,
 ) -> Element {
-    let models = [
-        "agnes-2.5-flash",
-        "deepseek-v4-flash",
-        "claude-opus-4-7",
-        "qwen3-32b",
-        "kimi-k3",
-    ];
+    let model_items: Vec<(String, String)> = MODELS
+        .iter()
+        .map(|m| (m.to_string(), m.to_string()))
+        .collect();
+    let thinking_items: Vec<(String, String)> = THINKING_OPTIONS
+        .iter()
+        .map(|(l, v)| (l.to_string(), v.to_string()))
+        .collect();
 
-    let thinking_options: Vec<(String, String)> = vec![
-        ("关闭".into(), "off".into()),
-        ("轻量".into(), "2k".into()),
-        ("标准".into(), "8k".into()),
-        ("深度".into(), "16k".into()),
-    ];
-
-    let display_messages: Vec<_> = messages
+    let display_messages: Vec<ChatMessage> = messages
         .iter()
         .filter(|m| {
             !m.content.is_empty() || !m.tool_calls.is_empty() || !m.parts.is_empty() || is_streaming
         })
         .cloned()
         .collect();
-
-    let last_idx = display_messages.len().saturating_sub(1);
 
     let prompt_items: Vec<(String, String)> = display_messages
         .iter()
@@ -70,61 +86,77 @@ pub fn Chat(
 
     rsx! {
         div { class: "relative flex-1 min-h-0 overflow-hidden",
-            // 单一滚动面板 = 整个聊天室（只有一个滚动条，位于房间最右侧）
+            // 单一滚动面板 = 整个聊天室
             div { class: "absolute inset-0 overflow-y-auto",
                 id: "chat-scroll",
-                div { class: "max-w-[1360px] w-[96%] mx-auto px-6 pt-5 pb-[160px] flex flex-col gap-3.5 min-h-full",
-                if display_messages.is_empty() && !is_streaming {
-                    div { class: "flex-1 flex flex-col items-center justify-center gap-2 text-muted text-center py-10 select-none",
-                        div { class: "text-base font-semibold text-muted-foreground", "开始一个新的任务" }
-                        div { class: "text-xs max-w-[420px] leading-relaxed", "在下方输入指令，Agent 将使用文件读写、bash 与代码编辑工具协助你完成。" }
-                    }
-                }
-                for (idx, msg) in display_messages.iter().enumerate() {
-                    // 用户的一次输入 + agent 的完整回答 = 一个完整过程；过程之间用清晰分界线隔开。
-                    if msg.role == "user" && idx > 0 {
-                        div { class: "h-px w-full bg-border-hover my-3 shrink-0" }
-                    }
-                    if msg.content.is_empty() && msg.tool_calls.is_empty() && msg.parts.is_empty() {
-                        div { key: "streaming-{idx}", class: "flex items-center gap-2 py-1 text-[12px] text-muted",
-                            dioxus_components::Spinner { size: dioxus_components::SpinnerSize::Small }
-                            span { "正在连接模型并思考生成回答..." }
+                div { class: "max-w-[780px] w-full mx-auto px-4 pt-4 pb-12 flex flex-col gap-4 min-h-full",
+                    if display_messages.is_empty() && !is_streaming {
+                        div { class: "flex-1 flex flex-col items-center justify-center gap-2.5 text-center py-10 select-none relative",
+                            div { class: "absolute w-[520px] h-[220px] rounded-full bg-brand/10 blur-[110px] -z-10" }
+                            div { class: "text-[26px] leading-8 font-semibold text-label", "开始一个新的任务" }
+                            div { class: "text-[14px] leading-[22px] text-label-3 max-w-[420px]",
+                                "在下方输入指令，Agent 将使用文件读写、bash 与代码编辑工具协助你完成。"
+                            }
                         }
-                    } else {
-                        MessageBubble { key: "{msg.id}-{idx}", message: msg.clone(), active: is_streaming && idx == last_idx && msg.role == "assistant", id: if msg.role == "user" { Some(format!("prompt-{}", msg.id)) } else { None } }
                     }
-                }
-                div { id: "chat-scroll-anchor", class: "h-4 shrink-0" }
+                    for (idx, msg) in display_messages.iter().enumerate() {
+                        {
+                            let is_last = idx == display_messages.len() - 1;
+                            let anchor = if msg.role == "user" {
+                                Some(format!("prompt-{}", msg.id))
+                            } else {
+                                None
+                            };
+                            rsx! {
+                                MessageItem {
+                                    key: "{msg.id}-{idx}",
+                                    message: msg.clone(),
+                                    // 流式指示只挂在最后一条 assistant 上
+                                    streaming_tail: is_streaming && is_last && msg.role == "assistant",
+                                    id: anchor,
+                                }
+                            }
+                        }
+                    }
+                    div { id: "chat-scroll-anchor", class: "h-2 shrink-0" }
                 }
             }
 
-            // 左侧缩略导航：每个用户 prompt 一个高亮横条作为锚点；悬停显示该次 prompt 的缩略面板。
-            // 整列垂直居中（中心向两边扩展），新增时重新居中。
+            // 左侧 minimap：每个用户 prompt 一个横条锚点（客户端 JS 聚光梯度）
             if !prompt_items.is_empty() {
-                div { class: "absolute left-2 top-0 bottom-0 flex flex-col justify-center z-20 pointer-events-auto",
+                div { class: "absolute left-2 top-0 bottom-0 flex flex-col justify-center z-20",
                     id: "minimap",
-                    for (anchor_id, p) in prompt_items.clone().into_iter() {
+                    for (anchor_id, p) in prompt_items.clone() {
                         div { class: "relative flex items-center",
                             style: "height:16px; width:56px;",
-                            "data-anchor": anchor_id.clone(),
+                            "data-anchor": anchor_id,
                             div { class: "rounded-full bg-subtle cursor-pointer transition-all duration-150 ease-out minimap-bar",
-                                style: "height:4px; width:12px;",
+                                style: "height:4px; width:10px;",
                             }
-                            div { class: "absolute left-14 top-1/2 -translate-y-1/2 z-30 w-[230px] max-h-[150px] overflow-hidden rounded-lg border border-subtle bg-surface-elevated px-3 py-2.5 shadow-[0_8px_26px_rgba(0,0,0,0.42)] pointer-events-none",
+                            div { class: "absolute left-14 top-1/2 -translate-y-1/2 z-30 w-[230px] max-h-[150px] overflow-hidden rounded-xl border border-binv bg-menu px-3 py-2.5 shadow-lv3 pointer-events-none",
                                 "data-tip": "",
                                 style: "display:none;",
-                                div { class: "text-[11px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words line-clamp-6", "{p}" }
+                                div { class: "text-[12px] leading-5 text-label-2 whitespace-pre-wrap break-words line-clamp-6", "{p}" }
                             }
                         }
                     }
                 }
             }
 
-            // 输入框悬浮在聊天室上方（pointer-events-none 让滚动穿透，仅输入框本身可交互）
-            div { class: "absolute bottom-0 left-1/2 -translate-x-1/2 w-[95%] max-w-[1260px] px-5 pb-4 z-30 pointer-events-none",
-                div { class: "bg-surface border border-subtle rounded-xl shadow-[0_8px_26px_rgba(0,0,0,0.42)] flex flex-col transition-all focus-within:border-accent pointer-events-auto",
-                    form {
-                        class: "flex flex-col",
+            // composer 悬浮座位：渐隐带 + 状态行 + dock + 输入卡
+            div { class: "absolute bottom-0 left-0 right-0 z-30 pointer-events-none",
+                div { class: "h-9 bg-gradient-to-t from-base to-transparent" }
+                div { class: "mx-auto w-full max-w-[780px] px-4 pb-2 flex flex-col items-center gap-2",
+                    // 状态行（dsh StatsLine：12/20 tertiary 居中）
+                    div { class: "text-[12px] leading-5 text-label-3 text-center select-none",
+                        "{statusline.model} · ↑{statusline.tokens_in} ↓{statusline.tokens_out} · ${statusline.cost_usd:.3} · context {statusline.context_pct:.0}%"
+                    }
+                    // dock 卡片（任务看板）
+                    {dock}
+                    // 输入卡：r22 胶囊
+                    // 不加 overflow-hidden：模型/思考菜单从工具行向上弹出，
+                    // 裁剪会切掉卡片外的部分；圆角由卡片自身的 bg + radius 呈现
+                    form { class: "pointer-events-auto w-full rounded-[22px] border border-b1 bg-input-bg shadow-lv2 flex flex-col transition-colors focus-within:border-b3",
                         onsubmit: move |e: FormEvent| {
                             let text = e
                                 .get_first("message")
@@ -137,51 +169,51 @@ pub fn Chat(
                                 on_send.call(text);
                             }
                         },
-
                         textarea {
                             id: "chat-input-area",
                             name: "message",
-                            class: "w-full min-h-[68px] max-h-[220px] bg-transparent border-none outline-none text-foreground font-normal text-[13px] leading-[1.55] px-4 pt-3.5 pb-2 resize-none placeholder:text-muted",
+                            class: "w-full resize-none bg-transparent border-none outline-none text-[16px] leading-6 text-label placeholder:text-caption caret-brand px-4 pt-3 pb-1 min-h-[52px] max-h-[336px]",
                             placeholder: "输入指令，Enter 发送，Shift+Enter 换行...",
                         }
-
-                        div { class: "flex items-center justify-between px-3 pt-2 pb-2.5 border-t border-[rgba(255,255,255,0.04)]",
-                            div { class: "flex items-center gap-1",
-                                // 模型下拉（复用 Dropdown，自带外点收起）
+                        div { class: "flex items-center justify-between pl-1.5 pr-2 pb-1.5 pt-0.5",
+                            div { class: "flex items-center gap-0.5",
+                                IconButton {
+                                    title: "附件（待接线）",
+                                    class: "bg-selector hover:bg-iactive",
+                                    disabled: true,
+                                    Paperclip { size: 15 }
+                                }
+                                IconButton {
+                                    title: "任务看板",
+                                    onclick: move |_| on_toggle_tasks.call(()),
+                                    SquareCheck { size: 15 }
+                                }
                                 Dropdown {
-                                    label: "{statusline.model} ▾",
+                                    label: "{statusline.model}",
                                     header: "选择模型",
-                                    items: models.iter().map(|m| (m.to_string(), m.to_string())).collect(),
+                                    items: model_items,
                                     active_value: statusline.model.clone(),
                                     mono: true,
-                                    on_select: move |m: String| {
-                                        on_model_change.call(m);
-                                    },
+                                    on_select: move |m: String| on_model_change.call(m),
                                 }
-                                // 思考下拉（复用 Dropdown，自带外点收起）
                                 Dropdown {
-                                    label: "思考 {statusline.thinking} ▾",
+                                    label: "思考 {statusline.thinking}",
                                     header: "思考强度",
-                                    items: thinking_options.clone(),
+                                    items: thinking_items,
                                     active_value: statusline.thinking.clone(),
-                                    on_select: move |_v: String| {
-                                        on_toggle_thinking.call(());
-                                    },
+                                    on_select: move |_| on_toggle_thinking.call(()),
                                 }
                             }
-
-                            div { class: "flex items-center gap-2",
-                                span { class: "text-[10px] text-muted font-mono", "{statusline.tokens_in} / {statusline.tokens_out}" }
+                            div { class: "flex items-center gap-2.5",
+                                span { class: "text-[12px] leading-5 text-caption font-mono",
+                                    "{statusline.tokens_in} / {statusline.tokens_out}"
+                                }
                                 button {
                                     r#type: "submit",
-                                    class: if is_streaming { "flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-semibold bg-accent text-[#0b0c10] opacity-75 cursor-not-allowed" } else { "flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-semibold bg-accent text-[#0b0c10] hover:bg-accent-hover cursor-pointer transition-colors" },
                                     disabled: is_streaming,
-                                    if is_streaming {
-                                        dioxus_components::Spinner { size: dioxus_components::SpinnerSize::Small }
-                                        span { "发送中..." }
-                                    } else {
-                                        span { "发送 ↵" }
-                                    }
+                                    class: "w-[34px] h-[34px] rounded-full bg-brand text-white hover:bg-brand-hover disabled:opacity-40 flex items-center justify-center cursor-pointer transition-colors border-none",
+                                    title: "发送 (Enter)",
+                                    ArrowUp { size: 16 }
                                 }
                             }
                         }
@@ -192,28 +224,29 @@ pub fn Chat(
     }
 }
 
+/// 单条消息：用户右侧气泡 / assistant 按发生顺序（过程折叠 + 最终回复）。
 #[component]
-fn MessageBubble(message: ChatMessage, active: bool, id: Option<String>) -> Element {
+fn MessageItem(message: ChatMessage, streaming_tail: bool, id: Option<String>) -> Element {
     let is_user = message.role == "user";
+    let dom_id = id.unwrap_or_default();
 
     if is_user {
-        // 用户消息：右侧消息气泡（无表头，模拟 zcode 风格）
         rsx! {
-            div { class: "flex flex-col items-end gap-1 w-full",
-                id: id.clone().unwrap_or_default(),
+            div { class: "flex flex-col items-end gap-1 w-full group",
+                id: "{dom_id}",
                 if !message.content.is_empty() {
-                    div { class: "markdown-body text-foreground bg-surface-elevated border border-accent-subtle rounded-[10px] px-3 py-2 text-[13px] leading-[1.55] max-w-[82%]",
+                    div { class: "markdown-sm bg-bubble rounded-[22px] px-4 py-2.5 max-w-[525px]",
                         dangerous_inner_html: "{markdown_to_html(&message.content)}"
                     }
+                }
+                span { class: "text-[12px] leading-5 text-label-3 pr-2 opacity-0 group-hover:opacity-100 transition-opacity duration-75",
+                    "{message.timestamp}"
                 }
             }
         }
     } else {
-        // 助手消息：按真实发生顺序渲染。
-        // 最后一段文本作为「最终回复」始终展示；其之前的内容（中间输出 + 工具调用）
-        // 收进单个「过程」折叠块——运行时完全展开，最终回复到达后自动折叠。
-        // 只有真正的 reason chunk 才算「思考」，当前数据无此类内容。
-        let parts = if !message.parts.is_empty() {
+        // 有序片段：为空时回退 content + tool_calls
+        let parts: Vec<MessagePart> = if !message.parts.is_empty() {
             message.parts.clone()
         } else {
             let mut v = Vec::new();
@@ -235,26 +268,39 @@ fn MessageBubble(message: ChatMessage, active: bool, id: Option<String>) -> Elem
                     MessagePart::Text(s) => s.clone(),
                     _ => String::new(),
                 };
-                (ft.clone(), parts[..fi].to_vec(), !ft.is_empty())
+                let has_final = !ft.is_empty();
+                (ft, parts[..fi].to_vec(), has_final)
             }
             None => (String::new(), parts.clone(), false),
         };
+        let waiting = streaming_tail && !has_final && process.is_empty();
 
         rsx! {
-            div { class: "flex flex-col gap-2 w-full",
-                id: id.clone().unwrap_or_default(),
-                if !process.is_empty() {
-                    ProcessBlock { parts: process, active }
-                }
-                if has_final {
-                    div { class: "markdown-body text-foreground",
-                        dangerous_inner_html: "{markdown_to_html(&final_text)}"
+            div { class: "flex flex-col gap-2 w-full group",
+                id: "{dom_id}",
+                if waiting {
+                    // dsh turn 状态行：26px 高 shimmer
+                    div { class: "h-[26px] flex items-center",
+                        span { class: "shimmer-text text-[14px] font-medium", "思考中" }
                     }
-                }
-                if active {
-                    div { class: "flex items-center gap-2 py-1 text-[12px] text-muted",
-                                        dioxus_components::Spinner { size: dioxus_components::SpinnerSize::Small }
-                        span { "正在生成回复..." }
+                } else {
+                    if !process.is_empty() {
+                        ProcessBlock { parts: process, active: streaming_tail }
+                    }
+                    if has_final {
+                        div { class: "markdown-body",
+                            dangerous_inner_html: "{markdown_to_html(&final_text)}"
+                        }
+                    }
+                    if streaming_tail {
+                        div { class: "flex items-center gap-2 h-[26px]",
+                            Spinner {}
+                            span { class: "text-[12px] leading-5 text-label-3", "正在生成回复..." }
+                        }
+                    }
+                    // hover 元信息（时间戳）
+                    span { class: "text-[12px] leading-5 text-label-3 -ml-1 h-5 opacity-0 group-hover:opacity-100 transition-opacity duration-75",
+                        "{message.timestamp}"
                     }
                 }
             }
@@ -262,8 +308,8 @@ fn MessageBubble(message: ChatMessage, active: bool, id: Option<String>) -> Elem
     }
 }
 
-/// 单个折叠块：包裹「最终回复」之前的所有内容（中间输出 + 工具调用）。
-/// 运行时（active）完全展开；最终回复到达后自动折叠，仅留最终回复可见。
+/// 「工作过程」折叠块：最终回复之前的全部内容（文本 + 工具调用）。
+/// 运行中完全展开；最终回复到达后自动折叠。
 #[component]
 fn ProcessBlock(parts: Vec<MessagePart>, active: bool) -> Element {
     let mut is_open = use_signal(|| false);
@@ -272,18 +318,23 @@ fn ProcessBlock(parts: Vec<MessagePart>, active: bool) -> Element {
 
     rsx! {
         div { class: "flex flex-col",
-            div {
-                class: "flex items-center gap-1.5 py-0.5 cursor-pointer select-none text-[11px] rounded hover:text-muted-foreground",
-                onclick: move |e: MouseEvent| { e.stop_propagation(); is_open.set(!is_open()); },
-                span { class: "font-medium text-muted", "过程" }
-                span { class: "text-muted/70", " · {count}" }
+            div { class: "h-6 flex items-center gap-1.5 cursor-pointer select-none w-fit text-[14px] leading-6 text-label-2 hover:text-label",
+                onclick: move |e: MouseEvent| {
+                    e.stop_propagation();
+                    is_open.set(!is_open());
+                },
+                span { class: if open { "text-label-3 rotate-90 transition-transform duration-150" } else { "text-label-3 transition-transform duration-150" },
+                    ChevronRight { size: 12 }
+                }
+                span { "工作过程" }
+                span { class: "text-caption", "· {count}" }
             }
             if open {
-                div { class: "flex flex-col gap-2 pl-1 mt-0.5",
+                div { class: "pl-[22px] pt-1 flex flex-col gap-2",
                     for (i, p) in parts.iter().enumerate() {
                         match p {
                             MessagePart::Text(s) => rsx! {
-                                div { key: "txt-{i}", class: "markdown-body text-foreground/90",
+                                div { key: "txt-{i}", class: "markdown-body",
                                     dangerous_inner_html: "{markdown_to_html(s)}"
                                 }
                             },
@@ -298,48 +349,51 @@ fn ProcessBlock(parts: Vec<MessagePart>, active: bool) -> Element {
     }
 }
 
-/// 单次工具调用：在「过程」块内作为可折叠项展示（默认折叠，仅显示一行表头）。
-/// 点击表头展开其 summary + 完整输出；执行失败（status == "error"）时以红色「失败」标记提醒。
+/// 单次工具调用折叠行（dsh DisclosureRow：24px 头 + 展开体）。
 #[component]
 fn ToolLine(tool: ToolCall) -> Element {
     let mut open = use_signal(|| false);
     let is_err = tool.status == "error";
-    let badge = if is_err {
-        "text-danger bg-danger/10"
+    let running = tool.status == "running";
+    let chip = kind_chip(&tool.kind);
+    let arrow_class = if open() {
+        "text-label-3 transition-transform duration-150 rotate-90"
     } else {
-        kind_badge(&tool.kind)
+        "text-label-3 transition-transform duration-150"
     };
-    let line_color = if is_err {
-        "border-danger/40"
-    } else {
-        "border-subtle/40"
-    };
-    let arrow = if open() { "▾" } else { "▸" };
 
     rsx! {
         div { class: "flex flex-col",
-            div { class: "flex items-center gap-1.5 py-1 text-[11px] rounded cursor-pointer select-none hover:text-muted-foreground",
-                onclick: move |e: MouseEvent| { e.stop_propagation(); open.set(!open()); },
-                span { class: "text-[10px] text-muted/70 w-3 text-center shrink-0", "{arrow}" }
-                span { class: "{badge} inline-flex items-center justify-center font-mono text-[9px] font-bold uppercase px-1.5 py-0.5 leading-none rounded-sm shrink-0", "{tool.kind}" }
-                if is_err {
-                    span { class: "text-danger font-mono text-[9px] font-bold uppercase px-1 py-px rounded-sm shrink-0", "失败" }
+            div { class: "h-6 flex items-center gap-2 cursor-pointer select-none w-fit",
+                onclick: move |e: MouseEvent| {
+                    e.stop_propagation();
+                    open.set(!open());
+                },
+                span { class: "{arrow_class}", ChevronRight { size: 12 } }
+                span { class: "{chip} inline-flex items-center font-mono text-[10px] font-semibold uppercase px-1.5 py-px leading-4 rounded-md shrink-0",
+                    "{tool.kind}"
                 }
-                span { class: "font-mono text-[11px] text-muted-foreground flex-1 truncate min-w-0", "{tool.title}" }
+                span { class: "font-mono text-[12px] leading-5 text-label-2 flex-1 truncate min-w-0", "{tool.title}" }
+                if running {
+                    Spinner {}
+                }
+                if is_err {
+                    span { class: "text-[11px] leading-4 font-medium text-danger shrink-0", "失败" }
+                }
             }
             if open() {
-                div { class: "ml-3.5 mb-1.5 border-l-2 {line_color} pl-3 py-0.5",
+                div { class: "pl-[22px] pb-1 flex flex-col gap-1.5",
                     if !tool.summary.is_empty() {
-                        div { class: "text-[11px] text-muted mb-1.5 leading-relaxed", "{tool.summary}" }
+                        div { class: "text-[13px] leading-5 text-label-3", "{tool.summary}" }
                     }
-                    div { class: "font-mono text-[11px] leading-[1.5] text-muted-foreground/70 whitespace-pre-wrap break-all",
+                    div { class: "bg-codeblock rounded-lg px-3 py-2 font-mono text-[12px] leading-[18px] text-label-2 whitespace-pre-wrap break-all",
                         for line in tool.detail.lines() {
                             if line.starts_with('+') && !line.starts_with("+++") {
-                                span { class: "text-success", "{line}\n" }
+                                span { class: "text-success-2", "{line}\n" }
                             } else if line.starts_with('-') && !line.starts_with("---") {
                                 span { class: "text-danger", "{line}\n" }
                             } else if line.starts_with("@@") {
-                                span { class: "text-accent", "{line}\n" }
+                                span { class: "text-brand", "{line}\n" }
                             } else {
                                 span { "{line}\n" }
                             }

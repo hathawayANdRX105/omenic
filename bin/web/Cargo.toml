@@ -15,15 +15,5 @@ dioxus = { version = "0.7", features = ["liveview"] }
 dioxus-liveview = { version = "0.7", features = ["axum"] }
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
-serde = { workspace = true }
-serde_json = { workspace = true }
-toml = { workspace = true }
-ureq = { workspace = true }
-pulldown-cmark = { workspace = true }
-dioxus_components = "0.1.2"
 omenic-web-client = { path = "../../crates/web/client" }
-omenic-web-state = { path = "../../crates/web/state" }
-omenic-web-components = { path = "../../crates/web/components" }
 omenic-web-page-workspace = { path = "../../crates/web/page-workspace" }
-omenic-web-page-stats = { path = "../../crates/web/page-stats" }
-omenic-web-page-config = { path = "../../crates/web/page-config" }

@@ -1,29 +1,15 @@
-//! Dioxus LiveView Web UI for omenic.
+//! Dioxus LiveView Web UI for omenic — dsh 风格。
 //!
-//! Real-time WebSocket interactive interface:
-//!   - `/`        Workspace (session sidebar + chat + task board)
-//!   - `/stats`   Observability dashboard with time range filtering
-//!   - `/config`  Model / channel configuration
+//! 无顶栏（dsh 无 topbar）：侧栏承载全部入口（新会话 / 搜索 ⌘K /
+//! 数据统计 / 设置弹窗）。页面数据当前来自 `omenic-web-mock`。
 
 use dioxus::prelude::*;
 use omenic_web_client::llm;
-use omenic_web_components::ui::{Button, ButtonVariant};
-use omenic_web_page_config::ConfigPage;
-use omenic_web_page_stats::Stats;
 use omenic_web_page_workspace::Workspace;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tab {
-    Workspace,
-    Stats,
-    Config,
-}
 
 #[component]
 pub fn App() -> Element {
-    let mut current_tab = use_signal(|| Tab::Workspace);
     let mut runtime_config = use_signal(llm::LlmRuntimeConfig::load_from_system);
-    let mut show_quick_switcher = use_signal(|| false);
     let css_content = format!(
         "{}",
         include_str!(concat!(env!("OUT_DIR"), "/tailwind.gen.css"))
@@ -31,68 +17,14 @@ pub fn App() -> Element {
 
     rsx! {
         style { "{css_content}" }
-
-        nav { class: "flex items-center h-[46px] px-4 bg-sidebar border-b border-subtle sticky top-0 z-50 select-none",
-            // 左侧占位，保证中间按钮真正水平居中
-            div { class: "flex-1" }
-            // 中间：搜索会话
-            div { class: "flex items-center",
-                Button {
-                    variant: ButtonVariant::Ghost,
-                    class: "border border-subtle h-9",
-                    onclick: move |_| {
-                        if current_tab() != Tab::Workspace {
-                            current_tab.set(Tab::Workspace);
-                        }
-                        show_quick_switcher.set(true);
-                    },
-                    span { class: "leading-none", "搜索会话" }
-                    kbd { class: "leading-none inline-flex items-center justify-center", "⌘K" }
-                }
-            }
-            // 右侧：标签 + 版本号（右对齐）
-            div { class: "flex-1 flex items-center justify-end gap-2",
-                div { class: "flex gap-0.5",
-                    button {
-                        class: if current_tab() == Tab::Workspace { "px-3 py-1.5 text-[12px] font-medium text-foreground bg-surface-elevated border-none rounded-md cursor-pointer transition-colors" } else { "px-3 py-1.5 text-[12px] font-medium text-muted-foreground bg-transparent border-none rounded-md cursor-pointer transition-colors hover:text-foreground" },
-                        onclick: move |_| current_tab.set(Tab::Workspace),
-                        "工作区"
-                    }
-                    button {
-                        class: if current_tab() == Tab::Stats { "px-3 py-1.5 text-[12px] font-medium text-foreground bg-surface-elevated border-none rounded-md cursor-pointer transition-colors" } else { "px-3 py-1.5 text-[12px] font-medium text-muted-foreground bg-transparent border-none rounded-md cursor-pointer transition-colors hover:text-foreground" },
-                        onclick: move |_| current_tab.set(Tab::Stats),
-                        "数据统计"
-                    }
-                    button {
-                        class: if current_tab() == Tab::Config { "px-3 py-1.5 text-[12px] font-medium text-foreground bg-surface-elevated border-none rounded-md cursor-pointer transition-colors" } else { "px-3 py-1.5 text-[12px] font-medium text-muted-foreground bg-transparent border-none rounded-md cursor-pointer transition-colors hover:text-foreground" },
-                        onclick: move |_| current_tab.set(Tab::Config),
-                        "配置"
-                    }
-                }
-                span { class: "font-mono text-[11px] text-muted ml-2", "v0.1.0" }
-            }
-        }
-
-        match current_tab() {
-            Tab::Workspace => rsx! {
-                Workspace {
-                    config: runtime_config(),
-                    on_update_config: move |cfg| runtime_config.set(cfg),
-                    show_quick_switcher: show_quick_switcher,
-                }
-            },
-            Tab::Stats => rsx! { Stats {} },
-            Tab::Config => rsx! {
-                ConfigPage {
-                    config: runtime_config(),
-                    on_update_config: move |cfg| runtime_config.set(cfg),
-                }
-            },
+        Workspace {
+            config: runtime_config(),
+            on_update_config: move |cfg| runtime_config.set(cfg),
         }
     }
 }
 
-/// Launch the interactive Dioxus LiveView server on http://127.0.0.1:8080.
+/// Launch the interactive Dioxus LiveView server on http://127.0.0.1:8026.
 pub async fn launch() {
     let port = std::env::var("PORT")
         .or_else(|_| std::env::var("OMENIC_WEB_PORT"))
@@ -124,7 +56,7 @@ pub async fn launch() {
     <script>
     (function() {{
         function scrollToBottom() {{
-            const chatEl = document.querySelector(".chat-messages");
+            const chatEl = document.getElementById("chat-scroll");
             if (chatEl) {{
                 chatEl.scrollTop = chatEl.scrollHeight;
             }}
@@ -332,7 +264,8 @@ pub async fn launch() {
             }}
         }}, true);
 
-        // Global Cmd+K / Ctrl+K for quick switcher
+        // Global Cmd+K / Ctrl+K for quick switcher (sidebar search button carries
+        // the .nav-search-bar hook class)
         document.addEventListener("keydown", function(e) {{
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {{
                 e.preventDefault();
@@ -348,7 +281,7 @@ pub async fn launch() {
             pinned.value = el.scrollHeight - el.scrollTop - el.clientHeight < PIN_EPS;
         }}
         function setUpPin() {{
-            const chatEl = document.querySelector(".chat-messages");
+            const chatEl = document.getElementById("chat-scroll");
             if (chatEl && !chatEl.__pinWired) {{
                 chatEl.__pinWired = true;
                 chatEl.addEventListener("scroll", function() {{ markPinned(chatEl); }});
@@ -357,7 +290,7 @@ pub async fn launch() {
         let scrollTimeout = null;
         const observer = new MutationObserver(function(mutations) {{
             setupMinimap();
-            const chatEl = document.querySelector(".chat-messages");
+            const chatEl = document.getElementById("chat-scroll");
             if (!chatEl) return;
             let insideTools = false;
             for (let i = 0; i < mutations.length; i++) {{
