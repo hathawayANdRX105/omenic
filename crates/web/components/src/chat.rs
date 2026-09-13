@@ -150,7 +150,9 @@ pub fn Chat(
                     // dock 卡片（任务看板）
                     {dock}
                     // 输入卡：r22 胶囊
-                    form { class: "pointer-events-auto w-full rounded-[22px] border border-b1 bg-input-bg shadow-lv2 flex flex-col overflow-hidden transition-colors focus-within:border-b3",
+                    // 不加 overflow-hidden：模型/思考菜单从工具行向上弹出，
+                    // 裁剪会切掉卡片外的部分；圆角由卡片自身的 bg + radius 呈现
+                    form { class: "pointer-events-auto w-full rounded-[22px] border border-b1 bg-input-bg shadow-lv2 flex flex-col transition-colors focus-within:border-b3",
                         onsubmit: move |e: FormEvent| {
                             let text = e
                                 .get_first("message")

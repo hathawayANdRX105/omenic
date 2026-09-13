@@ -202,7 +202,7 @@ pub fn Dropdown(
                     class: "fixed inset-0 z-40",
                     onclick: move |_| open.set(false),
                 }
-                div { class: "absolute {pos_class} z-50 rounded-xl border border-binv bg-menu shadow-lv3 p-1 py-1 {menu_class}",
+                div { class: "absolute {pos_class} z-50 rounded-xl border border-binv bg-menu shadow-lv3 p-1 {menu_class}",
                     div { class: "px-2.5 py-1.5 text-[12px] leading-4 text-caption select-none", "{header}" }
                     for (item_label, item_value) in items.iter() {
                         {
