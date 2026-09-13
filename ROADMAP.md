@@ -50,7 +50,7 @@
 
 | 小功能 | omenic 文件（拆后 crate） | dsh 参考 |
 |---|---|---|
-| 5.1 `AgentEvent` DTO + 转译层（→ UI 状态，纯函数可单测，先行开发不等 C3） | `crates/web/state/`（新，含 `AgentEvent`→UI 状态转译 + `memory_link`） | `packages/core/session/src/surface.ts` |
+| 5.1 ✅ `AgentEvent` DTO + 转译层（→ UI 状态，纯函数可单测，先行开发不等 C3；mock 流已消费，4 测试） | `crates/web/state/`（新，含 `AgentEvent`→UI 状态转译 + `memory_link`） | `packages/core/session/src/surface.ts` |
 | 5.2 daemon RPC 客户端（会话列表/历史/messages） | `crates/web/client/`（新，含 `llm.rs` LlmRuntimeConfig + `mock.rs` 过渡存放） | `packages/client/runtime/src/client/sessions/{manager.ts,conversation-assembler.ts}` |
 | 5.3 会话列表/历史 ← 真数据（替换 `mock_sessions`） | `crates/web/page-workspace/`（原 workspace.rs 1093 行） | `packages/client/runtime/src/client/sessions/{session.ts,lineage.ts}` |
 | 5.4 聊天流式：delta 追加 + tool 折叠卡 | `crates/web/components/`（chat.rs 352 行） | `client/conversation/{event-registry.ts,view-registry.ts}` + `sessions/tool-call-tree.ts` |
