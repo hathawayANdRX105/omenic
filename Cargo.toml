@@ -1,10 +1,16 @@
 [workspace]
 members = [
   "bin/cli", "bin/gate", "bin/web",
-  "crates/adaptor", "crates/orbit", "crates/tools", "crates/rpc",
-  "crates/task", "crates/spec", "crates/config", "crates/tui",
-  "crates/subagent", "crates/mcp", "crates/memory", "crates/prompts",
-  "crates/session", "crates/daemon", "crates/web",
+  "crates/agent/adaptor", "crates/agent/orbit", "crates/agent/tools", "crates/agent/mcp",
+  "crates/agent/task", "crates/evidence/spec", "crates/infra/config",
+  "crates/agent/subagent", "crates/infra/memory", "crates/infra/prompts",
+  "crates/infra/session", "crates/infra/daemon",
+  "crates/web/client", "crates/web/state",
+  "crates/web/components", "crates/web/page-workspace", "crates/web/page-stats",
+  "crates/web/page-config",
+  "crates/composition",
+  "crates/harness/core", "crates/harness/prompt", "crates/harness/tools",
+  "crates/harness/runtime", "crates/harness/plugin",
 ]
 resolver = "2"
 
@@ -20,8 +26,6 @@ tempfile = "3"
 ureq = { version = "2", features = ["json"] }
 thiserror = "2"
 anyhow = "1"
-ratatui = "0.30"
-crossterm = "0.29"
 pulldown-cmark = "0.13"
 ctrlc = "3"
 
