@@ -9,10 +9,12 @@
 //!   shutdown sequence so accidental early-return cleanup is automatic.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+
+use crate::state::EventBus;
 
 use crate::DaemonError;
 use crate::dispatch::{DispatchCtx, WorkerHandle};
@@ -60,6 +62,8 @@ pub struct Daemon {
     pub(crate) shutdown: Arc<AtomicBool>,
     pub(crate) started_at_ms: i64,
     pub(crate) accept_thread: Option<thread::JoinHandle<()>>,
+    /// Push-event fan-out table shared by all connections (R2 3.3).
+    pub(crate) events: EventBus,
 }
 
 impl Daemon {
@@ -90,6 +94,7 @@ impl Daemon {
         let worker = Arc::new(Mutex::new(WorkerHandle::new(cfg.omp_path.clone())));
         let shutdown = Arc::new(AtomicBool::new(false));
         let started_at_ms = now_ms();
+        let events = EventBus::new();
 
         let accept_thread = spawn_accept_loop(AcceptLoopCtx {
             listener,
@@ -98,6 +103,8 @@ impl Daemon {
             runs: run_ledger.clone(),
             shutdown: Arc::clone(&shutdown),
             started_at_ms,
+            events: events.clone(),
+            next_conn: Arc::new(AtomicU64::new(1)),
         })?;
 
         Ok(Daemon {
@@ -109,6 +116,7 @@ impl Daemon {
             shutdown,
             started_at_ms,
             accept_thread: Some(accept_thread),
+            events,
         })
     }
 
@@ -147,6 +155,12 @@ impl Daemon {
     pub fn runs(&self) -> &RunLedger {
         &self.run_ledger
     }
+
+    /// Handle to the push-event bus.  Useful in tests for asserting
+    /// subscription state.
+    pub fn events(&self) -> &EventBus {
+        &self.events
+    }
 }
 
 impl Drop for Daemon {
@@ -174,66 +188,114 @@ struct AcceptLoopCtx {
     runs: RunLedger,
     shutdown: Arc<AtomicBool>,
     started_at_ms: i64,
+    events: EventBus,
+    next_conn: Arc<AtomicU64>,
 }
 
 fn spawn_accept_loop(ctx: AcceptLoopCtx) -> Result<thread::JoinHandle<()>, DaemonError> {
-    let listener = ctx.listener;
-    let worker = ctx.worker;
-    let sessions = ctx.sessions;
-    let runs = ctx.runs;
-    let shutdown = ctx.shutdown;
-    let started_at_ms = ctx.started_at_ms;
-
     let handle = thread::Builder::new()
         .name("omenic-daemon-accept".into())
         .spawn(move || {
-            run_accept_loop(listener, worker, sessions, runs, shutdown, started_at_ms);
+            let poll_interval = Duration::from_millis(50);
+            let AcceptLoopCtx {
+                listener,
+                worker,
+                sessions,
+                runs,
+                shutdown,
+                started_at_ms,
+                events,
+                next_conn,
+            } = ctx;
+            // We poll the shutdown flag between accepts and use a short
+            // accept timeout so we don't block forever once shutdown is
+            // signalled.
+            while !shutdown.load(Ordering::SeqCst) {
+                let conn = match listener.accept_timeout(poll_interval) {
+                    Ok(Some(c)) => c,
+                    Ok(None) => continue, // timeout — re-check shutdown flag
+                    Err(_) => break,      // listener closed or poisoned
+                };
+                let worker = Arc::clone(&worker);
+                let sessions = sessions.clone();
+                let runs = runs.clone();
+                let shutdown = Arc::clone(&shutdown);
+                let events = events.clone();
+                let conn_id = next_conn.fetch_add(1, Ordering::Relaxed);
+                thread::spawn(move || {
+                    if let Err(e) = handle_connection(
+                        conn,
+                        &worker,
+                        &sessions,
+                        &runs,
+                        &shutdown,
+                        started_at_ms,
+                        events,
+                        conn_id,
+                    ) {
+                        eprintln!("daemon: connection error: {e}");
+                    }
+                });
+            }
         })
         .map_err(DaemonError::Io)?;
     Ok(handle)
 }
 
-fn run_accept_loop(
-    listener: Listener,
-    worker: Arc<Mutex<WorkerHandle>>,
-    sessions: SessionState,
-    runs: RunLedger,
-    shutdown: Arc<AtomicBool>,
-    started_at_ms: i64,
-) {
-    // We poll the shutdown flag between accepts and use a short accept
-    // timeout so we don't block forever once shutdown is signalled.
-    let poll_interval = Duration::from_millis(50);
-    while !shutdown.load(Ordering::SeqCst) {
-        let conn = match listener.accept_timeout(poll_interval) {
-            Ok(Some(c)) => c,
-            Ok(None) => continue, // timeout — re-check shutdown flag
-            Err(_) => break,      // listener closed or poisoned
-        };
-        let worker = Arc::clone(&worker);
-        let sessions = sessions.clone();
-        let runs = runs.clone();
-        let shutdown = Arc::clone(&shutdown);
-        thread::spawn(move || {
-            if let Err(e) =
-                handle_connection(conn, &worker, &sessions, &runs, shutdown, started_at_ms)
-            {
-                eprintln!("daemon: connection error: {e}");
-            }
-        });
-    }
-}
-
 fn handle_connection(
-    mut conn: Connection,
+    conn: Connection,
     worker: &Arc<Mutex<WorkerHandle>>,
     sessions: &SessionState,
     runs: &RunLedger,
-    shutdown: Arc<AtomicBool>,
+    shutdown: &AtomicBool,
     started_at_ms: i64,
+    events: EventBus,
+    conn_id: u64,
+) -> Result<(), DaemonError> {
+    // R2 3.3: responses and pushed events share one write channel drained by
+    // a dedicated writer thread, so a subscribed connection can receive
+    // `EventFrame`s while its read loop blocks on the next request.
+    let (mut reader, mut writer) = conn.into_split();
+    let (out, inbox) = std::sync::mpsc::channel::<String>();
+    let writer_thread = thread::spawn(move || {
+        while let Ok(line) = inbox.recv() {
+            if writer.write_frame(&line).is_err() {
+                break; // peer gone
+            }
+        }
+    });
+    let outcome = connection_read_loop(
+        &mut reader,
+        worker,
+        sessions,
+        runs,
+        shutdown,
+        started_at_ms,
+        &events,
+        conn_id,
+        &out,
+    );
+    // Teardown: stop pushes, wake the writer thread, let queued frames flush.
+    events.remove_conn(conn_id);
+    drop(out);
+    let _ = writer_thread.join();
+    outcome
+}
+
+#[allow(clippy::too_many_arguments)]
+fn connection_read_loop(
+    reader: &mut crate::socket::ConnectionReader,
+    worker: &Arc<Mutex<WorkerHandle>>,
+    sessions: &SessionState,
+    runs: &RunLedger,
+    shutdown: &AtomicBool,
+    started_at_ms: i64,
+    events: &EventBus,
+    conn_id: u64,
+    out: &std::sync::mpsc::Sender<String>,
 ) -> Result<(), DaemonError> {
     loop {
-        let line = match conn.read_frame()? {
+        let line = match reader.read_frame()? {
             Some(l) => l,
             None => return Ok(()), // EOF
         };
@@ -244,8 +306,9 @@ fn handle_connection(
                     None,
                     ResponseError::new("protocol", format!("malformed JSON: {e}")),
                 );
-                let payload = serde_json::to_string(&resp)?;
-                conn.write_frame(&payload)?;
+                if out.send(serde_json::to_string(&resp)?).is_err() {
+                    return Ok(()); // writer dead
+                }
                 continue;
             }
         };
@@ -263,13 +326,18 @@ fn handle_connection(
             runs: runs.clone(),
             worker: &mut *worker_guard,
             started_at_ms,
-            shutdown: &shutdown,
+            shutdown,
+            events: events.clone(),
+            conn_id,
+            out: out.clone(),
         };
         let resp = crate::dispatch::dispatch(&mut ctx, req);
         let payload = serde_json::to_string(&resp)?;
         drop(ctx);
         // Worker lock released here
-        conn.write_frame(&payload)?;
+        if out.send(payload).is_err() {
+            return Ok(()); // writer dead — connection effectively gone
+        }
 
         if is_shutdown {
             return Ok(());

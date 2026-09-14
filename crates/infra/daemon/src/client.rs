@@ -25,7 +25,7 @@ use crate::state::RunRecord;
 use session::{SessionMessage, SessionRole, SessionSummary};
 
 use crate::DaemonError;
-use crate::protocol::{Command, Request, Response};
+use crate::protocol::{Command, EventFrame, Request, Response};
 
 /// Errors returned from the daemon client.
 #[derive(Debug)]
@@ -298,6 +298,35 @@ impl DaemonClient {
         }
     }
 
+    /// `event.subscribe` — open a dedicated push connection for `topic`
+    /// (R2 3.3).  The returned handle reads `EventFrame`s until dropped.
+    pub fn subscribe(&self, topic: &str) -> Result<Subscription, ClientError> {
+        #[derive(serde::Deserialize)]
+        struct SubId {
+            subscription_id: u64,
+        }
+        let mut conn = connect(&self.socket).map_err(ClientError::Connect)?;
+        let req = Request::new(Command::EventSubscribe).with_params(json!({ "topic": topic }));
+        write_frame(&mut conn, &req).map_err(ClientError::Connect)?;
+        let resp = read_frame(&mut conn).map_err(ClientError::Connect)?;
+        if !resp.success {
+            return Err(match resp.error {
+                Some(e) => ClientError::Server {
+                    code: e.code,
+                    message: e.message,
+                },
+                None => ClientError::Protocol("subscribe reply missing error".into()),
+            });
+        }
+        let data = resp.data.unwrap_or(Value::Null);
+        let sub: SubId =
+            serde_json::from_value(data).map_err(|e| ClientError::Protocol(format!("{e}")))?;
+        Ok(Subscription {
+            stream: conn,
+            subscription_id: sub.subscription_id,
+        })
+    }
+
     /// `run.list` → up to `limit` runs (empty list allowed).
     pub fn run_list(&self, limit: u32) -> Result<Vec<RunRecord>, ClientError> {
         self.call(Command::RunList, json!({ "limit": limit }))
@@ -378,4 +407,89 @@ fn read_frame(conn: &mut Stream) -> std::io::Result<Response> {
         buf.push(byte[0]);
     }
     serde_json::from_slice(&buf).map_err(std::io::Error::other)
+}
+
+// ---------------- push subscriptions (R2 3.3) ----------------
+
+/// A live `event.subscribe` connection.  The daemon pushes `EventFrame`
+/// lines to this socket for as long as the handle is open; reading goes
+/// through [`Subscription::next_event`].  Dropping it closes the socket and
+/// the daemon detaches every subscription the connection owned.
+pub struct Subscription {
+    stream: Stream,
+    subscription_id: u64,
+}
+
+impl Subscription {
+    /// Id to pass to `event.unsubscribe`.
+    pub fn id(&self) -> u64 {
+        self.subscription_id
+    }
+
+    /// Read the next pushed event frame.  `Ok(None)` when nothing arrives
+    /// within `dur` (or the daemon closed the stream mid-frame).
+    pub fn next_event(
+        &mut self,
+        dur: std::time::Duration,
+    ) -> Result<Option<EventFrame>, ClientError> {
+        set_read_timeout(&mut self.stream, dur).map_err(ClientError::Connect)?;
+        let mut buf = Vec::new();
+        let mut byte = [0u8; 1];
+        loop {
+            match self.stream.read(&mut byte) {
+                Ok(0) => {
+                    return Err(ClientError::Connect(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "daemon closed the subscription stream",
+                    )));
+                }
+                Ok(_) => {
+                    if byte[0] == b'\n' {
+                        let frame: EventFrame =
+                            serde_json::from_slice(&buf).map_err(ClientError::Encode)?;
+                        return Ok(Some(frame));
+                    }
+                    buf.push(byte[0]);
+                }
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    return Ok(None);
+                }
+                Err(e) => return Err(ClientError::Connect(e)),
+            }
+        }
+    }
+}
+
+/// `event.unsubscribe` — drop one subscription by id.  Returns whether the
+/// daemon still knew about it.
+impl DaemonClient {
+    pub fn event_unsubscribe(&self, subscription_id: u64) -> Result<bool, ClientError> {
+        #[derive(serde::Deserialize)]
+        struct Removed {
+            removed: bool,
+        }
+        let r: Removed = self.call(
+            Command::EventUnsubscribe,
+            json!({ "subscription_id": subscription_id }),
+        )?;
+        Ok(r.removed)
+    }
+}
+
+#[cfg(target_family = "unix")]
+fn set_read_timeout(stream: &mut Stream, dur: std::time::Duration) -> std::io::Result<()> {
+    stream.set_read_timeout(Some(dur))
+}
+
+#[cfg(not(target_family = "unix"))]
+fn set_read_timeout(_stream: &mut Stream, _dur: std::time::Duration) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "push subscriptions require Unix-domain sockets",
+    ))
 }
