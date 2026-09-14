@@ -110,110 +110,106 @@ const PUMP_POLL: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// omenic 自家引擎（OMENIC_WORKER_MODE=orbit）：进程内跑 orbit agent
 /// 循环（C1 `run_agent_streaming`），把 orbit::AgentEvent 1:1 映射成
-/// [`WorkerEvent`]（词汇与 omp 转发层一致，下游零改动）。模型配置读
-/// OMENIC_LLM_BASE_URL/API_KEY/MODEL/MAX_TOKENS。
+/// [`WorkerEvent`]（词汇与 omp 转发层一致，下游零改动）。模型配置由
+/// DaemonConfig 从 `.oi/config.toml` 的 llm 三件套解析后传入。
 struct OrbitEngine {
     model: adaptor::Model,
-    ctx: adaptor::Context,
+    ctx: std::sync::Arc<std::sync::Mutex<adaptor::Context>>,
     abort_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     subs: std::sync::Arc<std::sync::Mutex<Vec<(String, std::sync::mpsc::Sender<WorkerEvent>)>>>,
     pull_push: std::sync::mpsc::Sender<WorkerEvent>,
     pull_queue: std::sync::mpsc::Receiver<WorkerEvent>,
+    /// prompt → 专用 run 线程：LLM 调用不占 dispatch 锁，abort 随时可达
+    run_tx: std::sync::mpsc::Sender<String>,
 }
 
 impl OrbitEngine {
-    fn new() -> Result<Self, crate::client::RpcError> {
+    fn new(model: adaptor::Model) -> Self {
         use std::sync::atomic::AtomicBool;
-        let base_url = std::env::var("OMENIC_LLM_BASE_URL").map_err(|_| {
-            crate::client::RpcError::Protocol(
-                "OMENIC_WORKER_MODE=orbit 需要 OMENIC_LLM_BASE_URL".into(),
-            )
-        })?;
-        let mut url = base_url.trim().trim_end_matches('/').to_string();
-        if !url.ends_with("/v1") {
-            url.push_str("/v1");
-        }
-        let api_key = std::env::var("OMENIC_LLM_API_KEY").unwrap_or_default();
-        let model = std::env::var("OMENIC_LLM_MODEL").unwrap_or_else(|_| "default".into());
-        let max_tokens = std::env::var("OMENIC_LLM_MAX_TOKENS")
-            .ok()
-            .and_then(|v| v.parse().ok());
         let (pull_push, pull_queue) = std::sync::mpsc::channel();
-        Ok(OrbitEngine {
-            model: adaptor::Model {
-                api_key,
-                model,
-                base_url: Some(url),
-                max_tokens,
-            },
-            ctx: adaptor::Context::default(),
+        let (run_tx, run_rx) = std::sync::mpsc::channel::<String>();
+        let engine = OrbitEngine {
+            model,
+            ctx: std::sync::Arc::new(std::sync::Mutex::new(adaptor::Context::default())),
             abort_flag: std::sync::Arc::new(AtomicBool::new(false)),
             subs: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             pull_push,
             pull_queue,
-        })
+            run_tx,
+        };
+        // 专用 run 线程：串行消费 prompt，LLM 调用不占 dispatch 锁，
+        // abort 标志（Arc）随时可从别的连接置位
+        let run_model = engine.model.clone();
+        let run_ctx = std::sync::Arc::clone(&engine.ctx);
+        let run_abort = std::sync::Arc::clone(&engine.abort_flag);
+        let run_subs = std::sync::Arc::clone(&engine.subs);
+        let run_pull = engine.pull_push.clone();
+        std::thread::Builder::new()
+            .name("omenic-orbit-worker".into())
+            .spawn(move || {
+                while let Ok(message) = run_rx.recv() {
+                    run_abort.store(false, std::sync::atomic::Ordering::SeqCst);
+                    // panic 恢复：单轮 turn 失败不杀死整条管线，事件流里
+                    // 出现 agent_end 让消费端复位
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let mut ctx = run_ctx.lock().unwrap_or_else(|e| e.into_inner());
+                        ctx.messages.push(adaptor::Message::user_text(&message));
+                        let tools = tools::builtin_tools();
+                        orbit::run_agent_streaming(
+                            &orbit::HttpLlm,
+                            &run_model,
+                            &mut ctx,
+                            &tools,
+                            &run_abort,
+                            orbit::LoopConfig::default(),
+                            &mut |ev| {
+                                let we = match ev {
+                                    orbit::AgentEvent::TurnStart => WorkerEvent::AgentStart,
+                                    orbit::AgentEvent::AssistantText { delta } => {
+                                        WorkerEvent::Message { text: delta }
+                                    }
+                                    orbit::AgentEvent::ToolCall(spec) => {
+                                        WorkerEvent::ToolExecutionStart {
+                                            name: spec.name,
+                                            input: spec.args,
+                                        }
+                                    }
+                                    orbit::AgentEvent::ToolStart { name, .. } => {
+                                        WorkerEvent::Unknown(serde_json::json!(
+                                            { "name": name }
+                                        ))
+                                    }
+                                    orbit::AgentEvent::ToolResult { name, result, .. } => {
+                                        WorkerEvent::ToolExecutionEnd {
+                                            name,
+                                            result: serde_json::from_str(&result)
+                                                .ok()
+                                                .or(Some(serde_json::Value::String(result))),
+                                        }
+                                    }
+                                    orbit::AgentEvent::TurnEnd { .. } => WorkerEvent::AgentEnd,
+                                };
+                                let mut s = run_subs.lock().unwrap_or_else(|e| e.into_inner());
+                                s.retain(|(_, tx)| tx.send(we.clone()).is_ok());
+                                let _ = run_pull.send(we);
+                            },
+                        );
+                    }));
+                    if result.is_err() {
+                        eprintln!("[orbit-worker] turn panicked, recovered");
+                        let mut s = run_subs.lock().unwrap_or_else(|e| e.into_inner());
+                        s.retain(|(_, tx)| tx.send(WorkerEvent::AgentEnd).is_ok());
+                        let _ = run_pull.send(WorkerEvent::AgentEnd);
+                    }
+                }
+            })
+            .expect("spawn orbit worker thread");
+        engine
     }
 
     fn broadcast(&self, event: WorkerEvent) {
         let mut subs = self.subs.lock().unwrap_or_else(|e| e.into_inner());
         subs.retain(|(_, tx)| tx.send(event.clone()).is_ok());
-    }
-
-    /// 同步跑一轮：阻塞调用线程（daemon 线程-per-连接），事件边产生边
-    /// 广播。返回最终 assistant 文本。
-    fn run_turn(&mut self, message: &str) -> String {
-        use std::sync::atomic::Ordering;
-        self.ctx.messages.push(adaptor::Message::user_text(message));
-        self.abort_flag.store(false, Ordering::SeqCst);
-        let subs = std::sync::Arc::clone(&self.subs);
-        let pull_push = self.pull_push.clone();
-        let backend = orbit::HttpLlm;
-        let tools = tools::builtin_tools();
-        let abort_flag = std::sync::Arc::clone(&self.abort_flag);
-        let mut model = self.model.clone();
-        let mut ctx = std::mem::take(&mut self.ctx);
-        let mut reply = String::new();
-        orbit::run_agent_streaming(
-            &backend,
-            &model,
-            &mut ctx,
-            &tools,
-            &abort_flag,
-            orbit::LoopConfig::default(),
-            &mut |ev| {
-                let we = match ev {
-                    orbit::AgentEvent::TurnStart => WorkerEvent::AgentStart,
-                    orbit::AgentEvent::AssistantText { delta } => {
-                        reply.push_str(&delta);
-                        WorkerEvent::Message { text: delta }
-                    }
-                    orbit::AgentEvent::ToolCall(spec) => WorkerEvent::ToolExecutionStart {
-                        name: spec.name.clone(),
-                        input: spec.args,
-                    },
-                    orbit::AgentEvent::ToolStart { name, .. } => WorkerEvent::Unknown(
-                        serde_json::json!({ "event": "tool_start", "name": name }),
-                    ),
-                    orbit::AgentEvent::ToolResult { name, result, .. } => {
-                        WorkerEvent::ToolExecutionEnd {
-                            name,
-                            result: serde_json::from_str(&result)
-                                .ok()
-                                .or(Some(serde_json::Value::String(result))),
-                        }
-                    }
-                    orbit::AgentEvent::TurnEnd { .. } => WorkerEvent::AgentEnd,
-                };
-                {
-                    let mut s = subs.lock().unwrap_or_else(|e| e.into_inner());
-                    s.retain(|(_, tx)| tx.send(we.clone()).is_ok());
-                }
-                let _ = pull_push.send(we);
-            },
-        );
-        drop(model);
-        self.ctx = ctx;
-        reply
     }
 }
 
@@ -226,25 +222,18 @@ impl Worker {
         }
     }
 
-    /// OMENIC_WORKER_MODE=orbit 时由 [`Worker::new`] 调用。
-    fn new_orbit_from_env() -> Result<Self, crate::client::RpcError> {
-        Ok(Worker {
-            client: None,
-            pump: None,
-            orbit: Some(OrbitEngine::new()?),
-        })
-    }
-}
-
-impl Worker {
-    /// Spawn a new worker process (`omp --mode rpc`).
-    ///
-    /// Blocks until the initial `ready` handshake completes.
-    pub fn new(omp_path: &str) -> Result<Self, crate::client::RpcError> {
-        if std::env::var("OMENIC_WORKER_MODE").as_deref() == Ok("orbit") {
-            return Self::new_orbit_from_env();
+    /// omp 兼容构造（`orbit_model` 为 None）或 omenic 自家引擎（Some）。
+    pub fn new(
+        omp_path: &str,
+        orbit_model: Option<adaptor::Model>,
+    ) -> Result<Self, crate::client::RpcError> {
+        if let Some(model) = orbit_model {
+            return Ok(Worker {
+                client: None,
+                pump: None,
+                orbit: Some(OrbitEngine::new(model)),
+            });
         }
-
         let client = crate::client::Client::new(omp_path)?;
         Ok(Self::omp_worker(client))
     }
@@ -362,8 +351,12 @@ impl Worker {
     /// read them via `read_event()` or push-subscribe via `subscribe()`.
     pub fn prompt(&mut self, message: &str) -> Result<Value, crate::client::RpcError> {
         if let Some(orbit) = self.orbit.as_mut() {
-            let reply = orbit.run_turn(message);
-            return Ok(serde_json::json!({ "reply": reply, "success": true }));
+            // 事件经订阅管线推送；本调用立即返回 ack
+            orbit
+                .run_tx
+                .send(message.to_string())
+                .map_err(|e| crate::client::RpcError::Protocol(e.to_string()))?;
+            return Ok(serde_json::json!({ "started": true }));
         }
         let req = crate::client::Request::new("prompt")
             .with_field("message", message)
