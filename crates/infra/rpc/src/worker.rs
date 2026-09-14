@@ -149,46 +149,58 @@ impl OrbitEngine {
             .spawn(move || {
                 while let Ok(message) = run_rx.recv() {
                     run_abort.store(false, std::sync::atomic::Ordering::SeqCst);
-                    let mut ctx = run_ctx.lock().unwrap_or_else(|e| e.into_inner());
-                    ctx.messages.push(adaptor::Message::user_text(&message));
-                    let tools = tools::builtin_tools();
-                    orbit::run_agent_streaming(
-                        &orbit::HttpLlm,
-                        &run_model,
-                        &mut ctx,
-                        &tools,
-                        &run_abort,
-                        orbit::LoopConfig::default(),
-                        &mut |ev| {
-                            let we = match ev {
-                                orbit::AgentEvent::TurnStart => WorkerEvent::AgentStart,
-                                orbit::AgentEvent::AssistantText { delta } => {
-                                    WorkerEvent::Message { text: delta }
-                                }
-                                orbit::AgentEvent::ToolCall(spec) => {
-                                    WorkerEvent::ToolExecutionStart {
-                                        name: spec.name,
-                                        input: spec.args,
+                    // panic 恢复：单轮 turn 失败不杀死整条管线，事件流里
+                    // 出现 agent_end 让消费端复位
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let mut ctx = run_ctx.lock().unwrap_or_else(|e| e.into_inner());
+                        ctx.messages.push(adaptor::Message::user_text(&message));
+                        let tools = tools::builtin_tools();
+                        orbit::run_agent_streaming(
+                            &orbit::HttpLlm,
+                            &run_model,
+                            &mut ctx,
+                            &tools,
+                            &run_abort,
+                            orbit::LoopConfig::default(),
+                            &mut |ev| {
+                                let we = match ev {
+                                    orbit::AgentEvent::TurnStart => WorkerEvent::AgentStart,
+                                    orbit::AgentEvent::AssistantText { delta } => {
+                                        WorkerEvent::Message { text: delta }
                                     }
-                                }
-                                orbit::AgentEvent::ToolStart { name, .. } => {
-                                    WorkerEvent::Unknown(serde_json::json!({ "name": name }))
-                                }
-                                orbit::AgentEvent::ToolResult { name, result, .. } => {
-                                    WorkerEvent::ToolExecutionEnd {
-                                        name,
-                                        result: serde_json::from_str(&result)
-                                            .ok()
-                                            .or(Some(serde_json::Value::String(result))),
+                                    orbit::AgentEvent::ToolCall(spec) => {
+                                        WorkerEvent::ToolExecutionStart {
+                                            name: spec.name,
+                                            input: spec.args,
+                                        }
                                     }
-                                }
-                                orbit::AgentEvent::TurnEnd { .. } => WorkerEvent::AgentEnd,
-                            };
-                            let mut s = run_subs.lock().unwrap_or_else(|e| e.into_inner());
-                            s.retain(|(_, tx)| tx.send(we.clone()).is_ok());
-                            let _ = run_pull.send(we);
-                        },
-                    );
+                                    orbit::AgentEvent::ToolStart { name, .. } => {
+                                        WorkerEvent::Unknown(serde_json::json!(
+                                            { "name": name }
+                                        ))
+                                    }
+                                    orbit::AgentEvent::ToolResult { name, result, .. } => {
+                                        WorkerEvent::ToolExecutionEnd {
+                                            name,
+                                            result: serde_json::from_str(&result)
+                                                .ok()
+                                                .or(Some(serde_json::Value::String(result))),
+                                        }
+                                    }
+                                    orbit::AgentEvent::TurnEnd { .. } => WorkerEvent::AgentEnd,
+                                };
+                                let mut s = run_subs.lock().unwrap_or_else(|e| e.into_inner());
+                                s.retain(|(_, tx)| tx.send(we.clone()).is_ok());
+                                let _ = run_pull.send(we);
+                            },
+                        );
+                    }));
+                    if result.is_err() {
+                        eprintln!("[orbit-worker] turn panicked, recovered");
+                        let mut s = run_subs.lock().unwrap_or_else(|e| e.into_inner());
+                        s.retain(|(_, tx)| tx.send(WorkerEvent::AgentEnd).is_ok());
+                        let _ = run_pull.send(WorkerEvent::AgentEnd);
+                    }
                 }
             })
             .expect("spawn orbit worker thread");

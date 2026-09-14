@@ -43,31 +43,33 @@ pub struct DaemonConfig {
 }
 
 impl DaemonConfig {
+    /// llm 三件套（base_url/api_key/model）在 `.oi/config.toml` 齐全时
+    /// 构建 orbit 模型配置——设置页写该文件即生效。
+    fn resolve_orbit_model(cfg: &config::Config) -> Option<adaptor::Model> {
+        let base = cfg.llm_base_url.as_ref()?.trim();
+        let key = cfg.llm_api_key.as_ref()?.trim();
+        let model = cfg.llm_model.as_ref()?.trim();
+        if base.is_empty() || key.is_empty() || model.is_empty() {
+            return None;
+        }
+        let mut url = base.trim_end_matches('/').to_string();
+        if !url.ends_with("/v1") {
+            url.push_str("/v1");
+        }
+        Some(adaptor::Model {
+            api_key: key.to_string(),
+            model: model.to_string(),
+            base_url: Some(url),
+            max_tokens: cfg.llm_max_tokens,
+        })
+    }
+
     /// Resolve paths from `Config` and the runtime environment.
     pub fn from_config(cfg: &config::Config) -> Result<Self, DaemonError> {
         let socket_path = Some(cfg.daemon_socket_path()?);
         let session_db_path = Some(cfg.session_db_path()?);
         let omp_path = cfg.omp_path.to_string_lossy().into_owned();
-        // llm 三件套齐全 → orbit 模式（设置页写 .oi/config.toml 即生效）
-        let orbit_model = match (&cfg.llm_base_url, &cfg.llm_api_key, &cfg.llm_model) {
-            (Some(base), Some(key), Some(model))
-                if !base.trim().is_empty()
-                    && !key.trim().is_empty()
-                    && !model.trim().is_empty() =>
-            {
-                let mut url = base.trim().trim_end_matches('/').to_string();
-                if !url.ends_with("/v1") {
-                    url.push_str("/v1");
-                }
-                Some(adaptor::Model {
-                    api_key: key.trim().to_string(),
-                    model: model.trim().to_string(),
-                    base_url: Some(url),
-                    max_tokens: cfg.llm_max_tokens,
-                })
-            }
-            _ => None,
-        };
+        let orbit_model = Self::resolve_orbit_model(cfg);
         Ok(DaemonConfig {
             socket_path,
             omp_path,
