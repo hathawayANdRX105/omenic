@@ -9,17 +9,28 @@
 //! command logic lives here, all protocol concerns live in `protocol.rs`,
 //! and the worker handle is the only piece that knows about `rpc::Worker`.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
+
 use serde_json::{Value, json};
 use session::SessionRole;
 
-use crate::protocol::{Command, Request, Response, ResponseError};
-use crate::state::{RunLedger, SessionState, require_str, require_u32};
+use crate::protocol::{Command, EventFrame, Request, Response, ResponseError};
+use crate::state::{EventBus, RunLedger, SessionState, require_str, require_u32};
+
+/// Topic fed by the `rpc` worker's push event stream (R2 3.3).
+pub const WORKER_TOPIC: &str = "worker";
 
 /// Shared worker handle.  The dispatch layer takes `&mut` so concurrent
 /// connections are serialized by the server's mutex.
 pub struct WorkerHandle {
     inner: Option<rpc::worker::Worker>,
     omp_path: String,
+    /// Whether the forwarder thread feeding [`WORKER_TOPIC`] is alive.
+    /// Cleared by the forwarder itself when the worker's event channel
+    /// closes (worker died or was reset), so the next subscribe respawns it.
+    pump_active: Arc<AtomicBool>,
 }
 
 impl WorkerHandle {
@@ -27,6 +38,7 @@ impl WorkerHandle {
         WorkerHandle {
             inner: None,
             omp_path: omp_path.into(),
+            pump_active: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -59,11 +71,46 @@ impl WorkerHandle {
         Ok(())
     }
 
-    /// Drop the worker entirely; next call lazy-respawns.
+    /// Drop the worker entirely; next call lazy-respawns.  The forwarder
+    /// thread observes the closed event channel and clears `pump_active`.
     pub fn reset(&mut self) {
         self.inner = None;
     }
+
+    /// Start the worker-side event pump once (R2 3.3): `rpc::Worker::
+    /// subscribe` hands the wire read loop to a pump thread; this daemon
+    /// side forwarder drains that receiver and broadcasts [`EventFrame`]
+    /// lines to every [`WORKER_TOPIC`] subscriber on the [`EventBus`].
+    /// Serialized against every other worker use by the server's mutex.
+    pub fn ensure_event_pump(&mut self, events: &EventBus) -> Result<(), Response> {
+        if self.pump_active.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        self.ensure_started()?;
+        let w = self.inner.as_mut().expect("ensured");
+        let rx = w.subscribe(WORKER_TOPIC);
+        let active = Arc::clone(&self.pump_active);
+        let bus = events.clone();
+        active.store(true, Ordering::SeqCst);
+        std::thread::spawn(move || {
+            // Ends when the worker dies (rpc pump clears its subscriber
+            // table).  Events with no subscribers are dropped by broadcast.
+            while let Ok(event) = rx.recv() {
+                let Ok(payload) = serde_json::to_value(&event) else {
+                    continue;
+                };
+                let Ok(line) = serde_json::to_string(&EventFrame::new(WORKER_TOPIC, payload))
+                else {
+                    continue;
+                };
+                bus.broadcast(WORKER_TOPIC, &line);
+            }
+            active.store(false, Ordering::SeqCst);
+        });
+        Ok(())
+    }
 }
+
 /// Per-connection dispatch context.  Carries the shared state + the worker
 /// handle.  The server holds the worker handle behind a mutex so concurrent
 /// connections don't trample each other's in-flight RPC frames.
@@ -73,6 +120,13 @@ pub struct DispatchCtx<'a> {
     pub worker: &'a mut WorkerHandle,
     pub started_at_ms: i64,
     pub shutdown: &'a std::sync::atomic::AtomicBool,
+    /// Push-event fan-out table (R2 3.3).
+    pub events: EventBus,
+    /// Identity of the connection being dispatched, for subscription
+    /// teardown on disconnect.
+    pub conn_id: u64,
+    /// This connection's write channel; subscriptions clone it.
+    pub out: Sender<String>,
 }
 
 /// Dispatch a single request.  Always returns a `Response`; the caller just
@@ -369,7 +423,6 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                 }
             }
         }
-
         Command::WorkerReadEvent => {
             if let Err(e) = ctx.worker.ensure_started() {
                 return e;
@@ -385,6 +438,32 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                     ResponseError::new("worker_read_event_failed", e.to_string()),
                 ),
             }
+        }
+
+        // ---------------- Events (R2 3.3) ----------------
+        Command::EventSubscribe => {
+            let topic = match require_str(&req.params, "topic") {
+                Ok(s) => s,
+                Err(m) => return Response::err(id, ResponseError::new("protocol", m)),
+            };
+            if topic == WORKER_TOPIC {
+                if let Err(e) = ctx.worker.ensure_event_pump(&ctx.events) {
+                    return e;
+                }
+            }
+            let sub_id = ctx.events.subscribe(topic, ctx.conn_id, ctx.out.clone());
+            Response::ok(id, json!({ "subscription_id": sub_id, "topic": topic }))
+        }
+
+        Command::EventUnsubscribe => {
+            let Some(sub_id) = req.params.get("subscription_id").and_then(Value::as_u64) else {
+                return Response::err(
+                    id,
+                    ResponseError::new("protocol", "subscription_id (u64) is required"),
+                );
+            };
+            let removed = ctx.events.unsubscribe(sub_id);
+            Response::ok(id, json!({ "removed": removed }))
         }
     }
 }
@@ -403,6 +482,7 @@ fn session_error_response(
         SessionError::InvalidLimit(_) => "invalid_limit",
         SessionError::UnknownRole(_) => "unknown_role",
         SessionError::DatabaseMissing(_) => "database_missing",
+        SessionError::MalformedTurnLog { .. } => "malformed_turn_log",
         SessionError::Libsql(_) | SessionError::Io(_) | SessionError::RuntimeBuild(_) => {
             "session_io"
         }

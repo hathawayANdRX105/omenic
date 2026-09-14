@@ -42,29 +42,68 @@ use serde::Serialize;
 use serde_json::Value;
 
 /// Events emitted by the worker during agent execution.
-#[derive(Debug, Serialize)]
+///
+/// R2 2.2: one dedicated variant per known omp wire event type (mirrors the
+/// dsh `known-event-types` discipline); `Unknown` stays as the forward-compat
+/// branch for genuinely unrecognized frames only — never as an error dump.
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum WorkerEvent {
-    /// Agent started processing.
+    /// Agent started processing (`agent_start`).
     AgentStart,
-    /// A text message from the agent.
+    /// A streamed text message (`message_start` / `message_update`).
     Message { text: String },
-    /// A tool execution (tool name, args, result).
-    ToolExecution {
-        name: String,
-        input: Value,
-        result: Option<Value>,
-    },
-    /// Agent finished (session idle).
+    /// Tool dispatch begins (`tool_execution` / `tool_execution_start`).
+    ToolExecutionStart { name: String, input: Value },
+    /// Tool dispatch completes (`tool_execution_end`).
+    ToolExecutionEnd { name: String, result: Option<Value> },
+    /// Agent finished (session idle) (`agent_end`).
     AgentEnd,
-    /// An unhandled event type (raw value for forward-compat).
+    /// Synthetic transport error: the event stream itself failed and the
+    /// raw error is surfaced to the consumer instead of killing the iterator.
+    Error { error: String },
+    /// An unrecognized wire event (raw value for forward-compat).
     Unknown(Value),
 }
 
 /// A worker session connected to an omp agent.
+///
+/// Two consumption modes:
+///
+/// * pull (default): `prompt()` + `read_event()` / `events()`.
+/// * push (R2 2.3): [`Worker::subscribe`] hands the RPC read loop to an
+///   internal pump thread which forwards every event to every receiver and
+///   matches command responses by id.  Command methods keep working through
+///   the pump; `read_event()` / `reconnect()` become unavailable.
 pub struct Worker {
-    client: crate::client::Client,
+    /// `None` once the pump thread owns the client.
+    client: Option<crate::client::Client>,
+    pump: Option<Pump>,
 }
+
+/// One unit of work for the pump thread.
+enum Job {
+    /// Send `req` to omp (the pump assigns the correlation id) and deliver
+    /// the matching response frame through `reply`.
+    Command {
+        req: crate::client::Request,
+        reply: std::sync::mpsc::Sender<Result<Value, crate::client::RpcError>>,
+    },
+    /// Stop the pump; dropping the client aborts and kills the omp process.
+    Shutdown,
+}
+
+/// Handle on the pump thread started by the first `subscribe()`.
+struct Pump {
+    job_tx: std::sync::mpsc::Sender<Job>,
+    subs: std::sync::Arc<std::sync::Mutex<Vec<(String, std::sync::mpsc::Sender<WorkerEvent>)>>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+    /// PID captured at pump start (reconnect is unavailable in push mode).
+    pid: u32,
+}
+
+/// How long the pump blocks in one frame read before re-checking jobs.
+const PUMP_POLL: std::time::Duration = std::time::Duration::from_millis(20);
 
 impl Worker {
     /// Spawn a new worker process (`omp --mode rpc`).
@@ -72,7 +111,10 @@ impl Worker {
     /// Blocks until the initial `ready` handshake completes.
     pub fn new(omp_path: &str) -> Result<Self, crate::client::RpcError> {
         let client = crate::client::Client::new(omp_path)?;
-        Ok(Worker { client })
+        Ok(Worker {
+            client: Some(client),
+            pump: None,
+        })
     }
 
     /// Spawn with a connect timeout and auto-reconnect retry count.
@@ -82,20 +124,65 @@ impl Worker {
         max_retries: u32,
     ) -> Result<Self, crate::client::RpcError> {
         let client = crate::client::Client::new_with_opts(omp_path, connect_timeout, max_retries)?;
-        Ok(Worker { client })
+        Ok(Worker {
+            client: Some(client),
+            pump: None,
+        })
     }
 
     /// Reconnect the underlying client (kill + respawn + renegotiate).
+    ///
+    /// Only available in pull mode; the pump thread owns the client once
+    /// `subscribe()` has run.
     pub fn reconnect(&mut self) -> Result<(), crate::client::RpcError> {
-        self.client.reconnect()
+        match self.client.as_mut() {
+            Some(client) => client.reconnect(),
+            None => Err(crate::client::RpcError::Protocol(
+                "event pump active; reconnect() unavailable".to_string(),
+            )),
+        }
+    }
+
+    /// Register a push subscriber (R2 2.3).
+    ///
+    /// The first call starts the pump thread that owns the RPC read loop.
+    /// `topic` is a routing label recorded for daemon-side fan-out; every
+    /// live receiver sees every event.  The receiver yields events until the
+    /// worker dies or is dropped, then disconnects.
+    pub fn subscribe(&mut self, topic: &str) -> std::sync::mpsc::Receiver<WorkerEvent> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let Some(client) = self.client.take() else {
+            let pump = self
+                .pump
+                .as_ref()
+                .expect("pump present once the client is taken");
+            pump.subs
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((topic.to_string(), tx));
+            return rx;
+        };
+        let (job_tx, job_rx) = std::sync::mpsc::channel();
+        let subs = std::sync::Arc::new(std::sync::Mutex::new(vec![(topic.to_string(), tx)]));
+        let pid = client.child_pid();
+        let subs_for_pump = std::sync::Arc::clone(&subs);
+        let handle = std::thread::Builder::new()
+            .name("omenic-rpc-pump".into())
+            .spawn(move || run_pump(client, job_rx, &subs_for_pump))
+            .expect("spawn event pump");
+        self.pump = Some(Pump {
+            job_tx,
+            subs,
+            handle: Some(handle),
+            pid,
+        });
+        rx
     }
 
     /// Send a ping to check liveness. Returns Ok if the process responds.
     pub fn ping(&mut self) -> Result<(), crate::client::RpcError> {
-        let id = self.client.next_id_str();
-        let req = crate::client::Request::new("ping").with_id(&id).done();
-        self.client.send(&req)?;
-        Ok(())
+        self.command(crate::client::Request::new("ping").done())
+            .map(|_| ())
     }
 
     /// Register tool definitions that omp may invoke through this client.
@@ -103,12 +190,10 @@ impl Worker {
         &mut self,
         defs: Vec<adaptor::ToolDef>,
     ) -> Result<(), crate::client::RpcError> {
-        let id = self.client.next_id_str();
         let req = crate::client::Request::new("register_external_tools")
-            .with_id(&id)
             .with_field("tools", defs)
             .done();
-        let response = self.client.send(&req)?;
+        let response = self.command(req)?;
         if response.get("success").and_then(Value::as_bool) == Some(true) {
             Ok(())
         } else {
@@ -124,37 +209,53 @@ impl Worker {
 
     /// Send a prompt to the agent (initial task brief or follow-up).
     ///
-    /// Returns the response data.  The agent will subsequently emit events
-    /// that can be read via `read_event()`.
+    /// Returns the response data.  The agent will subsequently emit events;
+    /// read them via `read_event()` or push-subscribe via `subscribe()`.
     pub fn prompt(&mut self, message: &str) -> Result<Value, crate::client::RpcError> {
-        let id = self.client.next_id_str();
         let req = crate::client::Request::new("prompt")
-            .with_id(&id)
             .with_field("message", message)
             .done();
-        self.client.send(&req)
+        self.command(req)
     }
 
     /// Steer the running agent with an instruction.
     pub fn steer(&mut self, message: &str) -> Result<Value, crate::client::RpcError> {
-        let id = self.client.next_id_str();
         let req = crate::client::Request::new("steer")
-            .with_id(&id)
             .with_field("message", message)
             .done();
-        self.client.send(&req)
+        self.command(req)
     }
 
     /// Abort the current agent session.
     pub fn abort(&mut self) -> Result<Value, crate::client::RpcError> {
-        let id = self.client.next_id_str();
-        let req = crate::client::Request::new("abort").with_id(&id).done();
-        self.client.send(&req)
+        self.command(crate::client::Request::new("abort").done())
+    }
+
+    /// Dispatch a command: straight through the client in pull mode, or via
+    /// the pump's job queue once push mode is active.
+    fn command(&mut self, req: crate::client::Request) -> Result<Value, crate::client::RpcError> {
+        if let Some(client) = self.client.as_mut() {
+            return client.send(&req);
+        }
+        let pump = self
+            .pump
+            .as_ref()
+            .expect("pump present once the client is taken");
+        let (tx, rx) = std::sync::mpsc::channel();
+        pump.job_tx
+            .send(Job::Command { req, reply: tx })
+            .map_err(|_| crate::client::RpcError::ProcessExited(None))?;
+        rx.recv()
+            .map_err(|_| crate::client::RpcError::ProcessExited(None))?
     }
 
     /// PID of the underlying omp worker process (its process group leader).
     pub fn child_pid(&self) -> u32 {
-        self.client.child_pid()
+        match (&self.client, &self.pump) {
+            (Some(client), _) => client.child_pid(),
+            (None, Some(pump)) => pump.pid,
+            (None, None) => 0,
+        }
     }
 
     /// Read the next event from the agent, blocking until one arrives.
@@ -164,57 +265,13 @@ impl Worker {
     /// subsequent agent events).  Callers should loop until `None` and then
     /// decide whether to prompt again or abort.
     pub fn read_event(&mut self) -> Result<Option<WorkerEvent>, crate::client::RpcError> {
-        let raw = self.client.next_frame_raw()?;
-        let ty = raw.get("type").and_then(|v| v.as_str()).unwrap_or("");
-
-        match ty {
-            "response" => {
-                // A response frame means the previous command completed.
-                // The agent may still have events queued after this, but
-                // for MVP we treat it as a yield point.
-                Ok(None)
-            }
-            "agent_start" => Ok(Some(WorkerEvent::AgentStart)),
-            "agent_end" => Ok(Some(WorkerEvent::AgentEnd)),
-            "message_start" | "message_update" => {
-                let text = raw
-                    .pointer("/message/content")
-                    .or_else(|| raw.get("text"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                Ok(Some(WorkerEvent::Message { text }))
-            }
-            "tool_execution" | "tool_execution_start" => {
-                let name = raw
-                    .get("toolName")
-                    .or_else(|| raw.get("name"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                let input = raw.get("input").cloned().unwrap_or(Value::Null);
-                Ok(Some(WorkerEvent::ToolExecution {
-                    name,
-                    input,
-                    result: None,
-                }))
-            }
-            "tool_execution_end" => {
-                let name = raw
-                    .get("toolName")
-                    .or_else(|| raw.get("name"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                let result = raw.get("result").cloned();
-                Ok(Some(WorkerEvent::ToolExecution {
-                    name,
-                    input: Value::Null,
-                    result,
-                }))
-            }
-            _ => Ok(Some(WorkerEvent::Unknown(raw))),
-        }
+        let client = self.client.as_mut().ok_or_else(|| {
+            crate::client::RpcError::Protocol(
+                "event pump active; consume subscribe() receivers instead".to_string(),
+            )
+        })?;
+        let raw = client.next_frame_raw()?;
+        Ok(frame_to_event(raw))
     }
 
     /// Convenience iterator: yields events until `None` (response received).
@@ -225,9 +282,132 @@ impl Worker {
     }
 }
 
+/// Turn one raw omp wire frame into a [`WorkerEvent`].
+/// `None` means the frame is a command `response` (consumed elsewhere).
+fn frame_to_event(raw: Value) -> Option<WorkerEvent> {
+    let ty = raw.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    let event = match ty {
+        "response" => return None,
+        "agent_start" => WorkerEvent::AgentStart,
+        "agent_end" => WorkerEvent::AgentEnd,
+        "message_start" | "message_update" => {
+            let text = raw
+                .pointer("/message/content")
+                .or_else(|| raw.get("text"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            WorkerEvent::Message { text }
+        }
+        "tool_execution" | "tool_execution_start" => {
+            let name = raw
+                .get("toolName")
+                .or_else(|| raw.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let input = raw.get("input").cloned().unwrap_or(Value::Null);
+            WorkerEvent::ToolExecutionStart { name, input }
+        }
+        "tool_execution_end" => {
+            let name = raw
+                .get("toolName")
+                .or_else(|| raw.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let result = raw.get("result").cloned();
+            WorkerEvent::ToolExecutionEnd { name, result }
+        }
+        _ => WorkerEvent::Unknown(raw),
+    };
+    Some(event)
+}
+
+/// Pump thread body: owns the client until shutdown or process death.
+/// Commands arrive via `job_rx`; response frames are matched by id and
+/// delivered to the waiting `Worker::command()` caller; every other frame
+/// becomes a [`WorkerEvent`] fanned out to all live subscribers.
+fn run_pump(
+    mut client: crate::client::Client,
+    job_rx: std::sync::mpsc::Receiver<Job>,
+    subs: &std::sync::Arc<std::sync::Mutex<Vec<(String, std::sync::mpsc::Sender<WorkerEvent>)>>>,
+) {
+    let mut pending: std::collections::HashMap<
+        String,
+        std::sync::mpsc::Sender<Result<Value, crate::client::RpcError>>,
+    > = std::collections::HashMap::new();
+    let mut dead = false;
+    while !dead {
+        // Drain queued commands before blocking on a frame read.
+        while let Ok(job) = job_rx.try_recv() {
+            match job {
+                Job::Shutdown => {
+                    dead = true;
+                    break;
+                }
+                Job::Command { mut req, reply } => {
+                    let id = client.next_id_str();
+                    req.id = Some(id.clone());
+                    match client.send_frame(&req) {
+                        Ok(()) => {
+                            pending.insert(id, reply);
+                        }
+                        Err(e) => {
+                            let _ = reply.send(Err(e));
+                            dead = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if dead {
+            break;
+        }
+        match client.next_frame_raw_timeout(PUMP_POLL) {
+            Ok(frame) => {
+                let ty = frame.get("type").and_then(Value::as_str).unwrap_or("");
+                if ty == "response" {
+                    let id = frame.get("id").and_then(Value::as_str).unwrap_or("");
+                    if let Some(reply) = pending.remove(id) {
+                        let _ = reply.send(Ok(frame));
+                    }
+                    // Unmatched responses (e.g. abort from Client::Drop) are dropped.
+                } else if let Some(event) = frame_to_event(frame) {
+                    let mut guard = subs.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut i = 0;
+                    while i < guard.len() {
+                        // Receiver dropped -> unregister this subscriber.
+                        if guard[i].1.send(event.clone()).is_err() {
+                            guard.swap_remove(i);
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+            }
+            Err(crate::client::RpcError::Timeout) => {}
+            Err(_) => dead = true, // process exited or transport error
+        }
+    }
+    for (_, reply) in pending.drain() {
+        let _ = reply.send(Err(crate::client::RpcError::ProcessExited(None)));
+    }
+    // Clearing the table closes every subscriber receiver (Disconnected),
+    // then dropping the client performs the abort + process-group kill.
+    subs.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
 impl Drop for Worker {
     fn drop(&mut self) {
-        // Client's Drop sends abort + kills the process.
+        if let Some(pump) = self.pump.take() {
+            let _ = pump.job_tx.send(Job::Shutdown);
+            if let Some(handle) = pump.handle {
+                let _ = handle.join();
+            }
+        }
+        // Pull mode: Client's Drop sends abort + kills the process.
     }
 }
 
@@ -244,11 +424,11 @@ impl<'a> Iterator for WorkerEvents<'a> {
             Ok(Some(event)) => Some(event),
             Ok(None) => None,
             Err(e) => {
-                // Return a synthetic event so the caller can handle the error.
-                Some(WorkerEvent::Unknown(serde_json::json!({
-                    "type": "error",
-                    "error": e.to_string(),
-                })))
+                // Surface the failure as a dedicated event so the caller can
+                // react without the iterator silently ending.
+                Some(WorkerEvent::Error {
+                    error: e.to_string(),
+                })
             }
         }
     }

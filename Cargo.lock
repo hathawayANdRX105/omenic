@@ -2037,9 +2037,12 @@ dependencies = [
 name = "omenic-web-client"
 version = "0.1.0"
 dependencies = [
+ "daemon",
  "omenic-web-state",
  "serde",
  "serde_json",
+ "session",
+ "tempfile",
  "toml",
  "ureq",
 ]
@@ -2103,6 +2106,7 @@ dependencies = [
  "orbit",
  "serde",
  "serde_json",
+ "session",
  "tools",
 ]
 
@@ -3507,7 +3511,6 @@ dependencies = [
  "dioxus-liveview",
  "omenic-web-client",
  "omenic-web-page-workspace",
- "serde_yaml",
  "tokio",
 ]
 

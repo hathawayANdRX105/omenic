@@ -6,7 +6,12 @@ publish = false
 
 [dependencies]
 omenic-web-state = { path = "../state" }
+daemon = { path = "../../infra/daemon" }
+session = { path = "../../infra/session" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
 ureq = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
