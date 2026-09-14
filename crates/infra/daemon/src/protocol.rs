@@ -114,6 +114,14 @@ pub enum Command {
     /// `worker.read_event` — `{}` → `WorkerEvent | null`.
     #[serde(rename = "worker.read_event")]
     WorkerReadEvent,
+
+    /// `event.subscribe` — `{ topic }` → `{ subscription_id }`.  The
+    /// connection then receives [`EventFrame`] pushes for that topic.
+    #[serde(rename = "event.subscribe")]
+    EventSubscribe,
+    /// `event.unsubscribe` — `{ subscription_id }` → `{ removed }`.
+    #[serde(rename = "event.unsubscribe")]
+    EventUnsubscribe,
 }
 
 /// One daemon → client frame.
@@ -182,4 +190,33 @@ impl ResponseError {
             message: message.into(),
         }
     }
+}
+
+/// One daemon → subscriber push frame (wire `{"type":"event",...}`).  Sent on
+/// a connection that answered `event.subscribe` (R2 3.3); interleaves freely
+/// with the `Response` frames for that connection's own requests.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventFrame {
+    #[serde(rename = "type")]
+    pub kind: EventFrameKind,
+    /// Topic the event was published to (e.g. `"worker"`).
+    pub topic: String,
+    /// The serialized event payload (`WorkerEvent` JSON for the worker topic).
+    pub event: Value,
+}
+
+impl EventFrame {
+    pub fn new(topic: impl Into<String>, event: Value) -> Self {
+        EventFrame {
+            kind: EventFrameKind::Event,
+            topic: topic.into(),
+            event,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EventFrameKind {
+    #[serde(rename = "event")]
+    Event,
 }
