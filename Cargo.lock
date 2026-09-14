@@ -1987,11 +1987,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "omenic-harness-compaction"
+version = "0.1.0"
+dependencies = [
+ "omenic-harness-core",
+ "omenic-harness-plugin",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "omenic-harness-core"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "omenic-harness-instruction"
+version = "0.1.0"
+dependencies = [
+ "omenic-harness-plugin",
+ "omenic-harness-prompt",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -2128,6 +2148,7 @@ version = "0.1.0"
 dependencies = [
  "adaptor",
  "fs2",
+ "omenic-harness-compaction",
  "omenic-harness-plugin",
  "prompts",
  "serde",

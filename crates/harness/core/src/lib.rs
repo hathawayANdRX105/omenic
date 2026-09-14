@@ -4,6 +4,8 @@
 //! and `dsh core/session` `SessionStore` lifecycle. These types are the
 //! common vocabulary for every crate in `crates/harness/`.
 
+pub mod chat;
+
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;

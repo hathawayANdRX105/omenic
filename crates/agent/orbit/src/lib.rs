@@ -19,15 +19,12 @@ use serde::{Deserialize, Serialize};
 use adaptor::{Context, Message, Model, StopReason, StreamEvent, ToolCallSpec, ToolDef};
 use tools::{Tool, def};
 
-/// Compaction triggers when the estimated context size exceeds this many
-/// characters (~4 chars/token, so roughly 30k tokens).
-/// ponytail: fixed budget — `Model` carries no context-window field; derive
-/// it from provider metadata once one exists.
-const COMPACT_CHAR_BUDGET: usize = 120_000;
-/// Characters of the newest messages kept verbatim during compaction.
-pub const KEEP_RECENT_CHARS: usize = 30_000;
-/// Newest messages always kept verbatim, even when oversized on their own.
-pub const KEEP_RECENT_MIN: usize = 2;
+// The compaction policy (char-budget trigger ~4 chars/token ≈ 30k tokens,
+// verbatim recent window) lives in `omenic-harness-compaction` (C4); the
+// public knobs stay re-exported on the orbit path.
+// ponytail: fixed budget — `Model` carries no context-window field; derive
+// it from provider metadata once one exists.
+pub use omenic_harness_compaction::{KEEP_RECENT_CHARS, KEEP_RECENT_MIN};
 
 /// LLM backend abstraction: the only seam between loop and network,
 /// so invariants are testable offline with scripted streams.
@@ -253,71 +250,60 @@ impl ContextLog {
 }
 
 // ===== compaction =====
+// Policy (char-budget window, tool-pairing invariant, kept-window guard,
+// transcript rendering) lives in `omenic-harness-compaction` (C4). What
+// remains here is the call seam: DTO re-typing plus the `LlmBackend`
+// bridge — zero policy logic.
 
-/// Estimated size of one message in characters: text measured directly,
-/// block content through its JSON encoding (what the wire actually carries).
-/// ponytail: role/framing overhead uncounted — a rounding error next to
-/// message bodies.
+use omenic_harness_compaction::{
+    COMPACT_CHAR_BUDGET, Summarizer, compact_with, message_chars as dto_chars,
+    select_compaction_cut as dto_cut, to_dto, to_wire,
+};
+
+/// Estimated size of one message in characters (delegates to the policy crate).
 pub fn message_chars(m: &Message) -> usize {
-    match &m.content {
-        adaptor::Content::Text(s) => s.len(),
-        blocks => serde_json::to_string(blocks).unwrap_or_default().len(),
-    }
+    dto_chars(&to_dto(m))
 }
 
-/// Estimated size of the whole context, system prompt included.
-fn context_chars(context: &Context) -> usize {
-    context.system_prompt.as_ref().map_or(0, |s| s.len())
-        + context.messages.iter().map(message_chars).sum::<usize>()
-}
-
-/// A user message carrying only tool results. Keeping it without the
-/// assistant `tool_use` that precedes it would break invariant 1.
-fn is_tool_result_only(m: &Message) -> bool {
-    match &m.content {
-        adaptor::Content::Blocks(bs) => {
-            !bs.is_empty()
-                && bs
-                    .iter()
-                    .all(|b| matches!(b, adaptor::Block::ToolResult { .. }))
-        }
-        _ => false,
-    }
-}
-
-/// First index to keep verbatim: walks newest → oldest spending `budget`
-/// characters, always keeping at least [`KEEP_RECENT_MIN`] messages. `0`
-/// means the whole context fits the recent window — nothing to compact.
+/// First index to keep verbatim under a recent-window char budget.
 pub fn select_compaction_cut(messages: &[Message], budget: usize) -> usize {
-    let mut used = 0usize;
-    let mut cut = messages.len();
-    for (i, m) in messages.iter().enumerate().rev() {
-        let size = message_chars(m);
-        if used + size > budget && messages.len() - i > KEEP_RECENT_MIN {
-            break;
-        }
-        used += size;
-        cut = i;
-    }
-    if cut == 0 {
-        return 0;
-    }
-    // Invariant 1: the kept window must not start on orphan tool_results
-    // whose tool_use blocks are being summarized away.
-    while cut < messages.len() && is_tool_result_only(&messages[cut]) {
-        cut += 1;
-    }
-    cut
+    dto_cut(&messages.iter().map(to_dto).collect::<Vec<_>>(), budget)
 }
 
-/// Summarize old messages when the context grows too large. The default
-/// host policy for [`LoopConfig::maintain`]; hosts may substitute their own.
-/// Invariant 4: on any failure the context is left untouched.
+/// Bridges the crate's `Summarizer` hook onto orbit's `LlmBackend`: the
+/// summary stream runs against the same scripted/HTTP backend as the loop.
+struct LlmSummarizer<'a>(&'a dyn LlmBackend, &'a Model, &'a AtomicBool);
+
+impl Summarizer for LlmSummarizer<'_> {
+    fn summarize(&self, transcript: &str) -> Option<String> {
+        let ctx = Context {
+            system_prompt: Some(
+                "请将以下对话总结为简洁的上下文摘要，保留关键决策、已做的工作和待办事项。".into(),
+            ),
+            messages: vec![Message::user_text(transcript)],
+        };
+        let mut summary = String::new();
+        for ev in self.0.stream(self.1, &ctx, &[], self.2) {
+            match ev {
+                StreamEvent::TextDelta(delta) => summary.push_str(&delta),
+                StreamEvent::Done {
+                    stop_reason: StopReason::Aborted,
+                }
+                | StreamEvent::Error(_) => return None,
+                _ => {}
+            }
+        }
+        (!summary.is_empty()).then_some(summary)
+    }
+}
+
+/// The default host maintenance hook for [`LoopConfig::maintain`]; hosts may
+/// substitute their own. Invariant 4: on any failure the context is left
+/// untouched.
 ///
-/// Traceability (EC-7): the injected summary goes through `context_log` too,
-/// so a replay of the log shows the full pre-compaction conversation (every
-/// original message was logged as it was appended) followed by the summary
-/// marker in its actual position.
+/// Traceability (EC-7): the injected summary marker goes through
+/// `context_log` too, so a replay of the log shows the full pre-compaction
+/// conversation followed by the marker in its actual position.
 pub fn compact_context(
     backend: &dyn LlmBackend,
     model: &Model,
@@ -325,81 +311,21 @@ pub fn compact_context(
     signal: &AtomicBool,
     context_log: Option<&ContextLog>,
 ) {
-    if signal.load(Ordering::Relaxed) || context_chars(context) < COMPACT_CHAR_BUDGET {
+    if signal.load(Ordering::Relaxed) {
         return;
     }
-
-    let keep_at = select_compaction_cut(&context.messages, KEEP_RECENT_CHARS);
-    if keep_at == 0 {
-        return; // nothing older than the recent window — leave the context alone
+    let dto: Vec<_> = context.messages.iter().map(to_dto).collect();
+    let (out, summary) = compact_with(
+        &LlmSummarizer(backend, model, signal),
+        context.system_prompt.as_deref(),
+        &dto,
+        COMPACT_CHAR_BUDGET,
+        &Default::default(),
+    );
+    context.messages = out.iter().map(to_wire).collect();
+    if let (Some(log), Some(msg)) = (context_log, &summary) {
+        let _ = log.append(&to_wire(msg));
     }
-    // The newest KEEP_RECENT_MIN messages are kept whatever their size. When
-    // they alone blow the budget, summarizing the prefix cannot get under it:
-    // shipping a summary here would just re-summarize the previous summary
-    // every turn. Leave the context intact instead.
-    let kept_chars: usize = context.system_prompt.as_ref().map_or(0, |s| s.len())
-        + context.messages[keep_at..]
-            .iter()
-            .map(message_chars)
-            .sum::<usize>();
-    if kept_chars >= COMPACT_CHAR_BUDGET {
-        return;
-    }
-    let old = &context.messages[..keep_at];
-    let recent: Vec<Message> = context.messages[keep_at..].to_vec();
-
-    let conversation: String = old
-        .iter()
-        .map(|m| {
-            format!(
-                "{:?}: {}",
-                m.role,
-                match &m.content {
-                    adaptor::Content::Text(s) => s.clone(),
-                    blocks => serde_json::to_string(blocks).unwrap_or_default(),
-                }
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let summary_context = Context {
-        system_prompt: Some(
-            "请将以下对话总结为简洁的上下文摘要，保留关键决策、已做的工作和待办事项。".into(),
-        ),
-        messages: vec![Message::user_text(conversation)],
-    };
-
-    let mut summary = String::new();
-    let mut failed = false;
-    for ev in backend.stream(model, &summary_context, &[], signal) {
-        match ev {
-            StreamEvent::TextDelta(delta) => summary.push_str(&delta),
-            StreamEvent::Done {
-                stop_reason: StopReason::Aborted,
-            } => {
-                failed = true;
-                break;
-            }
-            StreamEvent::Error(_) => {
-                failed = true;
-                break;
-            }
-            _ => {}
-        }
-    }
-
-    if failed || summary.is_empty() {
-        return; // invariant 4: keep original messages over a broken summary
-    }
-
-    let summary_msg = Message::user_text(format!("[context summary]\n{summary}"));
-    if let Some(log) = context_log {
-        let _ = log.append(&summary_msg);
-    }
-    let mut replaced = vec![summary_msg];
-    replaced.extend(recent);
-    context.messages = replaced;
 }
 
 // ===== agent loop =====

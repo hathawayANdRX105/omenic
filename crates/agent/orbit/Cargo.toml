@@ -14,6 +14,7 @@ serde_json = { workspace = true }
 fs2 = { workspace = true }
 prompts = { path = "../../infra/prompts" }
 omenic-harness-plugin = { path = "../../harness/plugin" }
+omenic-harness-compaction = { path = "../../harness/compaction" }
 
 [dev-dependencies]
 tempfile = { workspace = true }
