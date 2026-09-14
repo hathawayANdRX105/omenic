@@ -1,0 +1,13 @@
+[package]
+name = "omenic-harness-compaction"
+version = "0.1.0"
+edition = "2024"
+description = "Char-budget compaction policy: recent window, tool-pairing invariant, summarizer hook"
+license = "MIT"
+publish = false
+
+[dependencies]
+omenic-harness-core = { path = "../core" }
+omenic-harness-plugin = { path = "../plugin" }
+serde = { workspace = true }
+serde_json = { workspace = true }

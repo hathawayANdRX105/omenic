@@ -11,6 +11,7 @@ members = [
   "crates/composition",
   "crates/harness/core", "crates/harness/prompt", "crates/harness/tools",
   "crates/harness/runtime", "crates/harness/plugin",
+  "crates/harness/compaction",
 ]
 resolver = "2"
 
