@@ -113,33 +113,37 @@ fn worker_event_loop(d: WebDaemon, tx: tokio::sync::mpsc::UnboundedSender<AgentE
     const BACKOFF: [u64; 4] = [1, 2, 4, 5];
     let mut attempt = 0usize;
     loop {
-        if let Ok(mut sub) = d.subscribe_worker() {
-            attempt = 0;
-            let mut translator = WireTranslator::new();
-            loop {
-                // 5s keepalive：None 空转 tick 顺带感知消费端死亡，把组件
-                // 卸载后读线程的残留窗口从 30s 压到 5s（空转只是一次
-                // syscall，开销可忽略）
-                match sub.next_event(Duration::from_secs(5)) {
-                    Ok(Some(frame)) => {
-                        if let Some(ev) = translator.translate(&frame.event)
-                            && tx.send(ev).is_err()
-                        {
-                            return; // 消费端已亡
+        match d.subscribe_worker() {
+            Ok(mut sub) => {
+                attempt = 0;
+                let mut translator = WireTranslator::new();
+                loop {
+                    // 5s keepalive：None 空转 tick 顺带感知消费端死亡，把组件
+                    // 卸载后读线程的残留窗口从 30s 压到 5s（空转只是一次
+                    // syscall，开销可忽略）
+                    match sub.next_event(Duration::from_secs(5)) {
+                        Ok(Some(frame)) => {
+                            if let Some(ev) = translator.translate(&frame.event)
+                                && tx.send(ev).is_err()
+                            {
+                                return; // 消费端已亡
+                            }
                         }
-                    }
-                    Ok(None) => {
-                        if tx.is_closed() {
-                            return; // 消费端已亡：keepalive tick 时感知
+                        Ok(None) => {
+                            if tx.is_closed() {
+                                return; // 消费端已亡：keepalive tick 时感知
+                            }
                         }
+                        Err(_) => break, // 断线 → 走重连
                     }
-                    Err(_) => break, // 断线 → 走重连
                 }
             }
+            Err(e) => {}
         }
         if tx.is_closed() {
             return;
         }
+        eprintln!("retry in {}s", BACKOFF[attempt.min(BACKOFF.len() - 1)]);
         std::thread::sleep(Duration::from_secs(BACKOFF[attempt.min(BACKOFF.len() - 1)]));
         attempt += 1;
     }
@@ -242,7 +246,6 @@ pub fn Workspace(
         st.model = config.model.clone();
         st
     });
-    let mut is_streaming = use_signal(|| false);
     let mut view = use_signal(|| View::Chat);
     let mut show_quick_switcher = use_signal(|| false);
     let mut show_settings = use_signal(|| false);
@@ -311,8 +314,7 @@ pub fn Workspace(
                         // TurnEnd：占位文案 + 最终文本持久化 + 状态收尾。
                         // 会话已删除则跳过消息写回与会话状态更新（写回去
                         // 等于复活已删会话），但 statusline 结算与
-                        // is_streaming 复位必须照常执行（与 mock 消费端
-                        // 一致）。
+                        // 会话回 Idle 必须照常执行。
                         let deleted = !session_exists_in(space_sessions, &sid);
                         if !deleted {
                             let mut map = session_messages.write();
@@ -366,7 +368,6 @@ pub fn Workspace(
                             }
                             space_sessions.set(map);
                         }
-                        is_streaming.set(false);
                     }
                     _ => {
                         if matches!(ev, AgentEvent::AssistantText { .. }) {
@@ -557,6 +558,30 @@ pub fn Workspace(
         on_update_config.call(cfg);
     };
 
+    let on_abort = {
+        let backend_abort = backend;
+        let mut space_sessions_abort = space_sessions;
+        let sid_abort = active_session_id;
+        move |()| {
+            if let DataBackend::Daemon(d) = backend_abort() {
+                std::thread::spawn(move || {
+                    let _ = d.abort_worker();
+                });
+            }
+            // 内存即时复位：会话回 Idle；事件流里的残余事件由孤儿守卫兜底
+            let sid = sid_abort();
+            let mut map = space_sessions_abort.read().clone();
+            for list in map.values_mut() {
+                for s in list.iter_mut() {
+                    if s.id == sid {
+                        s.status = SessionStatus::Idle;
+                    }
+                }
+            }
+            space_sessions_abort.set(map);
+        }
+    };
+
     let on_toggle_thinking = move |()| {
         let mut st = statusline();
         st.thinking = if st.thinking == "off" {
@@ -603,22 +628,25 @@ pub fn Workspace(
                     let _ = d.create_session(&id, &title);
                 }
                 let _ = d.append_message(&sid_daemon, true, &text_daemon);
-                match d_prompt.worker_prompt(&text_daemon) {
-                    Ok(_) => eprintln!("[web-debug] worker_prompt ok"),
-                    Err(e) => {
-                        eprintln!("[web-debug] worker_prompt ERR: {e}");
-                        let _ = fail_tx.send(());
-                    }
+                if let Err(e) = d_prompt.worker_prompt(&text_daemon) {
+                    // 确定性的失败点（daemon 掉线 / worker 拉起失败）：
+                    // 事件路径不会有 TurnEnd 来复位。线程只发信号量，
+                    // Signal 写回留在任务里（UnsyncStorage 非 Send）
+                    eprintln!("[web] worker_prompt ERR: {e}");
+                    let _ = fail_tx.send(());
                 }
             });
-            // prompt 失败兜底：唯一确定「不再有事件」的失败点（daemon 掉
-            // 线 / worker 拉起失败）。线程只发信号量，Signal 写回留在任务
-            // 里（use_signal 底层 UnsyncStorage 非 Send，不能进
-            // std::thread）；复位是幂等的，与订阅端 TurnEnd 复位不冲突。
-            let mut is_streaming_fail = is_streaming;
+            let sid_fail = sid.clone();
             spawn(async move {
                 if fail_rx.await.is_ok() {
-                    is_streaming_fail.set(false);
+                    let mut map = space_sessions.write();
+                    for list in map.values_mut() {
+                        for s in list.iter_mut() {
+                            if s.id == sid_fail {
+                                s.status = SessionStatus::Idle;
+                            }
+                        }
+                    }
                 }
             });
         }
@@ -651,7 +679,6 @@ pub fn Workspace(
             }
         }
         space_sessions.set(map);
-        is_streaming.set(true);
 
         match backend() {
             DataBackend::Mock => {
@@ -683,7 +710,7 @@ pub fn Workspace(
 
                     // TurnEnd：占位文案 + 状态收尾。会话已删除则跳过消息
                     // 写回与会话状态更新（写回去等于复活已删会话），但
-                    // statusline 结算与 is_streaming 复位必须照常执行。
+                    // statusline 结算与会话回 Idle 必须照常执行。
                     let deleted = !session_exists_in(space_sessions, &sid);
                     if !deleted {
                         let mut map = session_messages.write();
@@ -722,7 +749,6 @@ pub fn Workspace(
                         }
                         space_sessions.set(map);
                     }
-                    is_streaming.set(false);
                 });
             }
             DataBackend::Daemon(_) => {
@@ -787,7 +813,7 @@ pub fn Workspace(
                         }
                     }
                     div { class: "flex-1" }
-                    if is_streaming() {
+                    if active_session_running(space_sessions, active_session_id) {
                         span { class: "flex items-center gap-1.5 text-[12px] leading-5 text-label-3",
                             span { class: "spinner-ring" }
                             "运行中"
@@ -800,10 +826,11 @@ pub fn Workspace(
                         Chat {
                             messages: current_messages,
                             statusline: statusline(),
-                            is_streaming: is_streaming(),
+                            is_streaming: active_session_running(space_sessions, active_session_id),
                             on_send: on_send,
                             on_model_change: on_model_change,
                             on_toggle_thinking: on_toggle_thinking,
+                            on_abort: on_abort,
                             on_toggle_tasks: move |_| show_tasks.set(!show_tasks()),
                             dock: show_tasks().then(|| rsx! {
                                 TaskPanel { tasks: store::tasks(), on_close: move |_| show_tasks.set(false) }
@@ -892,6 +919,21 @@ fn grid_cols(collapsed: bool, width: usize) -> String {
     } else {
         format!("{width}px minmax(0,1fr)")
     }
+}
+
+/// 当前会话是否在运行（会话级状态：composer 的停止钮/运行中标识/
+/// 输入门禁都由此驱动，切会话自然切换）。
+fn active_session_running(
+    space_sessions: Signal<HashMap<String, Vec<Session>>>,
+    active_session_id: Signal<String>,
+) -> bool {
+    let sid = active_session_id();
+    !sid.is_empty()
+        && space_sessions
+            .read()
+            .values()
+            .flatten()
+            .any(|s| s.id == sid && s.status == SessionStatus::Active)
 }
 
 /// 展平所有空间的会话（快速切换用），按最近活跃排序。

@@ -36,6 +36,10 @@ pub struct DaemonConfig {
     /// start — there is no default and we don't want to silently create one
     /// in the current directory.
     pub session_db_path: Option<PathBuf>,
+    /// omenic 自家引擎（orbit）的模型配置：llm_base_url/api_key/model 在
+    /// `.oi/config.toml` 齐全时 Some——daemon worker 走 orbit 模式（真
+    /// 模型）；None = omp 兼容模式。
+    pub orbit_model: Option<adaptor::Model>,
 }
 
 impl DaemonConfig {
@@ -44,10 +48,31 @@ impl DaemonConfig {
         let socket_path = Some(cfg.daemon_socket_path()?);
         let session_db_path = Some(cfg.session_db_path()?);
         let omp_path = cfg.omp_path.to_string_lossy().into_owned();
+        // llm 三件套齐全 → orbit 模式（设置页写 .oi/config.toml 即生效）
+        let orbit_model = match (&cfg.llm_base_url, &cfg.llm_api_key, &cfg.llm_model) {
+            (Some(base), Some(key), Some(model))
+                if !base.trim().is_empty()
+                    && !key.trim().is_empty()
+                    && !model.trim().is_empty() =>
+            {
+                let mut url = base.trim().trim_end_matches('/').to_string();
+                if !url.ends_with("/v1") {
+                    url.push_str("/v1");
+                }
+                Some(adaptor::Model {
+                    api_key: key.trim().to_string(),
+                    model: model.trim().to_string(),
+                    base_url: Some(url),
+                    max_tokens: cfg.llm_max_tokens,
+                })
+            }
+            _ => None,
+        };
         Ok(DaemonConfig {
             socket_path,
             omp_path,
             session_db_path,
+            orbit_model,
         })
     }
 }
@@ -91,7 +116,10 @@ impl Daemon {
         let run_ledger = RunLedger::open_for_socket(&socket_path)?;
 
         let session_state = SessionState::new(session_db);
-        let worker = Arc::new(Mutex::new(WorkerHandle::new(cfg.omp_path.clone())));
+        let worker = Arc::new(Mutex::new(WorkerHandle::new(
+            cfg.omp_path.clone(),
+            cfg.orbit_model.clone(),
+        )));
         let shutdown = Arc::new(AtomicBool::new(false));
         let started_at_ms = now_ms();
         let events = EventBus::new();
