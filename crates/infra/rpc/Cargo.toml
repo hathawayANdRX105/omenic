@@ -12,6 +12,8 @@ serde_json = { workspace = true }
 base64 = { workspace = true }
 libc = "0.2"
 adaptor = { path = "../../agent/adaptor" }
+orbit = { path = "../../agent/orbit" }
+tools = { path = "../../agent/tools" }
 
 [dev-dependencies]
 tempfile = { workspace = true }

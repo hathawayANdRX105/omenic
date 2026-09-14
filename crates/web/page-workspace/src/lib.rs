@@ -603,8 +603,12 @@ pub fn Workspace(
                     let _ = d.create_session(&id, &title);
                 }
                 let _ = d.append_message(&sid_daemon, true, &text_daemon);
-                if d_prompt.worker_prompt(&text_daemon).is_err() {
-                    let _ = fail_tx.send(());
+                match d_prompt.worker_prompt(&text_daemon) {
+                    Ok(_) => eprintln!("[web-debug] worker_prompt ok"),
+                    Err(e) => {
+                        eprintln!("[web-debug] worker_prompt ERR: {e}");
+                        let _ = fail_tx.send(());
+                    }
                 }
             });
             // prompt 失败兜底：唯一确定「不再有事件」的失败点（daemon 掉

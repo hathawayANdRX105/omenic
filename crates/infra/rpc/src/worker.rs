@@ -79,6 +79,9 @@ pub struct Worker {
     /// `None` once the pump thread owns the client.
     client: Option<crate::client::Client>,
     pump: Option<Pump>,
+    /// omenic 自家引擎模式（OMENIC_WORKER_MODE=orbit）：进程内跑 orbit
+    /// agent 循环（C1），事件词汇与 omp 转发层完全一致。None = omp 模式。
+    orbit: Option<OrbitEngine>,
 }
 
 /// One unit of work for the pump thread.
@@ -105,16 +108,145 @@ struct Pump {
 /// How long the pump blocks in one frame read before re-checking jobs.
 const PUMP_POLL: std::time::Duration = std::time::Duration::from_millis(20);
 
+/// omenic 自家引擎（OMENIC_WORKER_MODE=orbit）：进程内跑 orbit agent
+/// 循环（C1 `run_agent_streaming`），把 orbit::AgentEvent 1:1 映射成
+/// [`WorkerEvent`]（词汇与 omp 转发层一致，下游零改动）。模型配置读
+/// OMENIC_LLM_BASE_URL/API_KEY/MODEL/MAX_TOKENS。
+struct OrbitEngine {
+    model: adaptor::Model,
+    ctx: adaptor::Context,
+    abort_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    subs: std::sync::Arc<std::sync::Mutex<Vec<(String, std::sync::mpsc::Sender<WorkerEvent>)>>>,
+    pull_push: std::sync::mpsc::Sender<WorkerEvent>,
+    pull_queue: std::sync::mpsc::Receiver<WorkerEvent>,
+}
+
+impl OrbitEngine {
+    fn new() -> Result<Self, crate::client::RpcError> {
+        use std::sync::atomic::AtomicBool;
+        let base_url = std::env::var("OMENIC_LLM_BASE_URL").map_err(|_| {
+            crate::client::RpcError::Protocol(
+                "OMENIC_WORKER_MODE=orbit 需要 OMENIC_LLM_BASE_URL".into(),
+            )
+        })?;
+        let mut url = base_url.trim().trim_end_matches('/').to_string();
+        if !url.ends_with("/v1") {
+            url.push_str("/v1");
+        }
+        let api_key = std::env::var("OMENIC_LLM_API_KEY").unwrap_or_default();
+        let model = std::env::var("OMENIC_LLM_MODEL").unwrap_or_else(|_| "default".into());
+        let max_tokens = std::env::var("OMENIC_LLM_MAX_TOKENS")
+            .ok()
+            .and_then(|v| v.parse().ok());
+        let (pull_push, pull_queue) = std::sync::mpsc::channel();
+        Ok(OrbitEngine {
+            model: adaptor::Model {
+                api_key,
+                model,
+                base_url: Some(url),
+                max_tokens,
+            },
+            ctx: adaptor::Context::default(),
+            abort_flag: std::sync::Arc::new(AtomicBool::new(false)),
+            subs: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            pull_push,
+            pull_queue,
+        })
+    }
+
+    fn broadcast(&self, event: WorkerEvent) {
+        let mut subs = self.subs.lock().unwrap_or_else(|e| e.into_inner());
+        subs.retain(|(_, tx)| tx.send(event.clone()).is_ok());
+    }
+
+    /// 同步跑一轮：阻塞调用线程（daemon 线程-per-连接），事件边产生边
+    /// 广播。返回最终 assistant 文本。
+    fn run_turn(&mut self, message: &str) -> String {
+        use std::sync::atomic::Ordering;
+        self.ctx.messages.push(adaptor::Message::user_text(message));
+        self.abort_flag.store(false, Ordering::SeqCst);
+        let subs = std::sync::Arc::clone(&self.subs);
+        let pull_push = self.pull_push.clone();
+        let backend = orbit::HttpLlm;
+        let tools = tools::builtin_tools();
+        let abort_flag = std::sync::Arc::clone(&self.abort_flag);
+        let mut model = self.model.clone();
+        let mut ctx = std::mem::take(&mut self.ctx);
+        let mut reply = String::new();
+        orbit::run_agent_streaming(
+            &backend,
+            &model,
+            &mut ctx,
+            &tools,
+            &abort_flag,
+            orbit::LoopConfig::default(),
+            &mut |ev| {
+                let we = match ev {
+                    orbit::AgentEvent::TurnStart => WorkerEvent::AgentStart,
+                    orbit::AgentEvent::AssistantText { delta } => {
+                        reply.push_str(&delta);
+                        WorkerEvent::Message { text: delta }
+                    }
+                    orbit::AgentEvent::ToolCall(spec) => WorkerEvent::ToolExecutionStart {
+                        name: spec.name.clone(),
+                        input: spec.args,
+                    },
+                    orbit::AgentEvent::ToolStart { name, .. } => WorkerEvent::Unknown(
+                        serde_json::json!({ "event": "tool_start", "name": name }),
+                    ),
+                    orbit::AgentEvent::ToolResult { name, result, .. } => {
+                        WorkerEvent::ToolExecutionEnd {
+                            name,
+                            result: serde_json::from_str(&result)
+                                .ok()
+                                .or(Some(serde_json::Value::String(result))),
+                        }
+                    }
+                    orbit::AgentEvent::TurnEnd { .. } => WorkerEvent::AgentEnd,
+                };
+                {
+                    let mut s = subs.lock().unwrap_or_else(|e| e.into_inner());
+                    s.retain(|(_, tx)| tx.send(we.clone()).is_ok());
+                }
+                let _ = pull_push.send(we);
+            },
+        );
+        drop(model);
+        self.ctx = ctx;
+        reply
+    }
+}
+
+impl Worker {
+    fn omp_worker(client: crate::client::Client) -> Self {
+        Worker {
+            client: Some(client),
+            pump: None,
+            orbit: None,
+        }
+    }
+
+    /// OMENIC_WORKER_MODE=orbit 时由 [`Worker::new`] 调用。
+    fn new_orbit_from_env() -> Result<Self, crate::client::RpcError> {
+        Ok(Worker {
+            client: None,
+            pump: None,
+            orbit: Some(OrbitEngine::new()?),
+        })
+    }
+}
+
 impl Worker {
     /// Spawn a new worker process (`omp --mode rpc`).
     ///
     /// Blocks until the initial `ready` handshake completes.
     pub fn new(omp_path: &str) -> Result<Self, crate::client::RpcError> {
+        if std::env::var("OMENIC_WORKER_MODE").as_deref() == Ok("orbit") {
+            return Self::new_orbit_from_env();
+        }
+
         let client = crate::client::Client::new(omp_path)?;
-        Ok(Worker {
-            client: Some(client),
-            pump: None,
-        })
+        Ok(Self::omp_worker(client))
     }
 
     /// Spawn with a connect timeout and auto-reconnect retry count.
@@ -124,10 +256,7 @@ impl Worker {
         max_retries: u32,
     ) -> Result<Self, crate::client::RpcError> {
         let client = crate::client::Client::new_with_opts(omp_path, connect_timeout, max_retries)?;
-        Ok(Worker {
-            client: Some(client),
-            pump: None,
-        })
+        Ok(Self::omp_worker(client))
     }
 
     /// Reconnect the underlying client (kill + respawn + renegotiate).
@@ -135,6 +264,11 @@ impl Worker {
     /// Only available in pull mode; the pump thread owns the client once
     /// `subscribe()` has run.
     pub fn reconnect(&mut self) -> Result<(), crate::client::RpcError> {
+        if self.orbit.is_some() {
+            return Err(crate::client::RpcError::Protocol(
+                "orbit worker has no child process to reconnect".into(),
+            ));
+        }
         match self.client.as_mut() {
             Some(client) => client.reconnect(),
             None => Err(crate::client::RpcError::Protocol(
@@ -150,6 +284,15 @@ impl Worker {
     /// live receiver sees every event.  The receiver yields events until the
     /// worker dies or is dropped, then disconnects.
     pub fn subscribe(&mut self, topic: &str) -> std::sync::mpsc::Receiver<WorkerEvent> {
+        if let Some(orbit) = self.orbit.as_mut() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            orbit
+                .subs
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((topic.to_string(), tx));
+            return rx;
+        }
         let (tx, rx) = std::sync::mpsc::channel();
         let Some(client) = self.client.take() else {
             let pump = self
@@ -181,6 +324,9 @@ impl Worker {
 
     /// Send a ping to check liveness. Returns Ok if the process responds.
     pub fn ping(&mut self) -> Result<(), crate::client::RpcError> {
+        if self.orbit.is_some() {
+            return Ok(());
+        }
         self.command(crate::client::Request::new("ping").done())
             .map(|_| ())
     }
@@ -190,6 +336,9 @@ impl Worker {
         &mut self,
         defs: Vec<adaptor::ToolDef>,
     ) -> Result<(), crate::client::RpcError> {
+        if self.orbit.is_some() {
+            return Ok(());
+        }
         let req = crate::client::Request::new("register_external_tools")
             .with_field("tools", defs)
             .done();
@@ -212,6 +361,10 @@ impl Worker {
     /// Returns the response data.  The agent will subsequently emit events;
     /// read them via `read_event()` or push-subscribe via `subscribe()`.
     pub fn prompt(&mut self, message: &str) -> Result<Value, crate::client::RpcError> {
+        if let Some(orbit) = self.orbit.as_mut() {
+            let reply = orbit.run_turn(message);
+            return Ok(serde_json::json!({ "reply": reply, "success": true }));
+        }
         let req = crate::client::Request::new("prompt")
             .with_field("message", message)
             .done();
@@ -220,6 +373,11 @@ impl Worker {
 
     /// Steer the running agent with an instruction.
     pub fn steer(&mut self, message: &str) -> Result<Value, crate::client::RpcError> {
+        if self.orbit.is_some() {
+            return Err(crate::client::RpcError::Protocol(
+                "steer not supported in orbit worker mode yet".into(),
+            ));
+        }
         let req = crate::client::Request::new("steer")
             .with_field("message", message)
             .done();
@@ -228,6 +386,11 @@ impl Worker {
 
     /// Abort the current agent session.
     pub fn abort(&mut self) -> Result<Value, crate::client::RpcError> {
+        if let Some(orbit) = self.orbit.as_ref() {
+            use std::sync::atomic::Ordering;
+            orbit.abort_flag.store(true, Ordering::SeqCst);
+            return Ok(serde_json::json!({ "aborted": true }));
+        }
         self.command(crate::client::Request::new("abort").done())
     }
 
@@ -251,6 +414,9 @@ impl Worker {
 
     /// PID of the underlying omp worker process (its process group leader).
     pub fn child_pid(&self) -> u32 {
+        if self.orbit.is_some() {
+            return 0;
+        }
         match (&self.client, &self.pump) {
             (Some(client), _) => client.child_pid(),
             (None, Some(pump)) => pump.pid,
@@ -265,6 +431,9 @@ impl Worker {
     /// subsequent agent events).  Callers should loop until `None` and then
     /// decide whether to prompt again or abort.
     pub fn read_event(&mut self) -> Result<Option<WorkerEvent>, crate::client::RpcError> {
+        if let Some(orbit) = self.orbit.as_ref() {
+            return Ok(orbit.pull_queue.try_recv().ok());
+        }
         let client = self.client.as_mut().ok_or_else(|| {
             crate::client::RpcError::Protocol(
                 "event pump active; consume subscribe() receivers instead".to_string(),
