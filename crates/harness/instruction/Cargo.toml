@@ -1,0 +1,15 @@
+[package]
+name = "omenic-harness-instruction"
+version = "0.1.0"
+edition = "2024"
+description = "AGENTS.md workspace instruction discovery, mtime cache, deduped prompt fragments"
+license = "MIT"
+publish = false
+
+[dependencies]
+omenic-harness-prompt = { path = "../prompt" }
+omenic-harness-plugin = { path = "../plugin" }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tempfile = { workspace = true }
