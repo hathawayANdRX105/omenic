@@ -29,7 +29,7 @@ anchors:
     find: '选择会话快速切换'
     expect: '底部提示行「选择会话快速切换 + ESC 退出」，kbd 样式键帽。'
     source: 'omenic: crates/web/page-workspace/src/lib.rs:533-538'
-  - key: trigger
+  - key: cmdk-search
     file: crates/web/components/src/sidebar.rs
     find: 'nav-search-bar'
     expect: '入口为侧栏区头搜索钮（nav-search-bar hook），⌘K/Ctrl+K 全局触发。'

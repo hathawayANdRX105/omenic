@@ -46,16 +46,16 @@
 | 4.6 AGENTS.md 向上查找 + 状态缓存 | `crates/harness/instruction/src/`（新 crate） | `packages/context/agent-instructions/src/{files.ts,state.ts}` |
 | 4.7 指令 digest 去重 + 渲染 `PromptTemplate` | 同上（`render.rs`） | `packages/context/agent-instructions/src/{render.ts,digest.ts,config.ts}` |
 
-### C5 web 页面跑真数据 🟡 视觉层完成（dsh 复刻 + 自研 atoms）；读侧先行（5.2a/5.3/5.8 走现有 daemon 协议），事件侧 5.2b/5.4/5.6/5.9 等 3.3
+### C5 web 页面跑真数据 🟡 视觉层完成（dsh 复刻 + 自研 atoms）；读侧先行：5.2a ✅ 已实现（PR #341，探测失败回退 mock）、5.3 🟡 列表/历史已接真数据（谱系待 G4）；#343 事件推送协议已合入 → 5.2b 订阅端可对接（G4 验收）
 
 > **5.2a 整合注意（功能）**：① 写路径归 daemon——web 经 `session.append`/`worker.prompt` 调用，不直接写 sessions.db（避免双写 libSQL，2.4 repair 语义依赖 daemon 侧写）；② `worker.read_event` 是消费式出队，web 禁止轮询（会抢 CLI/task/memory 事件）；③ G1 冻结后 web 的 `AgentEvent` fixture 换 orbit 冻结 DTO（转译签名不变）；④ `DaemonClient` 同步短连接 × LiveView async → `spawn_blocking`；⑤ oi-web 与 daemon 必须同指一个 data_dir（worktree 各有 `.oi`），设置页加 daemon ping 校验；⑥ 谱系（5.5）无服务端命令，先平铺、G4 后按 `run.list` 组装。
 
 | 小功能 | omenic 文件（拆后 crate） | dsh 参考 |
 |---|---|---|
 | 5.1 ✅ `AgentEvent` DTO + 转译层（→ UI 状态，纯函数可单测，先行开发不等 C3；mock 流已消费，4 测试） | `crates/web/state/`（新，含 `AgentEvent`→UI 状态转译 + `memory_link`） | `packages/core/session/src/surface.ts` |
-| 5.2a ✅ 前置调查完成：daemon RPC 读客户端（会话列表/历史/messages/search，封装现有 `session.*`/`run.list` 协议 + `SessionSummary/SessionMessage` → state DTO 转换） | `crates/web/client/`（新增 `daemon.rs`；`llm.rs` 保留） | `packages/client/runtime/src/client/sessions/{manager.ts,remotes.ts}`（pull 模式已核实与服务端 `session.list/search/create/history` 一一对应） |
+| 5.2a ✅ 已实现（PR #341）：daemon RPC 读客户端（会话列表/历史/messages/search，封装现有 `session.*`/`run.list` 协议 + `SessionSummary/SessionMessage` → state DTO 转换；`DataBackend` 探测失败静默回退 mock） | `crates/web/client/`（新增 `daemon.rs`；`llm.rs` 保留） | `packages/client/runtime/src/client/sessions/{manager.ts,remotes.ts}`（pull 模式已核实与服务端 `session.list/search/create/history` 一一对应） |
 | 5.2b `event.subscribe` 消费端（等 3.3 定稿）：订阅接收端替换 `mock::stream_reply`，页面零改动 | `crates/web/client/`（`daemon.rs` 追加订阅 + 断线重连） | `packages/client/runtime/src/client/sessions/{notifier.ts,service.ts}` |
-| 5.3 会话列表/历史 ← 真数据（替换 `mock_sessions`） | `crates/web/page-workspace/`（原 workspace.rs 1093 行） | `packages/client/runtime/src/client/sessions/{session.ts,lineage.ts}` |
+| 5.3 🟡 会话列表/历史 ← 真数据（Daemon 模式已接 `session.list`/`load_messages`；谱系分组待 G4 后按 `run.list` 组装） | `crates/web/page-workspace/`（原 workspace.rs 1093 行） | `packages/client/runtime/src/client/sessions/{session.ts,lineage.ts}` |
 | 5.4 聊天流式：delta 追加 + tool 折叠卡 | `crates/web/components/`（chat.rs 352 行） | `client/conversation/{event-registry.ts,view-registry.ts}` + `sessions/tool-call-tree.ts` |
 | 5.5 sidebar 真会话 + 谱系分组 | `crates/web/components/`（sidebar.rs） | `packages/client/runtime/src/client/sessions/lineage.ts` |
 | 5.6 statusline 真运行态 + 计时 | `crates/web/components/`（statusline.rs） | `packages/client/runtime/src/client/sessions/assistant-timing.ts` |
