@@ -1,0 +1,38 @@
+# 工作区页契约：dsh AppFrame 三列布局（无顶栏）。
+# find 关键字全部取自 omenic rsx 源码中的稳定 class/字面量，由
+# bin/web/tests/ui_contract.rs 的「源码锚点抽查」测试自动核对。
+name: workspace
+target: crates/web/page-workspace/src/lib.rs
+description: 工作区页（Workspace）——三列 grid 根容器、侧栏宽度约束、面包屑头（无顶栏）。
+anchors:
+  - key: root-grid
+    find: 'grid h-screen w-screen bg-base overflow-hidden relative select-none'
+    expect: '根容器为占满全屏的 grid，bg-base（#151517）暗底，overflow-hidden 防滚动穿透。'
+    source: 'omenic: crates/web/page-workspace/src/lib.rs:404；dsh: packages/client/ui-layout/src/client/AppFrame.tsx:87（AppFrame 根框架）'
+  - key: grid-columns
+    find: 'minmax(0,1fr)'
+    expect: '列模板为「侧栏宽 + minmax(0,1fr) 中栏」两列，中栏可收缩到 0，无顶栏行。'
+    source: 'omenic: crates/web/page-workspace/src/lib.rs:556（grid_cols）；dsh: AppFrame 中栏 flex/grid 自适应列'
+  - key: sidebar-default-280
+    find: 'GlobalSignal::<usize>::new(|| 280)'
+    expect: '侧栏默认宽 280px（全局信号，切视图保持）。'
+    source: 'omenic: crates/web/page-workspace/src/lib.rs:130；dsh: SidebarRoot 接收 width prop，280 为 omenic 默认约束'
+  - key: sidebar-collapse-56
+    find: '56px minmax(0,1fr)'
+    expect: '折叠时列模板切换为 56px rail + 中栏。'
+    source: 'omenic: crates/web/page-workspace/src/lib.rs:557；dsh: SidebarRoot.module.css:25（56px rail geometry）'
+  - key: sidebar-width-clamp
+    find: 'clamp(264, 420)'
+    expect: '拖拽调宽夹取在 264–420px 区间（min 264 / max 420）。'
+    source: 'omenic: crates/web/page-workspace/src/lib.rs:165；dsh: 宽度由外部传入，264/420 为 omenic 约束'
+  - key: breadcrumb-header
+    find: 'min-h-[44px] pl-7 pr-5 pt-3 pb-2 border-b border-b1'
+    expect: '中栏顶部是 44px 面包屑头（项目名 / 会话名 / 分支 chip），非独立顶栏。'
+    source: 'omenic: crates/web/page-workspace/src/lib.rs:436；dsh: 无 topbar，标题区随中栏'
+  - key: branch-chip
+    find: 'bg-chip-brand text-brand-300 border border-b1'
+    expect: '分支以 mono chip 呈现（chip-brand 底 + brand-300 字 + 1px 边）。'
+    source: 'omenic: crates/web/page-workspace/src/lib.rs:444；dsh: 状态 chip 900 底 + 400 字惯例'
+notes: |
+  数据接线（mock store、流式转译层）不在本契约内——并行分支可能改
+  lib.rs 的逻辑段，锚点只锁布局 class 与静态结构。

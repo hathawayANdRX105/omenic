@@ -66,3 +66,29 @@ curl -s localhost:8026/ | grep -c -- --color-accent        # 页面里应 > 0
 **快速诊断**：`curl -s localhost:<port>/ | grep -c -- --color-accent` 返回 0 = 跑的是空 CSS 的旧二进制，按上面序列重建重启。浏览器记得**硬刷新**（LiveView 按 origin 缓存 wasm，换端口/换二进制后旧缓存不失效）。
 
 **CI / 协作**：`node_modules` 未进 git，CI 与任何新克隆/新 worktree 都要先 `npm install` 再 build，否则 UI 无样式。若要让 build 可复现，考虑把 `node_modules` 入库或让 build.rs 失败时报错而非静默写空文件。
+
+## Web UI 契约验收（specs/ui）
+
+web UI（dsh 设计语言复刻，C5.1 已验收）的视觉/结构锁在 `specs/ui/*.yaml` 契约里，防止后续接线（5.2a/5.2b）破坏。改动 web 组件样式或布局时：先跑契约测试，再按下表浏览器抽查。
+
+**契约测试**（无需起服；首次编译 web 依赖树较慢）：
+
+```bash
+cpulimit -l 70 -i -- cargo test -p web-cli   # bin/web/tests/ui_contract.rs
+```
+
+**yaml 字段约定**：`name`（契约名）/ `target`（omenic 实现文件，相对仓库根）/ `description` / `anchors`（锚点列表，每项 `key` + `find`（源码中稳定 class 片段或静态字面量）+ `expect`（预期形态）+ `source`（omenic 实现位置 + dsh 出处）+ 可选 `file`（锚点级实现文件覆盖，默认用 target））/ `notes`。测试两类断言：① 每个 yaml 可被 serde_yaml 解析且字段齐全；② 每个 `find` 关键字在对应实现文件中出现。新增 spec 必须同步登记 `tests/ui_contract.rs` 的 `SPEC_FILES`。
+
+**起服**：按上文「正确启动序列」起 oi-web（记得 npm install + touch css + 重建重启，浏览器硬刷新）。
+
+**浏览器抽查点**（每屏挑核心）：
+
+- `workspace.yaml`——三列 grid：侧栏 280px 拖拽夹取 264–420、折叠后 rail 56px；中栏只有 44px 面包屑头（无顶栏）；分支 chip 品牌蓝。
+- `chat.yaml`——发送消息后「工作过程」折叠行出现（24px 头 + 计数）；用户气泡右对齐 r22、max-w 525；发送钮 34px 圆形品牌蓝；状态行 12px 居中（model · tokens · $cost · context）。
+- `sidebar.yaml`——logo 行 52px + 18px 字标；新会话钮 h38 r12；项目行 34 / 会话行 32（缩进 22px，状态点 brand/dim/danger）；时间戳 hover 隐藏；底部数据统计/设置行 42px。
+- `stats.yaml`——KPI 卡一行 5 张；指标带一行 7 格；主体三列 320/1fr/340；吞吐折线品牌蓝。
+- `settings.yaml`——弹窗 800px r24、左导航 188px（单元 h40 r12）；「关于」页有版本号 chip。
+- `quick-switcher.yaml`——⌘K/Ctrl+K 弹出 560px 顶部对齐面板；输入 h44、会话行 h40；ESC 退出。
+- `taskpanel.yaml`——composer 上方 dock 卡宽随消息列（≤780）；进度条 1px 品牌蓝；filter chip h26 r7；任务卡 r10。
+
+**已知偏差（记录不改）**：dsh 消息列 748px，omenic 消息列与 composer 统一 `max-w-[780px]`（chat.yaml notes）。

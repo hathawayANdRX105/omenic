@@ -1,0 +1,43 @@
+# 设置弹窗契约：dsh SettingsRoot 复刻（800px r24 面板 + 188px 内导航 + 关于页）。
+# find 关键字全部取自 omenic rsx 源码中的稳定 class/字面量，由
+# bin/web/tests/ui_contract.rs 的「源码锚点抽查」测试自动核对。
+name: settings
+target: crates/web/page-config/src/lib.rs
+description: 设置弹窗（SettingsModal / ConfigForm / AboutPane）——800 面板、188 导航、模型与渠道表单、关于页版本号。
+anchors:
+  - key: modal-width
+    find: 'w-[800px]'
+    expect: '弹窗卡片宽 800px（Modal width_class 传入）。'
+    source: 'omenic: crates/web/page-config/src/lib.rs:32；dsh: SettingsRoot 面板宽度'
+  - key: modal-radius
+    file: crates/web/components/src/ui.rs
+    find: 'rounded-3xl border border-binv bg-layer-2 shadow-lv3'
+    expect: 'Modal 卡片 r24（rounded-3xl）、layer-2 底、lv3 阴影 + blur 遮罩。'
+    source: 'omenic: crates/web/components/src/ui.rs:263（Modal）；dsh: Modal r24 + mask blur 2px 规格'
+  - key: left-nav
+    find: 'w-[188px] shrink-0 bg-sidebar p-3 flex flex-col gap-1'
+    expect: '左导航栏宽 188px、bg-sidebar 底。'
+    source: 'omenic: crates/web/page-config/src/lib.rs:35'
+  - key: nav-cell
+    find: 'h-10 px-3 rounded-xl flex items-center gap-2.5'
+    expect: '导航单元 h40、r12，激活态 bg-[#434546]（bubble-highlight）。'
+    source: 'omenic: crates/web/page-config/src/lib.rs:23-28（nav_cell）'
+  - key: section-header
+    find: 'h-[54px] px-6 flex items-center justify-between border-b border-b1'
+    expect: '右内容列头 54px：区标题 + 28px 圆形关闭钮。'
+    source: 'omenic: crates/web/page-config/src/lib.rs:53'
+  - key: form-input
+    find: 'w-full h-9 rounded-[10px] bg-layer-2 border border-b2 px-3'
+    expect: '表单输入统一 h36、r10、layer-2 底，focus 时 brand 边框。'
+    source: 'omenic: crates/web/page-config/src/lib.rs:144（input_class）'
+  - key: model-cards
+    find: 'grid grid-cols-2 gap-2.5'
+    expect: '在线模型卡两列网格，当前默认卡 brand 边框 + success「默认」chip。'
+    source: 'omenic: crates/web/page-config/src/lib.rs:324,330-339'
+  - key: about-version
+    find: 'env!("CARGO_PKG_VERSION")'
+    expect: '「关于」页展示编译期版本号（v{CARGO_PKG_VERSION} chip）。'
+    source: 'omenic: crates/web/page-config/src/lib.rs:365-370（AboutPane）'
+notes: |
+  表单校验/保存逻辑（save_to_file、test_connection）不在本契约内；
+  锚点只锁面板几何、导航结构与输入样式。
