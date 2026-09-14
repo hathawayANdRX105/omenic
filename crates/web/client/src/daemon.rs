@@ -9,9 +9,10 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use daemon::{ClientError, DaemonClient};
+use daemon::{ClientError, Command, DaemonClient, Subscription};
 use omenic_web_state::convert::{message_to_chat, summary_to_session};
 use omenic_web_state::types::{ChatMessage, Session};
+use serde_json::Value;
 use session::SessionRole;
 
 /// 阻塞式 daemon 客户端。Clone 便宜（内部只有 socket 路径）。
@@ -114,6 +115,24 @@ impl WebDaemon {
         };
         self.client.session_append(sid, role, text)?;
         Ok(())
+    }
+
+    /// `worker.prompt`：把一条用户消息转交 daemon 的 omp worker（首次调用
+    /// 自动拉起 worker 进程）。返回 worker 的原始 rpc 响应值；实际回复内容
+    /// 全部走 [`Self::subscribe_worker`] 的事件推送，调用方（page-workspace）
+    /// 通常直接忽略返回值。阻塞到 worker 应答——调用方须放进 `std::thread`。
+    pub fn worker_prompt(&self, message: &str) -> Result<Value, ClientError> {
+        self.client.call(
+            Command::WorkerPrompt,
+            serde_json::json!({ "message": message }),
+        )
+    }
+
+    /// `event.subscribe("worker")`：worker 事件推送的专用长连接（C5.2b）。
+    /// 连接存活期间 daemon 持续推送 `EventFrame`；Drop 关连接，daemon 自动
+    /// 分离该连接的全部订阅（断线清理）。广播语义：多订阅者各收全流。
+    pub fn subscribe_worker(&self) -> Result<Subscription, ClientError> {
+        self.client.subscribe("worker")
     }
 }
 

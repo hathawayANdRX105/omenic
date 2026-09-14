@@ -2115,6 +2115,7 @@ dependencies = [
  "omenic-web-page-config",
  "omenic-web-page-stats",
  "omenic-web-state",
+ "tokio",
 ]
 
 [[package]]
