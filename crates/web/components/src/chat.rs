@@ -158,6 +158,11 @@ pub fn Chat(
                     // 裁剪会切掉卡片外的部分；圆角由卡片自身的 bg + radius 呈现
                     form { class: "pointer-events-auto w-full rounded-[22px] border border-b1 bg-input-bg shadow-lv2 flex flex-col transition-colors focus-within:border-b3",
                         onsubmit: move |e: FormEvent| {
+                            // dioxus-liveview 解释器对 submit 不做
+                            // preventDefault（handleEvent 的 response 在
+                            // liveview 模式为 undefined），必须显式阻止，
+                            // 否则原生 GET 提交整页重载丢状态
+                            e.prevent_default();
                             let text = e
                                 .get_first("message")
                                 .and_then(|v| match v {

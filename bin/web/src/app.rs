@@ -230,6 +230,15 @@ pub async fn launch() {
             if (e.target && e.target.id === "chat-input-area") composing.active = false;
         }}, true);
 
+        // Guard: liveview 解释器对 submit 不 preventDefault（见 chat.rs），
+        // 捕获阶段统一阻止聊天表单的原生 GET 提交；事件继续传播到解释器
+        // 的 onsubmit 处理器，Dioxus 侧逻辑不受影响
+        document.addEventListener("submit", function(e) {{
+            if (e.target && e.target.querySelector && e.target.querySelector('[id=chat-input-area]')) {{
+                e.preventDefault();
+            }}
+        }}, true);
+
         // Handle Enter key on textarea to submit form
         document.addEventListener("keydown", function(e) {{
             if (e.target && e.target.id === "chat-input-area" && e.key === "Enter" && !e.shiftKey) {{
