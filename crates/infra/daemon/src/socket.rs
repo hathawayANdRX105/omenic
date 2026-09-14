@@ -117,6 +117,18 @@ pub mod platform {
         writer: BufWriter<UnixStream>,
     }
 
+    /// Read half, after [`Connection::into_split`].
+    pub struct ConnectionReader {
+        inner: BufReader<UnixStream>,
+    }
+
+    /// Write half, after [`Connection::into_split`].  Owned by the
+    /// per-connection writer thread so event pushes can interleave with
+    /// request responses (R2 3.3).
+    pub struct ConnectionWriter {
+        inner: BufWriter<UnixStream>,
+    }
+
     impl Connection {
         pub(crate) fn new(stream: UnixStream) -> Self {
             // We can't easily split a `UnixStream` — clone the fd by
@@ -129,11 +141,21 @@ pub mod platform {
             }
         }
 
+        /// Consume the connection into independent halves.
+        pub(crate) fn into_split(self) -> (ConnectionReader, ConnectionWriter) {
+            (
+                ConnectionReader { inner: self.reader },
+                ConnectionWriter { inner: self.writer },
+            )
+        }
+    }
+
+    impl ConnectionReader {
         /// Read one newline-delimited JSON frame as raw text.  Returns
         /// `Ok(None)` on EOF.
         pub fn read_frame(&mut self) -> Result<Option<String>, DaemonError> {
             let mut buf = Vec::with_capacity(1024);
-            let n = self.reader.read_until(b'\n', &mut buf)?;
+            let n = self.inner.read_until(b'\n', &mut buf)?;
             if n == 0 {
                 return Ok(None);
             }
@@ -143,12 +165,14 @@ pub mod platform {
             }
             Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
         }
+    }
 
+    impl ConnectionWriter {
         /// Write one newline-delimited JSON frame.
         pub fn write_frame(&mut self, line: &str) -> Result<(), DaemonError> {
-            self.writer.write_all(line.as_bytes())?;
-            self.writer.write_all(b"\n")?;
-            self.writer.flush()?;
+            self.inner.write_all(line.as_bytes())?;
+            self.inner.write_all(b"\n")?;
+            self.inner.flush()?;
             Ok(())
         }
     }
@@ -169,6 +193,10 @@ pub mod platform {
 
     pub struct Connection;
 
+    /// Stub half types so the module surface matches the Unix one.
+    pub struct ConnectionReader;
+    pub struct ConnectionWriter;
+
     impl Connection {
         pub fn read_frame(&mut self) -> Result<Option<String>, DaemonError> {
             Err(DaemonError::UnsupportedPlatform)
@@ -179,4 +207,4 @@ pub mod platform {
     }
 }
 
-pub use platform::{Connection, Listener};
+pub use platform::{Connection, ConnectionReader, Listener};

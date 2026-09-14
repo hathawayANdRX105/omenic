@@ -293,3 +293,133 @@ pub fn require_u32(params: &Value, field: &str) -> Result<u32, String> {
         .map(|n| n.min(u32::MAX as u64) as u32)
         .ok_or_else(|| format!("missing required numeric field `{field}`"))
 }
+
+// ---------------------------------------------------------------------------
+// EventBus (R2 3.3)
+// ---------------------------------------------------------------------------
+
+/// Fan-out table behind `event.subscribe`: topic → live registrations.
+/// A registration is `(subscription id, connection write-channel)`; pushing
+/// an event serializes to one already-formatted JSONL line and sends it to
+/// every subscriber of the topic.  Dead connections (receiver dropped, e.g.
+/// the client hung up) are unregistered on the spot; connection teardown
+/// removes everything a connection owned via [`EventBus::remove_conn`].
+#[derive(Clone, Default)]
+pub struct EventBus {
+    inner: Arc<Mutex<BusInner>>,
+}
+
+#[derive(Default)]
+struct BusInner {
+    by_id: std::collections::HashMap<u64, Registration>,
+    by_conn: std::collections::HashMap<u64, Vec<u64>>,
+    by_topic: std::collections::HashMap<String, Vec<u64>>,
+    next_id: u64,
+}
+
+struct Registration {
+    topic: String,
+    conn_id: u64,
+    tx: std::sync::mpsc::Sender<String>,
+}
+
+impl EventBus {
+    /// An empty bus.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register `tx` as a writer for `topic` on connection `conn_id`.
+    /// Returns the subscription id echoed back to the client.
+    pub fn subscribe(&self, topic: &str, conn_id: u64, tx: std::sync::mpsc::Sender<String>) -> u64 {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let id = inner.next_id;
+        inner.next_id += 1;
+        inner.by_id.insert(
+            id,
+            Registration {
+                topic: topic.to_string(),
+                conn_id,
+                tx,
+            },
+        );
+        inner.by_conn.entry(conn_id).or_default().push(id);
+        inner
+            .by_topic
+            .entry(topic.to_string())
+            .or_default()
+            .push(id);
+        id
+    }
+
+    /// Drop one subscription by id.  Returns whether it existed.
+    pub fn unsubscribe(&self, id: u64) -> bool {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(reg) = inner.by_id.remove(&id) else {
+            return false;
+        };
+        detach(&mut inner, id, reg.topic, reg.conn_id);
+        true
+    }
+
+    /// Drop every subscription owned by a connection (teardown path).
+    pub fn remove_conn(&self, conn_id: u64) {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let ids = inner.by_conn.remove(&conn_id).unwrap_or_default();
+        for id in ids {
+            if let Some(reg) = inner.by_id.remove(&id) {
+                detach(&mut inner, id, reg.topic, conn_id);
+            }
+        }
+    }
+
+    /// Send one pre-formatted JSONL line to every subscriber of `topic`.
+    /// Returns how many deliveries succeeded.  Failed sends (dead writer
+    /// threads) unregister that subscription in place.
+    pub fn broadcast(&self, topic: &str, line: &str) -> usize {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let ids: Vec<u64> = match inner.by_topic.get(topic) {
+            Some(ids) => ids.clone(),
+            None => return 0,
+        };
+        let mut sent = 0usize;
+        let mut dead = Vec::new();
+        for id in &ids {
+            match inner.by_id.get(id) {
+                Some(reg) if reg.tx.send(line.to_string()).is_ok() => sent += 1,
+                _ => dead.push(*id),
+            }
+        }
+        if !dead.is_empty() {
+            for id in dead {
+                if let Some(reg) = inner.by_id.remove(&id) {
+                    detach(&mut inner, id, reg.topic, reg.conn_id);
+                }
+            }
+        }
+        sent
+    }
+
+    /// Whether at least one live subscription exists for `topic`.
+    pub fn has_topic(&self, topic: &str) -> bool {
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.by_topic.get(topic).is_some_and(|ids| !ids.is_empty())
+    }
+}
+
+/// Remove `id` from the conn/topic indexes (the by_id entry is the caller's
+/// job).  Linear scans are fine: subscription counts are tiny by design.
+fn detach(inner: &mut BusInner, id: u64, topic: String, conn_id: u64) {
+    if let Some(ids) = inner.by_topic.get_mut(&topic) {
+        ids.retain(|x| *x != id);
+        if ids.is_empty() {
+            inner.by_topic.remove(&topic);
+        }
+    }
+    if let Some(ids) = inner.by_conn.get_mut(&conn_id) {
+        ids.retain(|x| *x != id);
+        if ids.is_empty() {
+            inner.by_conn.remove(&conn_id);
+        }
+    }
+}

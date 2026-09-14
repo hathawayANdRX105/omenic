@@ -541,7 +541,7 @@ impl Client {
         id
     }
 
-    fn send_frame(&mut self, req: &Request) -> Result<(), RpcError> {
+    pub(crate) fn send_frame(&mut self, req: &Request) -> Result<(), RpcError> {
         if let Some(status) = self.process.try_wait()? {
             return Err(RpcError::ProcessExited(status.code()));
         }
@@ -623,6 +623,93 @@ impl Client {
         }
     }
 
+    /// Read the next non-noise frame, waiting at most `dur` for data.
+    ///
+    /// Same filtering as [`Self::next_frame_raw`], but the stdout fd is
+    /// polled against a deadline: `Err(RpcError::Timeout)` when nothing
+    /// readable arrived in time (buffered bytes are still returned). The
+    /// fd is restored to blocking mode on every return path, so
+    /// `send()`/`read_frame()` callers are unaffected.
+    pub fn next_frame_raw_timeout(&mut self, dur: Duration) -> Result<serde_json::Value, RpcError> {
+        use std::os::unix::io::AsRawFd;
+
+        let fd = self.reader.get_ref().as_raw_fd();
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 {
+            return Err(RpcError::Io(std::io::Error::last_os_error()));
+        }
+        unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+        let result = self.next_frame_deadline(Instant::now() + dur);
+        unsafe { libc::fcntl(fd, libc::F_SETFL, flags) };
+        result
+    }
+
+    /// Deadline-driven variant of the `next_frame_raw` loop. Assumes the
+    /// stdout fd is already in `O_NONBLOCK` mode (set by the caller).
+    fn next_frame_deadline(&mut self, deadline: Instant) -> Result<serde_json::Value, RpcError> {
+        loop {
+            let buf = match self.read_line_nb(deadline)? {
+                Some(b) => b,
+                None => {
+                    let status = self.process.try_wait().ok().flatten();
+                    return Err(RpcError::ProcessExited(status.and_then(|s| s.code())));
+                }
+            };
+            if buf.is_empty() {
+                continue;
+            }
+            let value: serde_json::Value = serde_json::from_slice(&buf)?;
+            let ty = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            match ty {
+                "extension_ui_request" | "available_commands_update" => continue,
+                "rpc_chunk" => {
+                    let chunk_frame: Frame = serde_json::from_slice(&buf)?;
+                    if let Some(assembled) = self.reassemble_chunk(chunk_frame)? {
+                        return Ok(serde_json::to_value(&assembled)?);
+                    }
+                    continue;
+                }
+                _ => return Ok(value),
+            }
+        }
+    }
+
+    /// Read one newline-delimited line from the (nonblocking) stdout pipe,
+    /// polling until `deadline`. `read_until` may append partial bytes
+    /// before it hits `WouldBlock`; those are kept in the line buffer, so a
+    /// frame split across reads is never lost. `Ok(None)` means EOF.
+    fn read_line_nb(&mut self, deadline: Instant) -> Result<Option<Vec<u8>>, RpcError> {
+        use std::io::ErrorKind;
+
+        let mut line: Vec<u8> = Vec::with_capacity(1024);
+        let mut chunk: Vec<u8> = Vec::with_capacity(1024);
+        loop {
+            chunk.clear();
+            match self.reader.read_until(b'\n', &mut chunk) {
+                Ok(0) => return Ok(if line.is_empty() { None } else { Some(line) }),
+                Ok(n) => {
+                    line.extend_from_slice(&chunk[..n]);
+                    if line.last() == Some(&b'\n') {
+                        line.pop();
+                        return Ok(Some(line));
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                    line.append(&mut chunk);
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return Err(RpcError::Timeout);
+                    }
+                    if !poll_readable(self.reader.get_ref(), remaining)? {
+                        return Err(RpcError::Timeout);
+                    }
+                }
+                Err(e) => return Err(RpcError::Io(e)),
+            }
+        }
+    }
+
     /// Reassemble a chunked payload. Returns the assembled frame if complete.
     fn reassemble_chunk(&mut self, frame: Frame) -> Result<Option<Frame>, RpcError> {
         match frame {
@@ -673,6 +760,28 @@ impl Drop for Client {
         let _ = self.process.kill();
         let _ = self.process.wait();
     }
+}
+/// Poll a reader's fd for readability for up to `dur`. `Ok(false)` means the
+/// poll expired without data (caller re-checks its deadline).
+fn poll_readable<R: std::os::unix::io::AsRawFd>(
+    reader: &R,
+    dur: Duration,
+) -> Result<bool, RpcError> {
+    let fd = reader.as_raw_fd();
+    let mut pfd = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let ms = dur.as_millis().min(i32::MAX as u128) as i32;
+    let rc = unsafe { libc::poll(&mut pfd, 1, ms) };
+    if rc < 0 {
+        return Err(RpcError::Io(std::io::Error::last_os_error()));
+    }
+    if rc == 0 {
+        return Ok(false);
+    }
+    Ok(pfd.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0)
 }
 
 /// Standalone chunk reassembly helper (testable without a Client).

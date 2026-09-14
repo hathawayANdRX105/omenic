@@ -399,19 +399,22 @@ fn event_record(event: &WorkerEvent) -> serde_json::Value {
             }
             serde_json::json!({ "event": "message", "text": truncate_utf8(text, EVENT_FIELD_MAX_BYTES) })
         }
-        WorkerEvent::ToolExecution {
-            name,
-            input,
-            result,
-        } => serde_json::json!({
-            "event": "tool_execution",
+        WorkerEvent::ToolExecutionStart { name, input } => serde_json::json!({
+            "event": "tool_execution_start",
             "name": name,
             "input": bounded_value(input, &mut truncated),
+        }),
+        WorkerEvent::ToolExecutionEnd { name, result } => serde_json::json!({
+            "event": "tool_execution_end",
+            "name": name,
             "result": match result {
                 Some(v) => bounded_value(v, &mut truncated),
                 None => serde_json::Value::Null,
             },
         }),
+        WorkerEvent::Error { error } => {
+            serde_json::json!({ "event": "error", "error": error })
+        }
         WorkerEvent::Unknown(raw) => {
             serde_json::json!({ "event": "unknown", "raw": bounded_value(raw, &mut truncated) })
         }

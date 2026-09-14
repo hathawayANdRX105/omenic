@@ -34,9 +34,9 @@ pub mod session_query;
 mod socket;
 pub mod state;
 
-pub use client::{AppendOutcome, ClientError, DaemonClient, DaemonInfo};
+pub use client::{AppendOutcome, ClientError, DaemonClient, DaemonInfo, Subscription};
 pub use lock::InstanceLock;
-pub use protocol::{Command, Request, Response, ResponseError};
+pub use protocol::{Command, EventFrame, Request, Response, ResponseError};
 pub use server::{Daemon, DaemonConfig};
 pub use session_query::SESSION_QUERY_NAME;
 pub use socket::SocketAddr;

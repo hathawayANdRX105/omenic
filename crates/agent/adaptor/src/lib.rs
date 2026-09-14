@@ -130,7 +130,9 @@ pub enum StopReason {
 }
 
 /// A completed tool call extracted from the stream.
-#[derive(Debug, Clone, PartialEq)]
+/// Serde-wise this is the payload of `orbit::AgentEvent::ToolCall`; the
+/// field names are the cross-crate event contract (R2 3.1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCallSpec {
     pub id: String,
     pub name: String,
