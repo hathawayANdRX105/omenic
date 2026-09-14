@@ -3532,6 +3532,7 @@ dependencies = [
  "dioxus-liveview",
  "omenic-web-client",
  "omenic-web-page-workspace",
+ "serde_yaml",
  "tokio",
 ]
 

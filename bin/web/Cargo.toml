@@ -17,3 +17,7 @@ axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 omenic-web-client = { path = "../../crates/web/client" }
 omenic-web-page-workspace = { path = "../../crates/web/page-workspace" }
+
+# 仅测试用：解析 specs/ui/*.yaml 契约（见 tests/ui_contract.rs）
+[dev-dependencies]
+serde_yaml = { workspace = true }
