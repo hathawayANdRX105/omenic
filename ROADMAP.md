@@ -46,7 +46,13 @@
 | 4.6 AGENTS.md 向上查找 + 状态缓存 | `crates/harness/instruction/src/`（新 crate） | `packages/context/agent-instructions/src/{files.ts,state.ts}` |
 | 4.7 指令 digest 去重 + 渲染 `PromptTemplate` | 同上（`render.rs`） | `packages/context/agent-instructions/src/{render.ts,digest.ts,config.ts}` |
 
-### C5 web 页面跑真数据 🟡 视觉层完成（dsh 复刻 + 自研 atoms）；读侧先行：5.2a ✅ 已实现（PR #341，探测失败回退 mock）、5.3 🟡 列表/历史已接真数据（谱系待 G4）；#343 事件推送协议已合入 → 5.2b 订阅端可对接（G4 验收）
+### C5 web 页面跑真数据 🟡 5.1/5.2a/5.2b ✅（#340/#341/#345）：读侧真数据 + 事件订阅端 + 真运行全通；5.3 🟡（谱系待 G4）；5.4/5.6 由订阅管线承载（展示层已就位）、5.9 删 mock 待 G4 验收后
+
+> **G4 联调阻塞点（R4 侧已就绪，剩余整合项）**：
+> 1. **单 worker 事件无会话归属**——并发 turn 事件会混写最近 on_send 的会话。处理：G4 联调期约定「单运行」纪律（daemon 一次只跑一轮 turn）；根治需 R2 给 WorkerPrompt/事件帧加 per-run 路由（协议改动权在 R2）。
+> 2. **断线重连无自动化测试**——读线程退避重连（1s→5s 封顶）已实现，重连后 translator 重建语义有单测；G4 联调实测「杀 daemon 再起，web 自动重连不白屏」（验收③）。
+> 3. **半开 run 显示 aborted**——`SessionSummary` 无状态字段（convert 统一映射 Idle）。处理：G4 联调实测 2.4 repair 后 list 侧暴露 run 状态；如 R2 未加字段，web 侧先用 `read_from_cursor` 的 run 记录组装。
+> 4. **G4 验收①⑤已具备载体**：① 3.4 e2e（R2 的 event_push.rs）+ ⑤ web 走 `worker.prompt`/订阅，不做 `worker.read_event` 轮询。
 
 > **5.2a 整合注意（功能）**：① 写路径归 daemon——web 经 `session.append`/`worker.prompt` 调用，不直接写 sessions.db（避免双写 libSQL，2.4 repair 语义依赖 daemon 侧写）；② `worker.read_event` 是消费式出队，web 禁止轮询（会抢 CLI/task/memory 事件）；③ G1 冻结后 web 的 `AgentEvent` fixture 换 orbit 冻结 DTO（转译签名不变）；④ `DaemonClient` 同步短连接 × LiveView async → `spawn_blocking`；⑤ oi-web 与 daemon 必须同指一个 data_dir（worktree 各有 `.oi`），设置页加 daemon ping 校验；⑥ 谱系（5.5）无服务端命令，先平铺、G4 后按 `run.list` 组装。
 
@@ -54,7 +60,7 @@
 |---|---|---|
 | 5.1 ✅ `AgentEvent` DTO + 转译层（→ UI 状态，纯函数可单测，先行开发不等 C3；mock 流已消费，4 测试） | `crates/web/state/`（新，含 `AgentEvent`→UI 状态转译 + `memory_link`） | `packages/core/session/src/surface.ts` |
 | 5.2a ✅ 已实现（PR #341）：daemon RPC 读客户端（会话列表/历史/messages/search，封装现有 `session.*`/`run.list` 协议 + `SessionSummary/SessionMessage` → state DTO 转换；`DataBackend` 探测失败静默回退 mock） | `crates/web/client/`（新增 `daemon.rs`；`llm.rs` 保留） | `packages/client/runtime/src/client/sessions/{manager.ts,remotes.ts}`（pull 模式已核实与服务端 `session.list/search/create/history` 一一对应） |
-| 5.2b `event.subscribe` 消费端（等 3.3 定稿）：订阅接收端替换 `mock::stream_reply`，页面零改动 | `crates/web/client/`（`daemon.rs` 追加订阅 + 断线重连） | `packages/client/runtime/src/client/sessions/{notifier.ts,service.ts}` |
+| 5.2b ✅ 已实现（订阅接收端：`WireTranslator` wire→AgentEvent 双形状兼容 + 工具同名 LIFO 配对合成 id；读线程断线退避重连 1s→5s；`worker.prompt` 真运行；error 帧→TurnEnd 兜底防输入锁死；Mock 分支原样回退） | `crates/web/client/`（`daemon.rs` 追加订阅 + 重连）、`page-workspace`（订阅管线） | `packages/client/runtime/src/client/sessions/{notifier.ts,service.ts}` |
 | 5.3 🟡 会话列表/历史 ← 真数据（Daemon 模式已接 `session.list`/`load_messages`；谱系分组待 G4 后按 `run.list` 组装） | `crates/web/page-workspace/`（原 workspace.rs 1093 行） | `packages/client/runtime/src/client/sessions/{session.ts,lineage.ts}` |
 | 5.4 聊天流式：delta 追加 + tool 折叠卡 | `crates/web/components/`（chat.rs 352 行） | `client/conversation/{event-registry.ts,view-registry.ts}` + `sessions/tool-call-tree.ts` |
 | 5.5 sidebar 真会话 + 谱系分组 | `crates/web/components/`（sidebar.rs） | `packages/client/runtime/src/client/sessions/lineage.ts` |
