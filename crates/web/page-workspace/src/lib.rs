@@ -16,6 +16,7 @@ use omenic_web_components::ui::Modal;
 use omenic_web_mock::store;
 use omenic_web_page_config::SettingsModal;
 use omenic_web_page_stats::StatsView;
+use omenic_web_state::convert::WireTranslator;
 use omenic_web_state::types::{
     ChatMessage, Session, SessionStatus, WorkspaceSpace, format_relative_time,
 };
@@ -100,6 +101,48 @@ fn session_exists_in(space_sessions: Signal<HashMap<String, Vec<Session>>>, sid:
         .values()
         .flatten()
         .any(|s| s.id == sid)
+}
+
+/// 订阅读线程：阻塞消费 `event.subscribe` 推送帧，断线退避重连
+/// （1s/2s/4s/5s 封顶）。只拥有 `WebDaemon` 克隆、`Subscription`、
+/// `WireTranslator` 与 `tx`——不碰任何 Signal（use_signal 底层
+/// UnsyncStorage 非 Send，不能进 std::thread）。退出条件：`tx.send`
+/// 失败（消费端随组件卸载而亡）或 keepalive tick 感知 `tx.is_closed`。
+fn worker_event_loop(d: WebDaemon, tx: tokio::sync::mpsc::UnboundedSender<AgentEvent>) {
+    use std::time::Duration;
+    const BACKOFF: [u64; 4] = [1, 2, 4, 5];
+    let mut attempt = 0usize;
+    loop {
+        if let Ok(mut sub) = d.subscribe_worker() {
+            attempt = 0;
+            let mut translator = WireTranslator::new();
+            loop {
+                // 5s keepalive：None 空转 tick 顺带感知消费端死亡，把组件
+                // 卸载后读线程的残留窗口从 30s 压到 5s（空转只是一次
+                // syscall，开销可忽略）
+                match sub.next_event(Duration::from_secs(5)) {
+                    Ok(Some(frame)) => {
+                        if let Some(ev) = translator.translate(&frame.event)
+                            && tx.send(ev).is_err()
+                        {
+                            return; // 消费端已亡
+                        }
+                    }
+                    Ok(None) => {
+                        if tx.is_closed() {
+                            return; // 消费端已亡：keepalive tick 时感知
+                        }
+                    }
+                    Err(_) => break, // 断线 → 走重连
+                }
+            }
+        }
+        if tx.is_closed() {
+            return;
+        }
+        std::thread::sleep(Duration::from_secs(BACKOFF[attempt.min(BACKOFF.len() - 1)]));
+        attempt += 1;
+    }
 }
 
 #[component]
@@ -224,6 +267,126 @@ pub fn Workspace(
             let list = d.search_sessions(&q, 50).unwrap_or_default();
             if switcher_generation() == gen_id {
                 switcher_sessions.set(list);
+            }
+        });
+    });
+
+    // 订阅管线：读线程（worker_event_loop）→ unbounded channel → 消费
+    // task。消费端与组件作用域绑定：VirtualDom 卸载 → task 取消 → rx
+    // drop → 读线程 send 失败自行退出。订阅事件不带会话归属，统一写给
+    // on_send 时记录的 run_target_sid；effect 只依赖 backend（初始化后
+    // 不再变化），管线整个生命周期只建一次。
+    let run_target_sid = use_signal(String::new);
+    use_effect(move || {
+        let DataBackend::Daemon(d) = backend() else {
+            return;
+        };
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
+        let d_consumer = d.clone();
+        std::thread::spawn(move || worker_event_loop(d, tx));
+        spawn(async move {
+            let mut total_out: u64 = 0;
+            while let Some(ev) = rx.recv().await {
+                let sid = run_target_sid();
+                if sid.is_empty() {
+                    continue;
+                }
+                match ev {
+                    AgentEvent::TurnStart => {
+                        // 会话进入运行态（孤儿会话不写回）
+                        if session_exists_in(space_sessions, &sid) {
+                            let mut map = space_sessions.read().clone();
+                            for list in map.values_mut() {
+                                for s in list.iter_mut() {
+                                    if s.id == sid {
+                                        s.status = SessionStatus::Active;
+                                        s.last_active = "刚刚".into();
+                                    }
+                                }
+                            }
+                            space_sessions.set(map);
+                        }
+                    }
+                    AgentEvent::TurnEnd { .. } => {
+                        // TurnEnd：占位文案 + 最终文本持久化 + 状态收尾。
+                        // 会话已删除则跳过消息写回与会话状态更新（写回去
+                        // 等于复活已删会话），但 statusline 结算与
+                        // is_streaming 复位必须照常执行（与 mock 消费端
+                        // 一致）。
+                        let deleted = !session_exists_in(space_sessions, &sid);
+                        if !deleted {
+                            let mut map = session_messages.write();
+                            let mut ui = UiState {
+                                messages: map.get(&sid).cloned().unwrap_or_default(),
+                            };
+                            ui.apply(&ev);
+                            // 最后一条 assistant 消息即最终回复文本，持久化
+                            // 到 daemon（线程内；空文本跳过，存储侧拒绝空
+                            // 消息）
+                            let final_text = ui
+                                .messages
+                                .iter()
+                                .rev()
+                                .find(|m| m.role == "assistant")
+                                .map(|m| m.content.clone())
+                                .unwrap_or_default();
+                            if !final_text.is_empty() {
+                                let sid_daemon = sid.clone();
+                                let d_turn = d_consumer.clone();
+                                std::thread::spawn(move || {
+                                    let _ = d_turn.append_message(&sid_daemon, false, &final_text);
+                                });
+                            }
+                            map.insert(sid.clone(), ui.messages);
+                        }
+
+                        let mut st = statusline();
+                        st.tokens_out += total_out;
+                        st.tokens_in = (session_messages
+                            .read()
+                            .get(&sid)
+                            .map(|list| list.iter().map(|m| m.content.len()).sum::<usize>())
+                            .unwrap_or(0)
+                            / 4) as u64;
+                        st.cost_usd += total_out as f64 * 0.000002;
+                        st.context_pct =
+                            ((st.tokens_in + st.tokens_out) as f64 / st.context_max as f64 * 100.0)
+                                .min(100.0);
+                        statusline.set(st);
+                        total_out = 0;
+
+                        if !deleted {
+                            let mut map = space_sessions.read().clone();
+                            for list in map.values_mut() {
+                                for s in list.iter_mut() {
+                                    if s.id == sid {
+                                        s.status = SessionStatus::Idle;
+                                    }
+                                }
+                            }
+                            space_sessions.set(map);
+                        }
+                        is_streaming.set(false);
+                    }
+                    _ => {
+                        if matches!(ev, AgentEvent::AssistantText { .. }) {
+                            total_out += 1;
+                        }
+                        // 流式期间会话可能已被删除：事件照常消费，但消息
+                        // 不写回，避免孤儿 entry
+                        if !session_exists_in(space_sessions, &sid) {
+                            continue;
+                        }
+                        // 读取与写回在同一把写锁内完成，避免跨锁的读后写
+                        // 窗口
+                        let mut map = session_messages.write();
+                        let mut ui = UiState {
+                            messages: map.get(&sid).cloned().unwrap_or_default(),
+                        };
+                        ui.apply(&ev);
+                        map.insert(sid.clone(), ui.messages);
+                    }
+                }
             }
         });
     });
@@ -426,16 +589,33 @@ pub fn Workspace(
         }
         let sid = active_session_id();
 
-        // Daemon 模式：用户消息持久化（线程内）；刚自建的会话在同一个
-        // 线程里先 create 再 append，保证持久化顺序
+        // Daemon 模式：真运行。用户消息持久化（线程内，刚自建的会话在同
+        // 一线程先 create 再 append 保证顺序）；assistant 事件全走订阅
+        // 管线（见上方 effect），prompt 返回值（worker 原始 rpc 响应）
+        // 忽略。run_target_sid 在 spawn 前落定，消费端据此写回本会话。
         if let DataBackend::Daemon(d) = backend() {
             let sid_daemon = sid.clone();
             let text_daemon = text.clone();
+            let d_prompt = d.clone();
+            let (fail_tx, fail_rx) = tokio::sync::oneshot::channel::<()>();
             std::thread::spawn(move || {
                 if let Some((id, title)) = created {
                     let _ = d.create_session(&id, &title);
                 }
                 let _ = d.append_message(&sid_daemon, true, &text_daemon);
+                if d_prompt.worker_prompt(&text_daemon).is_err() {
+                    let _ = fail_tx.send(());
+                }
+            });
+            // prompt 失败兜底：唯一确定「不再有事件」的失败点（daemon 掉
+            // 线 / worker 拉起失败）。线程只发信号量，Signal 写回留在任务
+            // 里（use_signal 底层 UnsyncStorage 非 Send，不能进
+            // std::thread）；复位是幂等的，与订阅端 TurnEnd 复位不冲突。
+            let mut is_streaming_fail = is_streaming;
+            spawn(async move {
+                if fail_rx.await.is_ok() {
+                    is_streaming_fail.set(false);
+                }
             });
         }
 
@@ -469,90 +649,83 @@ pub fn Workspace(
         space_sessions.set(map);
         is_streaming.set(true);
 
-        let mut rx = omenic_web_mock::stream::stream_reply(text);
-        spawn(async move {
-            let mut total_out: u64 = 0;
-            // 读取与写回在同一把写锁内完成，避免跨锁的读后写窗口
-            while let Some(ev) = rx.recv().await {
-                if matches!(ev, AgentEvent::TurnEnd { .. }) {
-                    break;
-                }
-                if matches!(ev, AgentEvent::AssistantText { .. }) {
-                    total_out += 1;
-                }
-                // 流式期间会话可能已被删除：事件照常消费，但消息不写回，
-                // 避免把已删会话的孤儿 entry 重新写进 session_messages
-                if !session_exists_in(space_sessions, &sid) {
-                    continue;
-                }
-                let mut map = session_messages.write();
-                let mut ui = UiState {
-                    messages: map.get(&sid).cloned().unwrap_or_default(),
-                };
-                ui.apply(&ev);
-                map.insert(sid.clone(), ui.messages);
-            }
-
-            // TurnEnd：占位文案 + 状态收尾。会话已删除则跳过消息写回
-            // 与会话状态更新（写回去等于复活已删会话），但 statusline
-            // 结算与 is_streaming 复位必须照常执行。
-            let deleted = !session_exists_in(space_sessions, &sid);
-            if !deleted {
-                let mut map = session_messages.write();
-                let mut ui = UiState {
-                    messages: map.get(&sid).cloned().unwrap_or_default(),
-                };
-                ui.apply(&AgentEvent::TurnEnd {
-                    stop_reason: "end_turn".into(),
-                });
-                // Daemon 模式：TurnEnd 收尾后最后一条 assistant 消息即
-                // 最终回复文本，持久化到 daemon（线程内；空文本跳过，
-                // 存储侧拒绝空消息）
-                if let DataBackend::Daemon(d) = backend() {
-                    let final_text = ui
-                        .messages
-                        .iter()
-                        .rev()
-                        .find(|m| m.role == "assistant")
-                        .map(|m| m.content.clone())
-                        .unwrap_or_default();
-                    if !final_text.is_empty() {
-                        let sid_daemon = sid.clone();
-                        std::thread::spawn(move || {
-                            let _ = d.append_message(&sid_daemon, false, &final_text);
-                        });
-                    }
-                }
-                map.insert(sid.clone(), ui.messages);
-            }
-
-            let mut st = statusline();
-            st.tokens_out += total_out;
-            st.tokens_in = (session_messages
-                .read()
-                .get(&sid)
-                .map(|list| list.iter().map(|m| m.content.len()).sum::<usize>())
-                .unwrap_or(0)
-                / 4) as u64;
-            st.cost_usd += total_out as f64 * 0.000002;
-            st.context_pct =
-                ((st.tokens_in + st.tokens_out) as f64 / st.context_max as f64 * 100.0).min(100.0);
-            statusline.set(st);
-
-            if !deleted {
-                let mut map = space_sessions.read().clone();
-                for list in map.values_mut() {
-                    for s in list.iter_mut() {
-                        if s.id == sid {
-                            s.status = SessionStatus::Idle;
-                            s.last_active = format_relative_time(now);
+        match backend() {
+            DataBackend::Mock => {
+                // 模拟流：节奏与真实事件流一致，驱动同一转译层
+                let mut rx = omenic_web_mock::stream::stream_reply(text);
+                spawn(async move {
+                    let mut total_out: u64 = 0;
+                    // 读取与写回在同一把写锁内完成，避免跨锁的读后写窗口
+                    while let Some(ev) = rx.recv().await {
+                        if matches!(ev, AgentEvent::TurnEnd { .. }) {
+                            break;
                         }
+                        if matches!(ev, AgentEvent::AssistantText { .. }) {
+                            total_out += 1;
+                        }
+                        // 流式期间会话可能已被删除：事件照常消费，但消息
+                        // 不写回，避免把已删会话的孤儿 entry 重新写进
+                        // session_messages
+                        if !session_exists_in(space_sessions, &sid) {
+                            continue;
+                        }
+                        let mut map = session_messages.write();
+                        let mut ui = UiState {
+                            messages: map.get(&sid).cloned().unwrap_or_default(),
+                        };
+                        ui.apply(&ev);
+                        map.insert(sid.clone(), ui.messages);
                     }
-                }
-                space_sessions.set(map);
+
+                    // TurnEnd：占位文案 + 状态收尾。会话已删除则跳过消息
+                    // 写回与会话状态更新（写回去等于复活已删会话），但
+                    // statusline 结算与 is_streaming 复位必须照常执行。
+                    let deleted = !session_exists_in(space_sessions, &sid);
+                    if !deleted {
+                        let mut map = session_messages.write();
+                        let mut ui = UiState {
+                            messages: map.get(&sid).cloned().unwrap_or_default(),
+                        };
+                        ui.apply(&AgentEvent::TurnEnd {
+                            stop_reason: "end_turn".into(),
+                        });
+                        map.insert(sid.clone(), ui.messages);
+                    }
+
+                    let mut st = statusline();
+                    st.tokens_out += total_out;
+                    st.tokens_in = (session_messages
+                        .read()
+                        .get(&sid)
+                        .map(|list| list.iter().map(|m| m.content.len()).sum::<usize>())
+                        .unwrap_or(0)
+                        / 4) as u64;
+                    st.cost_usd += total_out as f64 * 0.000002;
+                    st.context_pct =
+                        ((st.tokens_in + st.tokens_out) as f64 / st.context_max as f64 * 100.0)
+                            .min(100.0);
+                    statusline.set(st);
+
+                    if !deleted {
+                        let mut map = space_sessions.read().clone();
+                        for list in map.values_mut() {
+                            for s in list.iter_mut() {
+                                if s.id == sid {
+                                    s.status = SessionStatus::Idle;
+                                    s.last_active = format_relative_time(now);
+                                }
+                            }
+                        }
+                        space_sessions.set(map);
+                    }
+                    is_streaming.set(false);
+                });
             }
-            is_streaming.set(false);
-        });
+            DataBackend::Daemon(_) => {
+                // 事件由订阅管线（见上方 effect）驱动，TurnEnd 收尾在订阅
+                // 消费端完成；prompt 失败兜底已在上文挂接。
+            }
+        }
     };
 
     // ── 渲染 ────────────────────────────────────────────────────────────────
