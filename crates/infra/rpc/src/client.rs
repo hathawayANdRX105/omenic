@@ -541,7 +541,7 @@ impl Client {
         id
     }
 
-    fn send_frame(&mut self, req: &Request) -> Result<(), RpcError> {
+    pub(crate) fn send_frame(&mut self, req: &Request) -> Result<(), RpcError> {
         if let Some(status) = self.process.try_wait()? {
             return Err(RpcError::ProcessExited(status.code()));
         }
@@ -760,6 +760,28 @@ impl Drop for Client {
         let _ = self.process.kill();
         let _ = self.process.wait();
     }
+}
+/// Poll a reader's fd for readability for up to `dur`. `Ok(false)` means the
+/// poll expired without data (caller re-checks its deadline).
+fn poll_readable<R: std::os::unix::io::AsRawFd>(
+    reader: &R,
+    dur: Duration,
+) -> Result<bool, RpcError> {
+    let fd = reader.as_raw_fd();
+    let mut pfd = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let ms = dur.as_millis().min(i32::MAX as u128) as i32;
+    let rc = unsafe { libc::poll(&mut pfd, 1, ms) };
+    if rc < 0 {
+        return Err(RpcError::Io(std::io::Error::last_os_error()));
+    }
+    if rc == 0 {
+        return Ok(false);
+    }
+    Ok(pfd.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0)
 }
 
 /// Standalone chunk reassembly helper (testable without a Client).
