@@ -60,6 +60,8 @@ pub fn Chat(
     on_model_change: EventHandler<String>,
     on_toggle_thinking: EventHandler<()>,
     on_toggle_tasks: EventHandler<()>,
+    /// 运行中点停止：中止当前 agent run
+    on_abort: EventHandler<()>,
 ) -> Element {
     let model_items: Vec<(String, String)> = MODELS
         .iter()
@@ -213,12 +215,22 @@ pub fn Chat(
                                 span { class: "text-[12px] leading-5 text-caption font-mono",
                                     "{statusline.tokens_in} / {statusline.tokens_out}"
                                 }
-                                button {
-                                    r#type: "submit",
-                                    disabled: is_streaming,
-                                    class: "w-[34px] h-[34px] rounded-full bg-brand text-white hover:bg-brand-hover disabled:opacity-40 flex items-center justify-center cursor-pointer transition-colors border-none",
-                                    title: "发送 (Enter)",
-                                    ArrowUp { size: 16 }
+                                // Send/Stop 同位切换（dsh：主按钮运行中即停止钮）
+                                if is_streaming {
+                                    button {
+                                        r#type: "button",
+                                        class: "w-[34px] h-[34px] rounded-full bg-brand text-white hover:bg-brand-hover flex items-center justify-center cursor-pointer transition-colors border-none",
+                                        title: "停止",
+                                        onclick: move |_| on_abort.call(()),
+                                        span { class: "w-3 h-3 rounded-[2px] bg-white" }
+                                    }
+                                } else {
+                                    button {
+                                        r#type: "submit",
+                                        class: "w-[34px] h-[34px] rounded-full bg-brand text-white hover:bg-brand-hover flex items-center justify-center cursor-pointer transition-colors border-none",
+                                        title: "发送 (Enter)",
+                                        ArrowUp { size: 16 }
+                                    }
                                 }
                             }
                         }

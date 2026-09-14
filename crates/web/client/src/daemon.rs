@@ -101,6 +101,15 @@ impl WebDaemon {
         Ok(())
     }
 
+    /// 中止当前运行（orbit 模式置 abort 标志；omp 模式转发 abort）。
+    pub fn abort_worker(&self) -> Result<(), ClientError> {
+        self.client.call_raw(
+            daemon::protocol::Command::WorkerAbort,
+            serde_json::json!({}),
+        )?;
+        Ok(())
+    }
+
     /// 追加一条消息：`role_user` 为 true 是用户，否则 assistant。
     pub fn append_message(
         &self,

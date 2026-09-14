@@ -36,18 +36,45 @@ pub struct DaemonConfig {
     /// start — there is no default and we don't want to silently create one
     /// in the current directory.
     pub session_db_path: Option<PathBuf>,
+    /// omenic 自家引擎（orbit）的模型配置：llm_base_url/api_key/model 在
+    /// `.oi/config.toml` 齐全时 Some——daemon worker 走 orbit 模式（真
+    /// 模型）；None = omp 兼容模式。
+    pub orbit_model: Option<adaptor::Model>,
 }
 
 impl DaemonConfig {
+    /// llm 三件套（base_url/api_key/model）在 `.oi/config.toml` 齐全时
+    /// 构建 orbit 模型配置——设置页写该文件即生效。
+    fn resolve_orbit_model(cfg: &config::Config) -> Option<adaptor::Model> {
+        let base = cfg.llm_base_url.as_ref()?.trim();
+        let key = cfg.llm_api_key.as_ref()?.trim();
+        let model = cfg.llm_model.as_ref()?.trim();
+        if base.is_empty() || key.is_empty() || model.is_empty() {
+            return None;
+        }
+        let mut url = base.trim_end_matches('/').to_string();
+        if !url.ends_with("/v1") {
+            url.push_str("/v1");
+        }
+        Some(adaptor::Model {
+            api_key: key.to_string(),
+            model: model.to_string(),
+            base_url: Some(url),
+            max_tokens: cfg.llm_max_tokens,
+        })
+    }
+
     /// Resolve paths from `Config` and the runtime environment.
     pub fn from_config(cfg: &config::Config) -> Result<Self, DaemonError> {
         let socket_path = Some(cfg.daemon_socket_path()?);
         let session_db_path = Some(cfg.session_db_path()?);
         let omp_path = cfg.omp_path.to_string_lossy().into_owned();
+        let orbit_model = Self::resolve_orbit_model(cfg);
         Ok(DaemonConfig {
             socket_path,
             omp_path,
             session_db_path,
+            orbit_model,
         })
     }
 }
@@ -91,7 +118,10 @@ impl Daemon {
         let run_ledger = RunLedger::open_for_socket(&socket_path)?;
 
         let session_state = SessionState::new(session_db);
-        let worker = Arc::new(Mutex::new(WorkerHandle::new(cfg.omp_path.clone())));
+        let worker = Arc::new(Mutex::new(WorkerHandle::new(
+            cfg.omp_path.clone(),
+            cfg.orbit_model.clone(),
+        )));
         let shutdown = Arc::new(AtomicBool::new(false));
         let started_at_ms = now_ms();
         let events = EventBus::new();

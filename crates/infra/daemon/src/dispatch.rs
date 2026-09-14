@@ -31,14 +31,17 @@ pub struct WorkerHandle {
     /// Cleared by the forwarder itself when the worker's event channel
     /// closes (worker died or was reset), so the next subscribe respawns it.
     pump_active: Arc<AtomicBool>,
+    /// orbit 模式配置（DaemonConfig 从 .oi/config.toml 的 llm 三件套解析）
+    orbit_model: Option<adaptor::Model>,
 }
 
 impl WorkerHandle {
-    pub fn new(omp_path: impl Into<String>) -> Self {
+    pub fn new(omp_path: impl Into<String>, orbit_model: Option<adaptor::Model>) -> Self {
         WorkerHandle {
             inner: None,
             omp_path: omp_path.into(),
             pump_active: Arc::new(AtomicBool::new(false)),
+            orbit_model,
         }
     }
 
@@ -52,12 +55,13 @@ impl WorkerHandle {
     /// daemon-backed entry to the session store.
     fn ensure_started(&mut self) -> Result<(), Response> {
         if self.inner.is_none() {
-            let mut w = rpc::worker::Worker::new(&self.omp_path).map_err(|e| {
-                Response::err(
-                    None,
-                    ResponseError::new("worker_spawn_failed", e.to_string()),
-                )
-            })?;
+            let mut w = rpc::worker::Worker::new(&self.omp_path, self.orbit_model.clone())
+                .map_err(|e| {
+                    Response::err(
+                        None,
+                        ResponseError::new("worker_spawn_failed", e.to_string()),
+                    )
+                })?;
             // Register session_query as the single daemon-backed tool. A
             // registration failure is non-fatal: omp might not implement
             // the call yet, and we don't want tool negotiation to take
