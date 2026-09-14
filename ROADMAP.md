@@ -53,6 +53,7 @@
 > 2. **断线重连无自动化测试**——读线程退避重连（1s→5s 封顶）已实现，重连后 translator 重建语义有单测；G4 联调实测「杀 daemon 再起，web 自动重连不白屏」（验收③）。
 > 3. **半开 run 显示 aborted**——`SessionSummary` 无状态字段（convert 统一映射 Idle）。处理：G4 联调实测 2.4 repair 后 list 侧暴露 run 状态；如 R2 未加字段，web 侧先用 `read_from_cursor` 的 run 记录组装。
 > 4. **G4 验收①⑤已具备载体**：① 3.4 e2e（R2 的 event_push.rs）+ ⑤ web 走 `worker.prompt`/订阅，不做 `worker.read_event` 轮询。
+> **实测记录（2026-09-14，G4 rig /tmp/g4：daemon + mock-omp + oi-web 三件套）**：服务端事件链路探针 PASS×2（subscribe attach → worker.prompt → `agent_start…agent_end` 全序列推送，daemon 重启前后各一轮）；杀 daemon 期间 web 全程 200 不白屏，重启后链路恢复——验收③服务端部分通过；页面级实时 delta 由验收②载体（订阅消费端）承载，待浏览器实测确认。
 
 > **5.2a 整合注意（功能）**：① 写路径归 daemon——web 经 `session.append`/`worker.prompt` 调用，不直接写 sessions.db（避免双写 libSQL，2.4 repair 语义依赖 daemon 侧写）；② `worker.read_event` 是消费式出队，web 禁止轮询（会抢 CLI/task/memory 事件）；③ G1 冻结后 web 的 `AgentEvent` fixture 换 orbit 冻结 DTO（转译签名不变）；④ `DaemonClient` 同步短连接 × LiveView async → `spawn_blocking`；⑤ oi-web 与 daemon 必须同指一个 data_dir（worktree 各有 `.oi`），设置页加 daemon ping 校验；⑥ 谱系（5.5）无服务端命令，先平铺、G4 后按 `run.list` 组装。
 
