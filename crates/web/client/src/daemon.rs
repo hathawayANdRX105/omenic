@@ -15,6 +15,11 @@ use omenic_web_state::types::{ChatMessage, Session};
 use serde_json::Value;
 use session::SessionRole;
 
+/// daemon 侧的统计 DTO 原样转出，供 page-stats 直接消费——统计页没有
+/// 需要额外映射的展示形状（KPI 文案在页面里现算），再抄一层 UI DTO 只会
+/// 制造两处需要同步的定义。
+pub use daemon::state::{STATS_UNAVAILABLE, StatsBucket, StatsRecentRun, StatsSummary};
+
 /// 阻塞式 daemon 客户端。Clone 便宜（内部只有 socket 路径）。
 #[derive(Debug, Clone)]
 pub struct WebDaemon {
@@ -30,10 +35,10 @@ impl WebDaemon {
     /// 2. 平台配置目录 + `omenic/daemon.sock`（Unix：`$XDG_CONFIG_HOME`
     ///    非空否则 `$HOME/.config`）。
     ///
-    /// `data_dir` 目前不参与 socket 解析（config 侧也不从 data_dir 推导
-    /// socket），保留入参以对齐 `LlmRuntimeConfig` 的调用形状。
-    pub fn from_data_dir(data_dir: &str) -> Option<WebDaemon> {
-        let _ = data_dir;
+    /// socket 不从 data_dir 推导（config 侧也不这么推导），所以这里没有
+    /// 入参——旧名 `from_data_dir` 收一个被忽略的 `&str`，调用方会误以为
+    /// 传了 data_dir 就能选 daemon。
+    pub fn from_env_or_default() -> Option<WebDaemon> {
         let socket = resolve_socket_path()?;
         if !socket.exists() {
             return None;
@@ -178,6 +183,18 @@ impl WebDaemon {
     ) -> Result<Vec<daemon::state::RunRecord>, ClientError> {
         let runs = self.client.run_list(limit)?;
         Ok(runs.into_iter().filter(|r| r.session_id == sid).collect())
+    }
+
+    /// `stats.summary`（C5.7）：统计页的唯一数据源。`range` 取
+    /// `"1h"`/`"24h"`/`"7d"`/`"30d"`/`"90d"`/`"All"`，未知值 daemon 侧退化
+    /// 成 24h（不会报错）。聚合全部来自 run ledger；run 记录里没有 token /
+    /// 费用列，那些指标由 [`StatsSummary::unavailable`] 列出，页面据此隐藏
+    /// 对应卡片而不是显示编造的零。
+    ///
+    /// 阻塞式，调用方必须放进 `std::thread`（LiveView 渲染路径里同步 RPC
+    /// 会撞 "runtime within a runtime"）。
+    pub fn stats_summary(&self, range: &str) -> Result<StatsSummary, ClientError> {
+        self.client.stats_summary(range)
     }
 }
 
