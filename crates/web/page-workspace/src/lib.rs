@@ -4,7 +4,7 @@
 //! 静默回退 `omenic-web-mock`（假数据 + AgentEvent 模拟流）。assistant
 //! 流仍走 `mock::stream_reply`，G4 时换 daemon `event.subscribe` 接收端。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use dioxus::prelude::*;
 use omenic_web_client::daemon::WebDaemon;
@@ -16,7 +16,7 @@ use omenic_web_components::ui::Modal;
 use omenic_web_mock::store;
 use omenic_web_page_config::SettingsModal;
 use omenic_web_page_stats::StatsView;
-use omenic_web_state::convert::WireTranslator;
+use omenic_web_state::convert::{WireTranslator, infer_session_status};
 use omenic_web_state::types::{
     ChatMessage, Session, SessionStatus, WorkspaceSpace, format_relative_time,
 };
@@ -280,6 +280,15 @@ pub fn Workspace(
     // on_send 时记录的 run_target_sid；effect 只依赖 backend（初始化后
     // 不再变化），管线整个生命周期只建一次。
     let mut run_target_sid = use_signal(String::new);
+    // WP-C：当前在飞 run 的 id（on_send 生成，随 worker.prompt 一起带给
+    // daemon 记进 run ledger）。列表状态推断用它区分「正在跑」与「半开孤儿」；
+    // TurnEnd / 中断时清空。空串 = 无在飞 run。
+    let mut live_run_id = use_signal(String::new);
+    // WP-C：会话列表状态推断缓存——daemon 的 SessionSummary 无状态字段，
+    // 列表侧的 Idle/Active/Aborted 改由 run.list 的 run 记录组装。为避免
+    // 每次渲染都重复请求，run 记录只在会话列表数据变化（加载/新建/删除）
+    // 时重查一次；Mock 模式不接 run.list，缓存恒空，渲染侧归一为原状态。
+    let mut run_status_cache: Signal<HashMap<String, SessionStatus>> = use_signal(HashMap::new);
     use_effect(move || {
         let DataBackend::Daemon(d) = backend() else {
             return;
@@ -368,6 +377,9 @@ pub fn Workspace(
                             }
                             space_sessions.set(map);
                         }
+                        // run 收尾，在飞 run id 清空（WP-C：之后列表状态
+                        // 以 run_status_cache 的持久记录为准）
+                        live_run_id.set(String::new());
                     }
                     _ => {
                         if matches!(ev, AgentEvent::AssistantText { .. }) {
@@ -389,6 +401,40 @@ pub fn Workspace(
                     }
                 }
             }
+        });
+    });
+
+    // WP-C：会话列表状态推断。只在 Daemon 模式跑（Mock 不接 run.list）；
+    // 列表数据变化才重查——缓存已覆盖当前全部会话 id 即跳过，避免每次
+    // 渲染都重复请求。查询放 spawn 里不阻塞首帧；≤50 会话 × 一次 UDS
+    // 往返，耗时可忽略。
+    use_effect(move || {
+        let DataBackend::Daemon(d) = backend() else {
+            return;
+        };
+        let sids: HashSet<String> = space_sessions
+            .read()
+            .values()
+            .flatten()
+            .map(|s| s.id.clone())
+            .collect();
+        let cached: HashSet<String> = run_status_cache.read().keys().cloned().collect();
+        if sids == cached {
+            return;
+        }
+        let live = live_run_id();
+        spawn(async move {
+            let live_opt: Option<&str> = if live.is_empty() {
+                None
+            } else {
+                Some(live.as_str())
+            };
+            let mut map: HashMap<String, SessionStatus> = HashMap::new();
+            for sid in &sids {
+                let runs = d.runs_for_session(sid, 100).unwrap_or_default();
+                map.insert(sid.clone(), infer_session_status(&runs, live_opt));
+            }
+            run_status_cache.set(map);
         });
     });
 
@@ -468,7 +514,7 @@ pub fn Workspace(
 
     // ⌘K 候选列表：Mock 沿用内存过滤（行为不变）；Daemon 消费
     // search_sessions 的结果（空 query 时 effect 已列 daemon 全量）
-    let quick_switcher_list = match backend() {
+    let mut quick_switcher_list = match backend() {
         DataBackend::Mock => all_sessions_sorted(&spaces(), space_sessions.read().clone())
             .into_iter()
             .filter(|s| {
@@ -480,6 +526,9 @@ pub fn Workspace(
             .collect(),
         DataBackend::Daemon(_) => switcher_sessions(),
     };
+    // WP-C：列表状态喂入——在飞（Active）优先，其次 run 记录推断出的
+    // 缓存状态（Aborted/Idle），最后会话自身状态。Mock 无缓存，归一不变。
+    apply_run_statuses(&mut quick_switcher_list, &run_status_cache());
 
     // 各 move 闭包各自的 config 克隆（LlmRuntimeConfig 非 Copy）
     let config_create = config.clone();
@@ -561,6 +610,7 @@ pub fn Workspace(
     let on_abort = {
         let backend_abort = backend;
         let mut space_sessions_abort = space_sessions;
+        let mut live_run_id_abort = live_run_id;
         let sid_abort = active_session_id;
         move |()| {
             if let DataBackend::Daemon(d) = backend_abort() {
@@ -568,7 +618,10 @@ pub fn Workspace(
                     let _ = d.abort_worker();
                 });
             }
-            // 内存即时复位：会话回 Idle；事件流里的残余事件由孤儿守卫兜底
+            // 内存即时复位：会话回 Idle；事件流里的残余事件由孤儿守卫兜底。
+            // 在飞 run id 也清空：中断后列表状态以 run ledger 的持久记录
+            // 为准（WP-C）
+            live_run_id_abort.set(String::new());
             let sid = sid_abort();
             let mut map = space_sessions_abort.read().clone();
             for list in map.values_mut() {
@@ -618,6 +671,8 @@ pub fn Workspace(
         // 一线程先 create 再 append 保证顺序）；assistant 事件全走订阅
         // 管线（见上方 effect），prompt 返回值（worker 原始 rpc 响应）
         // 忽略。run_target_sid 在 spawn 前落定，消费端据此写回本会话。
+        // run_id 一并带给 daemon 记进 run ledger，刷新后列表据此组装
+        // aborted/active（WP-C）。
         if let DataBackend::Daemon(d) = backend() {
             let sid_daemon = sid.clone();
             let text_daemon = text.clone();
@@ -625,14 +680,19 @@ pub fn Workspace(
             // 订阅事件不带会话归属：消费端以 run_target_sid 为写回目标，
             // 必须在 prompt 发出前落定
             run_target_sid.set(sid.clone());
+            let run_id = format!("r-{}", now_ms());
+            live_run_id.set(run_id.clone());
             eprintln!("[web] send sid={} len={}", sid, text.len());
             let (fail_tx, fail_rx) = tokio::sync::oneshot::channel::<()>();
+            let run_id_prompt = run_id.clone();
             std::thread::spawn(move || {
                 if let Some((id, title)) = created {
                     let _ = d.create_session(&id, &title);
                 }
                 let _ = d.append_message(&sid_daemon, true, &text_daemon);
-                if let Err(e) = d_prompt.worker_prompt(&text_daemon) {
+                if let Err(e) =
+                    d_prompt.worker_prompt_run(&sid_daemon, &run_id_prompt, &text_daemon)
+                {
                     // 确定性的失败点（daemon 掉线 / worker 拉起失败）：
                     // 事件路径不会有 TurnEnd 来复位。线程只发信号量，
                     // Signal 写回留在任务里（UnsyncStorage 非 Send）
@@ -770,6 +830,10 @@ pub fn Workspace(
         active_title
     };
 
+    // WP-C：侧栏会话列表喂入推断出的状态（在飞 Active 优先，其次 run 记录
+    // 推断的缓存状态，最后会话自身状态）。Mock 无缓存，合并后与原样一致。
+    let sidebar_sessions = merge_run_statuses(space_sessions.read().clone(), &run_status_cache());
+
     rsx! {
         div { class: "grid h-screen w-screen bg-base overflow-hidden relative select-none",
             style: "grid-template-columns: {grid_cols(sidebar_collapsed(), sidebar_width())};",
@@ -777,7 +841,7 @@ pub fn Workspace(
             onmouseup: on_root_mouseup,
             Sidebar {
                 spaces: spaces(),
-                space_sessions: space_sessions.read().clone(),
+                space_sessions: sidebar_sessions,
                 active_id: active_session_id(),
                 on_select: move |id: String| {
                     active_session_id.set(id);
@@ -874,7 +938,7 @@ pub fn Workspace(
                                     };
                                     let dot = match session.status {
                                         SessionStatus::Active => "bg-brand",
-                                        SessionStatus::Archived => "bg-danger/70",
+                                        SessionStatus::Archived | SessionStatus::Aborted => "bg-danger/70",
                                         SessionStatus::Idle => "bg-dim",
                                     };
                                     rsx! {
@@ -954,4 +1018,33 @@ fn all_sessions_sorted(
     }
     list.sort_by_key(|s| std::cmp::Reverse(s.last_active_epoch));
     list
+}
+
+/// 会话列表侧的有效状态：页面在飞（Active，由事件流实时写）优先于
+/// run 记录推断出的缓存状态（WP-C），缓存缺失时保持会话自身状态。
+fn effective_status(current: &SessionStatus, inferred: Option<&SessionStatus>) -> SessionStatus {
+    match (current, inferred) {
+        // 页面正在跑：以实时态为准（推断缓存是加载时的快照，会滞后）
+        (SessionStatus::Active, _) => SessionStatus::Active,
+        (_, Some(inferred)) => inferred.clone(),
+        (other, None) => other.clone(),
+    }
+}
+
+/// 把推断状态就地合并进侧栏用的 space → 会话列表映射。
+fn merge_run_statuses(
+    mut map: HashMap<String, Vec<Session>>,
+    cache: &HashMap<String, SessionStatus>,
+) -> HashMap<String, Vec<Session>> {
+    for list in map.values_mut() {
+        apply_run_statuses(list, cache);
+    }
+    map
+}
+
+/// 把推断状态就地合并进一个会话列表（⌘K 快速切换用）。
+fn apply_run_statuses(list: &mut [Session], cache: &HashMap<String, SessionStatus>) {
+    for s in list.iter_mut() {
+        s.status = effective_status(&s.status, cache.get(&s.id));
+    }
 }

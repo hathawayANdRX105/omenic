@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 
+use daemon::state::RunRecord;
 use serde_json::Value;
 use session::{SessionMessage, SessionRole, SessionSummary};
 
@@ -14,8 +15,10 @@ use crate::ui_state::AgentEvent;
 
 /// `SessionSummary` → 侧栏/快速切换用的 `Session`。
 ///
-/// 存储侧没有运行状态概念，统一映射 [`SessionStatus::Idle`]（发送中由
-/// 页面在内存里自行置 Active）；存储侧也没有 model 字段，占位 `default`。
+/// 存储侧没有运行状态概念，统一映射 [`SessionStatus::Idle`]；列表侧的
+/// 运行态（含半开 run 的 [`SessionStatus::Aborted`]）由调用方拿
+/// [`infer_session_status`] 的结果在渲染时覆盖（见 page-workspace 的
+/// `run_status_cache`）。存储侧也没有 model 字段，占位 `default`。
 /// `last_active` 取 `updated_at_ms` 的相对时间。
 pub fn summary_to_session(s: &SessionSummary) -> Session {
     let updated = s.updated_at_ms.max(0) as u64;
@@ -26,6 +29,42 @@ pub fn summary_to_session(s: &SessionSummary) -> Session {
         model: "default".into(),
         status: SessionStatus::Idle,
         last_active_epoch: updated,
+    }
+}
+
+/// 一个会话的 run 记录 → 列表侧的运行状态（WP-C：半开 run 显示 aborted）。
+///
+/// daemon 的 `SessionSummary` 没有状态字段，`session.*` / `run.list` 的
+/// 命令语义又已冻结，会话列表的运行态改由 `run.list` 的 run 记录组装
+/// （ROADMAP 第 56 行自述的兜底方案）。判定对齐 dsh
+/// `interruptedTurnClosers` 的重载语义：有 `TurnStart` 无 `TurnEnd`
+/// closer 的 run，在重载视图里即崩溃孤儿。
+///
+/// 三态判定（输入须是**该会话**的 run 记录，由调用方按 `session_id`
+/// 过滤，见 `WebDaemon::runs_for_session`）：
+///
+/// 1. 存在未关闭的 run（`finished_at_ms` 为 `None`），且它不是当前页面
+///    在飞的那个 run → [`SessionStatus::Aborted`]（半开 / 崩溃孤儿）；
+/// 2. 未关闭的 run 恰好只有 `live_run_id` 指向的在飞 run →
+///    [`SessionStatus::Active`]；
+/// 3. 无 run 或全部正常关闭 → [`SessionStatus::Idle`]。
+///
+/// 纯函数、不碰网络：`live_run_id` 为 `None`（页面刚加载 / 刷新后无在飞
+/// 上下文）时，未关闭的 run 一律视为孤儿 → `Aborted`，这正是「手动中断
+/// run 后刷新页面，列表标 aborted 而非消失」的入口。
+pub fn infer_session_status(runs: &[RunRecord], live_run_id: Option<&str>) -> SessionStatus {
+    let half_open: Vec<&RunRecord> = runs.iter().filter(|r| r.finished_at_ms.is_none()).collect();
+    if half_open.is_empty() {
+        return SessionStatus::Idle;
+    }
+    // 唯一未关闭者恰为当前在飞 run → Active；除此之外（未关闭者不是在飞
+    // run、或存在多个孤儿）都视作有崩溃孤儿 → Aborted
+    let only_live_inflight =
+        half_open.len() == 1 && Some(half_open[0].run_id.as_str()) == live_run_id;
+    if only_live_inflight {
+        SessionStatus::Active
+    } else {
+        SessionStatus::Aborted
     }
 }
 

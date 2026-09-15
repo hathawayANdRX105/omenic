@@ -59,6 +59,10 @@ pub enum SessionStatus {
     Active,
     Idle,
     Archived,
+    /// 有开始无结束的半开 run（崩溃/中断孤儿）：刷新后由 `run.list` 的
+    /// run 记录组装出来（见 `convert::infer_session_status`）。侧栏状态点
+    /// 与 Archived 同走 danger 色。
+    Aborted,
 }
 
 /// 侧边栏的项目/工作区条目（真实接线时来自 `git worktree list`）。
