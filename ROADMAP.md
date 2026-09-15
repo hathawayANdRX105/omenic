@@ -1,9 +1,9 @@
 # omenic ROADMAP
 
 > 长期重构方向 + 并发分工。历史进度见 git log（`53419ec` / `906ea2e` / `1b405f0` 起），`todo/dsh/README.md` 为设计蓝图，`todo/dsh/BACKGROUND.md` 为现状锚点（冻结签名 / `AgentEvent` 契约）。
-> 最后更新：2026-09-15（R1/R2/R3 已合并 #339/#343/#346；R4 web #340-#352；G3 验收②③ 与 G4 验收③④ 的自动化载体由 #354-#357 补齐；#358 校正本文件失真。**G4 五项验收①②③④⑤ 全部通过**——①③④⑤ 自动化测试 + ② 用户浏览器实测确认流式输出（2026-09-15）。**G4 已过，G5 开工。**）
+> 最后更新：2026-09-16（R1/R2/R3 已合并 #339/#343/#346；R4 web #340-#352；G3 验收②③ 与 G4 验收③④ 的自动化载体由 #354-#357 补齐；#358 校正本文件失真。**G4 五项验收①②③④⑤ 全部通过**——①③④⑤ 自动化测试 + ② 用户浏览器实测确认流式输出（2026-09-15）。**G5 三项验收①②③ 全部通过**（2026-09-16，见下 G5 行）：① C1–C6 全绿（C6.5 装配根 #363 接通）、② main CI `cargo test --locked --all-targets` 在最终合并提交 `e6039d6` 上绿、③ `oi-web` 起在 8026 页面内联 40KB 真实 Tailwind 且 `grep -ci mock` = 0。**G4 已过，G5 已过（不含 tag）。**）
 > **校验记录**：`todo/roadmap-verify-2026-09-15.md`（三路交叉校验，含 16 条虚报/漏点清单）；本轮路线见 `todo/route-to-g4-2026-09-15.md`。
-> **范围裁定（2026-09-15）**：**C7 tag 与 C8 酒馆暂不做**——tag 等 G5 装配完再议；C8 不在 omenic 范围。G5 现阶段只做「composition 真装配 + 删 mock」。
+> **范围裁定（2026-09-15）**：**C7 tag 与 C8 酒馆暂不做**——tag 等 G5 装配完再议；C8 不在 omenic 范围。G5 只做「composition 真装配 + 删 mock」，2026-09-16 由 #363–#366 完成。
 > **G4 验收操作手册**：见本文末「G4 验收指南（用户实测）」一节。
 > 小功能行内 ✅ = 已合并 main；🟡 = 部分完成；⬜ = 未开工。
 
@@ -51,7 +51,7 @@
 | 4.7 ✅ 指令 digest 去重 + 渲染 `PromptTemplate` | 同上（`render.rs`） | `packages/context/agent-instructions/src/{render.ts,digest.ts,config.ts}` |
 | 4.8 ✅ **orbit system prompt 注入接线（#354）**：`LoopConfig.instruction_cwd` 显式旋钮 → `build_system_prompt` 查找+去重+前置到 TASK 之前；4 测试（注入/空/去重/降级） | `crates/agent/orbit/src/lib.rs`（`build_system_prompt:370`）+ `tests/instruction_prompt.rs` | `packages/context/agent-instructions/src/render.ts` |
 
-### C5 web 页面跑真数据 🟡 5.1/5.2a/5.2b ✅；读侧真数据 + 事件订阅端 + orbit 真运行全通（wildtoken agnes-2.5-flash，用户浏览器实测确认对话成功）；5.3 🟡（谱系待 G4）；5.4 ✅ 由订阅管线承载；5.6 🟡 运行态有、**elapsed 计时未做**；5.9 删 mock 是 G5 的活
+### C5 web 页面跑真数据 ✅ 5.1/5.2a/5.2b ✅；读侧真数据 + 事件订阅端 + orbit 真运行全通（wildtoken agnes-2.5-flash，用户浏览器实测确认对话成功）；5.3 🟡（谱系待 G4）；5.4 ✅ 由订阅管线承载；5.6 ✅ 计时接线（#365：`StatusLine::run_started_at_ms`/`elapsed_ms` + start/finish + 13 个计时测试）；5.7 ✅ stats 页走 `stats.summary` 真实 ledger（#364）；5.9 ✅ mock crate 已删（#366）
 > **本轮新增修复**：form/onsubmit→Dioxus onclick/onkeydown 替换（#351，dioxus-liveview 解释器不监听 submit 事件——源码实证）；按会话区分运行状态（#350，停止钮/门禁由当前会话 Active 驱动）；orbit 引擎 turn 非阻塞化（#350，prompt 专用线程 + ack + abort 可达）；聊天滚动区底部 padding 修正（#352）
 
 > **G4 阻塞点清零状态（2026-09-15，#353-#357 后）**：
@@ -85,7 +85,7 @@
 | 6.2 ✅ 事件总线（同步顺序派发，插件卸载自动注销） | 同上（`events.rs`） | `vendor/cordis/src/events.ts` |
 | 6.3 ✅ 插件生命周期（on_load/on_unload，Drop 逆序） | 同上（`fiber.rs`） | `vendor/cordis/src/fiber.ts` |
 | 6.4 ✅ 插件注册表 + 重名拒绝 | 同上（`registry.rs`） | `vendor/cordis/src/registry.ts` |
-| 6.5 ⚠️ 组装根存在但是死代码（`assemble()` 全仓零调用、零测试、Cargo.toml 自述 placeholder；daemon/web 启动均绕过它；**插件注册留 G5**） | `crates/composition/src/lib.rs` | `packages/bundle/base/src/index.ts` |
+| 6.5 ✅ 装配根已接通（#363，2026-09-16）：`assemble()` 由 `Daemon::start` 在取实例锁与 bind socket 之前调用，注册 Compaction / Instruction 两个核心插件，宿主重名经注册表拒绝；`tests/assemble.rs` 5 个测试钉住注册顺序、服务可用性与重名拒绝 | `crates/composition/src/lib.rs` + `crates/infra/daemon/src/server.rs` | `packages/bundle/base/src/index.ts` |
 | 6.6 ✅ orbit `run_agent` 服务化接线（daemon orbit worker 模式，PR #349/#350） | `crates/infra/rpc/src/worker.rs`（OrbitEngine） | `packages/core/agent-loop/src/index.ts` |
 
 ### C7 tag + ferrite 接线 ⏸️ 暂缓（2026-09-15 裁定）
@@ -127,16 +127,16 @@
 | **R1 插件面** ✅ 已合并（#339） | C6（6.1–6.6） | `crates/harness/plugin/`（新）、`crates/composition/`；orbit ≤30 行 | 无 | G1（6.1+6.5 定型）→ G2（全绿） |
 | **R2 事件流+修复** ✅ 已合并（#343） | C2（2.2–2.4）+ C3（3.1–3.4） | `crates/infra/{daemon,session,rpc}/`；orbit 只读 | 3.1 依赖 6.1 定型 | G4 |
 | **R3 核心插件** ✅ 已合并（#346；验收②③ 由 #354/#355 补齐） | C4（4.1–4.8） | `crates/harness/{compaction,instruction}/`（新）；orbit maintenance 接缝约 65 行 | 4.5 接缝 + `impl DshPlugin` 需 G1 | G3 |
-| **R4 web** ✅ 主线完成（#340-#352 + #356/#357） | C5（5.1–5.10） | `crates/web/{client,state,components,mock,page-workspace,page-stats,page-config}/`（**7** 个 crate，crate 名 `omenic-web-*`；壳=App/launch/build.rs/tailwind 全在 `bin/web/`，bin/web 是入口 crate 不进 crates） | 5.1/5.2a/5.2b/5.3/5.4/5.10 ✅；**5.6 计时未做**（运行态三态有）；**5.9 mock 删除是 G5 的活**；5.5 谱系、5.7 stats、5.8 配置页（已接线零测试）留 G5 | G4 ✅ 已过 |
+| **R4 web** ✅ 主线完成（#340-#352 + #356/#357） | C5（5.1–5.10） | `crates/web/{client,state,components,page-workspace,page-stats,page-config}/`（**6** 个 crate，mock 已删），crate 名 `omenic-web-*`；壳=App/launch/build.rs/tailwind 全在 `bin/web/`，bin/web 是入口 crate 不进 crates） | 5.1/5.2a/5.2b/5.3/5.4/5.10 ✅；5.6 ✅（#365 计时接线）；5.9 ✅（#366 删 mock crate）；5.7 ✅（#364 stats 真数据）；5.5 谱系、5.8 配置页（已接线零测试）仍留待办 | G4 ✅ 已过 |
 | **R5（占位，暂不做）** ⏸️ | C8（8.1–8.4） | `crates/harness/{interaction,metering}/`（新）、`adaptor/retry.rs` | 2026-09-15 裁定暂缓 | — |
-| **R6 总装（G5）** 🟡 开工中 | 6.5 真装配 + 5.9 删 mock | `crates/composition/`、`crates/web/mock/` 摘依赖、page-stats/page-workspace 换数据源 | G4 已过 | G5（不含 tag） |
+| **R6 总装（G5）** ✅ 已过（#363–#366，2026-09-16） | 6.5 真装配 + 5.9 删 mock | `crates/composition/` 装配根接通、page-stats/page-workspace 换数据源、`crates/web/mock/` 删除 | G4 已过 | G5（不含 tag） |
 
 **冲突仲裁**（每次合并都处理）：
 - 根 `Cargo.toml` members/Cargo.lock：各路线只加自己 crate 一行，合并顺序 R1→R3→R2→R4，后合者 rebase
 - `composition` 只 R1 可写；他路线装配需求走 issue
 - orbit 两处接缝限额共享：R1 ≤30 行（6.6）+ R3 ≤20 行（4.5），超限额走 issue
   - **2026-09-15 实测**：R3 压缩接缝（`orbit/src/lib.rs:265-342`）= 56 代码行 / 78 原始行，**超 R3 ≤20 限额 36 行**。R1 接缝（6.6，orbit::register）在限额内。当前项目只开 PR 不开 issue（见下「工作流」），该超限随 G5 接 WP-A 一并评估是否再切薄，不单独开 issue
-- **删 mock 陷阱（G5）**：`page-workspace:245 statusline()` 初值与 `:904 TaskPanel { tasks: store::tasks() }` 在 **Daemon 模式下也仍吃 mock**（不只是 Mock 分支），删 mock 时必须一并接真数据源，否则删不干净
+- **删 mock 陷阱（G5，已解）**：`page-workspace:245 statusline()` 初值与 `:904 TaskPanel { tasks: store::tasks() }` 原本在 **Daemon 模式下也仍吃 mock**（不只是 Mock 分支）。#365 按此陷阱处理：两处都换成真实数据源后再在 #366 删 crate，没有留下「Daemon 分支仍引用已删 crate」的编译缺口
 - 独有功能保护区（见上）：`infra/memory`、`agent/task`、`agent/subagent`、`agent/mcp` 任何路线只读/单向依赖
 - `AgentEvent` serde（3.1）、daemon protocol（3.3）、harness trait（6.1）三个契约改动权归首发路线，他路线按冻结类型消费
 
@@ -148,7 +148,7 @@
 | **G2 C6 收编** ✅ 已过 | R1 全绿 | orbit 6.6 接线合并；**验证**：orbit **23** 测试全量回归（loop.rs 20 + agent_event_serde.rs 3，不改断言）+ `oi task add` → 流式 run → 事件流 → 持久化全链路（C1 验收）仍通；C6 勾满。全链路唯一载体 `m3_e2e.rs` 标 `#[ignore]`（需真实 omp 二进制），日常回归靠 23 测试。 | R1 与 R3 同碰 orbit，接缝限额共享 |
 | **G3 插件回归闸** ✅ 已过（#346 + #354/#355 补验收） | R3 完成（C4 全绿） | compaction 切插件 + instruction 注入后；**验证**：① orbit **23** 测试仍绿（接缝未破坏循环）；② >120k 字符长会话压缩端到端不炸（checkpoint 快照 + 失败保原文）——**#355 `orbit/tests/compaction_e2e.rs` 4 测试**：触发 / 成对不变式 / 失败保原文 / 边界；③ AGENTS.md 注入——**#354 `orbit/tests/instruction_prompt.rs` 4 测试**：注入 / 无 AGENTS.md 保纯 TASK / digest 去重 / 静默降级；④ web 页打开一次真实 run，压缩不中断流式渲染（浏览器实测 2026-09-15，对话成功）。 | orbit 行为变更影响所有宿主 |
 | **G4 事件流汇合** ✅ 已过（#353-#357 + 用户实测 2026-09-15） | R2 绿 **且** R4 的 5.1 DTO 完成 | R4 删 fixture 切实时 daemon；**验证**：① 3.4 e2e 绿（`daemon/tests/event_push.rs`，#353 修复编译后通过）；② web 聊天页流式 delta 实时追加——**用户浏览器实测确认逐字流式（2026-09-15）**；③ 断线重连不白屏（`client/tests/reconnect.rs` 3 测试）；④ 半开 run 标 `aborted`（`state/tests/run_status.rs` 8 测试）；⑤ web 全仓零 `read_event` 调用。 | **最大冲突点**：daemon protocol 改动权在 R2 |
-| **G5 总装（不含 tag）** 🟡 开工中 | G1–G4 全过 | composition 真装配 + 删 mock；**验证**：① C1–C7 除 C7 tag 外全勾；② 全仓 `cargo test` 绿；③ `oi-web` 起在 8026，硬刷新后无 mock 残留（`curl localhost:8026 \| grep mock` = 0）。**tag 与 ferrite 接线暂缓**（2026-09-15 裁定）。 | 装配根只在 G5 集中改 |
+| **G5 总装（不含 tag）** ✅ 已过（2026-09-16） | G1–G4 全过 | composition 真装配（#363）+ stats 真数据（#364）+ workspace 去 mock（#365）+ mock crate 删除（#366）；**验证①** C1–C6 全绿（C6.5 由 #363 接通，C7 tag 按裁定暂缓）；**验证②** main CI `cargo test --locked --all-targets` 在 `e6039d6` 上 SUCCESS；**验证③** `oi-web` 起在 8026，页面内联 40KB 真实 Tailwind，`curl localhost:8026 \| grep -ci mock` = 0。crg+ocr 审查记录及修复逐条在 #363–#365。**tag 与 ferrite 接线暂缓**（2026-09-15 裁定）。 | 装配根只在 G5 集中改 |
 
 **顺序铁律**：G1 之前任何 `register`/`provide` 代码不得合入；G4 之前 R4 不得合入依赖 daemon 新协议（3.3）的实际请求路径——读侧（现有 `session.*`/`run.list`）与既有 `worker.prompt` 调用不算 3.3 依赖，允许先行。
 
