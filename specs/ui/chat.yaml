@@ -6,7 +6,7 @@ target: crates/web/components/src/chat.rs
 description: 会话区（Chat / MessageItem / ProcessBlock / ToolLine）——780 消息列、用户右气泡 r22、工作过程折叠、composer 胶囊卡。
 anchors:
   - key: message-column
-    find: 'max-w-[780px] w-full mx-auto px-4 pt-4 pb-12'
+    find: 'max-w-[780px] w-full mx-auto px-4 pt-4 pb-[220px]'
     expect: '消息列为居中限宽容器（实现统一 780；dsh 消息列 748，见 notes 偏差记录）。'
     source: 'omenic: crates/web/components/src/chat.rs:92；dsh: ConversationRoot.module.css:22（--dsh-chat-content-width: 748px）'
   - key: user-bubble
