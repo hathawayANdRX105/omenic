@@ -9,14 +9,20 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use omenic_harness_plugin::{DshPlugin, Fiber, PluginError, PluginRegistry};
+use omenic_harness_compaction::CompactionPlugin;
+use omenic_harness_instruction::InstructionPlugin;
 use omenic_harness_prompt::PromptTemplate;
 use omenic_harness_runtime::LoopEngine;
 
+// Re-export the container vocabulary: a host wiring `assemble` in speaks
+// only to this root, and never declares the plugin crate itself.
+pub use omenic_harness_plugin::{DshPlugin, Fiber, PluginError, PluginRegistry};
+
 /// Build the plugin container: a [`Fiber`] over `config`, every harness
 /// crate's services registered in dependency order, then the orbit thin
-/// layer, then the host `plugins` (a duplicate name aborts with
-/// [`PluginError`] and the caller discards the partially built fiber).
+/// layer, then the core plugins, then the host `plugins` (a duplicate name
+/// aborts with [`PluginError`] and the caller discards the partially built
+/// fiber).
 pub fn assemble(
     config: Value,
     plugins: Vec<Arc<dyn DshPlugin>>,
@@ -43,7 +49,20 @@ pub fn assemble(
         ctx.provide("harness.loop", LoopEngine { max_turns, model });
         // 4. agent domain (allowed direction: agent → harness): orbit defaults.
         orbit::register(ctx);
-        // 5. host plugins last: they may provide over anything above.
+        // 5. core plugins the framework always ships. They go through the
+        // named registry (not a bare `provide`) so a host plugin reusing one
+        // of their names is rejected instead of silently shadowing it.
+        // Compaction lands the keep-original safe path; a host wanting a real
+        // summarizer re-provides `CharBudgetPolicy` from its own plugin below.
+        registry.register(Arc::new(CompactionPlugin), ctx)?;
+        // Instruction discovery walks up from `cwd`; absent config means the
+        // process working directory, matching `InstructionPlugin::default`.
+        let instruction = match ctx.config()["cwd"].as_str() {
+            Some(cwd) => InstructionPlugin::new(cwd),
+            None => InstructionPlugin::default(),
+        };
+        registry.register(Arc::new(instruction), ctx)?;
+        // 6. host plugins last: they may provide over anything above.
         for plugin in plugins {
             registry.register(plugin, ctx)?;
         }

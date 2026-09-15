@@ -68,4 +68,10 @@ pub enum DaemonError {
     /// A request was malformed (parse OK, but unknown command / bad shape).
     #[error("protocol error: {0}")]
     Protocol(String),
+
+    /// The composition root refused to assemble the plugin container (e.g. a
+    /// duplicate plugin name). Startup aborts: a half-built fiber is never
+    /// handed to the accept loop.
+    #[error("daemon plugin assembly error: {0}")]
+    Plugin(#[from] omenic_composition::PluginError),
 }

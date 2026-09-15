@@ -15,6 +15,7 @@ adaptor = { path = "../../agent/adaptor" }
 rpc = { path = "../rpc" }
 session = { path = "../session" }
 config = { path = "../config" }
+omenic-composition = { path = "../../composition" }
 parking_lot = "0.12"
 ctrlc = { workspace = true, features = ["termination"] }
 
