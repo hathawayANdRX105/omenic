@@ -51,8 +51,8 @@ anchors:
     expect: '空闲会话状态点为暗色 bg-dim。'
     source: 'omenic: crates/web/components/src/sidebar.rs:14'
   - key: status-dot-archived
-    find: 'SessionStatus::Archived => "bg-danger/70"'
-    expect: '归档会话状态点为 danger 70% 透明。'
+    find: 'SessionStatus::Archived | SessionStatus::Aborted => "bg-danger/70"'
+    expect: '归档与中断（半开 run）会话状态点同为 danger 70% 透明。'
     source: 'omenic: crates/web/components/src/sidebar.rs:15'
   - key: time-hover-hide
     find: 'group-hover:hidden'

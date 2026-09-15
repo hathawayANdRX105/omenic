@@ -137,11 +137,47 @@ impl WebDaemon {
         )
     }
 
+    /// `worker.prompt` 的带归属版本（WP-C）：把 `session_id` / `run_id` 透传
+    /// 给 daemon，daemon 据此把 run 记进 run ledger（`runs.start`，prompt
+    /// 返回时写结束状态）。run_id 由调用方生成（`r-<epoch_ms>`，与 CLI 的
+    /// `session resume` 同一格式），刷新后 [`Self::runs_for_session`] 拿它
+    /// 组装出 Active/Aborted。仅加调用入参，daemon 侧这两个字段本来就是
+    /// 可选的，协议零改动。
+    pub fn worker_prompt_run(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        message: &str,
+    ) -> Result<Value, ClientError> {
+        self.client.call(
+            Command::WorkerPrompt,
+            serde_json::json!({
+                "message": message,
+                "session_id": session_id,
+                "run_id": run_id,
+            }),
+        )
+    }
+
     /// `event.subscribe("worker")`：worker 事件推送的专用长连接（C5.2b）。
     /// 连接存活期间 daemon 持续推送 `EventFrame`；Drop 关连接，daemon 自动
     /// 分离该连接的全部订阅（断线清理）。广播语义：多订阅者各收全流。
     pub fn subscribe_worker(&self) -> Result<Subscription, ClientError> {
         self.client.subscribe("worker")
+    }
+
+    /// `run.list`（按 session 过滤）：返回该会话的 run 记录，供列表侧组装
+    /// 运行状态（WP-C：半开 run → aborted，见
+    /// `omenic_web_state::convert::infer_session_status`）。daemon 的
+    /// `run.list` 语义只有全量 `{ limit }` → `[RunRecord]`，不可改，故在
+    /// 客户端按 `session_id` 过滤。空列表合法（会话从未跑过 run）。
+    pub fn runs_for_session(
+        &self,
+        sid: &str,
+        limit: u32,
+    ) -> Result<Vec<daemon::state::RunRecord>, ClientError> {
+        let runs = self.client.run_list(limit)?;
+        Ok(runs.into_iter().filter(|r| r.session_id == sid).collect())
     }
 }
 

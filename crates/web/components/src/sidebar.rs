@@ -12,7 +12,8 @@ fn status_dot_class(status: &SessionStatus) -> &'static str {
     match status {
         SessionStatus::Active => "bg-brand",
         SessionStatus::Idle => "bg-dim",
-        SessionStatus::Archived => "bg-danger/70",
+        // 中断/半开 run 与归档同走 danger 色（WP-C）
+        SessionStatus::Archived | SessionStatus::Aborted => "bg-danger/70",
     }
 }
 
