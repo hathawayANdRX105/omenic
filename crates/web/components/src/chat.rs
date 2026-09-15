@@ -92,7 +92,7 @@ pub fn Chat(
             // 单一滚动面板 = 整个聊天室
             div { class: "absolute inset-0 overflow-y-auto",
                 id: "chat-scroll",
-                div { class: "max-w-[780px] w-full mx-auto px-4 pt-4 pb-12 flex flex-col gap-4 min-h-full",
+                div { class: "max-w-[780px] w-full mx-auto px-4 pt-4 pb-[220px] flex flex-col gap-4 min-h-full",
                     if display_messages.is_empty() && !is_streaming {
                         div { class: "flex-1 flex flex-col items-center justify-center gap-2.5 text-center py-10 select-none relative",
                             div { class: "absolute w-[520px] h-[220px] rounded-full bg-brand/10 blur-[110px] -z-10" }
