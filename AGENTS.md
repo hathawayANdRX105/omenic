@@ -17,6 +17,24 @@ gh pr create --title "..." --body "..." --head <branch>
 
 gate 自动做创建前校验(规则在 `.githooks/spec/`)+ 创建后现实校验，FAIL 拒绝创建。
 
+## 构建与验证（CI 驱动）
+
+**所有测试、编译、lint 全部放 PR 的 CI（`.github/workflows/ci.yml`），本地不跑重型命令。**
+
+本地只做轻量验证：
+- `cargo fmt --check`（秒级）
+- `cargo check -p <crate>`（类型检查，单 crate）
+- `grep` / `ls` / 文件读写等只读命令
+
+**如果实在要本地跑重命令**（全量构建、`cargo test`、`cargo clippy`、`npm install` 等），**必须套 `cpulimit -l 65 -i --` 限制 CPU 到 65%**：
+
+```bash
+cpulimit -l 65 -i -- cargo test -p <crate>
+cpulimit -l 65 -i -- cargo build --release
+```
+
+`git`、`grep`、`ls` 等轻量命令不需要套。
+
 ## Demo 验证沙盒
 
 验证 issue/PR 流程、gh-gate 拦截、规则改动时，**不要在本仓库(omenic)直接创建 demo issue/PR**，使用专用沙盒：
@@ -24,8 +42,6 @@ gate 自动做创建前校验(规则在 `.githooks/spec/`)+ 创建后现实校�
 - 仓库：https://github.com/hathawayANdRX105/demo-githooks(本地 `~/projects/demo-githooks`)
 - 用途：验证 epic/sub/PR 链路、checkbox 强制、双向关联(GT-04b)、审查强制等，避免污染 omenic
 - .githooks 与 omenic 同步；规则改动后先在此仓库验证，再同步到其他项目(deskctl / new-api)
-
-规则文件同步流程：改动 omenic `.githooks/` → 复制到 demo-githooks / deskctl / new-api 并提交。
 
 ## TUI 验证约定（Ratatui）
 
@@ -74,7 +90,7 @@ web UI（dsh 设计语言复刻，C5.1 已验收）的视觉/结构锁在 `specs
 **契约测试**（无需起服；首次编译 web 依赖树较慢）：
 
 ```bash
-cpulimit -l 70 -i -- cargo test -p web-cli   # bin/web/tests/ui_contract.rs
+cpulimit -l 65 -i -- cargo test -p web-cli   # bin/web/tests/ui_contract.rs
 ```
 
 **yaml 字段约定**：`name`（契约名）/ `target`（omenic 实现文件，相对仓库根）/ `description` / `anchors`（锚点列表，每项 `key` + `find`（源码中稳定 class 片段或静态字面量）+ `expect`（预期形态）+ `source`（omenic 实现位置 + dsh 出处）+ 可选 `file`（锚点级实现文件覆盖，默认用 target））/ `notes`。测试两类断言：① 每个 yaml 可被 serde_yaml 解析且字段齐全；② 每个 `find` 关键字在对应实现文件中出现。新增 spec 必须同步登记 `tests/ui_contract.rs` 的 `SPEC_FILES`。
