@@ -1,8 +1,9 @@
 # omenic ROADMAP
 
 > 长期重构方向 + 并发分工。历史进度见 git log（`53419ec` / `906ea2e` / `1b405f0` 起），`todo/dsh/README.md` 为设计蓝图，`todo/dsh/BACKGROUND.md` 为现状锚点（冻结签名 / `AgentEvent` 契约）。
-> 最后更新：2026-09-15（R1/R2/R3 已合并 #339/#343/#346；R4 web 读侧+订阅端+真运行+按会话状态全通 #340-#352；G3 验收②③ 与 G4 验收③④ 的自动化载体由 #354-#357 补齐；G4 五项验收①②③④⑤ 全部有自动化测试或浏览器实测覆盖，待最终确认）
+> 最后更新：2026-09-15（R1/R2/R3 已合并 #339/#343/#346；R4 web #340-#352；G3 验收②③ 与 G4 验收③④ 的自动化载体由 #354-#357 补齐；#358 校正本文件失真。**G4 五项验收①②③④⑤ 全部有自动化测试或浏览器实测覆盖，待用户浏览器实测确认后关 G4 开 G5。**）
 > **校验记录**：`todo/roadmap-verify-2026-09-15.md`（三路交叉校验，含 16 条虚报/漏点清单）；下一阶段路线见 `todo/route-to-g4-2026-09-15.md`。
+> **G4 验收操作手册**：见本文末「G4 验收指南（用户实测）」一节。
 > 小功能行内 ✅ = 已合并 main；🟡 = 部分完成；⬜ = 未开工。
 
 ## 重构终点（先写死，agent 据此找缺口并更新路线）
@@ -154,3 +155,64 @@
 - **工作目录**：`.wt/<branch>`（git worktree add 必须在仓库根执行，防嵌套）
 - **测试**：放同层 `tests/`，不在 src/ 写 `#[cfg(test)]`；重型测试推 CI
 - **编译**：cargo 命令套 `cpulimit -l 70 -i --`，只跑 `-p <crate>`，禁止全仓 build
+
+---
+
+## G4 验收指南（用户实测）
+
+> 五项验收中 ①②③④⑤ 的自动化载体已全部落地（见整合门表）。①③④⑤ 有自动化测试覆盖，**② 是唯一需要你浏览器实测确认的一项**——因为它断言的是页面级流式渲染的实时性，自动化测试只能覆盖订阅管线的数据正确性，覆盖不到「肉眼看见流式输出」。
+>
+> 你做完 ② 之后，我就能把 G4 标为已过并开 G5。
+
+### 前置：起服务（约 3 分钟）
+
+```bash
+cd crates/web && npm install            # 确保 node_modules 在
+cd <仓库根>
+touch crates/web/assets/tailwind-input.css   # 强制重跑 build.rs
+cpulimit -l 65 -i -- cargo build --bin oi-web
+pkill -x oi-web; sleep 1
+nohup ./target/debug/oi-web > /tmp/oi-web.log 2>&1 &   # 默认 8026
+curl -s localhost:8026/ | grep -c -- --color-accent   # 应 > 0
+```
+
+起 daemon（另一终端）：
+
+```bash
+cpulimit -l 65 -i -- cargo build --bin daemon --bin oi
+./target/debug/oi daemon start    # 自动找同目录的 daemon 二进制；已运行会提示
+./target/debug/oi daemon status   # 确认在跑
+```
+
+浏览器**硬刷新** `http://localhost:8026`（Ctrl+Shift+R，LiveView 缓存 wasm）。
+
+### ② 流式 delta 实测（核心，唯一需要你做的）
+
+在聊天页发一条消息，观察回复：
+
+- [ ] **逐字流式出现**，不是等几秒一次性整段出现
+- [ ] 回复过程中「工作过程」折叠区实时计数（工具调用次数）
+- [ ] 回复完整结束后，状态行显示 model / tokens 等结算信息
+- [ ] 期间侧栏会话列表的状态点是 accent（运行中），结束后变 dim
+
+**如果不流式**（一次性出现）：截图给我，我看 `/tmp/oi-web.log` 排查。
+
+### ③ 顺带可做的断线重连（可选，自动化测试已覆盖）
+
+网页开着的时候，另一终端 `pkill -x oi-daemon`（或 kill daemon 进程）：
+
+- [ ] 页面**不白屏**，转圈或保留最后内容
+- [ ] `oi daemon start` 重启后，不刷新页面，发新消息能继续收到回复
+
+### ④ 半开 run（可选，自动化测试已覆盖）
+
+发一条消息，**在回复流式到一半时 kill daemon**，然后刷新页面：
+
+- [ ] 会话列表该会话标 `aborted`（danger 色状态点）而不是消失或显示正常
+- [ ] 注：daemon 现行实现在 prompt 返回时即写 finish，干净的 UI 中断可能不留半开记录；**稳定复现方式是 kill daemon 后重启再刷新**（走 2.4 repair 语义）
+
+### 验收完告诉我
+
+- ② 过了 → 我关 G4，开 G5（composition 真装配 + 删 mock + tag）
+- ② 没过 → 截图 + `/tmp/oi-web.log` 给我，我修
+
