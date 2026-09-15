@@ -104,6 +104,7 @@ fn event_subscribe_pushes_full_turn_to_every_subscriber() {
         socket_path: Some(socket.clone()),
         omp_path: omp.to_string_lossy().into_owned(),
         session_db_path: Some(db),
+        orbit_model: None,
     })
     .expect("daemon start");
 

@@ -71,7 +71,7 @@ fn event_kind(event: &WorkerEvent) -> &'static str {
 fn subscribe_receives_prompt_event_sequence() {
     let dir = tempfile::tempdir().unwrap();
     let omp = mock_omp(dir.path());
-    let mut worker = Worker::new(omp.to_str().unwrap()).expect("spawn mock omp");
+    let mut worker = Worker::new(omp.to_str().unwrap(), None).expect("spawn mock omp");
 
     let rx = worker.subscribe("worker");
     let resp = worker.prompt("hi").expect("prompt through pump");
@@ -94,7 +94,7 @@ fn subscribe_receives_prompt_event_sequence() {
 fn dropped_receiver_is_unregistered_other_receiver_keeps_flowing() {
     let dir = tempfile::tempdir().unwrap();
     let omp = mock_omp(dir.path());
-    let mut worker = Worker::new(omp.to_str().unwrap()).expect("spawn mock omp");
+    let mut worker = Worker::new(omp.to_str().unwrap(), None).expect("spawn mock omp");
 
     let dead = worker.subscribe("worker");
     let alive = worker.subscribe("worker");

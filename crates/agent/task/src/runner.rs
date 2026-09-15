@@ -197,7 +197,7 @@ pub fn run(ctx: &Ctx, task_id: &str) -> Result<RunOutcome, RunnerError> {
         })?;
     append_record(&mut events_log, &events_path, &run_start_record(task_id));
 
-    let mut worker = Worker::new(ctx.omp_path.to_str().unwrap_or("omp"))
+    let mut worker = Worker::new(ctx.omp_path.to_str().unwrap_or("omp"), None)
         .map_err(|e| RunnerError::Blocked(format!("worker spawn: {e}")))?;
     let abort_signal = AtomicBool::new(false);
     let tool_boxes = tools::builtin_tools()
