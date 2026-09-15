@@ -115,8 +115,9 @@ fn kill_and_restart_daemon_stream_recovers() {
 
     let dead = sub.next_event(Duration::from_secs(3));
     assert!(
-        matches!(dead, Err(_)),
-        "dead daemon must break the read stream with Err, got {dead:?}"
+        dead.is_err(),
+        "dead daemon must break the read stream with Err, got {:?}",
+        dead.err()
     );
 
     // 旧订阅已废，但 client 本身仍可用：ping 应失败而非 panic。
@@ -162,8 +163,9 @@ fn resubscribe_fails_until_daemon_returns() {
     // daemon 已死：重新订阅必须失败（这正是重连循环退避后再试的原因）。
     let down = wd.subscribe_worker();
     assert!(
-        matches!(down, Err(_)),
-        "resubscribe against a dead daemon must fail, got {down:?}"
+        down.is_err(),
+        "resubscribe against a dead daemon must fail, got {:?}",
+        down.err()
     );
 
     // 重启后恢复。
@@ -198,8 +200,9 @@ fn dead_daemon_keeps_failing_fast_not_hanging() {
     for _ in 0..3 {
         let r = sub.next_event(Duration::from_secs(2));
         assert!(
-            matches!(r, Err(_)),
-            "dead stream must keep failing fast, got {r:?}"
+            r.is_err(),
+            "dead stream must keep failing fast, got {:?}",
+            r.err()
         );
     }
 }
