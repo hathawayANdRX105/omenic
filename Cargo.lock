@@ -2123,6 +2123,7 @@ name = "omenic-web-state"
 version = "0.1.0"
 dependencies = [
  "adaptor",
+ "daemon",
  "memory",
  "orbit",
  "serde",
