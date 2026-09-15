@@ -1,7 +1,7 @@
 //! Dioxus LiveView Web UI for omenic — dsh 风格。
 //!
 //! 无顶栏（dsh 无 topbar）：侧栏承载全部入口（新会话 / 搜索 ⌘K /
-//! 数据统计 / 设置弹窗）。页面数据当前来自 `omenic-web-mock`。
+//! 数据统计 / 设置弹窗）。页面数据走 daemon RPC（`stats.summary` / `runs_for_session` / `list_sessions`），无 daemon 时空态。
 
 use dioxus::prelude::*;
 use omenic_web_client::llm;

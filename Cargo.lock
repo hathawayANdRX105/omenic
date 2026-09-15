@@ -2081,15 +2081,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "omenic-web-mock"
-version = "0.1.0"
-dependencies = [
- "omenic-web-state",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "omenic-web-page-config"
 version = "0.1.0"
 dependencies = [
