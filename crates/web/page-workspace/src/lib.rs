@@ -279,7 +279,7 @@ pub fn Workspace(
     // drop → 读线程 send 失败自行退出。订阅事件不带会话归属，统一写给
     // on_send 时记录的 run_target_sid；effect 只依赖 backend（初始化后
     // 不再变化），管线整个生命周期只建一次。
-    let run_target_sid = use_signal(String::new);
+    let mut run_target_sid = use_signal(String::new);
     use_effect(move || {
         let DataBackend::Daemon(d) = backend() else {
             return;
@@ -622,6 +622,10 @@ pub fn Workspace(
             let sid_daemon = sid.clone();
             let text_daemon = text.clone();
             let d_prompt = d.clone();
+            // 订阅事件不带会话归属：消费端以 run_target_sid 为写回目标，
+            // 必须在 prompt 发出前落定
+            run_target_sid.set(sid.clone());
+            eprintln!("[web] send sid={} len={}", sid, text.len());
             let (fail_tx, fail_rx) = tokio::sync::oneshot::channel::<()>();
             std::thread::spawn(move || {
                 if let Some((id, title)) = created {
