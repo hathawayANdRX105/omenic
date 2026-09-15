@@ -63,6 +63,7 @@ pub fn Chat(
     /// 运行中点停止：中止当前 agent run
     on_abort: EventHandler<()>,
 ) -> Element {
+    let mut draft = use_signal(String::new);
     let model_items: Vec<(String, String)> = MODELS
         .iter()
         .map(|m| (m.to_string(), m.to_string()))
@@ -158,29 +159,23 @@ pub fn Chat(
                     // 输入卡：r22 胶囊
                     // 不加 overflow-hidden：模型/思考菜单从工具行向上弹出，
                     // 裁剪会切掉卡片外的部分；圆角由卡片自身的 bg + radius 呈现
-                    form { class: "pointer-events-auto w-full rounded-[22px] border border-b1 bg-input-bg shadow-lv2 flex flex-col transition-colors focus-within:border-b3",
-                        onsubmit: move |e: FormEvent| {
-                            // dioxus-liveview 解释器对 submit 不做
-                            // preventDefault（handleEvent 的 response 在
-                            // liveview 模式为 undefined），必须显式阻止，
-                            // 否则原生 GET 提交整页重载丢状态
-                            e.prevent_default();
-                            let text = e
-                                .get_first("message")
-                                .and_then(|v| match v {
-                                    FormValue::Text(s) => Some(s.trim().to_string()),
-                                    _ => None,
-                                })
-                                .unwrap_or_default();
-                            if !text.is_empty() && !is_streaming {
-                                on_send.call(text);
-                            }
-                        },
+                    div { class: "pointer-events-auto w-full rounded-[22px] border border-b1 bg-input-bg shadow-lv2 flex flex-col transition-colors focus-within:border-b3",
                         textarea {
                             id: "chat-input-area",
-                            name: "message",
                             class: "w-full resize-none bg-transparent border-none outline-none text-[16px] leading-6 text-label placeholder:text-caption caret-brand px-4 pt-3 pb-1 min-h-[52px] max-h-[336px]",
                             placeholder: "输入指令，Enter 发送，Shift+Enter 换行...",
+                            value: "{draft}",
+                            oninput: move |e: FormEvent| draft.set(e.value()),
+                            onkeydown: move |e: KeyboardEvent| {
+                                if e.key() == Key::Enter && !e.modifiers().contains(Modifiers::SHIFT) {
+                                    e.prevent_default();
+                                    let text = draft();
+                                    if !text.trim().is_empty() && !is_streaming {
+                                        on_send.call(text.trim().to_string());
+                                        draft.set(String::new());
+                                    }
+                                }
+                            },
                         }
                         div { class: "flex items-center justify-between pl-1.5 pr-2 pb-1.5 pt-0.5",
                             div { class: "flex items-center gap-0.5",
@@ -226,9 +221,16 @@ pub fn Chat(
                                     }
                                 } else {
                                     button {
-                                        r#type: "submit",
+                                        r#type: "button",
                                         class: "w-[34px] h-[34px] rounded-full bg-brand text-white hover:bg-brand-hover flex items-center justify-center cursor-pointer transition-colors border-none",
-                                        title: "发送 (Enter)",
+                                        title: "发送",
+                                        onclick: move |_| {
+                                            let text = draft();
+                                            if !text.trim().is_empty() && !is_streaming {
+                                                on_send.call(text.trim().to_string());
+                                                draft.set(String::new());
+                                            }
+                                        },
                                         ArrowUp { size: 16 }
                                     }
                                 }
