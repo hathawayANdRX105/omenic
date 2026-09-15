@@ -87,6 +87,17 @@ pub fn Chat(
         .map(|m| (format!("prompt-{}", m.id), m.content.clone()))
         .collect();
 
+    // 状态行耗时段（G5/5.6）：在飞 run 显示「当前时刻 - 开始时刻」，已结束
+    // run 显示结算好的总耗时，两者都没有则为空串——空串时整段（含前导
+    // 分隔符）不渲染，避免状态行出现 " · " 空档。rsx! 内禁止 let，故在
+    // 此预先拼好。
+    let elapsed = statusline.elapsed_label();
+    let elapsed_seg = if elapsed.is_empty() {
+        String::new()
+    } else {
+        format!(" · {elapsed}")
+    };
+
     rsx! {
         div { class: "relative flex-1 min-h-0 overflow-hidden",
             // 单一滚动面板 = 整个聊天室
@@ -152,7 +163,7 @@ pub fn Chat(
                 div { class: "mx-auto w-full max-w-[780px] px-4 pb-2 flex flex-col items-center gap-2",
                     // 状态行（dsh StatsLine：12/20 tertiary 居中）
                     div { class: "text-[12px] leading-5 text-label-3 text-center select-none",
-                        "{statusline.model} · ↑{statusline.tokens_in} ↓{statusline.tokens_out} · ${statusline.cost_usd:.3} · context {statusline.context_pct:.0}%"
+                        "{statusline.model} · ↑{statusline.tokens_in} ↓{statusline.tokens_out} · ${statusline.cost_usd:.3} · context {statusline.context_pct:.0}%{elapsed_seg}"
                     }
                     // dock 卡片（任务看板）
                     {dock}

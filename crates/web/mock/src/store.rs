@@ -781,6 +781,10 @@ pub fn statusline() -> StatusLine {
         cost_usd: 0.023,
         context_pct: 34.2,
         context_max: 128_000,
+        // WP-C 的计时字段。mock 无真实 run：无在飞 run，总耗时归零。
+        // 本 crate 由 WP-D 整体移除，这里只补齐字段让 workspace 可编译。
+        run_started_at_ms: None,
+        elapsed_ms: 0,
     }
 }
 

@@ -2113,7 +2113,6 @@ dependencies = [
  "dioxus",
  "omenic-web-client",
  "omenic-web-components",
- "omenic-web-mock",
  "omenic-web-page-config",
  "omenic-web-page-stats",
  "omenic-web-state",
