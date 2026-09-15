@@ -26,8 +26,8 @@
 |---|---|---|
 | 2.1 ✅ 会话 CRUD + libSQL 持久化 | `crates/infra/session/src/lib.rs:SessionDb` | `packages/core/session/src/index.ts` |
 | 2.2 ✅ 事件词汇表（`WorkerEvent` 拆出 ToolExecutionStart/End/Error 专属变体，Unknown 只留给未识别帧） | `crates/infra/rpc/src/worker.rs` | `packages/core/session/src/{known-event-types.ts,types.ts}` |
-| 2.3 ✅ 无损分块编解码（turn log JSONL 往返） | `crates/infra/session/src/lib.rs`（`TurnRecord` + encode/decode） | `packages/core/session/src/{chunk-rows.ts,json.ts}` |
-| 2.4 ✅ crash-repair（半程 run 补 Aborted closer，6 测试） | `crates/infra/session/src/lib.rs`（`interrupted_run_closers`） | `packages/core/session/src/{repair.ts,request-header.ts}` |
+| 2.3 ✅ 编解码就绪，⚠️ **零生产写入**（`encode/decode_turn_log` 唯一调用者是 turn_repair.rs 测试；orbit TurnStart/TurnEnd 是内存事件，从未落 TurnRecord JSONL——session 持久化走 libSQL） | `crates/infra/session/src/lib.rs`（`TurnRecord` + encode/decode） | `packages/core/session/src/{chunk-rows.ts,json.ts}` |
+| 2.4 ✅ repair 函数就绪，⚠️ **零生产调用**（`interrupted_run_closers` 唯一调用者是测试；`Daemon::start` 无 repair 步骤。用户侧「aborted」实际由 web `run.list` 三态推断承担，见 `infer_session_status`。接线单独处理，不阻塞 G5） | `crates/infra/session/src/lib.rs`（`interrupted_run_closers`） | `packages/core/session/src/{repair.ts,request-header.ts}` |
 
 ### C3 事件流可推 web ✅（PR #343）
 
@@ -46,12 +46,12 @@
 | 4.2 ✅ tool_call/tool_result 成对裁剪不变式 | 同上（`pairing.rs`） | `packages/compaction/compaction/src/tool-pairing.ts` |
 | 4.3 ✅ 预算分区（system/工具/最近 N 条区） | 同上（`region.rs`） | `packages/compaction/compaction-basic/src/{region.ts,types.ts,config.ts}` |
 | 4.4 ✅ LLM 摘要钩子（超预算区段 → 摘要替换原文） | 同上（`summarize.rs`） | `packages/compaction/compaction-basic/src/summarizer.ts` |
-| 4.5 ✅ orbit maintenance 接缝替换（`select_compaction_cut`+`compact_context` 搬出，接缝约 65 行，loop.rs 20 测试零改动） | `crates/agent/orbit/src/lib.rs` | — |
+| 4.5 ✅ orbit maintenance 接缝替换（`select_compaction_cut`+`compact_context` 搬出，loop.rs 20 测试零改动）；⚠️ **接缝实测 56 代码行 / 78 原始行**（lib.rs:265-342），超 R3 ≤20 限额 36 行——见下方「接缝超限」注 | `crates/agent/orbit/src/lib.rs` | — |
 | 4.6 ✅ AGENTS.md 向上查找 + 状态缓存 | `crates/harness/instruction/src/files.rs` | `packages/context/agent-instructions/src/{files.ts,state.ts}` |
 | 4.7 ✅ 指令 digest 去重 + 渲染 `PromptTemplate` | 同上（`render.rs`） | `packages/context/agent-instructions/src/{render.ts,digest.ts,config.ts}` |
 | 4.8 ✅ **orbit system prompt 注入接线（#354）**：`LoopConfig.instruction_cwd` 显式旋钮 → `build_system_prompt` 查找+去重+前置到 TASK 之前；4 测试（注入/空/去重/降级） | `crates/agent/orbit/src/lib.rs`（`build_system_prompt:370`）+ `tests/instruction_prompt.rs` | `packages/context/agent-instructions/src/render.ts` |
 
-### C5 web 页面跑真数据 🟡 5.1/5.2a/5.2b ✅；读侧真数据 + 事件订阅端 + orbit 真运行全通（wildtoken agnes-2.5-flash，用户浏览器实测确认对话成功）；5.3 🟡（谱系待 G4）；5.4/5.6 由订阅管线承载；5.9 删 mock 待 G4 验收后
+### C5 web 页面跑真数据 🟡 5.1/5.2a/5.2b ✅；读侧真数据 + 事件订阅端 + orbit 真运行全通（wildtoken agnes-2.5-flash，用户浏览器实测确认对话成功）；5.3 🟡（谱系待 G4）；5.4 ✅ 由订阅管线承载；5.6 🟡 运行态有、**elapsed 计时未做**；5.9 删 mock 是 G5 的活
 > **本轮新增修复**：form/onsubmit→Dioxus onclick/onkeydown 替换（#351，dioxus-liveview 解释器不监听 submit 事件——源码实证）；按会话区分运行状态（#350，停止钮/门禁由当前会话 Active 驱动）；orbit 引擎 turn 非阻塞化（#350，prompt 专用线程 + ack + abort 可达）；聊天滚动区底部 padding 修正（#352）
 
 > **G4 阻塞点清零状态（2026-09-15，#353-#357 后）**：
@@ -71,11 +71,11 @@
 | 5.3 🟡 会话列表/历史 ← 真数据（Daemon 模式已接 `session.list`/`load_messages`；**状态三态已接 #356**：`run.list` 推断 Idle/Active/Aborted；谱系分组待 G4 后按 `run.list` 组装） | `crates/web/page-workspace/`（原 workspace.rs 1093 行） | `packages/client/runtime/src/client/sessions/{session.ts,lineage.ts}` |
 | 5.4 聊天流式：delta 追加 + tool 折叠卡 | `crates/web/components/`（chat.rs 352 行） | `client/conversation/{event-registry.ts,view-registry.ts}` + `sessions/tool-call-tree.ts` |
 | 5.5 sidebar 真会话 + 谱系分组 | `crates/web/components/`（sidebar.rs） | `packages/client/runtime/src/client/sessions/lineage.ts` |
-| 5.6 statusline 真运行态 + 计时 | `crates/web/components/`（statusline.rs） | `packages/client/runtime/src/client/sessions/assistant-timing.ts` |
+| 5.6 statusline 真运行态 ⚠️ **计时未做**（会话三态 + header「运行中」spinner + TurnEnd 结算 tokens/cost/context 已有；dsh `assistant-timing` 的 elapsed 计时零代码，`StatusLine` 无计时字段。另注：本行原指 `components/statusline.rs` **不存在**，状态行内联在 `chat.rs:155`） | `crates/web/components/`（内联 chat.rs:155） | `packages/client/runtime/src/client/sessions/assistant-timing.ts` |
 | 5.7 stats 接 token 真数据（无则隐藏该卡；完整需 C8.3） | `crates/web/page-stats/`（原 stats.rs + statsview.rs） | `packages/llm/token-meter/src/{usage-projection.ts,projection.ts}` |
-| 5.8 配置页读写 `infra/config`（TOML 往返） | `crates/web/page-config/`（原 config_page.rs） | `packages/settings/settings-file/src/index.ts` |
+| 5.8 配置页读写 `infra/config`（TOML 往返）⚠️ **零测试**（`load_from_system`/`save_to_file`/`test_connection` 已接线并工作，`crates/web/client/tests/` 无一覆盖 TOML 往返） | `crates/web/page-config/`（原 config_page.rs） | `packages/settings/settings-file/src/index.ts` |
 | 5.9 `mock.rs` 删除（mock 已搬独立 crate `crates/web/mock/`，仍是 page-workspace/page-stats 直接依赖、传递进 oi-web 二进制；`grep mock_sessions\|mock_messages` = 0 系改名达成，**真删待 G4 验收后**） | `crates/web/mock/`（906 行） | — |
-| 5.10 ✅ ui-validate 契约层（PR #344：`specs/ui/*.yaml` ×7 / 71 锚点 + 3 契约测试；浏览器实测序列见仓库 AGENTS.md「Web UI 契约验收」） | `bin/web/tests/` + `specs/ui/` | — |
+| 5.10 ✅ ui-validate 契约层（PR #344：`specs/ui/*.yaml` ×7 / 71 锚点 + 3 契约测试；浏览器实测序列见仓库 AGENTS.md「Web UI 契约验收」） | `bin/web/tests/` + `.githooks/spec/` | — |
 
 ### C6 插件面四件套 ✅（PR #339）
 
@@ -127,7 +127,7 @@
 | **R1 插件面** ✅ 已合并（#339） | C6（6.1–6.6） | `crates/harness/plugin/`（新）、`crates/composition/`；orbit ≤30 行 | 无 | G1（6.1+6.5 定型）→ G2（全绿） |
 | **R2 事件流+修复** ✅ 已合并（#343） | C2（2.2–2.4）+ C3（3.1–3.4） | `crates/infra/{daemon,session,rpc}/`；orbit 只读 | 3.1 依赖 6.1 定型 | G4 |
 | **R3 核心插件** ✅ 已合并（#346；验收②③ 由 #354/#355 补齐） | C4（4.1–4.8） | `crates/harness/{compaction,instruction}/`（新）；orbit maintenance 接缝约 65 行 | 4.5 接缝 + `impl DshPlugin` 需 G1 | G3 |
-| **R4 web** ✅ 主线完成（#340-#352 + #356/#357） | C5（5.1–5.10） | `crates/web/{client,state,components,mock,page-workspace,page-stats,page-config}/`（**7** 个 crate，crate 名 `omenic-web-*`；壳=App/launch/build.rs/tailwind 全在 `bin/web/`，bin/web 是入口 crate 不进 crates） | 5.1/5.2a/5.2b/5.3/5.4/5.6/5.10 ✅；**5.9 mock 删除是 G5 的活**；5.5 谱系、5.7 stats、5.8 配置页复用 config 留 G5 | G4 ✅ 已过 |
+| **R4 web** ✅ 主线完成（#340-#352 + #356/#357） | C5（5.1–5.10） | `crates/web/{client,state,components,mock,page-workspace,page-stats,page-config}/`（**7** 个 crate，crate 名 `omenic-web-*`；壳=App/launch/build.rs/tailwind 全在 `bin/web/`，bin/web 是入口 crate 不进 crates） | 5.1/5.2a/5.2b/5.3/5.4/5.10 ✅；**5.6 计时未做**（运行态三态有）；**5.9 mock 删除是 G5 的活**；5.5 谱系、5.7 stats、5.8 配置页（已接线零测试）留 G5 | G4 ✅ 已过 |
 | **R5（占位，暂不做）** ⏸️ | C8（8.1–8.4） | `crates/harness/{interaction,metering}/`（新）、`adaptor/retry.rs` | 2026-09-15 裁定暂缓 | — |
 | **R6 总装（G5）** 🟡 开工中 | 6.5 真装配 + 5.9 删 mock | `crates/composition/`、`crates/web/mock/` 摘依赖、page-stats/page-workspace 换数据源 | G4 已过 | G5（不含 tag） |
 
@@ -135,6 +135,8 @@
 - 根 `Cargo.toml` members/Cargo.lock：各路线只加自己 crate 一行，合并顺序 R1→R3→R2→R4，后合者 rebase
 - `composition` 只 R1 可写；他路线装配需求走 issue
 - orbit 两处接缝限额共享：R1 ≤30 行（6.6）+ R3 ≤20 行（4.5），超限额走 issue
+  - **2026-09-15 实测**：R3 压缩接缝（`orbit/src/lib.rs:265-342`）= 56 代码行 / 78 原始行，**超 R3 ≤20 限额 36 行**。R1 接缝（6.6，orbit::register）在限额内。当前项目只开 PR 不开 issue（见下「工作流」），该超限随 G5 接 WP-A 一并评估是否再切薄，不单独开 issue
+- **删 mock 陷阱（G5）**：`page-workspace:245 statusline()` 初值与 `:904 TaskPanel { tasks: store::tasks() }` 在 **Daemon 模式下也仍吃 mock**（不只是 Mock 分支），删 mock 时必须一并接真数据源，否则删不干净
 - 独有功能保护区（见上）：`infra/memory`、`agent/task`、`agent/subagent`、`agent/mcp` 任何路线只读/单向依赖
 - `AgentEvent` serde（3.1）、daemon protocol（3.3）、harness trait（6.1）三个契约改动权归首发路线，他路线按冻结类型消费
 
