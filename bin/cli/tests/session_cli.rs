@@ -23,6 +23,7 @@ fn start_daemon(dir: &Path, tag: &str) -> Daemon {
         socket_path: Some(dir.join(format!("{tag}.sock"))),
         omp_path: "omp-not-installed-for-cli-tests".to_string(),
         session_db_path: Some(dir.join(format!("{tag}.db"))),
+        orbit_model: None,
     };
     Daemon::start(cfg).expect("start daemon")
 }
