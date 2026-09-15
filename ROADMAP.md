@@ -1,8 +1,9 @@
 # omenic ROADMAP
 
 > 长期重构方向 + 并发分工。历史进度见 git log（`53419ec` / `906ea2e` / `1b405f0` 起），`todo/dsh/README.md` 为设计蓝图，`todo/dsh/BACKGROUND.md` 为现状锚点（冻结签名 / `AgentEvent` 契约）。
-> 最后更新：2026-09-15（R1/R2/R3 已合并 #339/#343/#346；R4 web #340-#352；G3 验收②③ 与 G4 验收③④ 的自动化载体由 #354-#357 补齐；#358 校正本文件失真。**G4 五项验收①②③④⑤ 全部有自动化测试或浏览器实测覆盖，待用户浏览器实测确认后关 G4 开 G5。**）
-> **校验记录**：`todo/roadmap-verify-2026-09-15.md`（三路交叉校验，含 16 条虚报/漏点清单）；下一阶段路线见 `todo/route-to-g4-2026-09-15.md`。
+> 最后更新：2026-09-15（R1/R2/R3 已合并 #339/#343/#346；R4 web #340-#352；G3 验收②③ 与 G4 验收③④ 的自动化载体由 #354-#357 补齐；#358 校正本文件失真。**G4 五项验收①②③④⑤ 全部通过**——①③④⑤ 自动化测试 + ② 用户浏览器实测确认流式输出（2026-09-15）。**G4 已过，G5 开工。**）
+> **校验记录**：`todo/roadmap-verify-2026-09-15.md`（三路交叉校验，含 16 条虚报/漏点清单）；本轮路线见 `todo/route-to-g4-2026-09-15.md`。
+> **范围裁定（2026-09-15）**：**C7 tag 与 C8 酒馆暂不做**——tag 等 G5 装配完再议；C8 不在 omenic 范围。G5 现阶段只做「composition 真装配 + 删 mock」。
 > **G4 验收操作手册**：见本文末「G4 验收指南（用户实测）」一节。
 > 小功能行内 ✅ = 已合并 main；🟡 = 部分完成；⬜ = 未开工。
 
@@ -87,15 +88,17 @@
 | 6.5 ⚠️ 组装根存在但是死代码（`assemble()` 全仓零调用、零测试、Cargo.toml 自述 placeholder；daemon/web 启动均绕过它；**插件注册留 G5**） | `crates/composition/src/lib.rs` | `packages/bundle/base/src/index.ts` |
 | 6.6 ✅ orbit `run_agent` 服务化接线（daemon orbit worker 模式，PR #349/#350） | `crates/infra/rpc/src/worker.rs`（OrbitEngine） | `packages/core/agent-loop/src/index.ts` |
 
-### C7 tag + ferrite 接线 ⬜
+### C7 tag + ferrite 接线 ⏸️ 暂缓（2026-09-15 裁定）
 
 | 小功能 | 文件 | 说明 |
 |---|---|---|
 | 7.1 C1–C6 全绿 + 全仓 `cargo test` | `crates/composition/` 统一装配 | G5 触发 |
-| 7.2 `tag omenic-harness-v0.1.0` | — | ferrite 侧 git 依赖按 tag 锁定 |
-| 7.3 ferrite 根 `Cargo.toml` 删本地 harness member，加 tag git 依赖；本地 `[patch]` → 阶段 4 后删 | ferrite 仓库 | 对照旧「阶段 3」 |
+| 7.2 `tag omenic-harness-v0.1.0` | — | **暂缓**：tag 等 G5 装配完成、删 mock 后再议 |
+| 7.3 ferrite 根 `Cargo.toml` 删本地 harness member，加 tag git 依赖；本地 `[patch]` → 阶段 4 后删 | ferrite 仓库 | **暂缓**，随 7.2 |
 
-### C8（可选，酒馆触发）：interaction + token-meter + llm-retry
+### C8（可选，酒馆触发）：interaction + token-meter + llm-retry ⏸️ 暂不做
+
+> **2026-09-15 裁定**：C8 不在 omenic 范围，仅占位。R5 路线保持占位状态，不分配工作。5.7 stats 的 token 数据源需求改由「无真数据则隐藏该卡」兜底，不为此做 token-meter。
 
 
 | 小功能 | omenic 文件 | dsh 参考 |
@@ -124,8 +127,9 @@
 | **R1 插件面** ✅ 已合并（#339） | C6（6.1–6.6） | `crates/harness/plugin/`（新）、`crates/composition/`；orbit ≤30 行 | 无 | G1（6.1+6.5 定型）→ G2（全绿） |
 | **R2 事件流+修复** ✅ 已合并（#343） | C2（2.2–2.4）+ C3（3.1–3.4） | `crates/infra/{daemon,session,rpc}/`；orbit 只读 | 3.1 依赖 6.1 定型 | G4 |
 | **R3 核心插件** ✅ 已合并（#346；验收②③ 由 #354/#355 补齐） | C4（4.1–4.8） | `crates/harness/{compaction,instruction}/`（新）；orbit maintenance 接缝约 65 行 | 4.5 接缝 + `impl DshPlugin` 需 G1 | G3 |
-| **R4 web** | C5（5.1–5.10） | `crates/web/{client,state,components,mock,page-workspace,page-stats,page-config}/`（**7** 个 crate，crate 名 `omenic-web-*`；壳=App/launch/build.rs/tailwind 全在 `bin/web/`，bin/web 是入口 crate 不进 crates） | 5.1/5.2a/5.2b/5.3 ✅；5.4/5.6 订阅管线承载；5.10 ✅；5.9 待 G4 验收后 | G4 联调 |
-| **R5（占位，酒馆触发，不在 omenic 范围）** | C8（8.1–8.4） | `crates/harness/{interaction,metering}/`（新）、`adaptor/retry.rs` | G1 + 酒馆需求确认 | — |
+| **R4 web** ✅ 主线完成（#340-#352 + #356/#357） | C5（5.1–5.10） | `crates/web/{client,state,components,mock,page-workspace,page-stats,page-config}/`（**7** 个 crate，crate 名 `omenic-web-*`；壳=App/launch/build.rs/tailwind 全在 `bin/web/`，bin/web 是入口 crate 不进 crates） | 5.1/5.2a/5.2b/5.3/5.4/5.6/5.10 ✅；**5.9 mock 删除是 G5 的活**；5.5 谱系、5.7 stats、5.8 配置页复用 config 留 G5 | G4 ✅ 已过 |
+| **R5（占位，暂不做）** ⏸️ | C8（8.1–8.4） | `crates/harness/{interaction,metering}/`（新）、`adaptor/retry.rs` | 2026-09-15 裁定暂缓 | — |
+| **R6 总装（G5）** 🟡 开工中 | 6.5 真装配 + 5.9 删 mock | `crates/composition/`、`crates/web/mock/` 摘依赖、page-stats/page-workspace 换数据源 | G4 已过 | G5（不含 tag） |
 
 **冲突仲裁**（每次合并都处理）：
 - 根 `Cargo.toml` members/Cargo.lock：各路线只加自己 crate 一行，合并顺序 R1→R3→R2→R4，后合者 rebase
@@ -141,8 +145,8 @@
 | **G1 契约冻结** ✅ 已过（#339） | R1 的 6.1 + 6.5 完成 | 广播：6.1 插件面 trait 签名 + 3.1 `AgentEvent` serde 为全路线唯一契约。**验证**：`cargo test -p omenic-harness-plugin` 全绿（**4** 个集成测试，`plugin_test.rs`）；`AgentEvent` 各变体 serde 往返一致（`orbit/tests/agent_event_serde.rs` 3 测试）。R3/R4 的 fixture 从此只能用冻结类型。 | EventBus 类型是 R2/R3 共同进口 |
 | **G2 C6 收编** ✅ 已过 | R1 全绿 | orbit 6.6 接线合并；**验证**：orbit **23** 测试全量回归（loop.rs 20 + agent_event_serde.rs 3，不改断言）+ `oi task add` → 流式 run → 事件流 → 持久化全链路（C1 验收）仍通；C6 勾满。全链路唯一载体 `m3_e2e.rs` 标 `#[ignore]`（需真实 omp 二进制），日常回归靠 23 测试。 | R1 与 R3 同碰 orbit，接缝限额共享 |
 | **G3 插件回归闸** ✅ 已过（#346 + #354/#355 补验收） | R3 完成（C4 全绿） | compaction 切插件 + instruction 注入后；**验证**：① orbit **23** 测试仍绿（接缝未破坏循环）；② >120k 字符长会话压缩端到端不炸（checkpoint 快照 + 失败保原文）——**#355 `orbit/tests/compaction_e2e.rs` 4 测试**：触发 / 成对不变式 / 失败保原文 / 边界；③ AGENTS.md 注入——**#354 `orbit/tests/instruction_prompt.rs` 4 测试**：注入 / 无 AGENTS.md 保纯 TASK / digest 去重 / 静默降级；④ web 页打开一次真实 run，压缩不中断流式渲染（浏览器实测 2026-09-15，对话成功）。 | orbit 行为变更影响所有宿主 |
-| **G4 事件流汇合** 🟡 五项载体齐备，待最终确认 | R2 绿 **且** R4 的 5.1 DTO 完成 | R4 删 fixture 切实时 daemon；**验证**：① 3.4 e2e 绿（`daemon/tests/event_push.rs`，#353 修复编译后通过）；② web 聊天页流式 delta 实时追加（`client/tests/subscribe_loopback.rs` + 浏览器实测 2026-09-15）；③ 断线重连：杀 daemon 再起不白屏——**#357 `client/tests/reconnect.rs` 3 测试**（杀→断→起→恢复 / 退避输入 / 不白屏）；④ 半开 run 标 `aborted`——**#356 `state/tests/run_status.rs` 8 测试**（Idle/Active/Aborted 三态，web 侧读 `run.list` 推断，daemon 协议零改动）；⑤ web 经 `worker.prompt` 起 run 与 CLI 事件互不抢占（web 全仓零 `read_event` 调用）。 | **最大冲突点**：daemon protocol 改动权在 R2 |
-| **G5 总装/tag** | G1–G4 全过 | composition 统一装配四路线产物；**验证**：① C1–C7 全勾；② 全仓 `cargo test` 绿；③ `oi-web` 起在 8026，硬刷新后无 mock 残留（`curl localhost:8026 \| grep mock` = 0）；④ `tag omenic-harness-v0.1.0` 后 ferrite 侧 `git pull` 编译过。 | 装配根只在 G5 集中改 |
+| **G4 事件流汇合** ✅ 已过（#353-#357 + 用户实测 2026-09-15） | R2 绿 **且** R4 的 5.1 DTO 完成 | R4 删 fixture 切实时 daemon；**验证**：① 3.4 e2e 绿（`daemon/tests/event_push.rs`，#353 修复编译后通过）；② web 聊天页流式 delta 实时追加——**用户浏览器实测确认逐字流式（2026-09-15）**；③ 断线重连不白屏（`client/tests/reconnect.rs` 3 测试）；④ 半开 run 标 `aborted`（`state/tests/run_status.rs` 8 测试）；⑤ web 全仓零 `read_event` 调用。 | **最大冲突点**：daemon protocol 改动权在 R2 |
+| **G5 总装（不含 tag）** 🟡 开工中 | G1–G4 全过 | composition 真装配 + 删 mock；**验证**：① C1–C7 除 C7 tag 外全勾；② 全仓 `cargo test` 绿；③ `oi-web` 起在 8026，硬刷新后无 mock 残留（`curl localhost:8026 \| grep mock` = 0）。**tag 与 ferrite 接线暂缓**（2026-09-15 裁定）。 | 装配根只在 G5 集中改 |
 
 **顺序铁律**：G1 之前任何 `register`/`provide` 代码不得合入；G4 之前 R4 不得合入依赖 daemon 新协议（3.3）的实际请求路径——读侧（现有 `session.*`/`run.list`）与既有 `worker.prompt` 调用不算 3.3 依赖，允许先行。
 
