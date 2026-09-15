@@ -14,7 +14,7 @@ agent 验证 UI 时**不依赖截图**，用结构化断言。
 
 1. **交互元素加 `data-testid`**：所有 `button` / `input` / `tab` 用 `name` 属性作为 ID
 2. **容器/标签加 ARIA**：`role="tab"` + `aria_selected="{i == active}"` + `aria-label`
-3. **每页一个 `specs/ui/<page>.yaml`** 契约
+3. **每页一个 `.githooks/spec/<page>.yaml`** 契约
 4. **PR smoke 用 `tab.ariaSnapshot()`**：断言 role+name+testid
 5. **截图仅作辅助**：视觉风格/品牌相关才用
 
@@ -25,7 +25,7 @@ agent 验证 UI 时**不依赖截图**，用结构化断言。
 3. **测试放 `crates/tui/tests/*.rs`**：3 秒内跑完
 4. **截图（`script` 录制）仅作辅助**
 
-## Web Spec 格式（`specs/ui/<page>.yaml`）
+## Web Spec 格式（`.githooks/spec/<page>.yaml`）
 
 ```yaml
 page: "/admin/overview"
