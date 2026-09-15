@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-use crate::state::RunRecord;
+use crate::state::{RunRecord, StatsSummary};
 use session::{SessionMessage, SessionRole, SessionSummary};
 
 use crate::DaemonError;
@@ -330,6 +330,14 @@ impl DaemonClient {
     /// `run.list` → up to `limit` runs (empty list allowed).
     pub fn run_list(&self, limit: u32) -> Result<Vec<RunRecord>, ClientError> {
         self.call(Command::RunList, json!({ "limit": limit }))
+    }
+
+    /// `stats.summary` → aggregated run statistics for `range`
+    /// (`"1h"`/`"24h"`/`"7d"`/`"30d"`/`"90d"`/`"all"`).  Everything is
+    /// derived from the run ledger; see [`StatsSummary::unavailable`] for
+    /// the metrics that have no persisted source at all.
+    pub fn stats_summary(&self, range: &str) -> Result<StatsSummary, ClientError> {
+        self.call(Command::StatsSummary, json!({ "range": range }))
     }
 }
 

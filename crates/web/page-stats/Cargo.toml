@@ -6,5 +6,4 @@ publish = false
 
 [dependencies]
 dioxus = { version = "0.7" }
-omenic-web-state = { path = "../state" }
-omenic-web-mock = { path = "../mock" }
+omenic-web-client = { path = "../client" }

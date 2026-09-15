@@ -246,6 +246,25 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
             }
         }
 
+        // ---------------- Stats (G5) ----------------
+        Command::StatsSummary => {
+            // `range` is optional: absent / unknown falls back to "24h"
+            // (see `StatsRange::parse`), so a bare `{}` is a valid call.
+            let range = req
+                .params
+                .get("range")
+                .and_then(Value::as_str)
+                .unwrap_or("24h");
+            let summary = ctx.runs.stats(range, crate::state::now_ms());
+            match serde_json::to_value(&summary) {
+                Ok(v) => Response::ok(id, v),
+                Err(e) => Response::err(
+                    id,
+                    ResponseError::new("internal", format!("serialize: {e}")),
+                ),
+            }
+        }
+
         Command::SessionAppend => {
             let sid = match require_str(&req.params, "session_id") {
                 Ok(s) => s,
