@@ -19,6 +19,7 @@ fn daemon_roundtrip() {
         socket_path: Some(socket.clone()),
         omp_path: "omp".into(),
         session_db_path: Some(db_path),
+        orbit_model: None,
     })
     .expect("启动 daemon");
 
