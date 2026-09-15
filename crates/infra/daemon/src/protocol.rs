@@ -99,6 +99,13 @@ pub enum Command {
     #[serde(rename = "run.list")]
     RunList,
 
+    /// `stats.summary` — `{ range?: "1h"|"24h"|"7d"|"30d"|"90d"|"All" }` →
+    /// [`crate::state::StatsSummary`].  Aggregated purely from the run
+    /// ledger; metrics with no persisted source (tokens, cost, cache) are
+    /// reported in `unavailable` rather than estimated.
+    #[serde(rename = "stats.summary")]
+    StatsSummary,
+
     /// `worker.ping` — round-trip to the omp worker (spawns it on first use).
     #[serde(rename = "worker.ping")]
     WorkerPing,

@@ -2103,8 +2103,7 @@ name = "omenic-web-page-stats"
 version = "0.1.0"
 dependencies = [
  "dioxus",
- "omenic-web-mock",
- "omenic-web-state",
+ "omenic-web-client",
 ]
 
 [[package]]

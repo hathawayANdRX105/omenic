@@ -158,16 +158,13 @@ pub fn Workspace(
     // 连接 + ping 放线程内执行（线程 + join，仿旧 db_load_sessions 的做法）；
     // UDS 往返耗时极短，不显著拖慢首帧。ping 不通（无 daemon / 陈旧 socket
     // 文件）→ None → Mock，保持现有行为，不 panic、不阻塞渲染。
-    let config_backend = config.clone();
     let backend = use_signal(move || {
-        std::thread::spawn(move || {
-            WebDaemon::from_data_dir(&config_backend.data_dir).filter(|d| d.ping())
-        })
-        .join()
-        .ok()
-        .flatten()
-        .map(DataBackend::Daemon)
-        .unwrap_or(DataBackend::Mock)
+        std::thread::spawn(|| WebDaemon::from_env_or_default().filter(|d| d.ping()))
+            .join()
+            .ok()
+            .flatten()
+            .map(DataBackend::Daemon)
+            .unwrap_or(DataBackend::Mock)
     });
 
     let data_dir = config.data_dir.clone();
