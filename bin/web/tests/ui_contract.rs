@@ -1,9 +1,9 @@
-//! Web UI 契约测试（specs/ui/*.yaml，ROADMAP C5.10 前置）。
+//! Web UI 契约测试（.githooks/spec/ 下的 UI 契约 yaml，ROADMAP C5.10 前置）。
 //!
 //! 把已通过用户验收的 dsh 风格视觉/结构锁进契约：spec 用「DOM/源码锚点」
 //! 而非像素。两类断言：
 //!
-//! a) 契约完整性 —— specs/ui 下 7 个 yaml 必须能被 serde_yaml 解析，
+//! a) 契约完整性 —— .githooks/spec 下 7 份 UI 契约 yaml 必须能被 serde_yaml 解析，
 //!    且含 name / target / anchors（非空）；每个锚点带 find / expect /
 //!    source 字段。
 //! b) 源码锚点抽查 —— 每个锚点的 find 关键字（稳定的 class 片段或静态
@@ -11,7 +11,7 @@
 //!    file 覆盖）。刻意避开数据接线代码（并行 5.2a 分支正在改逻辑段），
 //!    只锚样式与静态结构。
 //!
-//! spec 字段约定见 specs/ui/*.yaml 头注释与 AGENTS.md「Web UI 契约验收」。
+//! spec 字段约定见 .githooks/spec/ 下 UI 契约 yaml 头注释与 AGENTS.md「Web UI 契约验收」。
 
 use serde_yaml::Value;
 use std::path::{Path, PathBuf};
@@ -35,9 +35,9 @@ fn repo_root() -> PathBuf {
         .expect("仓库根路径解析失败")
 }
 
-/// specs/ui 目录。
+/// UI 契约 yaml 所在目录（与 gate 规则平铺混放）。
 fn specs_dir() -> PathBuf {
-    repo_root().join("specs/ui")
+    repo_root().join(".githooks/spec")
 }
 
 /// 解析单个 spec；失败时 panic 并带文件路径。
@@ -87,18 +87,25 @@ fn ui_specs_are_complete_and_parseable() {
     }
 }
 
-/// specs/ui 里没有未登记的 yaml（防止加了契约却绕过抽查）。
+/// .githooks/spec 里没有未登记的 UI 契约（防止加了契约却绕过抽查）。
+/// 判据：含 anchors + target 字段的 yaml 即 UI 契约（gate 规则 yaml 均无这两个字段）。
 #[test]
 fn ui_specs_dir_has_no_unregistered_files() {
     let mut actual: Vec<String> = std::fs::read_dir(specs_dir())
-        .expect("specs/ui 目录不存在")
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|f| f.ends_with(".yaml"))
+        .expect(".githooks/spec 目录不存在")
+        .map(|entry| entry.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "yaml"))
+        .filter(|p| {
+            serde_yaml::from_str::<Value>(&std::fs::read_to_string(p).unwrap_or_default())
+                .map(|v| v.get("anchors").is_some() && v.get("target").is_some())
+                .unwrap_or(false)
+        })
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
         .collect();
     actual.sort_unstable();
     let mut expected: Vec<String> = SPEC_FILES.iter().map(|s| (*s).to_string()).collect();
     expected.sort_unstable();
-    assert_eq!(actual, expected, "specs/ui 与 SPEC_FILES 登记不一致");
+    assert_eq!(actual, expected, ".githooks/spec 与 SPEC_FILES 登记不一致");
 }
 
 /// b) 源码锚点抽查：find 关键字必须出现在对应 omenic 实现文件中。

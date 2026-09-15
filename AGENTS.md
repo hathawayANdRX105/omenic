@@ -17,7 +17,7 @@ gh pr create --title "..." --body "..." --head <branch>
 
 gate 自动做创建前校验(规则在 `.githooks/spec/`)+ 创建后现实校验，FAIL 拒绝创建。
 
-**`.githooks/` 是 gate 自己的领地，agent 禁止改动**（含 `hooks/`、`spec/`、`gate` 二进制）。gate 规则的增删改由用户或 gate 自身的 `gate init` 负责；agent 遇到 gate FAIL 应改自己的提交/PR 正文去迎合规则，而不是去改规则。也不要把项目自己的契约文件（如 `specs/ui/*.yaml`）搬进 `.githooks/spec/`——那里只放 gate checklist。
+**`.githooks/` 是 gate 自己的领地，agent 禁止改动 gate 规则**（`hooks/`、`spec/` 下的 gate 规则 yaml、`gate` 二进制）。gate 规则的增删改由用户或 gate 自身的 `gate init` 负责；agent 遇到 gate FAIL 应改自己的提交/PR 正文去迎合规则，而不是去改规则。UI 契约 yaml（7 份，含 `anchors`/`target` 字段）也平铺在 `.githooks/spec/`，但它们不是 gate 规则，由 `bin/web/tests/ui_contract.rs` 消费。
 
 ## 构建与验证（CI 驱动）
 
@@ -38,7 +38,7 @@ cpulimit -l 65 -i -- cargo build --bin oi-web
 
 ## 禁改区
 
-`.githooks/` 归 gate 自身维护，**任何开发任务都不得改动它**（包括 `.githooks/spec/` 下的规则、hook 脚本、把别处文件搬进去）。规则要改先去 demo 沙盒（见下文）验证，并由用户显式指派。UI 契约 yaml 的正确位置是 `specs/ui/`，不是 `.githooks/spec/`。
+`.githooks/` 归 gate 自身维护，**任何开发任务都不得改动 gate 规则**（包括 `.githooks/spec/` 下的 gate 规则 yaml、hook 脚本）。规则要改先去 demo 沙盒（见下文）验证，并由用户显式指派。例外：UI 契约 yaml（用户指定）与 gate 规则平铺在 `.githooks/spec/`，由 ui_contract.rs 消费，不算 gate 规则。
 
 ## Demo 验证沙盒
 
@@ -88,11 +88,11 @@ curl -s localhost:8026/ | grep -c -- --color-accent        # 页面里应 > 0
 
 **CI / 协作**：`node_modules` 未进 git，CI 与任何新克隆/新 worktree 都要先 `npm install` 再 build，否则 UI 无样式。若要让 build 可复现，考虑把 `node_modules` 入库或让 build.rs 失败时报错而非静默写空文件。
 
-## Web UI 契约验收（specs/ui）
+## Web UI 契约验收（.githooks/spec 下 7 份 UI 契约）
 
-web UI（dsh 设计语言复刻，C5.1 已验收）的视觉/结构锁在 `specs/ui/*.yaml` 契约里，防止后续接线（5.2a/5.2b）破坏。改动 web 组件样式或布局时：先跑契约测试，再按下表浏览器抽查。
+web UI（dsh 设计语言复刻，C5.1 已验收）的视觉/结构锁在 `.githooks/spec/` 下的 7 份 UI 契约 yaml（workspace / chat / sidebar / stats / settings / quick-switcher / taskpanel），防止后续接线（5.2a/5.2b）破坏。改动 web 组件样式或布局时：先跑契约测试，再按下表浏览器抽查。
 
-**契约测试**：`bin/web/tests/ui_contract.rs`，**由 CI 跑，本地不跑**（见上文「构建与验证」）。本地只做静态核对：改了组件 class 就同步改 `specs/ui/*.yaml` 的 `find` 锚点，用 grep 确认锚点字符串在实现文件里真实存在。
+**契约测试**：`bin/web/tests/ui_contract.rs`，**由 CI 跑，本地不跑**（见上文「构建与验证」）。本地只做静态核对：改了组件 class 就同步改 `.githooks/spec/` 下对应 UI 契约 yaml 的 `find` 锚点，用 grep 确认锚点字符串在实现文件里真实存在。
 
 **yaml 字段约定**：`name`（契约名）/ `target`（omenic 实现文件，相对仓库根）/ `description` / `anchors`（锚点列表，每项 `key` + `find`（源码中稳定 class 片段或静态字面量）+ `expect`（预期形态）+ `source`（omenic 实现位置 + dsh 出处）+ 可选 `file`（锚点级实现文件覆盖，默认用 target））/ `notes`。测试两类断言：① 每个 yaml 可被 serde_yaml 解析且字段齐全；② 每个 `find` 关键字在对应实现文件中出现。新增 spec 必须同步登记 `tests/ui_contract.rs` 的 `SPEC_FILES`。
 
