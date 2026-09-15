@@ -2150,6 +2150,7 @@ dependencies = [
  "adaptor",
  "fs2",
  "omenic-harness-compaction",
+ "omenic-harness-instruction",
  "omenic-harness-plugin",
  "prompts",
  "serde",

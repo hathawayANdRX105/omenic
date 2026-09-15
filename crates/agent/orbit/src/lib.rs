@@ -145,6 +145,18 @@ pub struct LoopConfig<'a> {
     /// round) instead of ending it. `TurnEnd` fires only when both the
     /// model stopped and the queue is empty.
     pub get_follow_up: Option<&'a dyn Fn() -> Vec<Message>>,
+    /// Working directory whose ancestor chain is searched for `AGENTS.md`
+    /// workspace instructions when the caller left `Context.system_prompt`
+    /// unset (harness `instruction` crate, called directly here — plugin /
+    /// service registration is G5). Rendered fragments are prefixed before
+    /// the main-agent profile via [`build_system_prompt`]; an explicit
+    /// caller prompt is never overwritten.
+    ///
+    /// `None` (default) skips the lookup entirely: the loop reads no ambient
+    /// process state, so hosts opt in by handing over the session's cwd —
+    /// the same "every policy knob arrives through this struct" contract as
+    /// the other knobs.
+    pub instruction_cwd: Option<&'a Path>,
 }
 
 /// Conservative turn ceiling for callers that don't set one. A real
@@ -160,6 +172,7 @@ impl Default for LoopConfig<'_> {
             maintain: None,
             get_steering: None,
             get_follow_up: None,
+            instruction_cwd: None,
         }
     }
 }
@@ -328,6 +341,52 @@ pub fn compact_context(
     }
 }
 
+// ===== workspace instructions (WP-A) =====
+// Direct call into the harness `instruction` crate: discover `AGENTS.md` up
+// the ancestor chain, render digest-deduped fragments, prefix them before
+// the role profile. Plugin / service registration of the same crate is G5;
+// this path needs no container and stays inside the loop's "host passes
+// every knob in, loop pulls no ambient state" contract.
+
+use omenic_harness_instruction::{InstructionCache, render_fragments};
+
+/// Compose the default system prompt: [`prompts::agents::TASK`] prefixed with
+/// the `AGENTS.md` workspace instructions discovered up the directory chain
+/// from `cwd`.
+///
+/// Mirrors dsh's baseline rendering (`agent-instructions/render.ts`: one
+/// `Instructions from: <path>` section per file, broadest first, joined into a
+/// single block, same-content files collapsed by digest) minus dsh's byte
+/// budget and `<system-reminder>` framing — omenic composes fragments at the
+/// role layer (`infra/prompts` doc note) and the whole block ships as plain
+/// system-prompt text here.
+///
+/// Degradation is total and silent: `cwd: None` (host didn't opt in), a chain
+/// without instruction files, or any unreadable/missing file falls back to the
+/// bare TASK profile. The instruction crate's lookup→load→render path is
+/// infallible by construction (missing metadata and read errors are `None`,
+/// never `Err`), so a run can never fail because a workspace has no
+/// `AGENTS.md`.
+pub fn build_system_prompt(cwd: Option<&Path>) -> String {
+    // No host-supplied cwd → no discovery at all: pure role profile.
+    let Some(cwd) = cwd else {
+        return prompts::agents::TASK.to_string();
+    };
+    // Fresh cache per call: a prompt build is one-shot, and mtime gating only
+    // pays for a host refreshing fragments mid-session (the plugin path, G5).
+    let fragments = render_fragments(&InstructionCache::default().load(cwd));
+    if fragments.is_empty() {
+        return prompts::agents::TASK.to_string();
+    }
+    let mut prompt = String::new();
+    for fragment in &fragments {
+        prompt.push_str(&fragment.body);
+        prompt.push_str("\n\n");
+    }
+    prompt.push_str(prompts::agents::TASK);
+    prompt
+}
+
 // ===== agent loop =====
 
 fn turn_stop(reason: StopReason) -> TurnStop {
@@ -375,8 +434,11 @@ pub fn run_agent_streaming(
     // — frontmatter included — is the prompt; we do not concatenate a
     // tool table here (omp does not). Filling once at entry keeps the
     // caller-provided prompt contract: explicit wins, default fills.
+    // When the host hands over an instruction cwd, any `AGENTS.md` found
+    // up its ancestor chain is rendered (deduped) and prefixed before the
+    // profile — see [`build_system_prompt`].
     if context.system_prompt.is_none() {
-        context.system_prompt = Some(prompts::agents::TASK.to_string());
+        context.system_prompt = Some(build_system_prompt(config.instruction_cwd));
     }
 
     let mut turns_used = 0usize;
