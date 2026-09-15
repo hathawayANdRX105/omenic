@@ -1,8 +1,9 @@
 //! UI 状态 DTO 词汇表（omenic-web-state::types）。
 //!
-//! 页面/组件消费的会话、消息、任务、统计等形状。后续由
+//! 页面/组件消费的会话、消息、任务、统计等形状，由
 //! `ui_state::apply_event` 从 `AgentEvent` 流转译填充（C5.1/G4），
-//! 真实数据接线前由 `omenic-web-mock` 提供假数据。
+//! 或由 `convert` 从 daemon 存储行映射（C5.2a）。工作区页已无 mock
+//! 数据源（G5）：连不上 daemon 时一律空态（见 `StatusLine::empty`）。
 
 use serde::{Deserialize, Serialize};
 
@@ -77,6 +78,10 @@ pub struct WorkspaceSpace {
 
 // ── Status line ─────────────────────────────────────────────────────────────
 
+/// 模型上下文上限的中性默认值（原 mock fixture 也是 128k，保持一致）。
+/// 真实 per-model 上限还没有数据源（adaptor 侧未暴露），暂用该常量。
+pub const DEFAULT_CONTEXT_MAX: u64 = 128_000;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StatusLine {
     pub model: String,
@@ -88,6 +93,74 @@ pub struct StatusLine {
     pub cost_usd: f64,
     pub context_pct: f64,
     pub context_max: u64,
+    /// 当前 run 的开始时刻（epoch ms）。`None` = 无在飞 run。
+    /// run 开始时由页面 [`StatusLine::start_run`] 落定，结束时清空。
+    #[serde(default)]
+    pub run_started_at_ms: Option<u64>,
+    /// 最近一次已结束 run 的总耗时（ms）。0 = 还没跑过 run。
+    /// dsh 对位实现：`assistant-timing.ts` 的 turn 计时。
+    #[serde(default)]
+    pub elapsed_ms: u64,
+}
+
+impl Default for StatusLine {
+    /// 空态初值：无 mock、无编造。model/cwd 等由调用方用真实值覆盖；
+    /// token/cost/计时一律归零（真实值由 TurnEnd 结算写入）。
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl StatusLine {
+    /// 中性零值状态行：所有可计量字段归零，字符串字段留空（没有真实来源
+    /// 的字段不编造内容）。`context_max` 取 [`DEFAULT_CONTEXT_MAX`]，
+    /// 避免 `context_pct` 计算除零。
+    pub fn empty() -> Self {
+        StatusLine {
+            model: String::new(),
+            thinking: "off".into(),
+            cwd: String::new(),
+            git_branch: String::new(),
+            tokens_in: 0,
+            tokens_out: 0,
+            cost_usd: 0.0,
+            context_pct: 0.0,
+            context_max: DEFAULT_CONTEXT_MAX,
+            run_started_at_ms: None,
+            elapsed_ms: 0,
+        }
+    }
+
+    /// run 开始：记开始时刻并清掉上一轮的总耗时。
+    pub fn start_run(&mut self, now_ms: u64) {
+        self.run_started_at_ms = Some(now_ms);
+        self.elapsed_ms = 0;
+    }
+
+    /// run 结束：把开始时刻结算成总耗时。无在飞 run（重复结算 / 中断后
+    /// 又收到 TurnEnd）时保持上一次结算结果不变，避免把已算好的耗时清零。
+    pub fn finish_run(&mut self, now_ms: u64) {
+        if let Some(start) = self.run_started_at_ms.take() {
+            self.elapsed_ms = now_ms.saturating_sub(start);
+        }
+    }
+
+    /// 状态行的耗时文案。在飞 run 用「当前时刻 - 开始时刻」实时算（随流式
+    /// 事件重渲染自然刷新，不额外挂每秒定时器）；已结束 run 用结算好的
+    /// 总耗时。都没有则返回空串（状态行不显示耗时段）。
+    pub fn elapsed_label_at(&self, now_ms: u64) -> String {
+        let ms = match self.run_started_at_ms {
+            Some(start) => now_ms.saturating_sub(start),
+            None if self.elapsed_ms > 0 => self.elapsed_ms,
+            None => return String::new(),
+        };
+        format_duration_ms(ms)
+    }
+
+    /// [`Self::elapsed_label_at`] 取系统当前时刻的便捷版本（渲染侧用）。
+    pub fn elapsed_label(&self) -> String {
+        self.elapsed_label_at(now_epoch_ms())
+    }
 }
 
 // ── Tasks (mirrors crates/task) ─────────────────────────────────────────────
@@ -101,6 +174,68 @@ pub struct TaskItem {
     pub priority: u8,
     pub description: String,
     pub acceptance: String,
+}
+
+/// 任务卡的中性优先级：run 记录没有优先级概念，统一 P2（渲染成弱化
+/// chip）。真正的任务优先级属于 C8 任务子系统范围，此处不编造。
+pub const RUN_TASK_PRIORITY: u8 = 2;
+
+impl TaskItem {
+    /// daemon run ledger 的一条 run 记录 → 任务卡（G5：TaskPanel 的真实
+    /// 数据源）。「任务系统」视图本身属于 C8（暂缓），这里只把已有的真实
+    /// run 记录投影成任务卡形状，不新造任务子系统。
+    ///
+    /// 字段来源：
+    /// - `id` = `run_id`（真实）；
+    /// - `title` = run 起始时刻的相对时间（真实，`started_at_ms`）；
+    /// - `status` = 由 `finished_at_ms` / `status` 映射（真实，见
+    ///   [`run_task_status`]）；
+    /// - `kind` 固定 `"run"`（真实：这条记录就是一次 agent run）；
+    /// - `priority` = [`RUN_TASK_PRIORITY`]（无真实来源，中性值）；
+    /// - `description` = 耗时 / 进行中 + 结束状态（真实）；
+    /// - `acceptance` 留空——run 记录没有验收标准这一概念，不编造。
+    pub fn from_run(
+        run_id: &str,
+        started_at_ms: i64,
+        finished_at_ms: Option<i64>,
+        status: Option<&str>,
+    ) -> TaskItem {
+        let started = started_at_ms.max(0) as u64;
+        let description = match finished_at_ms {
+            Some(fin) => {
+                let dur = format_duration_ms((fin.max(0) as u64).saturating_sub(started));
+                match status {
+                    Some(s) if !s.is_empty() => format!("耗时 {dur} · {s}"),
+                    _ => format!("耗时 {dur}"),
+                }
+            }
+            None => "进行中".to_string(),
+        };
+        TaskItem {
+            id: run_id.to_string(),
+            title: format!("运行 · {}", format_relative_time(started)),
+            status: run_task_status(finished_at_ms, status).to_string(),
+            kind: "run".into(),
+            priority: RUN_TASK_PRIORITY,
+            description,
+            acceptance: String::new(),
+        }
+    }
+}
+
+/// run 记录 → 任务卡状态串（TaskPanel 的过滤/chip 词汇表）。
+///
+/// daemon 侧只写三种终态（`dispatch.rs`：`"ok"` / `"failed"` /
+/// `"spawn_failed"`），未结束的 run 没有 `finished_at_ms`：
+/// - 未结束 → `"in_progress"`；
+/// - `"ok"` → `"done"`；
+/// - 其余终态（失败 / 拉起失败 / 未知串）→ `"blocked"`（danger chip）。
+pub fn run_task_status(finished_at_ms: Option<i64>, status: Option<&str>) -> &'static str {
+    match (finished_at_ms, status) {
+        (None, _) => "in_progress",
+        (Some(_), Some("ok")) => "done",
+        (Some(_), _) => "blocked",
+    }
 }
 
 // ── Stats ───────────────────────────────────────────────────────────────────
@@ -154,15 +289,37 @@ pub struct StatsData {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+/// 当前 Unix 时刻（epoch ms）。计时/相对时间共用一处取时。
+pub fn now_epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+/// 时长（ms）→ 紧凑文案："820ms" / "4.2s" / "1m12s" / "1h03m"。
+/// 状态行与任务卡描述共用，保证同一份耗时在两处显示一致。
+pub fn format_duration_ms(ms: u64) -> String {
+    if ms < 1_000 {
+        return format!("{ms}ms");
+    }
+    let secs = ms / 1_000;
+    if secs < 60 {
+        return format!("{:.1}s", ms as f64 / 1_000.0);
+    }
+    let mins = secs / 60;
+    if mins < 60 {
+        return format!("{}m{:02}s", mins, secs % 60);
+    }
+    format!("{}h{:02}m", mins / 60, mins % 60)
+}
+
 /// 把毫秒时间戳转成相对时间："刚刚"/"X 分钟前"/"X 小时前"/"昨天 HH:MM"
 pub fn format_relative_time(epoch_ms: u64) -> String {
     if epoch_ms == 0 {
         return "刚刚".into();
     }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
+    let now = now_epoch_ms();
     let age_ms = now.saturating_sub(epoch_ms);
     let secs = age_ms / 1000;
     if secs < 60 {

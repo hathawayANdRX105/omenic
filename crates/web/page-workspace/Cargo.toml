@@ -8,7 +8,6 @@ publish = false
 omenic-web-client = { path = "../client" }
 omenic-web-components = { path = "../components" }
 omenic-web-state = { path = "../state" }
-omenic-web-mock = { path = "../mock" }
 omenic-web-page-stats = { path = "../page-stats" }
 omenic-web-page-config = { path = "../page-config" }
 dioxus = { version = "0.7" }
