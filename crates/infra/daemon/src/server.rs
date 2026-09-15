@@ -91,6 +91,12 @@ pub struct Daemon {
     pub(crate) accept_thread: Option<thread::JoinHandle<()>>,
     /// Push-event fan-out table shared by all connections (R2 3.3).
     pub(crate) events: EventBus,
+    /// Harness plugin container built by the composition root (C6.5). The
+    /// daemon holds it for the process lifetime: dropping the fiber unloads
+    /// plugins in reverse registration order, so it must outlive the accept
+    /// loop that serves requests against those services.
+    pub(crate) _fiber: omenic_composition::Fiber,
+    pub(crate) plugins: omenic_composition::PluginRegistry,
 }
 
 impl Daemon {
@@ -111,6 +117,13 @@ impl Daemon {
             .as_ref()
             .ok_or_else(|| DaemonError::Protocol("session_db_path is required".into()))?
             .clone();
+
+        // C6.5: build the harness plugin container first. Assembly only reads
+        // (InstructionPlugin walks up from cwd for AGENTS.md) and touches
+        // nothing outside the fiber, so a duplicate plugin name fails before
+        // we take the instance lock or bind the socket — no half-started
+        // daemon and no stale lock/socket files to clean up.
+        let (fiber, plugins) = Self::assemble_plugins(&cfg)?;
 
         let lock = InstanceLock::acquire(&socket_path)?;
         let listener = Listener::bind(&socket_path)?;
@@ -147,7 +160,35 @@ impl Daemon {
             started_at_ms,
             accept_thread: Some(accept_thread),
             events,
+            _fiber: fiber,
+            plugins,
         })
+    }
+
+    /// Assemble the harness plugin container for this daemon.
+    ///
+    /// The config document is what the composition root reads its knobs from
+    /// (`model`, `max_turns`, `cwd`, `system_prompt`). Only `model` has a
+    /// daemon-side source today — the orbit model when configured; the rest
+    /// stay absent so `assemble` applies its own defaults rather than having
+    /// the daemon invent values.
+    fn assemble_plugins(
+        cfg: &DaemonConfig,
+    ) -> Result<
+        (
+            omenic_composition::Fiber,
+            omenic_composition::PluginRegistry,
+        ),
+        DaemonError,
+    > {
+        let mut doc = serde_json::Map::new();
+        if let Some(model) = cfg.orbit_model.as_ref() {
+            doc.insert("model".into(), serde_json::Value::from(model.model.clone()));
+        }
+        Ok(omenic_composition::assemble(
+            serde_json::Value::Object(doc),
+            Vec::new(),
+        )?)
     }
 
     /// Trigger a graceful shutdown.  Sets the shutdown flag and waits for
@@ -190,6 +231,13 @@ impl Daemon {
     /// subscription state.
     pub fn events(&self) -> &EventBus {
         &self.events
+    }
+
+    /// Names of the harness plugins assembled into this daemon, in
+    /// registration order (C6.5).  Lets a test assert the container is real
+    /// rather than inferring it from behaviour.
+    pub fn plugin_names(&self) -> Vec<&str> {
+        self.plugins.plugins()
     }
 }
 
