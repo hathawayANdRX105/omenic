@@ -1,8 +1,9 @@
 //! 工作区页：dsh AppFrame 三列布局（侧栏 280 / 中栏）。
 //!
-//! 数据源双后端：启动时探测本机 daemon（C5.2a 读侧真数据），连接失败
-//! 静默回退 `omenic-web-mock`（假数据 + AgentEvent 模拟流）。assistant
-//! 流仍走 `mock::stream_reply`，G4 时换 daemon `event.subscribe` 接收端。
+//! 唯一数据源是本机 daemon（G5 删 mock）：启动时探测 + ping，连不上就是
+//! 空态——空项目列表、空会话列表、空状态行、空任务看板，既不回退假数据
+//! 也不 panic。assistant 流走 daemon `event.subscribe`（`worker_event_loop`
+//! 读线程 → channel → 消费 task）。
 
 use std::collections::{HashMap, HashSet};
 
@@ -13,12 +14,11 @@ use omenic_web_components::chat::Chat;
 use omenic_web_components::sidebar::Sidebar;
 use omenic_web_components::taskpanel::TaskPanel;
 use omenic_web_components::ui::Modal;
-use omenic_web_mock::store;
 use omenic_web_page_config::SettingsModal;
 use omenic_web_page_stats::StatsView;
 use omenic_web_state::convert::{WireTranslator, infer_session_status};
 use omenic_web_state::types::{
-    ChatMessage, Session, SessionStatus, WorkspaceSpace, format_relative_time,
+    ChatMessage, Session, SessionStatus, StatusLine, TaskItem, WorkspaceSpace,
 };
 use omenic_web_state::ui_state::{AgentEvent, UiState};
 
@@ -28,6 +28,10 @@ enum View {
     Stats,
 }
 
+/// 任务看板拉取的 run 记录条数上限（与会话状态推断的 100 同量级；
+/// run ledger 是追加日志，取最近若干条足够铺满看板）。
+const RUN_TASK_LIMIT: u32 = 50;
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -35,12 +39,14 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-/// 数据后端：Daemon = 本机 omenic daemon（读侧真数据）；Mock = fixture 假数据。
-/// 初始化连接失败（无 daemon / ping 不通）静默回退 Mock，行为与现状一致。
+/// 数据后端：唯一真实来源是本机 omenic daemon。初始化连接失败
+/// （无 daemon / ping 不通）→ [`DataBackend::Disconnected`]，全部数据源
+/// 返回空集合（空态），不回退假数据、不 panic。
 #[derive(Debug, Clone)]
 enum DataBackend {
     Daemon(WebDaemon),
-    Mock,
+    /// daemon 不可达：项目/会话/消息/任务一律空态。
+    Disconnected,
 }
 
 /// Daemon 模式下的唯一真实项目行：名字取 data_dir 的文件名。
@@ -138,7 +144,7 @@ fn worker_event_loop(d: WebDaemon, tx: tokio::sync::mpsc::UnboundedSender<AgentE
                     }
                 }
             }
-            Err(e) => {}
+            Err(_) => {}
         }
         if tx.is_closed() {
             return;
@@ -154,24 +160,30 @@ pub fn Workspace(
     config: LlmRuntimeConfig,
     on_update_config: EventHandler<LlmRuntimeConfig>,
 ) -> Element {
-    // ── 数据后端：先探测 daemon，失败静默回退 Mock ────────────────────────
+    // ── 数据后端：探测 daemon，连不上就是空态 ─────────────────────────────
     // 连接 + ping 放线程内执行（线程 + join，仿旧 db_load_sessions 的做法）；
     // UDS 往返耗时极短，不显著拖慢首帧。ping 不通（无 daemon / 陈旧 socket
-    // 文件）→ None → Mock，保持现有行为，不 panic、不阻塞渲染。
+    // 文件）→ None → Disconnected（全空态），不 panic、不阻塞渲染。
     let backend = use_signal(move || {
-        std::thread::spawn(|| WebDaemon::from_env_or_default().filter(|d| d.ping()))
-            .join()
-            .ok()
-            .flatten()
-            .map(DataBackend::Daemon)
-            .unwrap_or(DataBackend::Mock)
+        // 探测线程的 panic 不静默吞：`.ok()` 会把 JoinError 抹成 Disconnected，
+        // 于是 socket 解析或 ping 里的真 panic 只表现为空态，无从排查。
+        // 失败仍是 Disconnected（空态），但先留下痕迹。
+        match std::thread::spawn(|| WebDaemon::from_env_or_default().filter(|d| d.ping())).join() {
+            Ok(Some(d)) => DataBackend::Daemon(d),
+            Ok(None) => DataBackend::Disconnected,
+            Err(e) => {
+                eprintln!("[web] workspace daemon probe thread panicked: {e:?}");
+                DataBackend::Disconnected
+            }
+        }
     });
 
     let data_dir = config.data_dir.clone();
     let mut spaces = use_signal(move || match backend() {
         // Daemon 模式：项目行 = 单行真实项目（名字取 data_dir 文件名）
         DataBackend::Daemon(_) => vec![daemon_space(&data_dir)],
-        DataBackend::Mock => store::spaces(),
+        // 无 daemon：无项目行（空态）
+        DataBackend::Disconnected => Vec::new(),
     });
     let mut active_space_path = use_signal(|| {
         spaces
@@ -192,13 +204,8 @@ pub fn Workspace(
                     .unwrap_or_default();
                 HashMap::from([(path, list)])
             }
-            DataBackend::Mock => {
-                let mut map = HashMap::new();
-                for space in store::spaces() {
-                    map.insert(space.path.clone(), store::sessions_for_space(&space.path));
-                }
-                map
-            }
+            // 无 daemon：没有任何会话（空态），不造假数据
+            DataBackend::Disconnected => HashMap::new(),
         }
     });
     let mut active_session_id = use_signal(|| {
@@ -209,19 +216,17 @@ pub fn Workspace(
             .unwrap_or_default()
     });
     let mut session_messages: Signal<HashMap<String, Vec<ChatMessage>>> = use_signal(HashMap::new);
-    // 选中会话 → 填充消息：Mock 读 fixture，Daemon 线程内 load_messages(100)
-    //（线程 + join，仿旧 db_load_sessions 模式）；已缓存的会话不重复拉取
+    // 选中会话 → 填充消息：Daemon 线程内 load_messages(100)（线程 + join，
+    // 仿旧 db_load_sessions 模式）；已缓存的会话不重复拉取。无 daemon 时
+    // 不可能有选中会话（会话列表本身是空的），空态直接返回
     use_effect(move || {
         let sid = active_session_id();
         if sid.is_empty() || session_messages.read().contains_key(&sid) {
             return;
         }
         match backend() {
-            DataBackend::Mock => {
-                session_messages
-                    .write()
-                    .insert(sid.clone(), store::messages_for_session(&sid));
-            }
+            // 无 daemon：没有消息来源，空态（不写 entry，留给发送路径按需建）
+            DataBackend::Disconnected => {}
             DataBackend::Daemon(d) => {
                 let sid_loaded = sid.clone();
                 let msgs = std::thread::spawn(move || {
@@ -235,12 +240,18 @@ pub fn Workspace(
     });
 
     // ⌘K 快速切换的 Daemon 搜索结果信号（Daemon 模式由下方 effect 维护；
-    // Mock 模式渲染时内存过滤，不消费该信号）
+    // 无 daemon 时恒空）
     let mut switcher_sessions: Signal<Vec<Session>> = use_signal(Vec::new);
 
+    // 状态行：零值起步（G5 去 mock），只有真实来源的字段才填——model 来自
+    // 运行配置，cwd 取 web 进程工作目录；git_branch 暂无数据源留空。
+    // token/cost/耗时由 TurnEnd 结算与 start_run/finish_run 写入。
     let mut statusline = use_signal(|| {
-        let mut st = store::statusline();
+        let mut st = StatusLine::empty();
         st.model = config.model.clone();
+        st.cwd = std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
         st
     });
     let mut view = use_signal(|| View::Chat);
@@ -284,7 +295,7 @@ pub fn Workspace(
     // WP-C：会话列表状态推断缓存——daemon 的 SessionSummary 无状态字段，
     // 列表侧的 Idle/Active/Aborted 改由 run.list 的 run 记录组装。为避免
     // 每次渲染都重复请求，run 记录只在会话列表数据变化（加载/新建/删除）
-    // 时重查一次；Mock 模式不接 run.list，缓存恒空，渲染侧归一为原状态。
+    // 时重查一次；无 daemon 时不接 run.list，缓存恒空，渲染侧归一为原状态。
     let mut run_status_cache: Signal<HashMap<String, SessionStatus>> = use_signal(HashMap::new);
     use_effect(move || {
         let DataBackend::Daemon(d) = backend() else {
@@ -360,6 +371,10 @@ pub fn Workspace(
                         st.context_pct =
                             ((st.tokens_in + st.tokens_out) as f64 / st.context_max as f64 * 100.0)
                                 .min(100.0);
+                        // WP-C（ROADMAP 5.6）：turn 计时结算——on_send 起的
+                        // 计时在这里落成总耗时，状态行改显示已结束耗时。
+                        // 无在飞 run 时 finish_run 是 no-op，不会清掉上一轮。
+                        st.finish_run(now_ms());
                         statusline.set(st);
                         total_out = 0;
 
@@ -401,7 +416,7 @@ pub fn Workspace(
         });
     });
 
-    // WP-C：会话列表状态推断。只在 Daemon 模式跑（Mock 不接 run.list）；
+    // WP-C：会话列表状态推断。只在 Daemon 模式跑（无 daemon 无 run 记录）；
     // 列表数据变化才重查——缓存已覆盖当前全部会话 id 即跳过，避免每次
     // 渲染都重复请求。查询放 spawn 里不阻塞首帧；≤50 会话 × 一次 UDS
     // 往返，耗时可忽略。
@@ -432,6 +447,58 @@ pub fn Workspace(
                 map.insert(sid.clone(), infer_session_status(&runs, live_opt));
             }
             run_status_cache.set(map);
+        });
+    });
+
+    // WP-C：任务看板数据源 = 当前会话的真实 run 记录（方案 a）。
+    // 「任务系统」视图本身属于 C8（酒馆触发，已暂缓），这里不新造任务
+    // 子系统，只把 daemon run ledger 已有的记录投影成任务卡
+    // （`TaskItem::from_run`）。刷新时机：面板打开、切会话、run 起止
+    // （live_run_id 变化）——都不在渲染路径同步阻塞，RPC 放 spawn 里。
+    // 无 daemon（Disconnected）→ 看板恒空。
+    let mut run_tasks: Signal<Vec<TaskItem>> = use_signal(Vec::new);
+    use_effect(move || {
+        // 依赖登记：面板关闭时不查（省一次 UDS 往返），run 起止触发重查
+        let open = show_tasks();
+        let sid = active_session_id();
+        let live = live_run_id();
+        let DataBackend::Daemon(d) = backend() else {
+            run_tasks.set(Vec::new());
+            return;
+        };
+        if !open || sid.is_empty() {
+            return;
+        }
+        spawn(async move {
+            // RPC 失败不静默吞：TaskPanel 是用户主动展开的面板，一次瞬时
+            // daemon 错误若被 unwrap_or_default() 抹掉，用户只会看到空列表
+            // 且无从排查。降级仍是空列表（不 panic、不阻塞渲染），但留下日志。
+            let runs = match d.runs_for_session(&sid, RUN_TASK_LIMIT) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[web] runs_for_session({sid}) failed: {e}");
+                    Vec::new()
+                }
+            };
+            // 落后于用户操作的结果丢弃：查询期间切了会话、或起了/结束了 run，
+            // 先返回的那次 RPC 会拿旧会话的记录覆盖当前看板。effect 每次依赖
+            // 变化都重发一次新查询，丢掉陈旧结果只损失一次已无用的往返。
+            // 不校验 open：面板关闭时 run_tasks 本就不渲染，写进去也无害。
+            if active_session_id() != sid || live_run_id() != live {
+                return;
+            }
+            run_tasks.set(
+                runs.iter()
+                    .map(|r| {
+                        TaskItem::from_run(
+                            &r.run_id,
+                            r.started_at_ms,
+                            r.finished_at_ms,
+                            r.status.as_deref(),
+                        )
+                    })
+                    .collect(),
+            );
         });
     });
 
@@ -509,22 +576,15 @@ pub fn Workspace(
         .cloned()
         .unwrap_or_default();
 
-    // ⌘K 候选列表：Mock 沿用内存过滤（行为不变）；Daemon 消费
-    // search_sessions 的结果（空 query 时 effect 已列 daemon 全量）
+    // ⌘K 候选列表：Daemon 消费 search_sessions 的结果（空 query 时 effect
+    // 已列 daemon 全量）；无 daemon 时没有可检索的会话来源 → 空候选。
     let mut quick_switcher_list = match backend() {
-        DataBackend::Mock => all_sessions_sorted(&spaces(), space_sessions.read().clone())
-            .into_iter()
-            .filter(|s| {
-                let q = search_query().to_lowercase();
-                q.is_empty()
-                    || s.title.to_lowercase().contains(&q)
-                    || s.id.to_lowercase().contains(&q)
-            })
-            .collect(),
         DataBackend::Daemon(_) => switcher_sessions(),
+        DataBackend::Disconnected => Vec::new(),
     };
     // WP-C：列表状态喂入——在飞（Active）优先，其次 run 记录推断出的
-    // 缓存状态（Aborted/Idle），最后会话自身状态。Mock 无缓存，归一不变。
+    // 缓存状态（Aborted/Idle），最后会话自身状态。无 daemon 时缓存恒空，
+    // 归一不变。
     apply_run_statuses(&mut quick_switcher_list, &run_status_cache());
 
     // 各 move 闭包各自的 config 克隆（LlmRuntimeConfig 非 Copy）
@@ -608,6 +668,7 @@ pub fn Workspace(
         let backend_abort = backend;
         let mut space_sessions_abort = space_sessions;
         let mut live_run_id_abort = live_run_id;
+        let mut statusline_abort = statusline;
         let sid_abort = active_session_id;
         move |()| {
             if let DataBackend::Daemon(d) = backend_abort() {
@@ -619,6 +680,11 @@ pub fn Workspace(
             // 在飞 run id 也清空：中断后列表状态以 run ledger 的持久记录
             // 为准（WP-C）
             live_run_id_abort.set(String::new());
+            // 计时结算（5.6）：中断后不会再有 TurnEnd，此处不结算耗时会一直
+            // 按「在飞」实时增长。中断点即该 run 的终点。
+            let mut st = statusline_abort();
+            st.finish_run(now_ms());
+            statusline_abort.set(st);
             let sid = sid_abort();
             let mut map = space_sessions_abort.read().clone();
             for list in map.values_mut() {
@@ -679,6 +745,12 @@ pub fn Workspace(
             run_target_sid.set(sid.clone());
             let run_id = format!("r-{}", now_ms());
             live_run_id.set(run_id.clone());
+            // 5.6 计时起点：run 开始时落定 started_at，状态行的耗时段在飞
+            // 期间随流式事件重渲染实时算，TurnEnd 时结算成总耗时。
+            // 对位 dsh packages/client/runtime/.../assistant-timing.ts。
+            let mut st_start = statusline();
+            st_start.start_run(now_ms());
+            statusline.set(st_start);
             eprintln!("[web] send sid={} len={}", sid, text.len());
             let (fail_tx, fail_rx) = tokio::sync::oneshot::channel::<()>();
             let run_id_prompt = run_id.clone();
@@ -700,14 +772,21 @@ pub fn Workspace(
             let sid_fail = sid.clone();
             spawn(async move {
                 if fail_rx.await.is_ok() {
-                    let mut map = space_sessions.write();
-                    for list in map.values_mut() {
-                        for s in list.iter_mut() {
-                            if s.id == sid_fail {
-                                s.status = SessionStatus::Idle;
+                    {
+                        let mut map = space_sessions.write();
+                        for list in map.values_mut() {
+                            for s in list.iter_mut() {
+                                if s.id == sid_fail {
+                                    s.status = SessionStatus::Idle;
+                                }
                             }
                         }
                     }
+                    // 计时结算（5.6）：prompt 直接失败时事件路径不会有
+                    // TurnEnd，不结算耗时会一直按「在飞」实时增长
+                    let mut st = statusline();
+                    st.finish_run(now_ms());
+                    statusline.set(st);
                 }
             });
         }
@@ -742,75 +821,21 @@ pub fn Workspace(
         space_sessions.set(map);
 
         match backend() {
-            DataBackend::Mock => {
-                // 模拟流：节奏与真实事件流一致，驱动同一转译层
-                let mut rx = omenic_web_mock::stream::stream_reply(text);
-                spawn(async move {
-                    let mut total_out: u64 = 0;
-                    // 读取与写回在同一把写锁内完成，避免跨锁的读后写窗口
-                    while let Some(ev) = rx.recv().await {
-                        if matches!(ev, AgentEvent::TurnEnd { .. }) {
-                            break;
+            DataBackend::Disconnected => {
+                // 无 daemon = 无 agent 可跑：用户消息已上屏（本地即时反馈），
+                // 但不产生任何 assistant 回复——旧的 mock 模拟流已删除，这里
+                // 绝不编造回复。只把会话从上文刚置的 Active 复位回 Idle，
+                // 否则 composer 会永久卡在「运行中」（停止钮亮、输入被门禁）。
+                // 无 run 发起，statusline 计时也不启动（保持上一轮结算值）。
+                let mut map = space_sessions.read().clone();
+                for list in map.values_mut() {
+                    for s in list.iter_mut() {
+                        if s.id == sid {
+                            s.status = SessionStatus::Idle;
                         }
-                        if matches!(ev, AgentEvent::AssistantText { .. }) {
-                            total_out += 1;
-                        }
-                        // 流式期间会话可能已被删除：事件照常消费，但消息
-                        // 不写回，避免把已删会话的孤儿 entry 重新写进
-                        // session_messages
-                        if !session_exists_in(space_sessions, &sid) {
-                            continue;
-                        }
-                        let mut map = session_messages.write();
-                        let mut ui = UiState {
-                            messages: map.get(&sid).cloned().unwrap_or_default(),
-                        };
-                        ui.apply(&ev);
-                        map.insert(sid.clone(), ui.messages);
                     }
-
-                    // TurnEnd：占位文案 + 状态收尾。会话已删除则跳过消息
-                    // 写回与会话状态更新（写回去等于复活已删会话），但
-                    // statusline 结算与会话回 Idle 必须照常执行。
-                    let deleted = !session_exists_in(space_sessions, &sid);
-                    if !deleted {
-                        let mut map = session_messages.write();
-                        let mut ui = UiState {
-                            messages: map.get(&sid).cloned().unwrap_or_default(),
-                        };
-                        ui.apply(&AgentEvent::TurnEnd {
-                            stop_reason: "end_turn".into(),
-                        });
-                        map.insert(sid.clone(), ui.messages);
-                    }
-
-                    let mut st = statusline();
-                    st.tokens_out += total_out;
-                    st.tokens_in = (session_messages
-                        .read()
-                        .get(&sid)
-                        .map(|list| list.iter().map(|m| m.content.len()).sum::<usize>())
-                        .unwrap_or(0)
-                        / 4) as u64;
-                    st.cost_usd += total_out as f64 * 0.000002;
-                    st.context_pct =
-                        ((st.tokens_in + st.tokens_out) as f64 / st.context_max as f64 * 100.0)
-                            .min(100.0);
-                    statusline.set(st);
-
-                    if !deleted {
-                        let mut map = space_sessions.read().clone();
-                        for list in map.values_mut() {
-                            for s in list.iter_mut() {
-                                if s.id == sid {
-                                    s.status = SessionStatus::Idle;
-                                    s.last_active = format_relative_time(now);
-                                }
-                            }
-                        }
-                        space_sessions.set(map);
-                    }
-                });
+                }
+                space_sessions.set(map);
             }
             DataBackend::Daemon(_) => {
                 // 事件由订阅管线（见上方 effect）驱动，TurnEnd 收尾在订阅
@@ -898,7 +923,7 @@ pub fn Workspace(
                             on_abort: on_abort,
                             on_toggle_tasks: move |_| show_tasks.set(!show_tasks()),
                             dock: show_tasks().then(|| rsx! {
-                                TaskPanel { tasks: store::tasks(), on_close: move |_| show_tasks.set(false) }
+                                TaskPanel { tasks: run_tasks(), on_close: move |_| show_tasks.set(false) }
                             }),
                         }
                     },
@@ -999,22 +1024,6 @@ fn active_session_running(
             .values()
             .flatten()
             .any(|s| s.id == sid && s.status == SessionStatus::Active)
-}
-
-/// 展平所有空间的会话（快速切换用），按最近活跃排序。
-fn all_sessions_sorted(
-    spaces: &[WorkspaceSpace],
-    map: HashMap<String, Vec<Session>>,
-) -> Vec<Session> {
-    let order: Vec<String> = spaces.iter().map(|s| s.path.clone()).collect();
-    let mut list: Vec<Session> = Vec::new();
-    for path in order {
-        if let Some(items) = map.get(&path) {
-            list.extend(items.iter().cloned());
-        }
-    }
-    list.sort_by_key(|s| std::cmp::Reverse(s.last_active_epoch));
-    list
 }
 
 /// 会话列表侧的有效状态：页面在飞（Active，由事件流实时写）优先于
