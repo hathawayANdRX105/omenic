@@ -17,23 +17,28 @@ gh pr create --title "..." --body "..." --head <branch>
 
 gate 自动做创建前校验(规则在 `.githooks/spec/`)+ 创建后现实校验，FAIL 拒绝创建。
 
+**`.githooks/` 是 gate 自己的领地，agent 禁止改动**（含 `hooks/`、`spec/`、`gate` 二进制）。gate 规则的增删改由用户或 gate 自身的 `gate init` 负责；agent 遇到 gate FAIL 应改自己的提交/PR 正文去迎合规则，而不是去改规则。也不要把项目自己的契约文件（如 `specs/ui/*.yaml`）搬进 `.githooks/spec/`——那里只放 gate checklist。
+
 ## 构建与验证（CI 驱动）
 
-**所有测试、编译、lint 全部放 PR 的 CI（`.github/workflows/ci.yml`），本地不跑重型命令。**
+**测试一律不在本地跑。** `cargo test` / `cargo clippy` / 全量 `cargo build` / `npm install` 全部交给 PR 的 CI（`.github/workflows/ci.yml`）。本地跑测试属违规操作，即使套了 `cpulimit` 也不允许。
 
-本地只做轻量验证：
-- `cargo fmt --check`（秒级）
-- `cargo check -p <crate>`（类型检查，单 crate）
-- `grep` / `ls` / 文件读写等只读命令
+本地只允许这三类轻量验证：
+- `cargo fmt --check`（秒级，提交前必跑——commit checklist 会拦不合格的 rust）
+- `cargo check -p <crate>`（单 crate 类型检查，**不得**加 `--workspace` / `--all-targets`）
+- `grep` / `ls` / `git` / 文件读写等只读命令
 
-**如果实在要本地跑重命令**（全量构建、`cargo test`、`cargo clippy`、`npm install` 等），**必须套 `cpulimit -l 65 -i --` 限制 CPU 到 65%**：
+验证节奏：本地 `fmt --check` + 单 crate `cargo check` → push → **CI 出结果才算验证过**。CI 红了看日志改，不要在本地复现。
+
+**唯一例外**是 web UI 需要肉眼确认时的 `cargo build --bin oi-web`（见下文启动序列），必须套 `cpulimit -l 65 -i --`：
 
 ```bash
-cpulimit -l 65 -i -- cargo test -p <crate>
-cpulimit -l 65 -i -- cargo build --release
+cpulimit -l 65 -i -- cargo build --bin oi-web
 ```
 
-`git`、`grep`、`ls` 等轻量命令不需要套。
+## 禁改区
+
+`.githooks/` 归 gate 自身维护，**任何开发任务都不得改动它**（包括 `.githooks/spec/` 下的规则、hook 脚本、把别处文件搬进去）。规则要改先去 demo 沙盒（见下文）验证，并由用户显式指派。UI 契约 yaml 的正确位置是 `specs/ui/`，不是 `.githooks/spec/`。
 
 ## Demo 验证沙盒
 
@@ -87,11 +92,7 @@ curl -s localhost:8026/ | grep -c -- --color-accent        # 页面里应 > 0
 
 web UI（dsh 设计语言复刻，C5.1 已验收）的视觉/结构锁在 `specs/ui/*.yaml` 契约里，防止后续接线（5.2a/5.2b）破坏。改动 web 组件样式或布局时：先跑契约测试，再按下表浏览器抽查。
 
-**契约测试**（无需起服；首次编译 web 依赖树较慢）：
-
-```bash
-cpulimit -l 65 -i -- cargo test -p web-cli   # bin/web/tests/ui_contract.rs
-```
+**契约测试**：`bin/web/tests/ui_contract.rs`，**由 CI 跑，本地不跑**（见上文「构建与验证」）。本地只做静态核对：改了组件 class 就同步改 `specs/ui/*.yaml` 的 `find` 锚点，用 grep 确认锚点字符串在实现文件里真实存在。
 
 **yaml 字段约定**：`name`（契约名）/ `target`（omenic 实现文件，相对仓库根）/ `description` / `anchors`（锚点列表，每项 `key` + `find`（源码中稳定 class 片段或静态字面量）+ `expect`（预期形态）+ `source`（omenic 实现位置 + dsh 出处）+ 可选 `file`（锚点级实现文件覆盖，默认用 target））/ `notes`。测试两类断言：① 每个 yaml 可被 serde_yaml 解析且字段齐全；② 每个 `find` 关键字在对应实现文件中出现。新增 spec 必须同步登记 `tests/ui_contract.rs` 的 `SPEC_FILES`。
 
