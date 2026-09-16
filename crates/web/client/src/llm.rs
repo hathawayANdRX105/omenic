@@ -105,7 +105,7 @@ impl LlmRuntimeConfig {
         if let Ok(content) = std::fs::read_to_string(&target_path) {
             match content.parse::<toml_edit::DocumentMut>() {
                 Ok(mut doc) => {
-                    self.write_managed_keys(&mut doc);
+                    self.write_managed_keys(&mut doc)?;
                     return std::fs::write(&target_path, doc.to_string()).map_err(|e| {
                         format!("写入配置文件 {} 失败: {}", target_path.display(), e)
                     });
@@ -168,7 +168,7 @@ impl LlmRuntimeConfig {
     }
 
     /// 把本结构体管理的键写进已解析的文档；文档里的其它键、段、注释、排版一律不动。
-    fn write_managed_keys(&self, doc: &mut toml_edit::DocumentMut) {
+    fn write_managed_keys(&self, doc: &mut toml_edit::DocumentMut) -> Result<(), String> {
         let root = doc.as_table_mut();
         // `omp_path` 没有对应字段，只在缺失时补上默认值——直接写死 "omp" 会抹掉
         // 用户在别处配好的自定义路径，正是本修复要消除的那类静默覆盖。
@@ -181,15 +181,19 @@ impl LlmRuntimeConfig {
         if !root.contains_key("llm") {
             root.insert("llm", toml_edit::Item::Table(toml_edit::Table::new()));
         }
+        // 只在「llm 存在但不是表」（如 `llm = "x"`）时失败：上面刚确保过键存在，
+        // 到这里还取不到表说明用户配置本身畸形。panic 会让保存路径崩溃，返回
+        // 错误让调用方决定更安全。
         let llm = root
             .get_mut("llm")
             .and_then(toml_edit::Item::as_table_mut)
-            .expect("[llm] 段刚被确保存在");
+            .ok_or_else(|| "[llm] 段已存在但不是表，无法增量更新".to_string())?;
         set_item(llm, "base_url", toml_edit::value(self.base_url.as_str()));
         set_item(llm, "api_key", toml_edit::value(self.api_key.as_str()));
         set_item(llm, "model", toml_edit::value(self.model.as_str()));
         // TOML 整数是 i64；u32 → i64 无损。
         set_item(llm, "max_tokens", toml_edit::value(self.max_tokens as i64));
+        Ok(())
     }
 
     /// Test connection by querying /v1/models
@@ -301,9 +305,18 @@ fn set_item(table: &mut toml_edit::Table, key: &str, item: toml_edit::Item) {
 fn preserve_omp_path(unparsed: &str) -> Option<String> {
     for line in unparsed.lines() {
         let trimmed = line.trim();
-        let rest = trimmed.strip_prefix("omp_path")?;
+        // 必须 continue 而不是 ?：真实配置首行通常是注释，`?` 会让第一行
+        // 不匹配就把整个函数返回成 None，第 2 行的 omp_path 于是被丢弃——
+        // 正是这个函数要避免的丢失。
+        let rest = match trimmed.strip_prefix("omp_path") {
+            Some(r) => r,
+            None => continue,
+        };
         let rest = rest.trim_start();
-        let rest = rest.strip_prefix('=')?;
+        let rest = match rest.strip_prefix('=') {
+            Some(r) => r,
+            None => continue,
+        };
         let rest = rest.trim();
         let value = rest.strip_prefix('"').and_then(|r| r.strip_suffix('"'));
         if let Some(v) = value {

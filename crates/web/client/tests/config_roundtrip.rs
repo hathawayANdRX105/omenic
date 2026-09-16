@@ -435,3 +435,77 @@ fn save_preserves_comments() {
         "段内注释应保留: {saved}"
     );
 }
+
+/// 解析失败回退全量写时，`omp_path` 若不在第一行也必须被抢救回来。
+///
+/// 真实配置几乎都以注释开头，而 `preserve_omp_path` 曾在行循环里用 `?`：
+/// 第一行不匹配就从整个函数返回 None，第二行的 `omp_path` 于是被丢弃，
+/// 回退写把用户的自定义路径静默换成默认 "omp"。
+#[test]
+fn fallback_preserves_omp_path_not_on_first_line() {
+    let sb = Sandbox::new();
+
+    std::fs::create_dir_all(sb.path().join(".oi")).expect("建 .oi 失败");
+    // 重复的根键 model 使整份文档无法解析，强制走备份 + 全量写回退路径。
+    std::fs::write(
+        sb.path().join(".oi/config.toml"),
+        "# omenic configuration\n\
+         omp_path = \"custom-omp\"\n\
+         data_dir = \"./.oi\"\n\
+         model = \"m\"\n\
+         model = \"duplicate-key-breaks-parsing\"\n",
+    )
+    .expect("写配置失败");
+
+    LlmRuntimeConfig {
+        base_url: "http://x".to_string(),
+        api_key: "sk".to_string(),
+        model: "m".to_string(),
+        max_tokens: 100,
+        data_dir: "./.oi".to_string(),
+    }
+    .save_to_file()
+    .expect("保存配置失败");
+
+    let saved = std::fs::read_to_string(sb.path().join(".oi/config.toml")).expect("读回配置失败");
+    assert!(
+        saved.contains("custom-omp"),
+        "回退全量写必须抢救第二行的自定义 omp_path: {saved}"
+    );
+    // 原文已备份，解析失败不丢配置。
+    assert!(
+        sb.path().join(".oi/config.toml.bak").exists(),
+        "解析失败时应备份原文"
+    );
+}
+
+/// `[llm]` 键存在但不是表（如 `llm = "x"`）时，增量保存必须返回错误而不是
+/// panic——保存路径崩溃比拒绝写入更难诊断。
+#[test]
+fn save_errors_instead_of_panicking_when_llm_is_not_a_table() {
+    let sb = Sandbox::new();
+
+    std::fs::create_dir_all(sb.path().join(".oi")).expect("建 .oi 失败");
+    std::fs::write(
+        sb.path().join(".oi/config.toml"),
+        "data_dir = \"./.oi\"\n\
+         model = \"m\"\n\
+         llm = \"not-a-table\"\n",
+    )
+    .expect("写配置失败");
+
+    let res = LlmRuntimeConfig {
+        base_url: "http://x".to_string(),
+        api_key: "sk".to_string(),
+        model: "m".to_string(),
+        max_tokens: 100,
+        data_dir: "./.oi".to_string(),
+    }
+    .save_to_file();
+
+    let err = res.expect_err("畸形 [llm] 应返回错误");
+    assert!(
+        err.contains("[llm]"),
+        "错误信息应指出是 [llm] 段的问题: {err}"
+    );
+}
