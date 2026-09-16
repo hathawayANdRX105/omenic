@@ -156,19 +156,39 @@ fn one_text_turn(delta: &str) -> String {
     sse_text(delta, true)
 }
 
-/// `max_turns` test: every reply is an unfinished assistant turn, so the loop
-/// would spin forever if the cap were not enforced. The only thing that ends
-/// the run is `LoopConfig::max_turns`.
+/// `max_turns` test: every reply carries a tool call, so each round ends with
+/// a dispatch and the loop continues into the next round. A reply with no
+/// tool calls would let the loop exit on a plain EndTurn and the cap would
+/// never be reached. The tool name is one the real catalog does not provide —
+/// the loop routes that to an error result, which still counts as a completed
+/// round and keeps the loop spinning. The only thing that can end this run is
+/// `LoopConfig::max_turns`.
 fn endless_turns(n: usize) -> Vec<String> {
     (0..n)
-        .map(|_| {
-            let chunk = json!({
+        .map(|i| {
+            // First chunk: the tool call. Second chunk: finish without text,
+            // which closes the round and lets the loop dispatch + continue.
+            let call = json!({
                 "choices": [{
-                    "delta": { "role": "assistant", "content": format!("turn {n}") },
+                    "delta": {
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": format!("call_{i}"),
+                            "type": "function",
+                            "function": { "name": "g6_e2e_nonexistent", "arguments": "{}" }
+                        }]
+                    },
                     "finish_reason": serde_json::Value::Null
                 }]
             });
-            format!("data: {}\n\n", chunk)
+            let finish = json!({
+                "choices": [{
+                    "delta": {},
+                    "finish_reason": "tool_calls"
+                }]
+            });
+            format!("data: {}\ndata: {}\n\n", call, finish)
         })
         .collect()
 }
