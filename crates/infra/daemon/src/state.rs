@@ -604,6 +604,17 @@ impl SessionState {
         self.inner.ensure_session(id, title)
     }
 
+    /// [`Self::ensure_session`] with a lineage parent; `None` records a root.
+    /// Backs the optional `parent_id` field of `session.create`.
+    pub fn ensure_session_with_parent(
+        &self,
+        id: &str,
+        title: &str,
+        parent_id: Option<&str>,
+    ) -> Result<SessionSummary, SessionError> {
+        self.inner.ensure_session_with_parent(id, title, parent_id)
+    }
+
     pub fn delete_session(&self, id: &str) -> Result<bool, SessionError> {
         self.inner.delete_session(id)
     }

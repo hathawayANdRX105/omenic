@@ -143,15 +143,30 @@ impl DaemonClient {
         Ok(())
     }
 
-    /// `session.create` → created session summary.
+    /// `session.create` → created session summary. Creates a root session
+    /// (no lineage edge); see [`Self::session_create_with_parent`] for the
+    /// parented variant.
     pub fn session_create(
         &self,
         session_id: &str,
         title: &str,
     ) -> Result<SessionSummary, ClientError> {
+        self.session_create_with_parent(session_id, title, None)
+    }
+
+    /// `session.create` with an explicit lineage edge. `parent_id` names the
+    /// session this one forks from (5.3/5.5 grouping); `None` creates a root
+    /// session and is still sent as an explicit `null` so the daemon's
+    /// `params.get("parent_id")` sees the key either way.
+    pub fn session_create_with_parent(
+        &self,
+        session_id: &str,
+        title: &str,
+        parent_id: Option<&str>,
+    ) -> Result<SessionSummary, ClientError> {
         self.call(
             Command::SessionCreate,
-            json!({ "session_id": session_id, "title": title }),
+            json!({ "session_id": session_id, "title": title, "parent_id": parent_id }),
         )
     }
 

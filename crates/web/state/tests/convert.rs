@@ -17,6 +17,7 @@ fn summary_maps_fields_and_relative_time() {
     let summary = SessionSummary {
         id: "s-1".into(),
         title: "标题甲".into(),
+        parent_id: None,
         created_at_ms: (now - 60_000) as i64,
         updated_at_ms: (now - 120_000) as i64,
         message_count: 3,
@@ -38,6 +39,7 @@ fn summary_recent_activity_is_just_now() {
     let summary = SessionSummary {
         id: "s-2".into(),
         title: "标题乙".into(),
+        parent_id: None,
         created_at_ms: now as i64,
         updated_at_ms: now as i64,
         message_count: 0,
@@ -45,6 +47,35 @@ fn summary_recent_activity_is_just_now() {
     let s = summary_to_session(&summary);
     assert_eq!(s.last_active_epoch, now);
     assert_eq!(s.last_active, "刚刚");
+}
+
+#[test]
+fn summary_maps_parent_edge_and_root() {
+    let now = now_ms();
+    // 有父边：parent_id 原样透传，供侧栏按谱系分组（5.3/5.5）
+    let child = SessionSummary {
+        id: "s-child".into(),
+        title: "子会话".into(),
+        parent_id: Some("s-parent".into()),
+        created_at_ms: now as i64,
+        updated_at_ms: now as i64,
+        message_count: 0,
+    };
+    assert_eq!(
+        summary_to_session(&child).parent_id,
+        Some("s-parent".into())
+    );
+
+    // 根会话：None 透传成 None，不变成空串或别的占位
+    let root = SessionSummary {
+        id: "s-root".into(),
+        title: "根会话".into(),
+        parent_id: None,
+        created_at_ms: now as i64,
+        updated_at_ms: now as i64,
+        message_count: 0,
+    };
+    assert_eq!(summary_to_session(&root).parent_id, None);
 }
 
 #[test]

@@ -6,67 +6,44 @@
 
 ## 当前位置（2026-09-16）
 
-**G1–G6 全部已过，main 干净**（最新 `8e7fd6c`）。C1–C6 六个能力域的代码、测试、生产接线都在 main 里：
+**G1–G7 全部已过，main 干净。** G6 之前的 6 条开放缺口**全部关闭**（1/2/3/5 由 G6，4/6 由 G7）：
 
-- G6（#373）把装配容器接进了 daemon→web 生产路径，C4 的 AGENTS.md 注入与压缩第一次对真实用户生效；#374 补了真链路 e2e（真实 daemon + 本地 OpenAI mock，字节级断言）。
+- G6（#373/#374）把装配容器接进 daemon→web 生产路径，C4 的 AGENTS.md 注入与压缩第一次对真实用户生效，并补了真链路 e2e。
+- G7（#376）关掉最后两条：**谱系分组**（5.3/5.5，数据模型 + 侧栏树）与 **per-run 事件归属**（协议帧 run_id + 订阅端过滤）。
 - C7（tag）前置条件全满足，**等用户拍板时机**。
 - C8 已裁定不做。
 
-**G6 之前的 6 条开放缺口，现在只剩 2 条**（其余已被 G6 关闭，见下表）。
+**G7 之后没有排队中的整合点。** 下一步是 backlog 里的插件 schema 项，或等用户对 C7 拍板。
 
-## 开放缺口（全部已 grep/cg 实测，2026-09-16）
+## 缺口表（全部已关闭，留作记账）
 
-| # | 缺口 | 现状证据 | 规模 | 归属 |
-|---|---|---|---|---|
-| ~~1~~ | ~~装配容器零消费~~ | ✅ **已关**（#373）：`Daemon::orbit_setup` 在 `server.rs:210/213/218` 真实 resolve 三个 harness 服务；`Fiber::resolve` 有了生产调用者；fiber 字段已去掉下划线 | — | — |
-| ~~2~~ | ~~crash-repair 未接线~~ | ✅ **已关**（#373）：`server.rs:147` 的 `repair_interrupted_runs` 是 `interrupted_run_closers` 第一个生产调用者，`Daemon::start` 顺序为 open SessionDb → repair → bind | — | — |
-| ~~3~~ | ~~orbit 接缝超限~~ | ✅ **已关**（#373）：压缩接缝 56→3 行（`compaction_bridge.rs`），远低于 R3 ≤20 限额 | — | — |
-| 4 | **5.3/5.5 谱系分组** | 🟡 **仍开放**：web 侧零谱系代码（`grep lineage` 无结果）；`SessionSummary`（`session/src/lib.rs:152`）**无 parent 字段**——不是只缺 UI 分组，是缺数据模型。旧文「待按 `run.list` 组装」不准确，`run.list` 里没有父子关系 | 中（100–200 行 + schema 迁移） | **待规划** |
-| ~~5~~ | ~~2.3 turn codec 零生产写入~~ | ✅ **已关**（#373）：G6 加了 `turn_log` 列 + `append_turn_log`/`load_turn_log`，`encode/decode_turn_log` 在 `session/src/lib.rs:819/845/888` 有了生产读写路径 | — | — |
-| 6 | **单 worker 事件无会话归属** | 🟡 **仍开放**：并发 turn 事件会混写最近 `on_send` 的会话（`dispatch.rs` 事件推送无 per-run 路由）；#356 只让 web 侧 prompt 带 session_id/run_id；协议（`protocol.rs`）无 run_id 字段。暂靠「单运行」纪律兜底 | 中（协议加字段 + dispatch 路由） | **R2 协议层** |
-
-## 下一个整合点：G7 谱系 + 并发归属
-
-**触发条件已满足**：G6 已过，无前置阻塞。
-
-两个开放缺口**恰好可以并发**——文件所有权互斥：
-
-| 工作包 | 覆盖 | 独占文件 | 依赖 |
-|---|---|---|---|
-| **A 谱系分组（5.3/5.5）** | 缺口 4 | `crates/infra/session/src/lib.rs`（schema）、`crates/infra/daemon/src/state.rs`、`crates/web/{page-workspace,components}/`（sidebar 分组 UI） | 无 |
-| **B per-run 事件归属** | 缺口 6 | `crates/infra/daemon/src/protocol.rs`（加字段）、`crates/infra/daemon/src/dispatch.rs`（路由）、`crates/web/client/`（消费 run_id） | 无 |
-
-**可并发数：2**。两包文件零重叠（A 动 session schema + web 前端；B 动 daemon 协议 + dispatch + client 订阅端），合并不冲突。
-
-### 工作包 A：谱系分组
-
-dsh 的 `lineage.ts` 把会话按父子关系组成树（一个会话 fork 出子会话）。omenic 现在是平铺列表。要做的：
-
-1. **数据模型先行**：`sessions` 表加 `parent_id TEXT NULL` 列 + 幂等迁移（照 G6 的 `apply_turn_log_column` 模式）；`SessionSummary` 加 `parent_id`；`session.create` 支持传 parent
-2. **派生分组**：web 侧按 parent_id 组装成树；无 parent 的仍是顶层
-3. **侧栏 UI**：`components/sidebar.rs` 的会话行按树缩进渲染（对齐 `.githooks/spec/sidebar.yaml` 契约锚点）
-
-**注意**：不要从 `run.list` 派生父子关系——run 是会话内的执行记录，不是会话间的关系。
-
-### 工作包 B：per-run 事件归属
-
-dispatch 的事件推送当前不带 run_id，并发 turn 时事件会混到错误的会话。要做的：
-
-1. `protocol.rs` 的事件帧加可选 `run_id`（**只能加字段，不改既有命令语义**——冻结契约）
-2. `dispatch.rs` 推送时带上当前 prompt 的 run_id
-3. `web/client` 的 `WireTranslator` 按 run_id 过滤，只投递当前活跃 run 的事件
-
-**注意**：这是 R2 的协议改动权范围内的事；web 侧 `#356` 已经让 prompt 带了 session_id/run_id，B 只需让**事件反向**也带上归属。
+| # | 缺口 | 关闭证据 |
+|---|---|---|
+| 1 | 装配容器零消费 | ✅ G6（#373）：`Daemon::orbit_setup` 在 `server.rs:210/213/218` 真实 resolve 三个 harness 服务；`Fiber::resolve` 有了生产调用者 |
+| 2 | crash-repair 未接线 | ✅ G6（#373）：`server.rs:147` 的 `repair_interrupted_runs` 是 `interrupted_run_closers` 第一个生产调用者 |
+| 3 | orbit 接缝超限 | ✅ G6（#373）：压缩接缝 56→3 行，远低于 R3 ≤20 限额 |
+| 4 | 5.3/5.5 谱系分组 | ✅ **G7（#376）**：`sessions.parent_id` 列 + 幂等迁移（`apply_parent_id_column`）；`SessionSummary`/`Session` 双层贯通；侧栏 `group_sessions` 树渲染（孤儿当根 / visited 防环 / 深度封顶）；`session.create` + `DaemonClient::session_create_with_parent` wire 通路 |
+| 5 | 2.3 turn codec 零生产写入 | ✅ G6（#373）：`turn_log` 列 + `append_turn_log`/`load_turn_log` 有了生产读写路径 |
+| 6 | 单 worker 事件无会话归属 | ✅ **G7（#376）**：`EventFrame.run_id`（serde-optional，旧订阅端无感）+ `WorkerHandle` sticky active-run 槽（prompt 前设、下一个归属 prompt 覆盖、reset 清）+ `RunFilteredSubscription` 按 run 过滤且不侵占调用方 tick 预算 |
 
 ## 后续 backlog（按价值÷成本排序）
 
 | 优先 | 项 | 说明 |
 |---|---|---|
-| — | 插件 per-plugin Config schema + inject 依赖门控 | `DshPlugin` trait 现在只有 `name()` + `register()`（`registry.rs:14`）；要加关联类型/serde 结构 + 从主文档切插件切片 + 校验失败拒注册。两项改同一个 trait + registry，合并做省一半 |
-| — | 插件反注册（单插件卸载） | `fiber.rs:82` 的 `unload()` 只能逆序拆全部；`EventBus::unsubscribe` 已有 |
+| 1 | 插件 per-plugin Config schema + inject 依赖门控 | `DshPlugin` trait 现在只有 `name()` + `register()`（`registry.rs:14`）；要加关联类型/serde 结构 + 从主文档切插件切片 + 校验失败拒注册。两项改同一个 trait + registry，合并做省一半 |
+| 2 | 插件反注册（单插件卸载） | `fiber.rs:82` 的 `unload()` 只能逆序拆全部；`EventBus::unsubscribe` 已有 |
 | — | 插件发现/加载层（loader） | dsh 的 loader 绑 Node ESM hook，Rust 侧等价物是目录扫描+声明式注册表；**范围外**（C6 只对齐 cordis），暂不分配 |
 | — | token-meter（C8.3） | 已裁定不做，stats 卡靠「无真数据则隐藏」兜底 |
 | — | interaction 交互层（C8.1/8.2） | 已裁定不做，omenic 无 agent→用户提问通路 |
+| — | C7（tag） | 前置全满足，等用户拍板时机 |
+
+## G7 验收记录（#376）
+
+- **CI**：`3f7f7a3` SUCCESS、`8841190` SUCCESS
+- **审查**：CRG `detect-changes --brief --base e5d229c`（0 affected flows，untested 项均为跨模块名字匹配噪音，逐条在 PR comment 佐证）+ ocr 28 条逐条裁定 **0 真阳性**
+- **smoke**：真 `daemon` 二进制（`cpulimit -l 65` 构建）+ 临时 socket + 手写 mock omp，10/10 断言通过——含**手工造的 pre-G7 旧库**（daemon 在其上启动并自动加 `parent_id` 列）、谱系 wire 往返、空白 parent 归一、归属 prompt 受理
+- **测试**：`session/tests/lineage.rs`（5 例，含旧库迁移的 ALTER 分支）、`daemon/tests/run_routing.rs`（2 例，真 daemon + mock omp 的 run 盖章）、`components/tests/group_sessions.rs`（7 例，防环/孤儿/深链封顶）
+
 
 ## 工作约定
 

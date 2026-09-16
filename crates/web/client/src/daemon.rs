@@ -96,7 +96,21 @@ impl WebDaemon {
 
     /// 新建会话（存储侧幂等：已存在的 id 原样返回原行）。
     pub fn create_session(&self, sid: &str, title: &str) -> Result<(), ClientError> {
-        self.client.session_create(sid, title)?;
+        self.create_session_with_parent(sid, title, None)
+    }
+
+    /// [`Self::create_session`] 的带谱系版本：`parent_id` 指明本会话从哪个
+    /// 会话 fork 而来（5.3/5.5 分组的父子边），`None` 建根会话。返回值
+    /// 仍是 `()`——调用方（page-workspace）拿内存里的 id 直接插列表，
+    /// 不需要 daemon 回执的 summary。
+    pub fn create_session_with_parent(
+        &self,
+        sid: &str,
+        title: &str,
+        parent_id: Option<&str>,
+    ) -> Result<(), ClientError> {
+        self.client
+            .session_create_with_parent(sid, title, parent_id)?;
         Ok(())
     }
 
@@ -171,6 +185,25 @@ impl WebDaemon {
         self.client.subscribe("worker")
     }
 
+    /// `event.subscribe("worker")` 的 per-run 视图（G7-B）：返回的订阅只
+    /// 投递被 daemon 打上 `run_id` 归属的事件帧；属于其他 run 的事件（用户
+    /// 中途切了会话、或另一个会话的 turn 正在跑）在读循环里直接丢弃，不混入
+    /// 当前会话视图。daemon 无法归属的帧（旧 daemon / 归属 prompt 之外的事件）
+    /// 仍然放行——见 [`daemon::EventFrame::belongs_to_run`]。
+    ///
+    /// `run_id` 须非空（调用方生成的 `r-<epoch_ms>`）；没有 run 归属的调用方
+    /// 用 [`Self::subscribe_worker`] 拿全量流。连接语义与后者完全相同。
+    pub fn subscribe_worker_run(
+        &self,
+        run_id: &str,
+    ) -> Result<RunFilteredSubscription, ClientError> {
+        let inner = self.client.subscribe("worker")?;
+        Ok(RunFilteredSubscription {
+            inner,
+            run_id: run_id.to_string(),
+        })
+    }
+
     /// `run.list`（按 session 过滤）：返回该会话的 run 记录，供列表侧组装
     /// 运行状态（WP-C：半开 run → aborted，见
     /// `omenic_web_state::convert::infer_session_status`）。daemon 的
@@ -195,6 +228,51 @@ impl WebDaemon {
     /// 会撞 "runtime within a runtime"）。
     pub fn stats_summary(&self, range: &str) -> Result<StatsSummary, ClientError> {
         self.client.stats_summary(range)
+    }
+}
+
+/// Run-scoped view of a worker subscription (G7-B).  Wraps the raw
+/// [`Subscription`] from [`WebDaemon::subscribe_worker`] and yields only the
+/// frames the daemon attributed to `run_id`, so events belonging to another
+/// run never reach the current session view.  Read API mirrors
+/// [`Subscription::next_event`] (same keepalive / disconnect contract), so a
+/// caller can swap one for the other without changing its loop.
+pub struct RunFilteredSubscription {
+    inner: Subscription,
+    run_id: String,
+}
+
+impl RunFilteredSubscription {
+    /// Id to pass to `event.unsubscribe`（透传内层订阅）。
+    pub fn id(&self) -> u64 {
+        self.inner.id()
+    }
+
+    /// 读下一个属于本 run 的事件帧。`Ok(None)` = `dur` 内没有匹配帧到达
+    /// （keepalive tick 语义不变），或 daemon 在帧中途关了流；`Err` = 断线。
+    /// 其他 run 的帧被丢弃后继续等待，不计入超时预算：用的是截止时间而非
+    /// 每帧超时，跳过一阵外来事件不会拖长调用方的 tick 间隔。
+    pub fn next_event(
+        &mut self,
+        dur: std::time::Duration,
+    ) -> Result<Option<daemon::EventFrame>, ClientError> {
+        let deadline = std::time::Instant::now()
+            .checked_add(dur)
+            .unwrap_or_else(std::time::Instant::now);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Ok(None);
+            }
+            match self.inner.next_event(remaining)? {
+                None => return Ok(None),
+                Some(frame) if frame.belongs_to_run(&self.run_id) => return Ok(Some(frame)),
+                Some(_) => {
+                    // 另一个 run 的事件：丢弃，不混入当前视图。
+                    continue;
+                }
+            }
+        }
     }
 }
 
