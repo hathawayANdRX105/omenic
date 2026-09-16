@@ -121,9 +121,10 @@
 
 **独有功能保护区**（omenic 独有，dsh 无对应物——任何路线**只读/单向依赖**，不许重构、不许当缺口往里塞）：
 - `crates/infra/memory`（jcode：`embed/graph/recall/inject/pipeline`）
-- `crates/agent/task`（`runner/graph/store/template` RPC 任务模型）
-- `crates/agent/subagent`、`crates/agent/mcp`
+- `crates/agent/task`（`runner/graph/store/template` RPC 任务模型；dsh 的 `workflow` 是模型在运行时自己写编排，方向相反，不算对应物）
 - `crates/evidence/spec` + `bin/gate`（合规工具；远期归宿 = C6 插件面落地后注册成工具插件，现在不动）
+
+> **2026-09-16 更正**：此前本表把 `crates/agent/subagent` 与 `crates/agent/mcp` 也列为「dsh 无对应物」，经核对 dsh 源码**不成立**——dsh 有 `packages/subagent/`（11 子包：spawn/fork 进程内后端 + ACP/Codex/Claude Code/SDK 四个进程外后端 + control/report 工具）与 `packages/mcp/mcp-client/`（多传输客户端）。omenic 的 subagent 相当于 `subagent-spawn-in-process` 的只读工具简化版且**未接 daemon/web 生产路径**；mcp 客户端是 stdio 单传输形态。两者移出保护区，按普通缺口排优先级。
 
 **冻结契约**（改动权归首发路线，他路线按冻结类型消费）：`AgentEvent` serde（3.1）、daemon protocol（3.3）、harness trait（6.1）。改 `daemon/protocol.rs` **只能加命令**，不许改既有 `session.*` / `run.list` 语义（task/memory 的 RPC 依赖这些）。
 
