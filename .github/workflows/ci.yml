@@ -19,6 +19,10 @@ jobs:
       - name: Build
         run: cargo build --locked --all-targets
       - name: Test
-        run: cargo test --locked --all-targets
+        # --no-fail-fast + per-test-binary output so a hang shows which
+        # binary stalled instead of the whole step going dark. The timeout
+        # stops a hung binary from burning the whole job budget.
+        run: cargo test --locked --all-targets --no-fail-fast -- --test-threads=2
+        timeout-minutes: 25
       - name: Format check
         run: cargo fmt --all -- --check

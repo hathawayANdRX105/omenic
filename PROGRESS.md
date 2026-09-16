@@ -2,18 +2,19 @@
 
 > 已落地的背景见 [ROADMAP.md](ROADMAP.md)（已完成档）。本文只讲**还没做的**和**接下来做什么**——两份文档状态不同，ROADMAP 是已完成的沉淀，本文是未完成的规划。
 >
-> 编号体系沿用 ROADMAP：`C1–C8` / `R1–R7` / `G1–G7`。
+> 编号体系沿用 ROADMAP：`C1–C8` / `R1–R7` / `G1–G8`。
 
 ## 当前位置（2026-09-16）
 
-**G1–G7 全部已过，main 干净。** G6 之前的 6 条开放缺口**全部关闭**（1/2/3/5 由 G6，4/6 由 G7）：
+**G1–G7 全部已过；G8（会话生命周期正确性）已落地 PR #377。** G6 之前的 6 条开放缺口**全部关闭**（1/2/3/5 由 G6，4/6 由 G7）：
 
 - G6（#373/#374）把装配容器接进 daemon→web 生产路径，C4 的 AGENTS.md 注入与压缩第一次对真实用户生效，并补了真链路 e2e。
 - G7（#376）关掉最后两条：**谱系分组**（5.3/5.5，数据模型 + 侧栏树）与 **per-run 事件归属**（协议帧 run_id + 订阅端过滤）。
+- G8（#377）修三处「单测绿、生产路径失效」的缺陷（见下表），让三态生命周期在真实 orbit run 下可观测。
 - C7（tag）前置条件全满足，**等用户拍板时机**。
 - C8 已裁定不做。
 
-**G7 之后没有排队中的整合点。** 下一步是 backlog 里的插件 schema 项，或等用户对 C7 拍板。
+**G8 之后没有排队中的整合点。** 下一步是 dsh 全量对照 backlog（见文末，2026-09-16 archify 盘点），或等用户对 C7 拍板。
 
 ## 缺口表（全部已关闭，留作记账）
 
@@ -26,6 +27,16 @@
 | 5 | 2.3 turn codec 零生产写入 | ✅ G6（#373）：`turn_log` 列 + `append_turn_log`/`load_turn_log` 有了生产读写路径 |
 | 6 | 单 worker 事件无会话归属 | ✅ **G7（#376）**：`EventFrame.run_id`（serde-optional，旧订阅端无感）+ `WorkerHandle` sticky active-run 槽（prompt 前设、下一个归属 prompt 覆盖、reset 清）+ `RunFilteredSubscription` 按 run 过滤且不侵占调用方 tick 预算 |
 
+## G8：会话生命周期正确性（#377）
+
+三处「单测绿、生产失效」缺陷。共同特征是验收测试恰好绕开了生产路径的真实条件。
+
+| 子任务 | 缺陷 | 修复 |
+|---|---|---|
+| **G8-A** run 收尾过早 | orbit 模式 `prompt()` 只投 channel 就返回，dispatch 紧接着 `runs.finish("ok")` + `TurnEnd{ok}` → `in_flight_runs` 恒 0，三态状态机失效，`interrupted_run_closers` 无半开记录可修（G6 的崩溃修复被掏空） | `AgentEnd` 携带 `stop_reason`（`#[serde(default)]` 向后兼容旧帧）→ pump 线程收到 `AgentEnd` 才 `finish` + `record_turn` + CAS 清 sticky 槽；orbit prompt 只回 ack 不同步收尾，omp 兼容模式保留同步收尾；pump 改在 orbit prompt 前启动（不再依赖客户端订阅） |
+| **G8-B** 配置写回抹段 | `save_to_file` 用 `format!()` 整文件重写 6 个键，`[mcp]`/`[memory]`/`[daemon]` 静默消失；`config_roundtrip` 正好只覆盖被重写的键 | `toml_edit::DocumentMut` 增量写回，未管理段/注释/排版逐字节保留；解析失败时备份失败即中止（不吞错误）；`omp_path` 缺失才补，全量路径沿用原值 |
+| **G8-C** spill 文件碰撞 | `truncate_output` 的 `counter` 参数 5 个调用点全传 0 → 文件名恒 `oi-output-0.txt`，第二次溢出覆盖第一次全文（另有一处 mcp 调用点子代理与 cg 都漏） | 删参数，文件名 `oi-output-{pid}-{seq}.txt`（pid 隔进程、seq 进程内单调） |
+
 ## 后续 backlog（按价值÷成本排序）
 
 | 优先 | 项 | 说明 |
@@ -36,6 +47,27 @@
 | — | token-meter（C8.3） | 已裁定不做，stats 卡靠「无真数据则隐藏」兜底 |
 | — | interaction 交互层（C8.1/8.2） | 已裁定不做，omenic 无 agent→用户提问通路 |
 | — | C7（tag） | 前置全满足，等用户拍板时机 |
+
+## dsh 全量对照 backlog（2026-09-16 archify 盘点）
+
+用 archify 把 dsh（55 顶层包 / 约 227 子包，commit `b150a55`）聚合成 12 个功能域，逐域标注 omenic 复刻状态。图：`dsh-architecture.architecture.html`（deliver SHA-256 `9b2bc572…`），清单：`dsh-functional-inventory.md`。
+
+**完全缺失（omenic 零实现）**：
+
+1. **元工具与治理整片** — goal / todo / plan-mode / schedule / skill / lsp / hooks / guard / feedback / workflow（约 60 子包）。复刻差距最大的功能域。
+2. **LLM provider 注册表/路由 + token-meter** — 单 adaptor 硬编码，无第二 provider、无重试、无计量。
+3. **jobs 后台作业 + terminal 持久 PTY + persistent shell** — 长命令只能被 30s 超时杀掉。
+4. **会话恢复（resume）生产路径** — daemon 重启后 worker ctx 为空，模型只见最新一条消息（审计域2a 最高优先）。
+5. **附件全链路** — ui-attachment 前端 + 后端存储 + 上下文注入三段都缺。
+6. **host apiproxy + directory-picker** — 多 provider 路由与目录选择无对应物。
+7. **session telemetry/otel + title-llm** — 可观测性与自动标题。
+8. **core scope + agent-tool-presentation** — 作用域隔离与工具结果呈现策略。
+9. **acp 协议 + boot/bundle 声明式装配** — omenic composition 的 dsh 对应物，但声明式层（profile/bundle）缺失。
+10. **credentials authorization + identity** — 授权流与匿名身份（依赖 C8 已裁的交互通路，需重新裁定）。
+
+**已复刻但生产路径有缺陷（G8 已修）**：run 收尾时机、配置抹段、spill 碰撞。
+
+**已复刻的功能性偏差（未修）**：压缩配对方向与 dsh 相反（`cut += 1` 前缩 vs `keepFromIdx -= 1` 后扩，丢弃更多原文）；压缩阈值固定字符而非按窗口比例。
 
 ## G7 验收记录（#376）
 
