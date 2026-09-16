@@ -38,7 +38,7 @@ for line in sys.stdin:
             {"type": "message_update", "text": "hello"},
             {"type": "tool_execution_start", "toolName": "read", "input": {"path": "x"}},
             {"type": "tool_execution_end", "toolName": "read", "result": {"ok": True}},
-            {"type": "agent_end"},
+            {"type": "agent_end", "stop_reason": "end_turn"},
         ]:
             out(ev)
 "#;
@@ -61,9 +61,17 @@ fn event_kind(event: &WorkerEvent) -> &'static str {
         WorkerEvent::Message { .. } => "message",
         WorkerEvent::ToolExecutionStart { .. } => "tool_execution_start",
         WorkerEvent::ToolExecutionEnd { .. } => "tool_execution_end",
-        WorkerEvent::AgentEnd => "agent_end",
+        WorkerEvent::AgentEnd { .. } => "agent_end",
         WorkerEvent::Error { .. } => "error",
         WorkerEvent::Unknown(_) => "unknown",
+    }
+}
+
+/// The `stop_reason` an `AgentEnd` carries, or `None` for any other variant.
+fn agent_end_stop_reason(event: &WorkerEvent) -> Option<&str> {
+    match event {
+        WorkerEvent::AgentEnd { stop_reason } => Some(stop_reason),
+        _ => None,
     }
 }
 
@@ -77,7 +85,8 @@ fn subscribe_receives_prompt_event_sequence() {
     let resp = worker.prompt("hi").expect("prompt through pump");
     assert_eq!(resp.get("success").and_then(|v| v.as_bool()), Some(true));
 
-    let kinds: Vec<&str> = (0..5).map(|_| event_kind(&recv(&rx))).collect();
+    let events: Vec<WorkerEvent> = (0..5).map(|_| recv(&rx)).collect();
+    let kinds: Vec<&str> = events.iter().map(event_kind).collect();
     assert_eq!(
         kinds,
         [
@@ -87,6 +96,12 @@ fn subscribe_receives_prompt_event_sequence() {
             "tool_execution_end",
             "agent_end",
         ]
+    );
+    // The wire stop_reason rides through the pump onto AgentEnd.
+    assert_eq!(
+        agent_end_stop_reason(events.last().unwrap()),
+        Some("end_turn"),
+        "agent_end must carry the stop_reason from the wire frame"
     );
 }
 
@@ -107,4 +122,37 @@ fn dropped_receiver_is_unregistered_other_receiver_keeps_flowing() {
     assert_eq!(kinds[4], "agent_end");
     // Pull mode is closed while the pump runs.
     assert!(worker.read_event().is_err());
+}
+
+/// `AgentEnd` keeps its discriminator and serializes the stop reason it
+/// carries — the payload downstream run-lifetime bookkeeping keys on.
+#[test]
+fn agent_end_serializes_its_stop_reason() {
+    for reason in ["end_turn", "error", "aborted", "max_tokens", "max_turns"] {
+        let json = serde_json::to_string(&WorkerEvent::AgentEnd {
+            stop_reason: reason.to_string(),
+        })
+        .unwrap();
+        assert!(
+            json.contains("\"event\":\"agent_end\""),
+            "tag must survive: {json}"
+        );
+        assert!(
+            json.contains(&format!("\"stop_reason\":\"{reason}\"")),
+            "stop_reason must round-trip: {json}"
+        );
+    }
+}
+
+/// Legacy wire frames never carry `stop_reason` (the omp compat mode still
+/// speaks the old shape), so `#[serde(default)]` must keep them parsable —
+/// the acceptance core of the stop_reason addition.
+#[test]
+fn agent_end_deserializes_legacy_frame_without_stop_reason() {
+    let ev: WorkerEvent = serde_json::from_str(r#"{"event":"agent_end"}"#).unwrap();
+    assert_eq!(
+        agent_end_stop_reason(&ev),
+        Some(""),
+        "legacy frames decode to an empty stop_reason, not an error"
+    );
 }

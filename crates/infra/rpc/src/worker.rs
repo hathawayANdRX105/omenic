@@ -31,7 +31,7 @@
 //! for event in worker.events() {
 //!     match event {
 //!         WorkerEvent::Message { text } => println!("{text}"),
-//!         WorkerEvent::AgentEnd => break,
+//!         WorkerEvent::AgentEnd { .. } => break,
 //!         _ => {}
 //!     }
 //! }
@@ -43,6 +43,15 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use serde_json::Value;
+
+/// Map orbit's loop-level stop reason onto the wire string `AgentEnd`
+/// carries. `TurnStop` is `#[serde(rename_all = "snake_case")]`, so its
+/// serialized discriminator is already the wire spelling; a unit variant
+/// serializes to a bare quoted string like `"end_turn"`.
+fn turn_stop_to_wire(stop: orbit::TurnStop) -> String {
+    let s = serde_json::to_string(&stop).unwrap_or_else(|_| "\"error\"".to_string());
+    s.trim_matches('"').to_string()
+}
 
 /// Events emitted by the worker during agent execution.
 ///
@@ -61,7 +70,15 @@ pub enum WorkerEvent {
     /// Tool dispatch completes (`tool_execution_end`).
     ToolExecutionEnd { name: String, result: Option<Value> },
     /// Agent finished (session idle) (`agent_end`).
-    AgentEnd,
+    ///
+    /// `stop_reason` mirrors orbit's `TurnStop`: how the turn ended (clean,
+    /// aborted, errored, or a budget cap).  Defaults to empty for legacy
+    /// wire frames and omp-compat peers that never send it — downstream
+    /// bookkeeping treats empty as "unknown, not necessarily clean".
+    AgentEnd {
+        #[serde(default)]
+        stop_reason: String,
+    },
     /// Synthetic transport error: the event stream itself failed and the
     /// raw error is surfaced to the consumer instead of killing the iterator.
     Error { error: String },
@@ -333,7 +350,11 @@ impl OrbitEngine {
                                                 .or(Some(serde_json::Value::String(result))),
                                         }
                                     }
-                                    orbit::AgentEvent::TurnEnd { .. } => WorkerEvent::AgentEnd,
+                                    orbit::AgentEvent::TurnEnd { stop_reason } => {
+                                        WorkerEvent::AgentEnd {
+                                            stop_reason: turn_stop_to_wire(stop_reason),
+                                        }
+                                    }
                                 };
                                 let mut s = run_subs.lock().unwrap_or_else(|e| e.into_inner());
                                 s.retain(|(_, tx)| tx.send(we.clone()).is_ok());
@@ -343,9 +364,12 @@ impl OrbitEngine {
                     }));
                     if result.is_err() {
                         eprintln!("[orbit-worker] turn panicked, recovered");
+                        let ev = WorkerEvent::AgentEnd {
+                            stop_reason: "error".to_string(),
+                        };
                         let mut s = run_subs.lock().unwrap_or_else(|e| e.into_inner());
-                        s.retain(|(_, tx)| tx.send(WorkerEvent::AgentEnd).is_ok());
-                        let _ = run_pull.send(WorkerEvent::AgentEnd);
+                        s.retain(|(_, tx)| tx.send(ev.clone()).is_ok());
+                        let _ = run_pull.send(ev);
                     }
                 }
             })
@@ -595,7 +619,13 @@ fn frame_to_event(raw: Value) -> Option<WorkerEvent> {
     let event = match ty {
         "response" => return None,
         "agent_start" => WorkerEvent::AgentStart,
-        "agent_end" => WorkerEvent::AgentEnd,
+        "agent_end" => WorkerEvent::AgentEnd {
+            stop_reason: raw
+                .get("stop_reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        },
         "message_start" | "message_update" => {
             let text = raw
                 .pointer("/message/content")
