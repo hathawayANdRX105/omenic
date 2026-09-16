@@ -16,3 +16,12 @@ parking_lot = "0.12"
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# Both are already regular dependencies of this crate at the same versions,
+# so listing them here adds no new resolution to Cargo.lock. The lineage
+# tests need them to build a pre-G7 database file by hand (see
+# tests/lineage.rs) — that is the only way to reach the migration's ALTER
+# branch, since a file created by current code gets `parent_id` from
+# `CREATE TABLE` and never exercises it. `rt` (current-thread only) drives
+# that one bootstrap; the test itself stays a plain `#[test]`.
+libsql = { version = "0.9", default-features = false, features = ["core"] }
+tokio = { version = "1", default-features = false, features = ["rt"] }

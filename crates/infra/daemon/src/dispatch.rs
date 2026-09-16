@@ -31,6 +31,12 @@ pub struct WorkerHandle {
     /// Cleared by the forwarder itself when the worker's event channel
     /// closes (worker died or was reset), so the next subscribe respawns it.
     pump_active: Arc<AtomicBool>,
+    /// The run served by the prompt currently in flight (G7-B run
+    /// attribution).  The event pump reads this to stamp every
+    /// [`EventFrame`] it broadcasts, so subscribers can route events to the
+    /// run that owns them rather than to the session that sent most
+    /// recently.  `None` while no attributed prompt is running.
+    active_run: Arc<std::sync::RwLock<Option<String>>>,
     /// orbit 模式构造包（模型 + 后端 + 容器解析出的 OrbitConfig）；
     /// None = omp 兼容模式。daemon 在 start 时从装配容器解析一次。
     orbit_setup: Option<rpc::worker::OrbitSetup>,
@@ -42,8 +48,30 @@ impl WorkerHandle {
             inner: None,
             omp_path: omp_path.into(),
             pump_active: Arc::new(AtomicBool::new(false)),
+            active_run: Arc::new(std::sync::RwLock::new(None)),
             orbit_setup,
         }
+    }
+
+    /// Record the run served by the prompt about to be sent (G7-B).  The
+    /// event pump stamps this onto every frame it pushes while the run is
+    /// active.  The slot is *sticky*: `prompt` returns as soon as the worker
+    /// acks, but the turn's events keep flowing afterwards (the pump owns
+    /// the read loop and fans them out after the response frame is matched
+    /// — in orbit mode the whole turn is async), so the run is only replaced
+    /// by the next attributed prompt, never cleared on prompt return.
+    /// An empty `run_id` (legacy prompt without attribution) clears the
+    /// slot so a finished run cannot own a later, unattributed turn.
+    pub fn set_active_run(&self, run_id: &str) {
+        let mut guard = self.active_run.write().unwrap_or_else(|e| e.into_inner());
+        *guard = (!run_id.is_empty()).then(|| run_id.to_string());
+    }
+
+    /// Forget any active run (worker reset: a respawned worker owes the
+    /// previous run nothing).
+    pub fn clear_active_run(&self) {
+        let mut guard = self.active_run.write().unwrap_or_else(|e| e.into_inner());
+        *guard = None;
     }
 
     /// PID of the underlying omp worker (0 if not yet spawned).
@@ -79,6 +107,7 @@ impl WorkerHandle {
     /// Drop the worker entirely; next call lazy-respawns.  The forwarder
     /// thread observes the closed event channel and clears `pump_active`.
     pub fn reset(&mut self) {
+        self.clear_active_run();
         self.inner = None;
     }
 
@@ -95,6 +124,7 @@ impl WorkerHandle {
         let w = self.inner.as_mut().expect("ensured");
         let rx = w.subscribe(WORKER_TOPIC);
         let active = Arc::clone(&self.pump_active);
+        let active_run = Arc::clone(&self.active_run);
         let bus = events.clone();
         active.store(true, Ordering::SeqCst);
         std::thread::spawn(move || {
@@ -104,8 +134,21 @@ impl WorkerHandle {
                 let Ok(payload) = serde_json::to_value(&event) else {
                     continue;
                 };
-                let Ok(line) = serde_json::to_string(&EventFrame::new(WORKER_TOPIC, payload))
-                else {
+                let mut frame = EventFrame::new(WORKER_TOPIC, payload);
+                // G7-B: attribute the frame to the run the in-flight prompt
+                // declared, so subscribers route it to the owning run.
+                // Read-only here; a prompt on another connection may be
+                // setting the slot concurrently (the server serializes
+                // prompts by the worker mutex, but the pump keeps draining
+                // this run's events after that prompt returned).
+                if let Some(run) = active_run
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_ref()
+                {
+                    frame = frame.with_run_id(run);
+                }
+                let Ok(line) = serde_json::to_string(&frame) else {
                     continue;
                 };
                 bus.broadcast(WORKER_TOPIC, &line);
@@ -167,7 +210,17 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                 Ok(s) => s,
                 Err(m) => return Response::err(id, ResponseError::new("protocol", m)),
             };
-            match ctx.sessions.ensure_session(sid, title) {
+            // G7-A1: optional lineage parent. Absent / null / blank → root,
+            // so a client that predates parent_id keeps working untouched.
+            let parent_id = req
+                .params
+                .get("parent_id")
+                .and_then(Value::as_str)
+                .filter(|p| !p.trim().is_empty());
+            match ctx
+                .sessions
+                .ensure_session_with_parent(sid, title, parent_id)
+            {
                 Ok(row) => match serde_json::to_value(&row) {
                     Ok(v) => Response::ok(id, v),
                     Err(e) => Response::err(
@@ -415,6 +468,10 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                 );
                 return e;
             }
+            // G7-B: declare the run this turn's events belong to before the
+            // prompt goes out.  The pump stamps it on every frame it pushes
+            // while the slot holds it (sticky — see `set_active_run`).
+            ctx.worker.set_active_run(run_id);
             let w = ctx.worker.inner.as_mut().expect("ensured");
             let resp = w.prompt(msg);
             let finished = crate::state::now_ms();

@@ -70,7 +70,10 @@ pub enum Command {
     #[serde(rename = "daemon.info")]
     Info,
 
-    /// `session.create` — `{ id, title }` → `SessionSummary`.
+    /// `session.create` — `{ session_id, title, parent_id? }` →
+    /// `SessionSummary`.  Omitting `parent_id` (or passing null/blank)
+    /// creates a root session; a set `parent_id` records the lineage edge
+    /// used by 5.3/5.5 grouping.
     #[serde(rename = "session.create")]
     SessionCreate,
     /// `session.list` — `{ query, limit }` → `[SessionSummary]`.
@@ -210,6 +213,14 @@ pub struct EventFrame {
     pub topic: String,
     /// The serialized event payload (`WorkerEvent` JSON for the worker topic).
     pub event: Value,
+    /// The run this event belongs to (G7-B run attribution): the `run_id`
+    /// the prompt carried while the worker emitted it, so subscribers can
+    /// route events to the run that owns them instead of to whichever
+    /// session happened to send most recently.  Absent on frames pushed by
+    /// an older daemon and on events emitted outside any attributed prompt;
+    /// [`EventFrame::belongs_to_run`] treats those as pass-through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
 }
 
 impl EventFrame {
@@ -218,6 +229,25 @@ impl EventFrame {
             kind: EventFrameKind::Event,
             topic: topic.into(),
             event,
+            run_id: None,
+        }
+    }
+
+    /// Stamp the run this event belongs to (G7-B).  Builder-style so the
+    /// daemon's event pump can attribute a frame only when a run is active.
+    pub fn with_run_id(mut self, run_id: impl Into<String>) -> Self {
+        self.run_id = Some(run_id.into());
+        self
+    }
+
+    /// Routing predicate for subscribers (G7-B): whether this frame belongs
+    /// to `run`.  Frames without a `run_id` — pushed by an older daemon, or
+    /// emitted outside an attributed prompt — pass through, so a newer
+    /// subscriber never silently drops traffic it cannot attribute.
+    pub fn belongs_to_run(&self, run: &str) -> bool {
+        match &self.run_id {
+            Some(frame_run) => frame_run == run,
+            None => true,
         }
     }
 }

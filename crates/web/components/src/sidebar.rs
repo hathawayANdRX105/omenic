@@ -25,6 +25,8 @@ pub fn Sidebar(
     on_select: EventHandler<String>,
     on_select_space: EventHandler<String>,
     on_create: EventHandler<String>,
+    /// 行内「+」钮：以某会话为父创建子会话（5.3/5.5 谱系分组）
+    on_create_child: EventHandler<String>,
     on_delete_session: EventHandler<String>,
     on_delete_space: EventHandler<String>,
     collapsed: bool,
@@ -157,15 +159,17 @@ pub fn Sidebar(
                                         }
                                         span { class: "text-[12px] leading-5 text-label-3 tabular-nums", "{count}" }
                                     }
-                                    // 会话行 h32，缩进 22px
+                                    // 会话行 h32，缩进 22px；树内子会话再逐层缩进
                                     if is_open {
                                         div { class: "pl-[22px] flex flex-col gap-px pb-1",
-                                            for session in sessions_for_space {
+                                            for (session, depth) in group_sessions(&sessions_for_space) {
                                                 SessionRow {
                                                     key: "{session.id}",
                                                     session: session.clone(),
+                                                    depth,
                                                     active: session.id == active_id,
                                                     on_select: on_select,
+                                                    on_create_child: on_create_child,
                                                     on_delete: on_delete_session,
                                                 }
                                             }
@@ -199,14 +203,86 @@ pub fn Sidebar(
     }
 }
 
+/// 把一个 space 内的扁平会话列表按 `parent_id` 组成渲染树：父在前、子紧随
+/// 其后并逐层加深，返回 `(会话引用, 层级)`。`parent_id` 是无 FK 的自由文本，
+/// 三条边界：父不在本列表（被删 / 在别的 space）→ 当根；成环（a→b→a）
+/// 由 visited 集合截断并在第二趟当根兜底；层级超深时缩进封顶但**节点照常
+/// 渲染**——深链不该让会话从侧栏消失。绝不死循环。渲染顺序沿原列表顺序，
+/// 与 page-workspace「子插在父之后」对齐。
+///
+/// `pub` 是为了让 `tests/group_sessions.rs` 锁住这几条边界不变式——它跑在
+/// 渲染路径上，一旦死循环或层级算错，表现是侧栏卡死/错位而不是编译失败。
+pub fn group_sessions(sessions: &[Session]) -> Vec<(&Session, usize)> {
+    const MAX_DEPTH: usize = 16;
+
+    let by_id: HashMap<&str, &Session> = sessions.iter().map(|s| (s.id.as_str(), s)).collect();
+    // 只认父也在本列表内的边；父不在 → 该会话是根
+    let mut children: HashMap<&str, Vec<&Session>> = HashMap::new();
+    for s in sessions {
+        if let Some(pid) = s.parent_id.as_deref()
+            && by_id.contains_key(pid)
+        {
+            children.entry(pid).or_default().push(s);
+        }
+    }
+
+    let mut visited: HashSet<&str> = HashSet::new();
+    let mut out: Vec<(&Session, usize)> = Vec::new();
+    let is_root = |s: &Session| match s.parent_id.as_deref() {
+        Some(pid) => !by_id.contains_key(pid),
+        None => true,
+    };
+    // 两趟：第一趟只处理根，第二趟兜底成环残余（a↔b 互相指向时二者都不是根）
+    for pass in 0..2u8 {
+        for s in sessions {
+            if visited.contains(s.id.as_str()) {
+                continue;
+            }
+            if pass == 0 && !is_root(s) {
+                continue;
+            }
+            let mut stack: Vec<(&Session, usize)> = vec![(s, 0)];
+            while let Some((node, depth)) = stack.pop() {
+                if !visited.insert(node.id.as_str()) {
+                    continue;
+                }
+                out.push((node, depth));
+                if let Some(kids) = children.get(node.id.as_str()) {
+                    // 反序入栈，弹出时保持原列表顺序。超过 MAX_DEPTH 的后代
+                    // 仍然渲染，只是缩进封顶——深链不该让会话从侧栏消失。
+                    for child in kids.iter().rev() {
+                        stack.push((child, (depth + 1).min(MAX_DEPTH)));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 子会话逐层缩进 18px；根会话由外层容器的 `pl-[22px]` 统一缩进，故
+/// depth 0 不再叠加。层级封顶 3 层，更深的嵌套不再加宽，避免把行内容
+/// 挤出侧栏可视区。
+fn depth_indent_class(depth: usize) -> &'static str {
+    match depth {
+        0 => "",
+        1 => "pl-[18px]",
+        2 => "pl-[36px]",
+        _ => "pl-[54px]",
+    }
+}
+
 #[component]
 fn SessionRow(
     session: Session,
+    depth: usize,
     active: bool,
     on_select: EventHandler<String>,
+    on_create_child: EventHandler<String>,
     on_delete: EventHandler<String>,
 ) -> Element {
     let id_for_select = session.id.clone();
+    let id_for_child = session.id.clone();
     let id_for_delete = session.id.clone();
     let dot = status_dot_class(&session.status);
 
@@ -222,10 +298,21 @@ fn SessionRow(
     };
 
     rsx! {
-        div { class: "{row_class}",
+        div { class: "{row_class} {depth_indent_class(depth)}",
             onclick: move |_| on_select.call(id_for_select.clone()),
             span { class: "w-2 h-2 rounded-full {dot} shrink-0" }
             span { class: "{title_class}", "{session.title}" }
+            // 新建子会话：样式语言同项目行 + 钮，与删除钮共用 hover 让位
+            // 出来的空间（时间戳 group-hover:hidden）
+            button {
+                class: "shrink-0 flex items-center justify-center w-4 h-4 text-label-3 hover:text-label opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer bg-transparent border-none",
+                title: "新建子会话",
+                onclick: move |e: MouseEvent| {
+                    e.stop_propagation();
+                    on_create_child.call(id_for_child.clone());
+                },
+                Plus { size: 13 }
+            }
             button {
                 class: "shrink-0 flex items-center justify-center w-4 h-4 text-label-3 hover:text-danger opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer bg-transparent border-none",
                 title: "删除会话",
