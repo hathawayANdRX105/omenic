@@ -533,14 +533,18 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
 
 /// Record one run boundary in the session's durable turn log. Best-effort
 /// and invisible to the protocol: a caller that omits `session_id` / `run_id`
-/// gets no turn log, and a storage failure is dropped (the ledger write next
-/// to it already ignores its own errors). The persisted log is what startup
-/// crash repair walks — see [`crate::server::Daemon::repair_interrupted_runs`].
+/// gets no turn log. A storage failure is logged rather than propagated (the
+/// ledger write next to it already ignores its own errors) — but it stays
+/// visible, because the persisted log is what startup crash repair walks, so
+/// a silent failure here would later surface as an unrepaired run.
+/// See [`crate::server::Daemon::repair_interrupted_runs`].
 fn record_turn(sessions: &SessionState, session_id: &str, run_id: &str, record: TurnRecord) {
     if session_id.is_empty() || run_id.is_empty() {
         return;
     }
-    let _ = sessions.append_turn_log(session_id, &[record]);
+    if let Err(e) = sessions.append_turn_log(session_id, &[record]) {
+        eprintln!("daemon: turn log append failed for session {session_id}: {e}");
+    }
 }
 
 fn session_error_response(

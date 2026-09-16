@@ -222,7 +222,7 @@ impl Daemon {
             model: model.clone(),
             backend: std::sync::Arc::new(orbit::HttpLlm),
             config: rpc::worker::OrbitConfig {
-                cwd: Some(std::sync::Arc::<Path>::from(cfg.cwd.as_path())),
+                cwd: Some(std::sync::Arc::from(cfg.cwd.clone())),
                 max_turns,
                 compaction,
                 catalog,

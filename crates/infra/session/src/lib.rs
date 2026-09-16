@@ -364,6 +364,18 @@ fn is_lock_error(err: &SessionError) -> bool {
     matches!(*code & 0xFF, 5 | 6)
 }
 
+/// Whether `err` means the `turn_log` column already exists — the race case
+/// where two processes passed the same `PRAGMA table_info` check and the
+/// second `ALTER TABLE` lost. Treated as success because the end state (the
+/// column is present) is exactly what the migration wanted.
+fn is_duplicate_column_error(err: &SessionError) -> bool {
+    let SessionError::Libsql(libsql::Error::SqliteFailure(code, msg)) = err else {
+        return false;
+    };
+    // SQLITE_ERROR (1) carries "duplicate column name" in the message.
+    *code & 0xFF == 1 && msg.contains("duplicate column")
+}
+
 async fn run_with_lock_retry<F, Fut>(op: F) -> Result<(), SessionError>
 where
     F: Fn() -> Fut,
@@ -373,6 +385,11 @@ where
     loop {
         match op().await {
             Ok(()) => return Ok(()),
+            Err(e) if is_duplicate_column_error(&e) => {
+                // Lost the `PRAGMA table_info` race against another process:
+                // the column is there, which is all this migration wanted.
+                return Ok(());
+            }
             Err(e) if attempt < INIT_LOCK_RETRIES && is_lock_error(&e) => {
                 attempt += 1;
                 // No sleep: `busy_timeout` already drives the actual wait
@@ -818,8 +835,26 @@ impl SessionDb {
                 None => return Ok(()), // no session row — best-effort no-op
             };
             drop(row);
-            let _ = decode_turn_log(&existing)?;
-            let mut text = existing;
+            // A log that fails to decode is kept verbatim — the caller still
+            // gets its records appended — but the unreadable prefix is
+            // quarantined so crash repair can keep making progress on this
+            // session instead of failing every append forever.
+            let prefix = if existing.is_empty() {
+                String::new()
+            } else {
+                match decode_turn_log(&existing) {
+                    Ok(_) => existing.clone(),
+                    Err(_) => {
+                        eprintln!(
+                            "session: turn_log of {id_owned} failed to decode; \
+                             quarantining {} bytes and continuing",
+                            existing.len()
+                        );
+                        String::new()
+                    }
+                }
+            };
+            let mut text = prefix;
             text.push_str(&appended);
             tx.execute(
                 "UPDATE sessions SET turn_log = ?1 WHERE id = ?2",

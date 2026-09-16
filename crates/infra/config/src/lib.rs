@@ -464,7 +464,10 @@ impl TomlConfig {
             base.cwd = PathBuf::from(v);
         }
         if let Some(v) = self.daemon.max_turns {
-            base.max_turns = Some(v as usize);
+            // `as usize` would silently truncate on a 32-bit host; the TOML
+            // field is u64 because TOML integers are. usize::try_from keeps a
+            // too-large value out of the config instead of wrapping it.
+            base.max_turns = usize::try_from(v).ok();
         }
         base
     }
