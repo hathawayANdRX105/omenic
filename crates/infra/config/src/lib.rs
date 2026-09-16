@@ -38,6 +38,14 @@ pub struct Config {
     pub memory_enabled: bool,
     /// Override for the memory directory; `None` = `data_dir/memory`.
     pub memory_dir: Option<PathBuf>,
+    /// Working directory the daemon's orbit engine treats as the session
+    /// root: `AGENTS.md` workspace-instruction discovery walks up this
+    /// directory's ancestor chain. Defaults to the daemon startup directory
+    /// (`.oi/config.toml` `[daemon] cwd`, or `OMENIC_CWD`).
+    pub cwd: PathBuf,
+    /// Cap on LLM round-trips per run for the orbit engine. `None` = the
+    /// loop's own default (`[daemon] max_turns`, or `OMENIC_MAX_TURNS`).
+    pub max_turns: Option<usize>,
 }
 
 /// One external MCP server: a child process spoken to over stdio.
@@ -126,6 +134,8 @@ impl Config {
             mcp_servers: Vec::new(),
             memory_enabled: false,
             memory_dir: None,
+            cwd: Self::default_cwd(),
+            max_turns: None,
         };
 
         // Load from TOML file (.oi/config.toml, legacy fallback omenic.toml);
@@ -167,8 +177,23 @@ impl Config {
         if let Ok(v) = env::var("OMENIC_LLM_MAX_TOKENS") {
             config.llm_max_tokens = v.parse().ok();
         }
+        if let Ok(v) = env::var("OMENIC_CWD") {
+            config.cwd = PathBuf::from(v);
+        }
+        if let Ok(v) = env::var("OMENIC_MAX_TURNS") {
+            config.max_turns = v.parse().ok();
+        }
         config.validate()?;
         Ok(config)
+    }
+
+    /// Daemon session working directory: the orbit engine searches this
+    /// directory's ancestor chain for `AGENTS.md`. Defaults to the process
+    /// working directory — the daemon startup dir — never to a silent
+    /// `None`, so a workspace without an explicit `cwd` still gets instruction
+    /// discovery from where it was launched.
+    fn default_cwd() -> PathBuf {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     }
 
     /// Validate config fields after all sources are merged.
@@ -258,6 +283,24 @@ impl Config {
                     message: format!("duplicate server name '{}'", s.name),
                 });
             }
+        }
+
+        // cwd: when it exists it must be a directory — instruction discovery
+        // walks its ancestor chain, and a file would never hold AGENTS.md.
+        if self.cwd.exists() && !self.cwd.is_dir() {
+            return Err(ConfigError::Invalid {
+                field: "cwd",
+                message: format!("'{}' exists but is not a directory", self.cwd.display()),
+            });
+        }
+        // max_turns: 0 would end every run before its first LLM round-trip.
+        if let Some(n) = self.max_turns
+            && n == 0
+        {
+            return Err(ConfigError::Invalid {
+                field: "max_turns",
+                message: "must be at least 1".to_string(),
+            });
         }
 
         Ok(())
@@ -350,12 +393,23 @@ struct TomlConfig {
     mcp: McpToml,
     #[serde(default)]
     memory: MemoryToml,
+    #[serde(default)]
+    daemon: DaemonToml,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
 struct MemoryToml {
     enabled: Option<bool>,
     dir: Option<String>,
+}
+
+/// `[daemon]` TOML section: orbit-engine session knobs.
+#[derive(Debug, Default, serde::Deserialize)]
+struct DaemonToml {
+    /// Session working directory (`AGENTS.md` discovery root).
+    cwd: Option<String>,
+    /// Cap on LLM round-trips per run.
+    max_turns: Option<u64>,
 }
 
 /// `[llm]` TOML section for direct LLM credentials.
@@ -405,6 +459,12 @@ impl TomlConfig {
         }
         if let Some(v) = self.memory.dir {
             base.memory_dir = Some(PathBuf::from(v));
+        }
+        if let Some(v) = self.daemon.cwd {
+            base.cwd = PathBuf::from(v);
+        }
+        if let Some(v) = self.daemon.max_turns {
+            base.max_turns = Some(v as usize);
         }
         base
     }

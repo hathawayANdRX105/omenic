@@ -46,6 +46,20 @@ impl Fiber {
         PluginContext::new(&mut self.registry, &mut self.bus, &self.config)
     }
 
+    /// Resolve a service out of the assembled container (read-only; the
+    /// registry is untouched). This is the host-side read that makes
+    /// registration real: a service a plugin `provide`d is looked up by the
+    /// same key and type. `None` when the service was never provided or was
+    /// provided under a different key.
+    pub fn resolve<T: std::any::Any + Send + Sync>(&self, key: &str) -> Option<std::sync::Arc<T>> {
+        self.registry.resolve(key)
+    }
+
+    /// Read-only view of the merged config document.
+    pub fn config(&self) -> &Value {
+        &self.config
+    }
+
     /// Adopt `plugin`: runs `on_load` immediately (services first, so the
     /// plugin can resolve what earlier plugins provided).
     pub fn load(&mut self, mut plugin: Box<dyn PluginLifecycle>) {

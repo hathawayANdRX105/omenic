@@ -64,6 +64,8 @@ fn start_daemon(dir: &Path, tag: &str, omp: &Path) -> Daemon {
         omp_path: omp.to_string_lossy().into_owned(),
         session_db_path: Some(dir.join(format!("{tag}.db"))),
         orbit_model: None,
+        cwd: dir.to_path_buf(),
+        max_turns: 64,
     })
     .expect("daemon start")
 }

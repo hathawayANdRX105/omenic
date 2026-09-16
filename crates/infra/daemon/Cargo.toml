@@ -12,10 +12,14 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 fs2 = { workspace = true }
 adaptor = { path = "../../agent/adaptor" }
+orbit = { path = "../../agent/orbit" }
 rpc = { path = "../rpc" }
 session = { path = "../session" }
 config = { path = "../config" }
 omenic-composition = { path = "../../composition" }
+omenic-harness-tools = { path = "../../harness/tools" }
+omenic-harness-compaction = { path = "../../harness/compaction" }
+omenic-harness-runtime = { path = "../../harness/runtime" }
 parking_lot = "0.12"
 ctrlc = { workspace = true, features = ["termination"] }
 

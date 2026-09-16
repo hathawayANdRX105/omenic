@@ -265,7 +265,8 @@ async fn apply_schema(conn: &Connection) -> Result<(), SessionError> {
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL,
             created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL
+            updated_at INTEGER NOT NULL,
+            turn_log TEXT NOT NULL DEFAULT ''
          );
          CREATE TABLE IF NOT EXISTS messages (
             session_id TEXT NOT NULL,
@@ -279,6 +280,33 @@ async fn apply_schema(conn: &Connection) -> Result<(), SessionError> {
          CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);";
     run_with_lock_retry(|| async {
         conn.execute_batch(sql).await?;
+        Ok(())
+    })
+    .await
+}
+
+/// Add the `turn_log` column to `sessions` when the file predates it.
+///
+/// SQLite has no `ADD COLUMN IF NOT EXISTS`, so the column list is read
+/// first; the `ALTER` runs only when the column is missing. Idempotent —
+/// every `open` runs it, and a database that already has the column costs
+/// one `PRAGMA table_info` round trip.
+async fn apply_turn_log_column(conn: &Connection) -> Result<(), SessionError> {
+    let mut rows = conn.query("PRAGMA table_info(sessions)", ()).await?;
+    let mut has_turn_log = false;
+    while let Some(row) = rows.next().await? {
+        // Column 1 of `table_info` is the name (0 = cid).
+        if row.get_str(1).is_ok_and(|name| name == "turn_log") {
+            has_turn_log = true;
+        }
+    }
+    drop(rows);
+    if has_turn_log {
+        return Ok(());
+    }
+    run_with_lock_retry(|| async {
+        conn.execute_batch("ALTER TABLE sessions ADD COLUMN turn_log TEXT NOT NULL DEFAULT '';")
+            .await?;
         Ok(())
     })
     .await
@@ -323,6 +351,7 @@ async fn init_database(conn: &Connection) -> Result<(), SessionError> {
     enable_wal_if_needed(conn).await?;
     apply_pragmas(conn).await?;
     apply_schema(conn).await?;
+    apply_turn_log_column(conn).await?;
     Ok(())
 }
 
@@ -727,6 +756,101 @@ impl SessionDb {
                 });
             }
             Ok(out)
+        })
+    }
+}
+
+// -----------------------------------------------------------------------------
+// API: turn log
+// -----------------------------------------------------------------------------
+
+impl SessionDb {
+    /// Every session id, in id order. Used by the daemon's startup
+    /// crash-repair pass, which must walk each session's turn log;
+    /// [`SessionDb::list_sessions`] requires a query and is the wrong tool
+    /// for an unconditional scan.
+    pub fn session_ids(&self) -> Result<Vec<String>, SessionError> {
+        let guard = self.inner.conn.lock();
+        self.inner.runtime.block_on(async move {
+            let conn = &*guard;
+            let mut rows = conn
+                .query("SELECT id FROM sessions ORDER BY id ASC", ())
+                .await?;
+            let mut out = Vec::new();
+            while let Some(row) = rows.next().await? {
+                out.push(row.get(0)?);
+            }
+            Ok(out)
+        })
+    }
+
+    /// Append `records` to the durable turn log of `session_id`. The existing
+    /// column is decoded first, so a half-written or corrupt store fails
+    /// loudly here instead of silently growing mixed-encoding garbage. A
+    /// session row that does not exist is a silent no-op: turn logging is
+    /// best-effort, and a caller may hand an id the client never created.
+    pub fn append_turn_log(
+        &self,
+        session_id: &str,
+        records: &[TurnRecord],
+    ) -> Result<(), SessionError> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        SessionError::invalid_id_if_blank(session_id)?;
+        let id_owned = session_id.to_string();
+        let appended = encode_turn_log(records);
+
+        let guard = self.inner.conn.lock();
+        self.inner.runtime.block_on(async move {
+            let conn = &*guard;
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .await?;
+            let mut row = tx
+                .query(
+                    "SELECT turn_log FROM sessions WHERE id = ?1",
+                    libsql::params![id_owned.as_str()],
+                )
+                .await?;
+            let existing: String = match row.next().await? {
+                Some(r) => r.get(0)?,
+                None => return Ok(()), // no session row — best-effort no-op
+            };
+            drop(row);
+            let _ = decode_turn_log(&existing)?;
+            let mut text = existing;
+            text.push_str(&appended);
+            tx.execute(
+                "UPDATE sessions SET turn_log = ?1 WHERE id = ?2",
+                libsql::params![text, id_owned.as_str()],
+            )
+            .await?;
+            tx.commit().await?;
+            Ok(())
+        })
+    }
+
+    /// Read the durable turn log of `session_id` (empty when the session has
+    /// no recorded run boundaries yet, or does not exist).
+    pub fn load_turn_log(&self, session_id: &str) -> Result<Vec<TurnRecord>, SessionError> {
+        SessionError::invalid_id_if_blank(session_id)?;
+        let id_owned = session_id.to_string();
+
+        let guard = self.inner.conn.lock();
+        self.inner.runtime.block_on(async move {
+            let conn = &*guard;
+            let mut rows = conn
+                .query(
+                    "SELECT turn_log FROM sessions WHERE id = ?1",
+                    libsql::params![id_owned.as_str()],
+                )
+                .await?;
+            let text: String = match rows.next().await? {
+                Some(row) => row.get(0)?,
+                None => return Ok(Vec::new()),
+            };
+            decode_turn_log(&text)
         })
     }
 }

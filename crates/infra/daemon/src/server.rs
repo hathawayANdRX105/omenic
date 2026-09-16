@@ -8,7 +8,7 @@
 //! * `Daemon` owns the lock + worker state; `Drop` performs the
 //!   shutdown sequence so accidental early-return cleanup is automatic.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -40,6 +40,14 @@ pub struct DaemonConfig {
     /// `.oi/config.toml` 齐全时 Some——daemon worker 走 orbit 模式（真
     /// 模型）；None = omp 兼容模式。
     pub orbit_model: Option<adaptor::Model>,
+    /// 会话工作目录：orbit 引擎沿其祖先链查找 `AGENTS.md`（`.oi/config.toml`
+    /// 的 `[daemon] cwd`，默认 daemon 启动目录）。写入装配文档并经
+    /// `LoopConfig::instruction_cwd` 注入——G6 第一次让指令注入在生产路径
+    /// 生效。
+    pub cwd: PathBuf,
+    /// 每 run 的 LLM 往返上限（`.oi/config.toml` 的 `[daemon] max_turns`）。
+    /// 写入装配文档，由 daemon 从 `harness.loop` 服务解析回读。
+    pub max_turns: usize,
 }
 
 impl DaemonConfig {
@@ -75,6 +83,8 @@ impl DaemonConfig {
             omp_path,
             session_db_path,
             orbit_model,
+            cwd: cfg.cwd.clone(),
+            max_turns: cfg.max_turns.unwrap_or(orbit::DEFAULT_MAX_TURNS),
         })
     }
 }
@@ -91,11 +101,12 @@ pub struct Daemon {
     pub(crate) accept_thread: Option<thread::JoinHandle<()>>,
     /// Push-event fan-out table shared by all connections (R2 3.3).
     pub(crate) events: EventBus,
-    /// Harness plugin container built by the composition root (C6.5). The
-    /// daemon holds it for the process lifetime: dropping the fiber unloads
-    /// plugins in reverse registration order, so it must outlive the accept
-    /// loop that serves requests against those services.
-    pub(crate) _fiber: omenic_composition::Fiber,
+    /// Harness plugin container built by the composition root (C6.5) and
+    /// consumed at start ([`Self::orbit_setup`]). The daemon holds it for the
+    /// process lifetime: dropping the fiber unloads plugins in reverse
+    /// registration order, so it must outlive the accept loop that serves
+    /// requests against those services.
+    pub(crate) fiber: omenic_composition::Fiber,
     pub(crate) plugins: omenic_composition::PluginRegistry,
 }
 
@@ -126,14 +137,31 @@ impl Daemon {
         let (fiber, plugins) = Self::assemble_plugins(&cfg)?;
 
         let lock = InstanceLock::acquire(&socket_path)?;
-        let listener = Listener::bind(&socket_path)?;
         let session_db = session::SessionDb::open(&session_db_path)?;
+        let session_state = SessionState::new(session_db);
+
+        // G6 crash repair: a daemon killed mid-run leaves half-open runs in
+        // the persisted turn logs. Close them now — after the DB is open and
+        // before the socket is bound, so a client never connects to a run
+        // the previous process left dangling. Idempotent on a clean log.
+        Self::repair_interrupted_runs(&session_state);
+
+        let listener = Listener::bind(&socket_path)?;
         let run_ledger = RunLedger::open_for_socket(&socket_path)?;
 
-        let session_state = SessionState::new(session_db);
+        // G6: the container is consumed, not just assembled. The orbit engine
+        // gets its tools, compaction policy and turn cap from the services
+        // the plugins provided (falling back to each family's own default
+        // when a service is absent). orbit stays the production loop; the
+        // container supplies config and policy, the worker bridges.
+        let orbit_setup = cfg
+            .orbit_model
+            .as_ref()
+            .map(|model| Self::orbit_setup(&fiber, model, &cfg));
+
         let worker = Arc::new(Mutex::new(WorkerHandle::new(
             cfg.omp_path.clone(),
-            cfg.orbit_model.clone(),
+            orbit_setup,
         )));
         let shutdown = Arc::new(AtomicBool::new(false));
         let started_at_ms = now_ms();
@@ -160,18 +188,86 @@ impl Daemon {
             started_at_ms,
             accept_thread: Some(accept_thread),
             events,
-            _fiber: fiber,
+            fiber,
             plugins,
         })
+    }
+
+    /// Resolve the orbit engine's setup out of the assembled container: the
+    /// tool catalog (`harness.tools`), the compaction policy
+    /// (`harness.compaction`), and the turn cap (`harness.loop`, itself built
+    /// from the config document — see [`Self::assemble_plugins`]).
+    ///
+    /// Every resolution degrades to the family's own default rather than
+    /// failing the daemon start: a container that doesn't provide a service
+    /// still yields a working engine on the documented defaults.
+    fn orbit_setup(
+        fiber: &omenic_composition::Fiber,
+        model: &adaptor::Model,
+        cfg: &DaemonConfig,
+    ) -> rpc::worker::OrbitSetup {
+        let catalog = fiber
+            .resolve::<omenic_harness_tools::ToolCatalog>("harness.tools")
+            .unwrap_or_else(|| std::sync::Arc::new(omenic_harness_tools::default_catalog()));
+        let compaction = fiber
+            .resolve::<omenic_harness_compaction::CharBudgetPolicy>("harness.compaction")
+            .unwrap_or_else(|| {
+                std::sync::Arc::new(omenic_harness_compaction::CharBudgetPolicy::default())
+            });
+        let max_turns = fiber
+            .resolve::<omenic_harness_runtime::LoopEngine>("harness.loop")
+            .map(|engine| engine.max_turns)
+            .unwrap_or(cfg.max_turns);
+        rpc::worker::OrbitSetup {
+            model: model.clone(),
+            backend: std::sync::Arc::new(orbit::HttpLlm),
+            config: rpc::worker::OrbitConfig {
+                cwd: Some(std::sync::Arc::<Path>::from(cfg.cwd.as_path())),
+                max_turns,
+                compaction,
+                catalog,
+            },
+        }
+    }
+
+    /// Append synthetic `TurnEnd { aborted }` records for every run a prior
+    /// process left open. Best-effort: a storage failure logs and skips that
+    /// session rather than aborting the daemon start.
+    fn repair_interrupted_runs(sessions: &SessionState) {
+        let ids = match sessions.session_ids() {
+            Ok(ids) => ids,
+            Err(e) => {
+                eprintln!("daemon: turn-log scan failed, skipping crash repair: {e}");
+                return;
+            }
+        };
+        for id in &ids {
+            let Ok(records) = sessions.load_turn_log(id) else {
+                continue;
+            };
+            let closers = session::interrupted_run_closers(&records);
+            if closers.is_empty() {
+                continue;
+            }
+            match sessions.append_turn_log(id, &closers) {
+                Ok(()) => eprintln!(
+                    "daemon: crash repair closed {} interrupted run(s) in session {id}",
+                    closers.len()
+                ),
+                Err(e) => eprintln!("daemon: crash repair of session {id} failed: {e}"),
+            }
+        }
     }
 
     /// Assemble the harness plugin container for this daemon.
     ///
     /// The config document is what the composition root reads its knobs from
-    /// (`model`, `max_turns`, `cwd`, `system_prompt`). Only `model` has a
-    /// daemon-side source today — the orbit model when configured; the rest
-    /// stay absent so `assemble` applies its own defaults rather than having
-    /// the daemon invent values.
+    /// (`model`, `max_turns`, `cwd`, `system_prompt`). `model` comes from the
+    /// orbit credentials when configured; `cwd` and `max_turns` come from
+    /// `[daemon]` in `.oi/config.toml`. The document is the single source the
+    /// container consumes — the daemon then reads the assembled services back
+    /// out (see [`Self::orbit_setup`]), so a knob flows document → service →
+    /// engine rather than being short-circuited.
     fn assemble_plugins(
         cfg: &DaemonConfig,
     ) -> Result<
@@ -185,6 +281,14 @@ impl Daemon {
         if let Some(model) = cfg.orbit_model.as_ref() {
             doc.insert("model".into(), serde_json::Value::from(model.model.clone()));
         }
+        doc.insert(
+            "cwd".into(),
+            serde_json::Value::from(cfg.cwd.to_string_lossy().into_owned()),
+        );
+        doc.insert(
+            "max_turns".into(),
+            serde_json::Value::from(cfg.max_turns as u64),
+        );
         Ok(omenic_composition::assemble(
             serde_json::Value::Object(doc),
             Vec::new(),
@@ -238,6 +342,14 @@ impl Daemon {
     /// rather than inferring it from behaviour.
     pub fn plugin_names(&self) -> Vec<&str> {
         self.plugins.plugins()
+    }
+
+    /// The assembled plugin container (C6.5): every service the plugins
+    /// provided at start is resolvable from here for the daemon's lifetime.
+    /// G6: the daemon resolves the orbit engine's tools / compaction policy /
+    /// turn cap out of this rather than hardcoding them.
+    pub fn fiber(&self) -> &omenic_composition::Fiber {
+        &self.fiber
     }
 }
 

@@ -43,6 +43,14 @@ impl ToolCatalog {
     pub fn specs(&self) -> Vec<ToolSpec> {
         self.tools.iter().map(|t| t.spec()).collect()
     }
+
+    /// Cloned handles to every registered tool, in registration order. A
+    /// host that dispatches through a different tool trait (orbit's
+    /// `tools::Tool`) adapts each handle at the seam instead of re-building
+    /// the catalog.
+    pub fn all(&self) -> Vec<Arc<dyn Tool>> {
+        self.tools.iter().cloned().collect()
+    }
 }
 
 impl Default for ToolCatalog {

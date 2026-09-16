@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 
 use serde_json::{Value, json};
-use session::SessionRole;
+use session::{SessionRole, TurnRecord};
 
 use crate::protocol::{Command, EventFrame, Request, Response, ResponseError};
 use crate::state::{EventBus, RunLedger, SessionState, require_str, require_u32};
@@ -31,17 +31,18 @@ pub struct WorkerHandle {
     /// Cleared by the forwarder itself when the worker's event channel
     /// closes (worker died or was reset), so the next subscribe respawns it.
     pump_active: Arc<AtomicBool>,
-    /// orbit 模式配置（DaemonConfig 从 .oi/config.toml 的 llm 三件套解析）
-    orbit_model: Option<adaptor::Model>,
+    /// orbit 模式构造包（模型 + 后端 + 容器解析出的 OrbitConfig）；
+    /// None = omp 兼容模式。daemon 在 start 时从装配容器解析一次。
+    orbit_setup: Option<rpc::worker::OrbitSetup>,
 }
 
 impl WorkerHandle {
-    pub fn new(omp_path: impl Into<String>, orbit_model: Option<adaptor::Model>) -> Self {
+    pub fn new(omp_path: impl Into<String>, orbit_setup: Option<rpc::worker::OrbitSetup>) -> Self {
         WorkerHandle {
             inner: None,
             omp_path: omp_path.into(),
             pump_active: Arc::new(AtomicBool::new(false)),
-            orbit_model,
+            orbit_setup,
         }
     }
 
@@ -55,7 +56,7 @@ impl WorkerHandle {
     /// daemon-backed entry to the session store.
     fn ensure_started(&mut self) -> Result<(), Response> {
         if self.inner.is_none() {
-            let mut w = rpc::worker::Worker::new(&self.omp_path, self.orbit_model.clone())
+            let mut w = rpc::worker::Worker::new(&self.omp_path, self.orbit_setup.clone())
                 .map_err(|e| {
                     Response::err(
                         None,
@@ -386,6 +387,15 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
             if !run_id.is_empty() {
                 let _ = ctx.runs.start(run_id, session_id, started);
             }
+            record_turn(
+                &ctx.sessions,
+                session_id,
+                run_id,
+                TurnRecord::TurnStart {
+                    run_id: run_id.to_string(),
+                    ts_ms: started,
+                },
+            );
 
             if let Err(e) = ctx.worker.ensure_started() {
                 if !run_id.is_empty() {
@@ -393,6 +403,16 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                         .runs
                         .finish(run_id, crate::state::now_ms(), "spawn_failed");
                 }
+                record_turn(
+                    &ctx.sessions,
+                    session_id,
+                    run_id,
+                    TurnRecord::TurnEnd {
+                        run_id: run_id.to_string(),
+                        ts_ms: crate::state::now_ms(),
+                        status: "failed".into(),
+                    },
+                );
                 return e;
             }
             let w = ctx.worker.inner.as_mut().expect("ensured");
@@ -403,12 +423,32 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                     if !run_id.is_empty() {
                         let _ = ctx.runs.finish(run_id, finished, "ok");
                     }
+                    record_turn(
+                        &ctx.sessions,
+                        session_id,
+                        run_id,
+                        TurnRecord::TurnEnd {
+                            run_id: run_id.to_string(),
+                            ts_ms: finished,
+                            status: "ok".into(),
+                        },
+                    );
                     Response::ok(id, v.clone())
                 }
                 Err(e) => {
                     if !run_id.is_empty() {
                         let _ = ctx.runs.finish(run_id, finished, "failed");
                     }
+                    record_turn(
+                        &ctx.sessions,
+                        session_id,
+                        run_id,
+                        TurnRecord::TurnEnd {
+                            run_id: run_id.to_string(),
+                            ts_ms: finished,
+                            status: "failed".into(),
+                        },
+                    );
                     Response::err(
                         id,
                         ResponseError::new("worker_prompt_failed", e.to_string()),
@@ -489,6 +529,18 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
             Response::ok(id, json!({ "removed": removed }))
         }
     }
+}
+
+/// Record one run boundary in the session's durable turn log. Best-effort
+/// and invisible to the protocol: a caller that omits `session_id` / `run_id`
+/// gets no turn log, and a storage failure is dropped (the ledger write next
+/// to it already ignores its own errors). The persisted log is what startup
+/// crash repair walks — see [`crate::server::Daemon::repair_interrupted_runs`].
+fn record_turn(sessions: &SessionState, session_id: &str, run_id: &str, record: TurnRecord) {
+    if session_id.is_empty() || run_id.is_empty() {
+        return;
+    }
+    let _ = sessions.append_turn_log(session_id, &[record]);
 }
 
 fn session_error_response(
