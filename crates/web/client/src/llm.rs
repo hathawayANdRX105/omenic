@@ -84,11 +84,43 @@ impl LlmRuntimeConfig {
         }
     }
 
-    /// Persist to `.oi/config.toml`
+    /// Persist to `.oi/config.toml`.
+    ///
+    /// **增量写回**：若文件已存在，用 [`toml_edit::DocumentMut`] 只更新本结构体
+    /// 管理的键——根表的 `omp_path` / `data_dir` / `model` 与 `[llm]` 段下的
+    /// `base_url` / `api_key` / `model` / `max_tokens`——**其余内容原样保留**：
+    /// `[mcp]` / `[memory]` / `[daemon]` 等未管理段、注释、空行与排版。
+    ///
+    /// 旧实现用 `format!()` 整文件重写，只写上述 6 个键，会把配置页一次保存
+    /// 变成对 `[mcp]` / `[memory]` / `[daemon]` 的静默抹除。
     pub fn save_to_file(&self) -> Result<(), String> {
         let dir = Path::new(&self.data_dir);
         if !dir.exists() {
             let _ = std::fs::create_dir_all(dir);
+        }
+
+        let target_path = dir.join("config.toml");
+
+        // 文件已存在：增量更新，未管理区域逐字节保留。
+        if let Ok(content) = std::fs::read_to_string(&target_path) {
+            match content.parse::<toml_edit::DocumentMut>() {
+                Ok(mut doc) => {
+                    self.write_managed_keys(&mut doc);
+                    return std::fs::write(&target_path, doc.to_string()).map_err(|e| {
+                        format!("写入配置文件 {} 失败: {}", target_path.display(), e)
+                    });
+                }
+                // 解析失败时绝不能让用户配置凭空消失：先备份原文，再回退全量写。
+                Err(e) => {
+                    eprintln!(
+                        "warn: 配置文件 {} 解析失败({})，已备份为 {} 后回退全量写",
+                        target_path.display(),
+                        e,
+                        target_path.with_extension("toml.bak").display()
+                    );
+                    let _ = std::fs::write(target_path.with_extension("toml.bak"), &content);
+                }
+            }
         }
 
         let toml_content = format!(
@@ -104,9 +136,33 @@ impl LlmRuntimeConfig {
             self.data_dir, self.model, self.base_url, self.api_key, self.model, self.max_tokens
         );
 
-        let target_path = dir.join("config.toml");
         std::fs::write(&target_path, toml_content)
             .map_err(|e| format!("写入配置文件 {} 失败: {}", target_path.display(), e))
+    }
+
+    /// 把本结构体管理的键写进已解析的文档；文档里的其它键、段、注释、排版一律不动。
+    fn write_managed_keys(&self, doc: &mut toml_edit::DocumentMut) {
+        let root = doc.as_table_mut();
+        // `omp_path` 没有对应字段，只在缺失时补上默认值——直接写死 "omp" 会抹掉
+        // 用户在别处配好的自定义路径，正是本修复要消除的那类静默覆盖。
+        if !root.contains_key("omp_path") {
+            root.insert("omp_path", toml_edit::value("omp"));
+        }
+        set_item(root, "data_dir", toml_edit::value(self.data_dir.as_str()));
+        set_item(root, "model", toml_edit::value(self.model.as_str()));
+
+        if !root.contains_key("llm") {
+            root.insert("llm", toml_edit::Item::Table(toml_edit::Table::new()));
+        }
+        let llm = root
+            .get_mut("llm")
+            .and_then(toml_edit::Item::as_table_mut)
+            .expect("[llm] 段刚被确保存在");
+        set_item(llm, "base_url", toml_edit::value(self.base_url.as_str()));
+        set_item(llm, "api_key", toml_edit::value(self.api_key.as_str()));
+        set_item(llm, "model", toml_edit::value(self.model.as_str()));
+        // TOML 整数是 i64；u32 → i64 无损。
+        set_item(llm, "max_tokens", toml_edit::value(self.max_tokens as i64));
     }
 
     /// Test connection by querying /v1/models
@@ -193,5 +249,19 @@ impl LlmRuntimeConfig {
         } else {
             Err("回复中未包含有效的 message.content".to_string())
         }
+    }
+}
+
+/// 写入一个管理键：已存在就原地替换 value，不存在才 insert。
+///
+/// 不能无条件用 `Table::insert`——它对已存在的键会调 `Key::fmt()`，把 key 的
+/// decor 清掉，而 toml_edit 把「行前注释」（如 `# provider endpoint`）挂在
+/// key 的 decor 上，那样注释就跟着没了。只换 value 时 key 与其 decor 原地不动，
+/// 注释/排版得以保留。
+fn set_item(table: &mut toml_edit::Table, key: &str, item: toml_edit::Item) {
+    if let Some(slot) = table.get_mut(key) {
+        *slot = item;
+    } else {
+        table.insert(key, item);
     }
 }

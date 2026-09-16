@@ -263,3 +263,172 @@ fn env_overrides_take_precedence_over_the_file() {
         }
     }
 }
+
+/// 核心回归：`save_to_file` 只更新自己管理的键，`[mcp]` / `[memory]` / `[daemon]`
+/// 等未管理段必须原样保留（旧实现用 `format!()` 整文件重写，会静默抹掉它们）。
+#[test]
+fn save_preserves_unmanaged_sections() {
+    let sb = Sandbox::new();
+
+    std::fs::create_dir_all(".oi").expect("建 .oi 失败");
+    // 一份「完整」配置：除管理键外还含三个未管理段，均取自
+    // `crates/infra/config` 的真实 schema（`TomlConfig` 的 mcp/memory/daemon）。
+    std::fs::write(
+        ".oi/config.toml",
+        "# omenic configuration\n\
+         omp_path = \"omp\"\n\
+         data_dir = \"./.oi\"\n\
+         model = \"agnes-2.5-flash\"\n\
+         \n\
+         [llm]\n\
+         base_url = \"http://127.0.0.1:3182\"\n\
+         api_key = \"sk-original\"\n\
+         model = \"agnes-2.5-flash\"\n\
+         max_tokens = 4096\n\
+         \n\
+         [memory]\n\
+         enabled = true\n\
+         dir = \"./.oi/memory\"\n\
+         \n\
+         [daemon]\n\
+         cwd = \"/workspace\"\n\
+         max_turns = 32\n\
+         \n\
+         [mcp]\n\
+         \n\
+         [[mcp.servers]]\n\
+         name = \"fs\"\n\
+         command = \"npx\"\n\
+         args = [\"-y\", \"@modelcontextprotocol/server-filesystem\"]\n",
+    )
+    .expect("写配置失败");
+
+    LlmRuntimeConfig {
+        base_url: "http://127.0.0.1:9999/v1".to_string(),
+        api_key: "sk-updated".to_string(),
+        model: "agnes-3.0-pro".to_string(),
+        max_tokens: 8192,
+        data_dir: "./.oi".to_string(),
+    }
+    .save_to_file()
+    .expect("保存配置失败");
+
+    // 用 toml_edit 解析后逐段断言，而不是只看字符串包含——这样「段在但键被抹」
+    // 也能被抓到。
+    let doc = std::fs::read_to_string(sb.path().join(".oi/config.toml"))
+        .expect("读回配置失败")
+        .parse::<toml_edit::DocumentMut>()
+        .expect("保存后的配置必须是合法 TOML");
+
+    // 管理键确实被更新
+    assert_eq!(doc["data_dir"].as_str(), Some("./.oi"));
+    assert_eq!(doc["model"].as_str(), Some("agnes-3.0-pro"));
+    assert_eq!(
+        doc["llm"]["base_url"].as_str(),
+        Some("http://127.0.0.1:9999/v1")
+    );
+    assert_eq!(doc["llm"]["api_key"].as_str(), Some("sk-updated"));
+    assert_eq!(doc["llm"]["model"].as_str(), Some("agnes-3.0-pro"));
+    assert_eq!(doc["llm"]["max_tokens"].as_integer(), Some(8192));
+
+    // 未管理段逐键保留
+    assert_eq!(doc["memory"]["enabled"].as_bool(), Some(true));
+    assert_eq!(doc["memory"]["dir"].as_str(), Some("./.oi/memory"));
+    assert_eq!(doc["daemon"]["cwd"].as_str(), Some("/workspace"));
+    assert_eq!(doc["daemon"]["max_turns"].as_integer(), Some(32));
+
+    // [[mcp.servers]] 是表数组，不是内联数组
+    let servers = doc["mcp"]["servers"]
+        .as_array_of_tables()
+        .expect("[mcp].servers 应保留为表数组");
+    assert_eq!(servers.len(), 1, "[[mcp.servers]] 条目数应保留");
+    let server = servers.get(0).expect("表数组首项应存在");
+    assert_eq!(server["name"].as_str(), Some("fs"));
+    assert_eq!(server["command"].as_str(), Some("npx"));
+    assert_eq!(
+        server["args"].as_array().map(|a| a.len()),
+        Some(2),
+        "args 数组内容应保留"
+    );
+}
+
+/// 向后兼容：旧配置只有根表键、没有 `[llm]` 段，保存后 `[llm]` 段被正确创建且四键齐全。
+#[test]
+fn save_adds_missing_llm_section() {
+    let sb = Sandbox::new();
+
+    std::fs::create_dir_all(".oi").expect("建 .oi 失败");
+    std::fs::write(
+        ".oi/config.toml",
+        "# legacy config\nomp_path = \"omp\"\ndata_dir = \"./.oi\"\nmodel = \"legacy-model\"\n",
+    )
+    .expect("写配置失败");
+
+    LlmRuntimeConfig {
+        base_url: "http://127.0.0.1:3182".to_string(),
+        api_key: "sk-new".to_string(),
+        model: "agnes-2.5-flash".to_string(),
+        max_tokens: 2048,
+        data_dir: "./.oi".to_string(),
+    }
+    .save_to_file()
+    .expect("保存配置失败");
+
+    let doc = std::fs::read_to_string(sb.path().join(".oi/config.toml"))
+        .expect("读回配置失败")
+        .parse::<toml_edit::DocumentMut>()
+        .expect("保存后应为合法 TOML");
+
+    let llm = doc
+        .get("llm")
+        .and_then(toml_edit::Item::as_table)
+        .expect("save_to_file 应为缺段的配置补上 [llm]");
+    assert_eq!(llm["base_url"].as_str(), Some("http://127.0.0.1:3182"));
+    assert_eq!(llm["api_key"].as_str(), Some("sk-new"));
+    assert_eq!(llm["model"].as_str(), Some("agnes-2.5-flash"));
+    assert_eq!(llm["max_tokens"].as_integer(), Some(2048));
+
+    // 原有根键保留，model 被管理键覆盖为结构体的值
+    assert_eq!(doc["omp_path"].as_str(), Some("omp"));
+    assert_eq!(doc["data_dir"].as_str(), Some("./.oi"));
+    assert_eq!(doc["model"].as_str(), Some("agnes-2.5-flash"));
+}
+
+/// 注释由 toml_edit 原样保留（根表注释与段内注释都在）。
+#[test]
+fn save_preserves_comments() {
+    let sb = Sandbox::new();
+
+    std::fs::create_dir_all(".oi").expect("建 .oi 失败");
+    std::fs::write(
+        ".oi/config.toml",
+        "# my note\n\
+         data_dir = \"./.oi\"\n\
+         model = \"m\"\n\
+         \n\
+         [llm]\n\
+         # provider endpoint\n\
+         base_url = \"http://x\"\n\
+         api_key = \"sk\"\n\
+         model = \"m\"\n\
+         max_tokens = 100\n",
+    )
+    .expect("写配置失败");
+
+    LlmRuntimeConfig {
+        base_url: "http://x".to_string(),
+        api_key: "sk".to_string(),
+        model: "m".to_string(),
+        max_tokens: 100,
+        data_dir: "./.oi".to_string(),
+    }
+    .save_to_file()
+    .expect("保存配置失败");
+
+    let saved = std::fs::read_to_string(sb.path().join(".oi/config.toml")).expect("读回配置失败");
+    assert!(saved.contains("# my note"), "根表注释应保留: {saved}");
+    assert!(
+        saved.contains("# provider endpoint"),
+        "段内注释应保留: {saved}"
+    );
+}
