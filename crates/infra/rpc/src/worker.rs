@@ -41,16 +41,22 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Map orbit's loop-level stop reason onto the wire string `AgentEnd`
-/// carries. `TurnStop` is `#[serde(rename_all = "snake_case")]`, so its
-/// serialized discriminator is already the wire spelling; a unit variant
-/// serializes to a bare quoted string like `"end_turn"`.
-fn turn_stop_to_wire(stop: orbit::TurnStop) -> String {
-    let s = serde_json::to_string(&stop).unwrap_or_else(|_| "\"error\"".to_string());
-    s.trim_matches('"').to_string()
+/// Map orbit's loop-level stop reason onto the snake_case wire string
+/// [`WorkerEvent::AgentEnd`] carries — `end_turn` / `max_tokens` / `aborted`
+/// / `error` / `max_turns` — so a clean turn end, an abort, an error and the
+/// turn cap stay distinguishable downstream.
+fn turn_stop_to_string(s: &orbit::TurnStop) -> String {
+    match s {
+        orbit::TurnStop::EndTurn => "end_turn",
+        orbit::TurnStop::MaxTokens => "max_tokens",
+        orbit::TurnStop::Aborted => "aborted",
+        orbit::TurnStop::Error => "error",
+        orbit::TurnStop::MaxTurns => "max_turns",
+    }
+    .to_string()
 }
 
 /// Events emitted by the worker during agent execution.
@@ -58,7 +64,7 @@ fn turn_stop_to_wire(stop: orbit::TurnStop) -> String {
 /// R2 2.2: one dedicated variant per known omp wire event type (mirrors the
 /// dsh `known-event-types` discipline); `Unknown` stays as the forward-compat
 /// branch for genuinely unrecognized frames only — never as an error dump.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum WorkerEvent {
     /// Agent started processing (`agent_start`).
@@ -352,7 +358,7 @@ impl OrbitEngine {
                                     }
                                     orbit::AgentEvent::TurnEnd { stop_reason } => {
                                         WorkerEvent::AgentEnd {
-                                            stop_reason: turn_stop_to_wire(stop_reason),
+                                            stop_reason: turn_stop_to_string(&stop_reason),
                                         }
                                     }
                                 };
