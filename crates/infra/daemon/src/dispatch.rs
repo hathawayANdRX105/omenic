@@ -554,6 +554,21 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                     ts_ms: started,
                 },
             );
+            // G8: in orbit mode the run's AgentEnd is consumed by the event
+            // pump, which was previously started lazily on the first
+            // `event.subscribe`. A client that prompts without subscribing
+            // would leave every run half-open forever — the exact state
+            // this change exists to eliminate. Start the pump before the
+            // prompt goes out so the close path is wired regardless of
+            // subscriptions. Idempotent (`pump_active` guards the spawn).
+            if ctx.worker.is_orbit() {
+                if let Err(e) = ctx
+                    .worker
+                    .ensure_event_pump(&ctx.events, &ctx.sessions, &ctx.runs)
+                {
+                    return e;
+                }
+            }
 
             if let Err(e) = ctx.worker.ensure_started() {
                 if !run_id.is_empty() {
