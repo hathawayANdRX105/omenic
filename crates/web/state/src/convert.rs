@@ -36,7 +36,7 @@ pub fn summary_to_session(s: &SessionSummary) -> Session {
 ///
 /// daemon 的 `SessionSummary` 没有状态字段，`session.*` / `run.list` 的
 /// 命令语义又已冻结，会话列表的运行态改由 `run.list` 的 run 记录组装
-/// （ROADMAP 第 56 行自述的兜底方案）。判定对齐 dsh
+/// （ROADMAP-active 缺口表「crash-repair 未接线」自述的兜底方案）。判定对齐 dsh
 /// `interruptedTurnClosers` 的重载语义：有 `TurnStart` 无 `TurnEnd`
 /// closer 的 run，在重载视图里即崩溃孤儿。
 ///
