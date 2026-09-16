@@ -78,6 +78,13 @@ impl AbortSignal {
     pub fn flag(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.flag)
     }
+
+    /// Wrap an existing shared flag — the inverse of [`Self::flag`]. Lets a
+    /// host adapter hand the loop's own `AtomicBool` to a harness tool
+    /// instead of a fresh, unconnected flag.
+    pub fn from_flag(flag: Arc<AtomicBool>) -> Self {
+        Self { flag }
+    }
 }
 
 /// A single LLM conversation message. Mirrors `adaptor::Message` shape
