@@ -99,6 +99,6 @@ impl Tool for Grep {
 
         let header = format!("{} matches:\n", results.len());
         let body = results.join("\n");
-        Ok(truncate_output(&format!("{header}{body}"), 0)?)
+        Ok(truncate_output(&format!("{header}{body}"))?)
     }
 }

@@ -56,6 +56,6 @@ impl Tool for McpTool {
             .map_err(ToolError::from)?;
         // Same line cap the built-in tools use: a chatty server must not blow
         // the context window. Overflow spills to a temp file.
-        Ok(tools::truncate_output(&text, 0)?)
+        Ok(tools::truncate_output(&text)?)
     }
 }
