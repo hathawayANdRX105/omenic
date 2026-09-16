@@ -389,6 +389,31 @@ impl StatsSummary {
     }
 }
 
+/// Map a worker `AgentEnd { stop_reason }` onto a [`RunLedger::finish`]
+/// status (G8).  The daemon's event pump calls this when it forwards the end
+/// of an orbit turn — the first moment the run is provably over, since an
+/// orbit `prompt` only acknowledges that the message was queued.
+///
+/// The mapping stays inside the ledger's own status vocabulary (the same
+/// strings [`aggregate_stats`] buckets on):
+///
+/// * `"aborted"` — the loop was aborted mid-flight → `"aborted"`.
+/// * `"error"` — the loop errored, or panicked and was recovered →
+///   `"failed"`.
+/// * anything else (`"end_turn"`, `"max_tokens"`, `"max_turns"`, …) →
+///   `"ok"`.  Hitting a budget cap is a clean stop, not a run failure.
+/// * `""` — the wire frame carried no reason (a legacy frame, or an
+///   omp-compat peer that never sends one).  "Unknown" is not "failed": an
+///   empty reason means the caller said nothing, not that the run went
+///   wrong, so it degrades to `"ok"` with every other unrecognized reason.
+pub fn agent_end_status(stop_reason: &str) -> &'static str {
+    match stop_reason {
+        "aborted" => "aborted",
+        "error" => "failed",
+        _ => "ok",
+    }
+}
+
 /// Pure aggregation over a run slice.  Split out from [`RunLedger`] so it
 /// can be unit-tested with hand-built records and no daemon or socket.
 ///

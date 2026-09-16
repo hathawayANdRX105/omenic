@@ -10,9 +10,11 @@
 //! and the worker handle is the only piece that knows about `rpc::Worker`.
 
 use std::sync::Arc;
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 
+use rpc::worker::WorkerEvent;
 use serde_json::{Value, json};
 use session::{SessionRole, TurnRecord};
 
@@ -74,6 +76,20 @@ impl WorkerHandle {
         *guard = None;
     }
 
+    /// Whether this handle drives the omenic orbit engine in-process (`Some`
+    /// orbit setup) instead of an external omp worker (G8).
+    ///
+    /// The split changes run bookkeeping fundamentally: an omp `prompt`
+    /// blocks for the whole turn and its return value *is* the turn's
+    /// terminal state, so `dispatch` closes the run synchronously.  An orbit
+    /// `prompt` only acknowledges the message was queued — the turn runs on
+    /// the engine's serial thread and ends later, when the event pump
+    /// forwards `WorkerEvent::AgentEnd`.  Closing on the ack would make every
+    /// run look finished the instant it started.
+    pub fn is_orbit(&self) -> bool {
+        self.orbit_setup.is_some()
+    }
+
     /// PID of the underlying omp worker (0 if not yet spawned).
     pub fn child_pid(&self) -> u32 {
         self.inner.as_ref().map(|w| w.child_pid()).unwrap_or(0)
@@ -116,7 +132,18 @@ impl WorkerHandle {
     /// side forwarder drains that receiver and broadcasts [`EventFrame`]
     /// lines to every [`WORKER_TOPIC`] subscriber on the [`EventBus`].
     /// Serialized against every other worker use by the server's mutex.
-    pub fn ensure_event_pump(&mut self, events: &EventBus) -> Result<(), Response> {
+    ///
+    /// In orbit mode this thread is also the run's undertaker (G8): a prompt
+    /// only acknowledges that the message was queued, so the ledger run and
+    /// the session's turn log stay open until the pump forwards the turn's
+    /// [`WorkerEvent::AgentEnd`].  `sessions` / `runs` are shared in for that
+    /// close.
+    pub fn ensure_event_pump(
+        &mut self,
+        events: &EventBus,
+        sessions: &SessionState,
+        runs: &RunLedger,
+    ) -> Result<(), Response> {
         if self.pump_active.load(Ordering::SeqCst) {
             return Ok(());
         }
@@ -126,6 +153,12 @@ impl WorkerHandle {
         let active = Arc::clone(&self.pump_active);
         let active_run = Arc::clone(&self.active_run);
         let bus = events.clone();
+        let sessions = sessions.clone();
+        let runs = runs.clone();
+        // Orbit runs end here, omp-compat runs end in `dispatch` when the
+        // blocking prompt returns — the pump must not second-guess that
+        // close (it would append a second TurnEnd per turn).
+        let is_orbit = self.is_orbit();
         active.store(true, Ordering::SeqCst);
         std::thread::spawn(move || {
             // Ends when the worker dies (rpc pump clears its subscriber
@@ -141,12 +174,27 @@ impl WorkerHandle {
                 // setting the slot concurrently (the server serializes
                 // prompts by the worker mutex, but the pump keeps draining
                 // this run's events after that prompt returned).
-                if let Some(run) = active_run
-                    .read()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .as_ref()
-                {
+                //
+                // The run is snapshotted once and reused below: the finish
+                // must close exactly the run this frame was attributed to,
+                // not whatever a concurrent prompt left in the slot later.
+                let attributed = active_run.read().unwrap_or_else(|e| e.into_inner()).clone();
+                if let Some(run) = attributed.as_deref() {
                     frame = frame.with_run_id(run);
+                }
+                // G8: an orbit turn's terminal event is AgentEnd on this
+                // stream, not the prompt's ack. Close the ledger run and the
+                // turn log here, before the frame goes out, so a subscriber
+                // reading the end frame sees a run that is already closed.
+                // Then release the sticky slot (compare-and-set — see
+                // [`try_clear_active_run`]) so later unattributed events do
+                // not keep stamping a run that already ended.
+                if is_orbit
+                    && let WorkerEvent::AgentEnd { stop_reason } = &event
+                    && let Some(run) = attributed.as_deref()
+                {
+                    close_run_on_agent_end(&runs, &sessions, run, stop_reason);
+                    try_clear_active_run(&active_run, run);
                 }
                 let Ok(line) = serde_json::to_string(&frame) else {
                     continue;
@@ -156,6 +204,63 @@ impl WorkerHandle {
             active.store(false, Ordering::SeqCst);
         });
         Ok(())
+    }
+}
+
+/// Finish a run and append its `TurnEnd` when the orbit engine signals the
+/// end of the turn (G8).  Idempotent: a run already closed (a repeated
+/// `AgentEnd` for the same turn) is left alone, so the turn log keeps exactly
+/// one `TurnEnd` per `TurnStart` — that start/end balance is exactly what
+/// [`session::interrupted_run_closers`] walks at startup.
+fn close_run_on_agent_end(
+    runs: &RunLedger,
+    sessions: &SessionState,
+    run_id: &str,
+    stop_reason: &str,
+) {
+    // Snapshot before finishing: the session id has to survive a concurrent
+    // close of the same run, and a run that is already done is not ours to
+    // close.
+    let Some(record) = runs.get(run_id) else {
+        return;
+    };
+    if record.finished_at_ms.is_some() {
+        return;
+    }
+    let status = crate::state::agent_end_status(stop_reason);
+    let ts_ms = crate::state::now_ms();
+    let _ = runs.finish(run_id, ts_ms, status);
+    record_turn(
+        sessions,
+        &record.session_id,
+        run_id,
+        TurnRecord::TurnEnd {
+            run_id: run_id.to_string(),
+            ts_ms,
+            status: status.into(),
+        },
+    );
+}
+
+/// Clear the sticky active-run slot only while it still holds `expected`
+/// (G8).
+///
+/// The pump reads the slot, finishes that run, then clears — but between the
+/// read and the write a prompt on another connection may have swapped the
+/// slot to a brand-new run `r2`: the server serializes dispatch by the
+/// worker mutex, yet the pump keeps draining the finished run's trailing
+/// events after its own prompt returned, and the next prompt's
+/// [`WorkerHandle::set_active_run`] is a separate lock acquisition that can
+/// land in that gap.  Blinding the slot to `None` would orphan `r2` — its
+/// events would lose their run attribution and *its* `AgentEnd` would find
+/// an empty slot and never close the run, which is precisely the
+/// half-open-run bug this change fixes.  Comparing `expected` under the
+/// write lock turns the clear into a compare-and-swap: the slot is dropped
+/// only if nobody replaced it in between, and `r2` keeps its owner.
+fn try_clear_active_run(slot: &RwLock<Option<String>>, expected: &str) {
+    let mut guard = slot.write().unwrap_or_else(|e| e.into_inner());
+    if guard.as_deref() == Some(expected) {
+        *guard = None;
     }
 }
 
@@ -477,6 +582,22 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
             let finished = crate::state::now_ms();
             match &resp {
                 Ok(v) => {
+                    if ctx.worker.is_orbit() {
+                        // G8: an orbit prompt only acknowledges that the
+                        // message reached the engine's run thread — the turn
+                        // itself is still in flight and ends later, when the
+                        // event pump forwards `AgentEnd`.  Closing the run
+                        // here would make every orbit run look finished the
+                        // instant it started: `in_flight_runs` pinned at 0,
+                        // the session state machine's three states
+                        // unreachable, and the half-open turn-log entry that
+                        // `interrupted_run_closers` exists to repair could
+                        // never appear in a live log.  Just ack the client;
+                        // `ensure_event_pump` owns the close.
+                        return Response::ok(id, v.clone());
+                    }
+                    // omp-compat: `prompt` blocks for the whole turn, so its
+                    // return *is* the terminal state — close synchronously.
                     if !run_id.is_empty() {
                         let _ = ctx.runs.finish(run_id, finished, "ok");
                     }
@@ -493,6 +614,10 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                     Response::ok(id, v.clone())
                 }
                 Err(e) => {
+                    // The message never reached the engine (orbit: run
+                    // channel closed; omp: wire error), so the run did not
+                    // start at all — closing it as failed here is correct in
+                    // either mode.
                     if !run_id.is_empty() {
                         let _ = ctx.runs.finish(run_id, finished, "failed");
                     }
@@ -567,7 +692,9 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                 Err(m) => return Response::err(id, ResponseError::new("protocol", m)),
             };
             if topic == WORKER_TOPIC
-                && let Err(e) = ctx.worker.ensure_event_pump(&ctx.events)
+                && let Err(e) = ctx
+                    .worker
+                    .ensure_event_pump(&ctx.events, &ctx.sessions, &ctx.runs)
             {
                 return e;
             }
