@@ -14,7 +14,7 @@ use omenic_harness_core::chat::{Block, Content};
 
 use crate::Message;
 
-fn ids<'m>(m: &'m Message, tool_use: bool) -> Vec<&'m str> {
+fn ids(m: &Message, tool_use: bool) -> Vec<&str> {
     let Content::Blocks(bs) = &m.content else {
         return Vec::new();
     };

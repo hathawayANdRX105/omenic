@@ -41,11 +41,11 @@ fn wait_for_socket(path: &Path) {
         thread::sleep(Duration::from_millis(20));
     }
     eprintln!("wait_for_socket: giving up; parent dir contents:");
-    if let Some(parent) = path.parent() {
-        if let Ok(rd) = std::fs::read_dir(parent) {
-            for e in rd.flatten() {
-                eprintln!("  {:?}", e.path());
-            }
+    if let Some(parent) = path.parent()
+        && let Ok(rd) = std::fs::read_dir(parent)
+    {
+        for e in rd.flatten() {
+            eprintln!("  {:?}", e.path());
         }
     }
     panic!("daemon socket never came up: {path:?}");

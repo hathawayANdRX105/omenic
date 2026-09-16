@@ -30,16 +30,15 @@ pub fn parse_spec(content: &str) -> Result<Spec, String> {
             && !t.starts_with("<!-- spec")
             && !t.starts_with("<!-- desc")
             && !t.starts_with("<!-- forbid")
+            && let Some(f) = fields.last_mut()
         {
-            if let Some(f) = fields.last_mut() {
-                let hint = t
-                    .trim_start_matches("<!--")
-                    .trim_end_matches("-->")
-                    .trim()
-                    .to_string();
-                if !hint.is_empty() {
-                    f.hint = hint;
-                }
+            let hint = t
+                .trim_start_matches("<!--")
+                .trim_end_matches("-->")
+                .trim()
+                .to_string();
+            if !hint.is_empty() {
+                f.hint = hint;
             }
         }
     }

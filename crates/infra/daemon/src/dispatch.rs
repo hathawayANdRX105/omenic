@@ -355,7 +355,7 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
             if let Err(e) = ctx.worker.ensure_started() {
                 return e;
             }
-            let w = (*ctx.worker).inner.as_mut().expect("ensured");
+            let w = ctx.worker.inner.as_mut().expect("ensured");
             match w.ping() {
                 Ok(()) => Response::ok(id, json!({ "pong": true })),
                 Err(e) => {
@@ -395,7 +395,7 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                 }
                 return e;
             }
-            let w = (*ctx.worker).inner.as_mut().expect("ensured");
+            let w = ctx.worker.inner.as_mut().expect("ensured");
             let resp = w.prompt(msg);
             let finished = crate::state::now_ms();
             match &resp {
@@ -425,7 +425,7 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
             if let Err(e) = ctx.worker.ensure_started() {
                 return e;
             }
-            let w = (*ctx.worker).inner.as_mut().expect("ensured");
+            let w = ctx.worker.inner.as_mut().expect("ensured");
             match w.steer(msg) {
                 Ok(v) => Response::ok(id, v),
                 Err(e) => {
@@ -438,7 +438,7 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
             if let Err(e) = ctx.worker.ensure_started() {
                 return e;
             }
-            let w = (*ctx.worker).inner.as_mut().expect("ensured");
+            let w = ctx.worker.inner.as_mut().expect("ensured");
             match w.abort() {
                 Ok(v) => Response::ok(id, v),
                 Err(e) => {
@@ -450,7 +450,7 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
             if let Err(e) = ctx.worker.ensure_started() {
                 return e;
             }
-            let w = (*ctx.worker).inner.as_mut().expect("ensured");
+            let w = ctx.worker.inner.as_mut().expect("ensured");
             match w.read_event() {
                 Ok(ev) => match serde_json::to_value(ev) {
                     Ok(v) => Response::ok(id, v),
@@ -469,10 +469,10 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                 Ok(s) => s,
                 Err(m) => return Response::err(id, ResponseError::new("protocol", m)),
             };
-            if topic == WORKER_TOPIC {
-                if let Err(e) = ctx.worker.ensure_event_pump(&ctx.events) {
-                    return e;
-                }
+            if topic == WORKER_TOPIC
+                && let Err(e) = ctx.worker.ensure_event_pump(&ctx.events)
+            {
+                return e;
             }
             let sub_id = ctx.events.subscribe(topic, ctx.conn_id, ctx.out.clone());
             Response::ok(id, json!({ "subscription_id": sub_id, "topic": topic }))

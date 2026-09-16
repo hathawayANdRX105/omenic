@@ -11,7 +11,6 @@
 //! daemon portable and embeddable.
 
 use config::Config;
-use ctrlc;
 use daemon::{Daemon, DaemonConfig, DaemonError};
 
 use std::sync::Arc;

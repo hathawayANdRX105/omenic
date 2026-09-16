@@ -1595,10 +1595,10 @@ fn render_plan(tasks: &[Task]) -> String {
                 for m in ms {
                     let e = indeg.get_mut(m).unwrap();
                     *e -= 1;
-                    if *e == 0 {
-                        if let Some(t) = kids.iter().find(|k| k.id == m) {
-                            queue.push(t);
-                        }
+                    if *e == 0
+                        && let Some(t) = kids.iter().find(|k| k.id == m)
+                    {
+                        queue.push(t);
                     }
                 }
             }
@@ -2040,10 +2040,10 @@ fn pr_render_cmd(id: &str, json: bool) -> Result<u8, String> {
                 for m in ms {
                     let e = indeg.get_mut(m).unwrap();
                     *e -= 1;
-                    if *e == 0 {
-                        if let Some(t) = kids.iter().find(|k| k.id == m) {
-                            queue.push(t);
-                        }
+                    if *e == 0
+                        && let Some(t) = kids.iter().find(|k| k.id == m)
+                    {
+                        queue.push(t);
                     }
                 }
             }
@@ -3888,7 +3888,7 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
                 let unmet: Vec<String> = t
                     .deps
                     .iter()
-                    .filter(|dep| map.get(*dep).map_or(true, |d| d.status != TaskStatus::Done))
+                    .filter(|dep| map.get(*dep).is_none_or(|d| d.status != TaskStatus::Done))
                     .cloned()
                     .collect();
                 if unmet.is_empty() {
@@ -3921,7 +3921,7 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
                 let unmet = t
                     .deps
                     .iter()
-                    .filter(|dep| map.get(*dep).map_or(true, |d| d.status != TaskStatus::Done));
+                    .filter(|dep| map.get(*dep).is_none_or(|d| d.status != TaskStatus::Done));
                 if unmet.count() == 0 { None } else { Some(t) }
             })
             .collect();

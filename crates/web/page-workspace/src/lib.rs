@@ -119,32 +119,29 @@ fn worker_event_loop(d: WebDaemon, tx: tokio::sync::mpsc::UnboundedSender<AgentE
     const BACKOFF: [u64; 4] = [1, 2, 4, 5];
     let mut attempt = 0usize;
     loop {
-        match d.subscribe_worker() {
-            Ok(mut sub) => {
-                attempt = 0;
-                let mut translator = WireTranslator::new();
-                loop {
-                    // 5s keepalive：None 空转 tick 顺带感知消费端死亡，把组件
-                    // 卸载后读线程的残留窗口从 30s 压到 5s（空转只是一次
-                    // syscall，开销可忽略）
-                    match sub.next_event(Duration::from_secs(5)) {
-                        Ok(Some(frame)) => {
-                            if let Some(ev) = translator.translate(&frame.event)
-                                && tx.send(ev).is_err()
-                            {
-                                return; // 消费端已亡
-                            }
+        if let Ok(mut sub) = d.subscribe_worker() {
+            attempt = 0;
+            let mut translator = WireTranslator::new();
+            loop {
+                // 5s keepalive：None 空转 tick 顺带感知消费端死亡，把组件
+                // 卸载后读线程的残留窗口从 30s 压到 5s（空转只是一次
+                // syscall，开销可忽略）
+                match sub.next_event(Duration::from_secs(5)) {
+                    Ok(Some(frame)) => {
+                        if let Some(ev) = translator.translate(&frame.event)
+                            && tx.send(ev).is_err()
+                        {
+                            return; // 消费端已亡
                         }
-                        Ok(None) => {
-                            if tx.is_closed() {
-                                return; // 消费端已亡：keepalive tick 时感知
-                            }
-                        }
-                        Err(_) => break, // 断线 → 走重连
                     }
+                    Ok(None) => {
+                        if tx.is_closed() {
+                            return; // 消费端已亡：keepalive tick 时感知
+                        }
+                    }
+                    Err(_) => break, // 断线 → 走重连
                 }
             }
-            Err(_) => {}
         }
         if tx.is_closed() {
             return;

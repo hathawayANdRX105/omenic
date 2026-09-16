@@ -128,7 +128,7 @@ fn kill_and_restart_daemon_stream_recovers() {
 
     // 重启 daemon，重新订阅，事件流恢复。
     let mut daemon2 = start_daemon(dir.path(), "second", &omp);
-    let wd2 = WebDaemon::connect_to(&dir.path().join("second.sock"));
+    let wd2 = WebDaemon::connect_to(dir.path().join("second.sock"));
     assert!(wd2.ping(), "restarted daemon answers");
 
     let mut sub2 = wd2.subscribe_worker().expect("resubscribe after restart");
@@ -173,7 +173,7 @@ fn resubscribe_fails_until_daemon_returns() {
 
     // 重启后恢复。
     let mut daemon2 = start_daemon(dir.path(), "backoff2", &omp);
-    let wd2 = WebDaemon::connect_to(&dir.path().join("backoff2.sock"));
+    let wd2 = WebDaemon::connect_to(dir.path().join("backoff2.sock"));
     assert!(
         wd2.subscribe_worker().is_ok(),
         "resubscribe succeeds after restart"
