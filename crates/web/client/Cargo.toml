@@ -18,4 +18,4 @@ ureq = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-toml_edit = "0.22"
+# toml_edit 已在 [dependencies] 中，集成测试可直接引用，无需重复声明。

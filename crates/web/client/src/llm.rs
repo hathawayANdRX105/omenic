@@ -112,20 +112,41 @@ impl LlmRuntimeConfig {
                 }
                 // 解析失败时绝不能让用户配置凭空消失：先备份原文，再回退全量写。
                 Err(e) => {
+                    let backup_path = target_path.with_extension("toml.bak");
+                    // 备份本身失败时必须中止：继续全量写会覆盖掉唯一一份原文，
+                    // 而它连备份都没有——正是本修复要消除的静默丢失。
+                    if let Err(backup_err) = std::fs::write(&backup_path, &content) {
+                        return Err(format!(
+                            "配置文件 {} 解析失败({})，且备份原始内容到 {} 也失败({})；已中止写入以避免丢失配置",
+                            target_path.display(),
+                            e,
+                            backup_path.display(),
+                            backup_err
+                        ));
+                    }
                     eprintln!(
                         "warn: 配置文件 {} 解析失败({})，已备份为 {} 后回退全量写",
                         target_path.display(),
                         e,
-                        target_path.with_extension("toml.bak").display()
+                        backup_path.display()
                     );
-                    let _ = std::fs::write(target_path.with_extension("toml.bak"), &content);
+                    // 全量写也只补默认 omp_path——原文里若已有自定义路径，写死
+                    // "omp" 会抹掉它（与 write_managed_keys 的缺失才补同语义）。
+                    return self
+                        .write_full_config(&target_path, preserve_omp_path(&content).as_deref());
                 }
             }
         }
 
+        self.write_full_config(&target_path, None)
+    }
+
+    /// 全量写一份只含管理键的新配置（文件不存在或原文件不可解析时使用）。
+    /// `omp_path` 由调用方决定：`None` 用默认 `"omp"`，`Some(v)` 沿用原值。
+    fn write_full_config(&self, target_path: &Path, omp_path: Option<&str>) -> Result<(), String> {
         let toml_content = format!(
             "# omenic configuration\n\
-             omp_path = \"omp\"\n\
+             omp_path = \"{}\"\n\
              data_dir = \"{}\"\n\
              model = \"{}\"\n\n\
              [llm]\n\
@@ -133,10 +154,16 @@ impl LlmRuntimeConfig {
              api_key = \"{}\"\n\
              model = \"{}\"\n\
              max_tokens = {}\n",
-            self.data_dir, self.model, self.base_url, self.api_key, self.model, self.max_tokens
+            omp_path.unwrap_or("omp"),
+            self.data_dir,
+            self.model,
+            self.base_url,
+            self.api_key,
+            self.model,
+            self.max_tokens
         );
 
-        std::fs::write(&target_path, toml_content)
+        std::fs::write(target_path, toml_content)
             .map_err(|e| format!("写入配置文件 {} 失败: {}", target_path.display(), e))
     }
 
@@ -264,4 +291,26 @@ fn set_item(table: &mut toml_edit::Table, key: &str, item: toml_edit::Item) {
     } else {
         table.insert(key, item);
     }
+}
+
+/// 从一份**不可解析**的原始配置里抢救 `omp_path` 的值（若有）。
+///
+/// 文件能正常解析时走增量路径，`write_managed_keys` 已经「缺失才补」地保住了
+/// 自定义路径；只有解析失败回退全量写时才需要这里——用行扫描而非 toml 解析，
+/// 因为调用前提就是这个文件解析不了。格式必须是 `omp_path = "value"`。
+fn preserve_omp_path(unparsed: &str) -> Option<String> {
+    for line in unparsed.lines() {
+        let trimmed = line.trim();
+        let rest = trimmed.strip_prefix("omp_path")?;
+        let rest = rest.trim_start();
+        let rest = rest.strip_prefix('=')?;
+        let rest = rest.trim();
+        let value = rest.strip_prefix('"').and_then(|r| r.strip_suffix('"'));
+        if let Some(v) = value {
+            return Some(v.to_string());
+        }
+        // 无引号形式也接受，取到行尾（去注释与空白）。
+        return Some(rest.split('#').next().unwrap_or(rest).trim().to_string());
+    }
+    None
 }

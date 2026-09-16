@@ -157,11 +157,11 @@ fn save_creates_a_missing_data_dir() {
 /// `[llm]` 段里的 model 覆盖顶层 model；max_tokens 从整数正确取回。
 #[test]
 fn llm_section_overrides_top_level_model() {
-    let _sb = Sandbox::new();
+    let sb = Sandbox::new();
 
-    std::fs::create_dir_all(".oi").expect("建 .oi 失败");
+    std::fs::create_dir_all(sb.path().join(".oi")).expect("建 .oi 失败");
     std::fs::write(
-        ".oi/config.toml",
+        sb.path().join(".oi/config.toml"),
         "data_dir = \"./.oi\"\n\
          model = \"top-level-model\"\n\
          \n\
@@ -188,12 +188,15 @@ fn llm_section_overrides_top_level_model() {
 /// 配置文件缺字段时，缺的那部分保持内置默认，不被清空。
 #[test]
 fn missing_keys_fall_back_to_builtin_defaults() {
-    let _sb = Sandbox::new();
+    let sb = Sandbox::new();
 
-    std::fs::create_dir_all(".oi").expect("建 .oi 失败");
+    std::fs::create_dir_all(sb.path().join(".oi")).expect("建 .oi 失败");
     // 只给 base_url，其余全缺
-    std::fs::write(".oi/config.toml", "[llm]\nbase_url = \"http://only-url\"\n")
-        .expect("写配置失败");
+    std::fs::write(
+        sb.path().join(".oi/config.toml"),
+        "[llm]\nbase_url = \"http://only-url\"\n",
+    )
+    .expect("写配置失败");
 
     let loaded = LlmRuntimeConfig::load_from_system();
 
@@ -270,11 +273,11 @@ fn env_overrides_take_precedence_over_the_file() {
 fn save_preserves_unmanaged_sections() {
     let sb = Sandbox::new();
 
-    std::fs::create_dir_all(".oi").expect("建 .oi 失败");
+    std::fs::create_dir_all(sb.path().join(".oi")).expect("建 .oi 失败");
     // 一份「完整」配置：除管理键外还含三个未管理段，均取自
     // `crates/infra/config` 的真实 schema（`TomlConfig` 的 mcp/memory/daemon）。
     std::fs::write(
-        ".oi/config.toml",
+        sb.path().join(".oi/config.toml"),
         "# omenic configuration\n\
          omp_path = \"omp\"\n\
          data_dir = \"./.oi\"\n\
@@ -357,9 +360,9 @@ fn save_preserves_unmanaged_sections() {
 fn save_adds_missing_llm_section() {
     let sb = Sandbox::new();
 
-    std::fs::create_dir_all(".oi").expect("建 .oi 失败");
+    std::fs::create_dir_all(sb.path().join(".oi")).expect("建 .oi 失败");
     std::fs::write(
-        ".oi/config.toml",
+        sb.path().join(".oi/config.toml"),
         "# legacy config\nomp_path = \"omp\"\ndata_dir = \"./.oi\"\nmodel = \"legacy-model\"\n",
     )
     .expect("写配置失败");
@@ -399,9 +402,9 @@ fn save_adds_missing_llm_section() {
 fn save_preserves_comments() {
     let sb = Sandbox::new();
 
-    std::fs::create_dir_all(".oi").expect("建 .oi 失败");
+    std::fs::create_dir_all(sb.path().join(".oi")).expect("建 .oi 失败");
     std::fs::write(
-        ".oi/config.toml",
+        sb.path().join(".oi/config.toml"),
         "# my note\n\
          data_dir = \"./.oi\"\n\
          model = \"m\"\n\
