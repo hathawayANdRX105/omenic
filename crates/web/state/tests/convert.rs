@@ -17,6 +17,7 @@ fn summary_maps_fields_and_relative_time() {
     let summary = SessionSummary {
         id: "s-1".into(),
         title: "标题甲".into(),
+        parent_id: None,
         created_at_ms: (now - 60_000) as i64,
         updated_at_ms: (now - 120_000) as i64,
         message_count: 3,
@@ -38,6 +39,7 @@ fn summary_recent_activity_is_just_now() {
     let summary = SessionSummary {
         id: "s-2".into(),
         title: "标题乙".into(),
+        parent_id: None,
         created_at_ms: now as i64,
         updated_at_ms: now as i64,
         message_count: 0,

@@ -152,6 +152,14 @@ impl fmt::Display for SessionRole {
 pub struct SessionSummary {
     pub id: String,
     pub title: String,
+    /// Parent session id — the lineage edge for 5.3/5.5 grouping. `None` for a
+    /// root session (a `NULL` column, or a caller that never set one).
+    ///
+    /// Serde-optional: a client that omits the field deserializes as `None`,
+    /// and `None` is emitted as an explicit `null` so every summary the daemon
+    /// returns carries the key.
+    #[serde(default)]
+    pub parent_id: Option<String>,
     /// Unix epoch milliseconds. Matches `created_at` / `updated_at` columns.
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
@@ -264,6 +272,7 @@ async fn apply_schema(conn: &Connection) -> Result<(), SessionError> {
     let sql = "CREATE TABLE IF NOT EXISTS sessions (
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL,
+            parent_id TEXT,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
             turn_log TEXT NOT NULL DEFAULT ''
@@ -312,6 +321,41 @@ async fn apply_turn_log_column(conn: &Connection) -> Result<(), SessionError> {
     .await
 }
 
+/// Add the `parent_id` column to `sessions` when the file predates it.
+///
+/// Same idempotent shape as [`apply_turn_log_column`]: SQLite has no
+/// `ADD COLUMN IF NOT EXISTS`, so the column list is read first and the
+/// `ALTER` runs only when the column is missing. Every `open` runs this —
+/// an up-to-date file costs one `PRAGMA table_info` round trip and no DDL.
+/// The race where two processes pass the same check and one `ALTER` loses is
+/// absorbed by [`is_duplicate_column_error`] inside [`run_with_lock_retry`].
+///
+/// `parent_id` is intentionally a bare nullable `TEXT` with no `FOREIGN KEY`
+/// constraint (unlike `messages.session_id`): lineage is written by the
+/// `session.create` caller and a child may legitimately be recorded before
+/// its parent row exists (client-side grouping, out-of-order replay).
+/// Grouping (5.3/5.5) treats a missing-or-null parent as a root.
+async fn apply_parent_id_column(conn: &Connection) -> Result<(), SessionError> {
+    let mut rows = conn.query("PRAGMA table_info(sessions)", ()).await?;
+    let mut has_parent_id = false;
+    while let Some(row) = rows.next().await? {
+        // Column 1 of `table_info` is the name (0 = cid).
+        if row.get_str(1).is_ok_and(|name| name == "parent_id") {
+            has_parent_id = true;
+        }
+    }
+    drop(rows);
+    if has_parent_id {
+        return Ok(());
+    }
+    run_with_lock_retry(|| async {
+        conn.execute_batch("ALTER TABLE sessions ADD COLUMN parent_id TEXT;")
+            .await?;
+        Ok(())
+    })
+    .await
+}
+
 async fn apply_pragmas(conn: &Connection) -> Result<(), SessionError> {
     conn.execute_batch("PRAGMA synchronous = NORMAL;").await?;
     Ok(())
@@ -352,6 +396,7 @@ async fn init_database(conn: &Connection) -> Result<(), SessionError> {
     apply_pragmas(conn).await?;
     apply_schema(conn).await?;
     apply_turn_log_column(conn).await?;
+    apply_parent_id_column(conn).await?;
     Ok(())
 }
 
@@ -425,14 +470,37 @@ impl SessionDb {
     /// Create a brand-new session, or return the existing row (with its
     /// original timestamps) if `id` is already present.
     ///
-    /// `id` and `title` must be non-empty (after trimming).
+    /// `id` and `title` must be non-empty (after trimming). The new row is a
+    /// root (no parent); use [`Self::ensure_session_with_parent`] to record a
+    /// lineage edge.
     pub fn ensure_session(&self, id: &str, title: &str) -> Result<SessionSummary, SessionError> {
+        self.ensure_session_with_parent(id, title, None)
+    }
+
+    /// [`Self::ensure_session`] with an explicit `parent_id`. `None` (or a
+    /// blank string) records a root session.
+    ///
+    /// The parent is written only on insert — an existing row keeps whatever
+    /// lineage edge it already has, mirroring how `ensure_session` preserves
+    /// `title` and `created_at`. A parent id is not validated against the
+    /// `sessions` table (see [`apply_parent_id_column`]: a child may be
+    /// recorded before its parent).
+    pub fn ensure_session_with_parent(
+        &self,
+        id: &str,
+        title: &str,
+        parent_id: Option<&str>,
+    ) -> Result<SessionSummary, SessionError> {
         SessionError::invalid_id_if_blank(id)?;
         if title.trim().is_empty() {
             return Err(SessionError::InvalidSessionId);
         }
+        // A blank parent is the same as no parent — keeps a stray "" out of
+        // the lineage column.
+        let parent_id = parent_id.filter(|p| !p.trim().is_empty());
         let id_owned = id.to_string();
         let title_owned = title.to_string();
+        let parent_owned = parent_id.map(str::to_string);
 
         let guard = self.inner.conn.lock();
         // ponytail: scope the guard so the lock is released the instant the
@@ -441,13 +509,18 @@ impl SessionDb {
         self.inner.runtime.block_on(async move {
             let conn = &*guard;
             let now = now_ms();
-            // INSERT OR IGNORE leaves existing rows alone (so created_at is
-            // preserved); we then UPDATE updated_at so the row moves to the
-            // top of list_sessions.
+            // INSERT OR IGNORE leaves existing rows alone (so created_at and
+            // parent_id are preserved); we then UPDATE updated_at so the row
+            // moves to the top of list_sessions.
             conn.execute(
-                "INSERT OR IGNORE INTO sessions (id, title, created_at, updated_at) \
-                  VALUES (?1, ?2, ?3, ?3)",
-                libsql::params![id_owned.as_str(), title_owned.as_str(), now],
+                "INSERT OR IGNORE INTO sessions (id, title, parent_id, created_at, updated_at) \
+                  VALUES (?1, ?2, ?3, ?4, ?4)",
+                libsql::params![
+                    id_owned.as_str(),
+                    title_owned.as_str(),
+                    parent_owned.as_deref(),
+                    now
+                ],
             )
             .await?;
             conn.execute(
@@ -465,7 +538,18 @@ impl SessionDb {
     /// was already taken — same as [`Self::ensure_session`] but with a
     /// shorter name for the "I just want to make sure this exists" call site.
     pub fn create_session(&self, id: &str, title: &str) -> Result<SessionSummary, SessionError> {
-        self.ensure_session(id, title)
+        self.create_session_with_parent(id, title, None)
+    }
+
+    /// [`Self::create_session`] with an explicit `parent_id`; see
+    /// [`Self::ensure_session_with_parent`] for the parent semantics.
+    pub fn create_session_with_parent(
+        &self,
+        id: &str,
+        title: &str,
+        parent_id: Option<&str>,
+    ) -> Result<SessionSummary, SessionError> {
+        self.ensure_session_with_parent(id, title, parent_id)
     }
 
     /// Delete a session and all of its messages (via `ON DELETE CASCADE`).
@@ -506,7 +590,7 @@ impl SessionDb {
             let conn = &*guard;
             let mut rows = conn
                 .query(
-                    "SELECT s.id, s.title, s.created_at, s.updated_at, \
+                    "SELECT s.id, s.title, s.parent_id, s.created_at, s.updated_at, \
                             (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) \
                      FROM sessions s \
                      WHERE s.id LIKE ?1 COLLATE NOCASE OR s.title LIKE ?1 COLLATE NOCASE \
@@ -520,9 +604,10 @@ impl SessionDb {
                 out.push(SessionSummary {
                     id: row.get(0)?,
                     title: row.get(1)?,
-                    created_at_ms: row.get(2)?,
-                    updated_at_ms: row.get(3)?,
-                    message_count: row.get::<i64>(4)?.max(0) as u64,
+                    parent_id: row.get::<Option<String>>(2)?,
+                    created_at_ms: row.get(3)?,
+                    updated_at_ms: row.get(4)?,
+                    message_count: row.get::<i64>(5)?.max(0) as u64,
                 });
             }
             Ok(out)
@@ -556,7 +641,7 @@ impl SessionDb {
 async fn load_session_row(conn: &Connection, id: &str) -> Option<SessionSummary> {
     let mut rows = match conn
         .query(
-            "SELECT id, title, created_at, updated_at, \
+            "SELECT id, title, parent_id, created_at, updated_at, \
                     (SELECT COUNT(*) FROM messages WHERE session_id = s.id) \
              FROM sessions s WHERE id = ?1",
             libsql::params![id],
@@ -570,9 +655,10 @@ async fn load_session_row(conn: &Connection, id: &str) -> Option<SessionSummary>
     Some(SessionSummary {
         id: row.get(0).ok()?,
         title: row.get(1).ok()?,
-        created_at_ms: row.get(2).ok()?,
-        updated_at_ms: row.get(3).ok()?,
-        message_count: row.get::<i64>(4).ok()?.max(0) as u64,
+        parent_id: row.get::<Option<String>>(2).ok()?,
+        created_at_ms: row.get(3).ok()?,
+        updated_at_ms: row.get(4).ok()?,
+        message_count: row.get::<i64>(5).ok()?.max(0) as u64,
     })
 }
 
