@@ -272,7 +272,7 @@ fn invariant_1_abort_mid_execution_still_backfills_every_result() {
     let signal: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(FlipOnSecond(signal, AtomicBool::new(false)))];
     let mut ctx = Context::default();
-    let events = run_agent(&backend, &model(), &mut ctx, &tools, &signal, None);
+    let events = run_agent(&backend, &model(), &mut ctx, &tools, signal, None);
 
     let results: Vec<_> = events
         .iter()
@@ -413,7 +413,7 @@ fn run_agent_injects_default_system_prompt_when_caller_leaves_none() {
         messages: vec![Message::user_text("hi")],
     };
     let tools: Vec<Box<dyn tools::Tool>> = vec![Box::new(tools::read::ReadFile)];
-    let _ = run_agent_streaming(
+    run_agent_streaming(
         &backend,
         &model(),
         &mut ctx,

@@ -402,7 +402,7 @@ fn connection_read_loop(
         let mut ctx = DispatchCtx {
             sessions: sessions.clone(),
             runs: runs.clone(),
-            worker: &mut *worker_guard,
+            worker: &mut worker_guard,
             started_at_ms,
             shutdown,
             events: events.clone(),

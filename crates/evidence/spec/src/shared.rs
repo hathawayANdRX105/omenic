@@ -161,17 +161,17 @@ pub fn apply_global_overrides(findings: &mut [Finding]) {
         None => return,
     };
     for finding in findings.iter_mut() {
-        if let Some(sev_val) = map.get(&YamlValue::String(finding.rule_id.to_string())) {
-            if let Some(sev_str) = sev_val.as_str() {
-                let new_sev = match sev_str.to_uppercase().as_str() {
-                    "FAIL" => Severity::Fail,
-                    "WARN" => Severity::Warn,
-                    "INFO" => Severity::Info,
-                    _ => continue,
-                };
-                if finding.severity != Severity::Info {
-                    finding.severity = new_sev;
-                }
+        if let Some(sev_val) = map.get(YamlValue::String(finding.rule_id.to_string()))
+            && let Some(sev_str) = sev_val.as_str()
+        {
+            let new_sev = match sev_str.to_uppercase().as_str() {
+                "FAIL" => Severity::Fail,
+                "WARN" => Severity::Warn,
+                "INFO" => Severity::Info,
+                _ => continue,
+            };
+            if finding.severity != Severity::Info {
+                finding.severity = new_sev;
             }
         }
     }
@@ -185,17 +185,17 @@ pub fn apply_severity_overrides(findings: &mut [Finding], cfg: Option<&YamlValue
         None => return,
     };
     for finding in findings.iter_mut() {
-        if let Some(sev_val) = map.get(&YamlValue::String(finding.rule_id.to_string())) {
-            if let Some(sev_str) = sev_val.as_str() {
-                let new_sev = match sev_str.to_uppercase().as_str() {
-                    "FAIL" => Severity::Fail,
-                    "WARN" => Severity::Warn,
-                    "INFO" => Severity::Info,
-                    _ => continue,
-                };
-                if finding.severity != Severity::Info {
-                    finding.severity = new_sev;
-                }
+        if let Some(sev_val) = map.get(YamlValue::String(finding.rule_id.to_string()))
+            && let Some(sev_str) = sev_val.as_str()
+        {
+            let new_sev = match sev_str.to_uppercase().as_str() {
+                "FAIL" => Severity::Fail,
+                "WARN" => Severity::Warn,
+                "INFO" => Severity::Info,
+                _ => continue,
+            };
+            if finding.severity != Severity::Info {
+                finding.severity = new_sev;
             }
         }
     }
@@ -208,10 +208,10 @@ fn load_severity_overrides() -> Option<YamlValue> {
         let candidate = dir.join(".githooks");
         if candidate.is_dir() {
             let path = candidate.join("spec/severity_overrides.yaml");
-            if let Ok(text) = fs::read_to_string(&path) {
-                if let Ok(cfg) = serde_yaml::from_str(&text) {
-                    return Some(cfg);
-                }
+            if let Ok(text) = fs::read_to_string(&path)
+                && let Ok(cfg) = serde_yaml::from_str(&text)
+            {
+                return Some(cfg);
             }
             return None;
         }

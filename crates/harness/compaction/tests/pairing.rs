@@ -49,10 +49,10 @@ fn orphan_pair_ids(msgs: &[Message], cut: usize) -> Vec<String> {
                 true => find_pair(msgs, i, &id, false),
                 false => find_pair(msgs, i, &id, true),
             };
-            if let Some(j) = j {
-                if (i < cut) != (j < cut) {
-                    orphans.push(id);
-                }
+            if let Some(j) = j
+                && (i < cut) != (j < cut)
+            {
+                orphans.push(id);
             }
         }
     }

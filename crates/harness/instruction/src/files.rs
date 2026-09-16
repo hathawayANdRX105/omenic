@@ -65,10 +65,10 @@ impl InstructionCache {
     /// then rendering treat a missing file as a no-op.
     pub fn read(&mut self, path: &Path) -> Option<String> {
         let mtime = fs::metadata(path).ok()?.modified().ok()?;
-        if let Some((t, content)) = self.entries.get(path) {
-            if *t == mtime {
-                return Some(content.clone());
-            }
+        if let Some((t, content)) = self.entries.get(path)
+            && *t == mtime
+        {
+            return Some(content.clone());
         }
         let content = fs::read_to_string(path).ok()?;
         self.entries

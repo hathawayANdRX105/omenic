@@ -45,17 +45,12 @@ impl HookScope {
 /// L1 = structural (zero token, milliseconds).
 /// L2 = semantic (lightweight, seconds).
 /// L3 = LLM-based (on-demand, minutes).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum SlaLevel {
+    #[default]
     L1,
     L2,
     L3,
-}
-
-impl Default for SlaLevel {
-    fn default() -> Self {
-        SlaLevel::L1
-    }
 }
 
 #[derive(Debug, Deserialize, Default)]

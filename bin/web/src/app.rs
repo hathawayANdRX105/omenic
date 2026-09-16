@@ -10,10 +10,7 @@ use omenic_web_page_workspace::Workspace;
 #[component]
 pub fn App() -> Element {
     let mut runtime_config = use_signal(llm::LlmRuntimeConfig::load_from_system);
-    let css_content = format!(
-        "{}",
-        include_str!(concat!(env!("OUT_DIR"), "/tailwind.gen.css"))
-    );
+    let css_content = include_str!(concat!(env!("OUT_DIR"), "/tailwind.gen.css")).to_string();
 
     rsx! {
         style { "{css_content}" }
@@ -34,10 +31,7 @@ pub async fn launch() {
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let view = dioxus_liveview::LiveViewPool::new();
     let glue = dioxus_liveview::interpreter_glue("/ws");
-    let css = format!(
-        "{}",
-        include_str!(concat!(env!("OUT_DIR"), "/tailwind.gen.css"))
-    );
+    let css = include_str!(concat!(env!("OUT_DIR"), "/tailwind.gen.css")).to_string();
 
     let index_html = format!(
         r#"<!DOCTYPE html>
