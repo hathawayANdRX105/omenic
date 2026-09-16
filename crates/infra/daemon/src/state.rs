@@ -645,6 +645,28 @@ impl SessionState {
     ) -> Result<Vec<SessionMessage>, SessionError> {
         self.inner.search_messages(query, scope, limit)
     }
+
+    /// Every session id; the startup crash-repair pass walks them all.
+    pub fn session_ids(&self) -> Result<Vec<String>, SessionError> {
+        self.inner.session_ids()
+    }
+
+    /// Append run-boundary records to a session's durable turn log.
+    pub fn append_turn_log(
+        &self,
+        session_id: &str,
+        records: &[session::TurnRecord],
+    ) -> Result<(), SessionError> {
+        self.inner.append_turn_log(session_id, records)
+    }
+
+    /// Read a session's durable turn log.
+    pub fn load_turn_log(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<session::TurnRecord>, SessionError> {
+        self.inner.load_turn_log(session_id)
+    }
 }
 
 // Re-export so callers can construct a request `data` envelope without

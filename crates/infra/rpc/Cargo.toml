@@ -14,6 +14,11 @@ libc = "0.2"
 adaptor = { path = "../../agent/adaptor" }
 orbit = { path = "../../agent/orbit" }
 tools = { path = "../../agent/tools" }
+omenic-harness-core = { path = "../../harness/core" }
+omenic-harness-tools = { path = "../../harness/tools" }
+omenic-harness-compaction = { path = "../../harness/compaction" }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+omenic-composition = { path = "../../composition" }
+omenic-harness-runtime = { path = "../../harness/runtime" }

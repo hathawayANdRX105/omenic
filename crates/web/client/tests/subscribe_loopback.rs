@@ -67,6 +67,8 @@ fn subscribe_worker_receives_and_translates_full_turn() {
         omp_path: omp.to_string_lossy().into_owned(),
         session_db_path: Some(db),
         orbit_model: None,
+        cwd: dir.path().to_path_buf(),
+        max_turns: 64,
     })
     .expect("daemon start");
 

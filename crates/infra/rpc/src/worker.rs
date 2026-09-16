@@ -38,6 +38,9 @@
 //! worker.abort()?;
 //! ```
 
+use std::path::Path;
+use std::sync::Arc;
+
 use serde::Serialize;
 use serde_json::Value;
 
@@ -108,12 +111,118 @@ struct Pump {
 /// How long the pump blocks in one frame read before re-checking jobs.
 const PUMP_POLL: std::time::Duration = std::time::Duration::from_millis(20);
 
+/// orbit-engine configuration resolved by the host (the daemon) from the
+/// assembled plugin container: the session cwd for `AGENTS.md` discovery,
+/// the turn cap, the compaction policy, and the tool catalog. Nothing here
+/// is read from ambient process state — every knob arrives explicitly, the
+/// same contract orbit's `LoopConfig` keeps with the loop.
+#[derive(Clone)]
+pub struct OrbitConfig {
+    /// `AGENTS.md` discovery root; `None` skips the instruction lookup
+    /// entirely (orbit `LoopConfig::instruction_cwd`).
+    pub cwd: Option<std::sync::Arc<Path>>,
+    /// Cap on LLM round-trips per run (orbit `LoopConfig::max_turns`).
+    pub max_turns: usize,
+    /// Compaction policy supplying the maintenance hook's budget and
+    /// verbatim-window region (`harness.compaction`). The summary stream
+    /// itself goes through the loop's own backend.
+    pub compaction: std::sync::Arc<omenic_harness_compaction::CharBudgetPolicy>,
+    /// Tool catalog (`harness.tools`), adapted onto orbit's tool trait at
+    /// the seam — see [`orbit_tools`].
+    pub catalog: std::sync::Arc<omenic_harness_tools::ToolCatalog>,
+}
+
+/// orbit-mode construction bundle: the model, the streaming backend, and the
+/// container-resolved [`OrbitConfig`]. The backend is injectable so a test
+/// can substitute a scripted backend; production passes `orbit::HttpLlm`.
+/// Cloned by the daemon on each (re)spawn of the worker — `reset()` drops
+/// the engine and the next prompt rebuilds it from the same setup.
+#[derive(Clone)]
+pub struct OrbitSetup {
+    pub model: adaptor::Model,
+    pub backend: std::sync::Arc<dyn orbit::LlmBackend + Send + Sync>,
+    pub config: OrbitConfig,
+}
+
+/// harness `Tool` -> omenic `tools::Tool`. orbit's loop dispatches
+/// `&[Box<dyn tools::Tool>]`; the container's catalog speaks the harness
+/// trait. The two are deliberately not unified (C6) — this shim is the whole
+/// bridge, built once per engine.
+struct HarnessTool {
+    name: String,
+    description: String,
+    parameters: Value,
+    inner: std::sync::Arc<dyn omenic_harness_tools::Tool>,
+    /// The engine's shared abort flag — the same `AtomicBool` the orbit loop
+    /// polls, so an abort reaches the harness tool mid-flight.
+    abort: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl HarnessTool {
+    fn new(
+        tool: std::sync::Arc<dyn omenic_harness_tools::Tool>,
+        abort: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        let spec = tool.spec();
+        HarnessTool {
+            name: spec.name,
+            description: spec.description,
+            parameters: spec.params_schema,
+            inner: tool,
+            abort,
+        }
+    }
+}
+
+impl tools::Tool for HarnessTool {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn description(&self) -> String {
+        self.description.clone()
+    }
+    fn parameters(&self) -> Value {
+        self.parameters.clone()
+    }
+    fn execute(
+        &self,
+        args: &Value,
+        _signal: &std::sync::atomic::AtomicBool,
+    ) -> Result<String, tools::ToolError> {
+        let abort = omenic_harness_core::AbortSignal::from_flag(std::sync::Arc::clone(&self.abort));
+        match self.inner.execute(args, &abort) {
+            Ok(result) => Ok(result.output),
+            Err(omenic_harness_core::ToolError::Aborted) => {
+                Err(tools::ToolError::Message("tool aborted".into()))
+            }
+            Err(e) => Ok(format!("error: {e}")),
+        }
+    }
+}
+
+/// Adapt the container's catalog onto orbit's `&[Box<dyn tools::Tool>]` shape.
+fn orbit_tools(
+    catalog: &omenic_harness_tools::ToolCatalog,
+    abort: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Vec<Box<dyn tools::Tool>> {
+    catalog
+        .all()
+        .into_iter()
+        .map(|t| {
+            Box::new(HarnessTool::new(t, std::sync::Arc::clone(&abort))) as Box<dyn tools::Tool>
+        })
+        .collect()
+}
+
 /// omenic 自家引擎（OMENIC_WORKER_MODE=orbit）：进程内跑 orbit agent
 /// 循环（C1 `run_agent_streaming`），把 orbit::AgentEvent 1:1 映射成
 /// [`WorkerEvent`]（词汇与 omp 转发层一致，下游零改动）。模型配置由
-/// DaemonConfig 从 `.oi/config.toml` 的 llm 三件套解析后传入。
+/// DaemonConfig 从 `.oi/config.toml` 的 llm 三件套解析后传入；cwd /
+/// max_turns / 压缩策略 / 工具集由宿主从装配容器解析后经
+/// [`OrbitSetup`] 传入。
 struct OrbitEngine {
     model: adaptor::Model,
+    backend: std::sync::Arc<dyn orbit::LlmBackend + Send + Sync>,
     ctx: std::sync::Arc<std::sync::Mutex<adaptor::Context>>,
     abort_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     subs: std::sync::Arc<std::sync::Mutex<Vec<(String, std::sync::mpsc::Sender<WorkerEvent>)>>>,
@@ -121,29 +230,50 @@ struct OrbitEngine {
     pull_queue: std::sync::mpsc::Receiver<WorkerEvent>,
     /// prompt → 专用 run 线程：LLM 调用不占 dispatch 锁，abort 随时可达
     run_tx: std::sync::mpsc::Sender<String>,
+    /// `AGENTS.md` 发现根（orbit `LoopConfig::instruction_cwd`）。
+    cwd: Option<std::sync::Arc<Path>>,
+    /// 每轮 run 的 LLM 往返上限（orbit `LoopConfig::max_turns`）。
+    max_turns: usize,
+    /// 压缩策略（`harness.compaction`），由 maintain 钩子消费。
+    compaction: std::sync::Arc<omenic_harness_compaction::CharBudgetPolicy>,
 }
 
 impl OrbitEngine {
-    fn new(model: adaptor::Model) -> Self {
+    fn new(setup: OrbitSetup) -> Self {
         use std::sync::atomic::AtomicBool;
+        let OrbitSetup {
+            model,
+            backend,
+            config,
+        } = setup;
         let (pull_push, pull_queue) = std::sync::mpsc::channel();
         let (run_tx, run_rx) = std::sync::mpsc::channel::<String>();
+        let abort_flag = std::sync::Arc::new(AtomicBool::new(false));
+        let tools = orbit_tools(&config.catalog, std::sync::Arc::clone(&abort_flag));
         let engine = OrbitEngine {
-            model,
+            model: model.clone(),
+            backend: Arc::clone(&backend),
             ctx: std::sync::Arc::new(std::sync::Mutex::new(adaptor::Context::default())),
-            abort_flag: std::sync::Arc::new(AtomicBool::new(false)),
+            abort_flag: std::sync::Arc::clone(&abort_flag),
             subs: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             pull_push,
             pull_queue,
             run_tx,
+            cwd: config.cwd,
+            max_turns: config.max_turns,
+            compaction: config.compaction,
         };
         // 专用 run 线程：串行消费 prompt，LLM 调用不占 dispatch 锁，
         // abort 标志（Arc）随时可从别的连接置位
         let run_model = engine.model.clone();
+        let run_backend = Arc::clone(&engine.backend);
         let run_ctx = std::sync::Arc::clone(&engine.ctx);
         let run_abort = std::sync::Arc::clone(&engine.abort_flag);
         let run_subs = std::sync::Arc::clone(&engine.subs);
         let run_pull = engine.pull_push.clone();
+        let run_cwd = engine.cwd.clone();
+        let run_max_turns = engine.max_turns;
+        let run_compaction = std::sync::Arc::clone(&engine.compaction);
         std::thread::Builder::new()
             .name("omenic-orbit-worker".into())
             .spawn(move || {
@@ -154,14 +284,30 @@ impl OrbitEngine {
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let mut ctx = run_ctx.lock().unwrap_or_else(|e| e.into_inner());
                         ctx.messages.push(adaptor::Message::user_text(&message));
-                        let tools = tools::builtin_tools();
+                        // 压缩钩子：容器解析出的 policy 供预算/最近窗口，
+                        // 摘要流走 loop 自己的后端（orbit 接缝，G6 缺口 A）。
+                        let compaction = std::sync::Arc::clone(&run_compaction);
+                        let maintain =
+                            |b: &dyn orbit::LlmBackend,
+                             m: &adaptor::Model,
+                             c: &mut adaptor::Context,
+                             s: &std::sync::atomic::AtomicBool| {
+                                orbit::compact_context_with(b, m, c, s, None, &compaction);
+                            };
                         orbit::run_agent_streaming(
-                            &orbit::HttpLlm,
+                            run_backend.as_ref(),
                             &run_model,
                             &mut ctx,
                             &tools,
                             &run_abort,
-                            orbit::LoopConfig::default(),
+                            orbit::LoopConfig {
+                                context_log: None,
+                                max_turns: run_max_turns,
+                                maintain: Some(&maintain),
+                                get_steering: None,
+                                get_follow_up: None,
+                                instruction_cwd: run_cwd.as_deref(),
+                            },
                             &mut |ev| {
                                 let we = match ev {
                                     orbit::AgentEvent::TurnStart => WorkerEvent::AgentStart,
@@ -222,16 +368,14 @@ impl Worker {
         }
     }
 
-    /// omp 兼容构造（`orbit_model` 为 None）或 omenic 自家引擎（Some）。
-    pub fn new(
-        omp_path: &str,
-        orbit_model: Option<adaptor::Model>,
-    ) -> Result<Self, crate::client::RpcError> {
-        if let Some(model) = orbit_model {
+    /// omp 兼容构造（`orbit` 为 None）或 omenic 自家引擎（Some：模型 +
+    /// 后端 + 容器解析出的 [`OrbitConfig`]）。
+    pub fn new(omp_path: &str, orbit: Option<OrbitSetup>) -> Result<Self, crate::client::RpcError> {
+        if let Some(setup) = orbit {
             return Ok(Worker {
                 client: None,
                 pump: None,
-                orbit: Some(OrbitEngine::new(model)),
+                orbit: Some(OrbitEngine::new(setup)),
             });
         }
         let client = crate::client::Client::new(omp_path)?;

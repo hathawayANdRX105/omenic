@@ -265,81 +265,17 @@ impl ContextLog {
 // ===== compaction =====
 // Policy (char-budget window, tool-pairing invariant, kept-window guard,
 // transcript rendering) lives in `omenic-harness-compaction` (C4). What
-// remains here is the call seam: DTO re-typing plus the `LlmBackend`
-// bridge — zero policy logic.
+// remains on the orbit path is the call seam — the LLM bridge and the
+// wire<->DTO re-typing — isolated in [`compaction_bridge`] so this module
+// stays under the R3 <= 20 line budget. A host resolves a `CharBudgetPolicy`
+// out of the assembled container and hands it to the seam; passing
+// `&CharBudgetPolicy::default()` is the historic hardcoded budget/region.
 
-use omenic_harness_compaction::{
-    COMPACT_CHAR_BUDGET, Summarizer, compact_with, message_chars as dto_chars,
-    select_compaction_cut as dto_cut, to_dto, to_wire,
+mod compaction_bridge;
+
+pub use compaction_bridge::{
+    LlmSummarizer, compact_context, compact_context_with, message_chars, select_compaction_cut,
 };
-
-/// Estimated size of one message in characters (delegates to the policy crate).
-pub fn message_chars(m: &Message) -> usize {
-    dto_chars(&to_dto(m))
-}
-
-/// First index to keep verbatim under a recent-window char budget.
-pub fn select_compaction_cut(messages: &[Message], budget: usize) -> usize {
-    dto_cut(&messages.iter().map(to_dto).collect::<Vec<_>>(), budget)
-}
-
-/// Bridges the crate's `Summarizer` hook onto orbit's `LlmBackend`: the
-/// summary stream runs against the same scripted/HTTP backend as the loop.
-struct LlmSummarizer<'a>(&'a dyn LlmBackend, &'a Model, &'a AtomicBool);
-
-impl Summarizer for LlmSummarizer<'_> {
-    fn summarize(&self, transcript: &str) -> Option<String> {
-        let ctx = Context {
-            system_prompt: Some(
-                "请将以下对话总结为简洁的上下文摘要，保留关键决策、已做的工作和待办事项。".into(),
-            ),
-            messages: vec![Message::user_text(transcript)],
-        };
-        let mut summary = String::new();
-        for ev in self.0.stream(self.1, &ctx, &[], self.2) {
-            match ev {
-                StreamEvent::TextDelta(delta) => summary.push_str(&delta),
-                StreamEvent::Done {
-                    stop_reason: StopReason::Aborted,
-                }
-                | StreamEvent::Error(_) => return None,
-                _ => {}
-            }
-        }
-        (!summary.is_empty()).then_some(summary)
-    }
-}
-
-/// The default host maintenance hook for [`LoopConfig::maintain`]; hosts may
-/// substitute their own. Invariant 4: on any failure the context is left
-/// untouched.
-///
-/// Traceability (EC-7): the injected summary marker goes through
-/// `context_log` too, so a replay of the log shows the full pre-compaction
-/// conversation followed by the marker in its actual position.
-pub fn compact_context(
-    backend: &dyn LlmBackend,
-    model: &Model,
-    context: &mut Context,
-    signal: &AtomicBool,
-    context_log: Option<&ContextLog>,
-) {
-    if signal.load(Ordering::Relaxed) {
-        return;
-    }
-    let dto: Vec<_> = context.messages.iter().map(to_dto).collect();
-    let (out, summary) = compact_with(
-        &LlmSummarizer(backend, model, signal),
-        context.system_prompt.as_deref(),
-        &dto,
-        COMPACT_CHAR_BUDGET,
-        &Default::default(),
-    );
-    context.messages = out.iter().map(to_wire).collect();
-    if let (Some(log), Some(msg)) = (context_log, &summary) {
-        let _ = log.append(&to_wire(msg));
-    }
-}
 
 // ===== workspace instructions (WP-A) =====
 // Direct call into the harness `instruction` crate: discover `AGENTS.md` up
@@ -617,6 +553,10 @@ pub fn run_agent(
     context_log: Option<&ContextLog>,
 ) -> Vec<AgentEvent> {
     let mut events = Vec::new();
+    // The default policy carries the historic budget/region
+    // (COMPACT_CHAR_BUDGET + default RegionBudget); the seam streams the
+    // summary through the same backend as the loop, so this is identical to
+    // the pre-G6 hardcoded compact_context.
     let maintain = |b: &dyn LlmBackend, m: &Model, c: &mut Context, s: &AtomicBool| {
         compact_context(b, m, c, s, context_log)
     };

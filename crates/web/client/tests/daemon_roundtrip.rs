@@ -20,6 +20,8 @@ fn daemon_roundtrip() {
         omp_path: "omp".into(),
         session_db_path: Some(db_path),
         orbit_model: None,
+        cwd: dir.path().to_path_buf(),
+        max_turns: 64,
     })
     .expect("启动 daemon");
 

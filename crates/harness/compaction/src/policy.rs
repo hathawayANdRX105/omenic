@@ -140,6 +140,20 @@ impl CharBudgetPolicy {
             &self.region,
         )
     }
+
+    /// Trigger budget of this policy (compaction fires once the context
+    /// reaches this many characters). Read-only view for hosts that run the
+    /// policy through their own seam: orbit's `LlmBackend` bridge streams the
+    /// summary itself and only takes the budget + region from the resolved
+    /// service, so a host-provided policy still decides when compaction fires.
+    pub fn total_chars(&self) -> usize {
+        self.region.total_chars
+    }
+
+    /// Verbatim recent-window partition of this policy; see [`RegionBudget`].
+    pub fn region(&self) -> RegionBudget {
+        self.region
+    }
 }
 
 impl CompactionPolicy for CharBudgetPolicy {

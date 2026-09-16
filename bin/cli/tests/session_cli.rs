@@ -24,6 +24,8 @@ fn start_daemon(dir: &Path, tag: &str) -> Daemon {
         omp_path: "omp-not-installed-for-cli-tests".to_string(),
         session_db_path: Some(dir.join(format!("{tag}.db"))),
         orbit_model: None,
+        cwd: dir.to_path_buf(),
+        max_turns: 64,
     };
     Daemon::start(cfg).expect("start daemon")
 }

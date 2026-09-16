@@ -105,6 +105,10 @@ fn event_subscribe_pushes_full_turn_to_every_subscriber() {
         omp_path: omp.to_string_lossy().into_owned(),
         session_db_path: Some(db),
         orbit_model: None,
+        // Scope instruction discovery to the temp dir so the test never
+        // picks up a real AGENTS.md from the repo it runs in.
+        cwd: dir.path().to_path_buf(),
+        max_turns: 64,
     })
     .expect("daemon start");
 
