@@ -71,9 +71,9 @@
 | 5.3 🟡 会话列表/历史 ← 真数据（Daemon 模式已接 `session.list`/`load_messages`；**状态三态已接 #356**：`run.list` 推断 Idle/Active/Aborted；谱系分组待 G4 后按 `run.list` 组装） | `crates/web/page-workspace/`（原 workspace.rs 1093 行） | `packages/client/runtime/src/client/sessions/{session.ts,lineage.ts}` |
 | 5.4 聊天流式：delta 追加 + tool 折叠卡 | `crates/web/components/`（chat.rs 352 行） | `client/conversation/{event-registry.ts,view-registry.ts}` + `sessions/tool-call-tree.ts` |
 | 5.5 sidebar 真会话 + 谱系分组 | `crates/web/components/`（sidebar.rs） | `packages/client/runtime/src/client/sessions/lineage.ts` |
-| 5.6 statusline 真运行态 ⚠️ **计时未做**（会话三态 + header「运行中」spinner + TurnEnd 结算 tokens/cost/context 已有；dsh `assistant-timing` 的 elapsed 计时零代码，`StatusLine` 无计时字段。另注：本行原指 `components/statusline.rs` **不存在**，状态行内联在 `chat.rs:155`） | `crates/web/components/`（内联 chat.rs:155） | `packages/client/runtime/src/client/sessions/assistant-timing.ts` |
+| 5.6 statusline 真运行态 ✅ **计时已接（#365, 2026-09-16）**——`StatusLine` 加 `run_started_at_ms`/`elapsed_ms` + `start_run`/`finish_run`/`elapsed_label_at`；页面在 run 派发时起表、TurnEnd 结算；chat.rs 渲染该段，空时整段省略；13 个计时测试在 `crates/web/state/tests/statusline_timing.rs`。另注：本行原指 `components/statusline.rs` **不存在**，状态行内联在 `chat.rs:155`） | `crates/web/components/`（内联 chat.rs:155） | `packages/client/runtime/src/client/sessions/assistant-timing.ts` |
 | 5.7 stats 接 token 真数据（无则隐藏该卡；完整需 C8.3） | `crates/web/page-stats/`（原 stats.rs + statsview.rs） | `packages/llm/token-meter/src/{usage-projection.ts,projection.ts}` |
-| 5.8 配置页读写 `infra/config`（TOML 往返）⚠️ **零测试**（`load_from_system`/`save_to_file`/`test_connection` 已接线并工作，`crates/web/client/tests/` 无一覆盖 TOML 往返） | `crates/web/page-config/`（原 config_page.rs） | `packages/settings/settings-file/src/index.ts` |
+| 5.8 配置页读写 `infra/config`（TOML 往返）✅ **有测试（#364, 2026-09-16）**——`crates/web/client/tests/config_roundtrip.rs` 覆盖 `LlmRuntimeConfig` 的 TOML 往返（串行跑在嵌套临时 cwd 里，因为 `load_from_system` 读相对路径与进程级 env）。`load_from_system`/`save_to_file`/`test_connection` 本就接线并工作 | `crates/web/page-config/`（原 config_page.rs） | `packages/settings/settings-file/src/index.ts` |
 | 5.9 `mock.rs` 删除（mock 已搬独立 crate `crates/web/mock/`，仍是 page-workspace/page-stats 直接依赖、传递进 oi-web 二进制；`grep mock_sessions\|mock_messages` = 0 系改名达成，**真删待 G4 验收后**） | `crates/web/mock/`（906 行） | — |
 | 5.10 ✅ ui-validate 契约层（PR #344：`specs/ui/*.yaml` ×7 / 71 锚点 + 3 契约测试；浏览器实测序列见仓库 AGENTS.md「Web UI 契约验收」） | `bin/web/tests/` + `.githooks/spec/` | — |
 
@@ -127,7 +127,7 @@
 | **R1 插件面** ✅ 已合并（#339） | C6（6.1–6.6） | `crates/harness/plugin/`（新）、`crates/composition/`；orbit ≤30 行 | 无 | G1（6.1+6.5 定型）→ G2（全绿） |
 | **R2 事件流+修复** ✅ 已合并（#343） | C2（2.2–2.4）+ C3（3.1–3.4） | `crates/infra/{daemon,session,rpc}/`；orbit 只读 | 3.1 依赖 6.1 定型 | G4 |
 | **R3 核心插件** ✅ 已合并（#346；验收②③ 由 #354/#355 补齐） | C4（4.1–4.8） | `crates/harness/{compaction,instruction}/`（新）；orbit maintenance 接缝约 65 行 | 4.5 接缝 + `impl DshPlugin` 需 G1 | G3 |
-| **R4 web** ✅ 主线完成（#340-#352 + #356/#357） | C5（5.1–5.10） | `crates/web/{client,state,components,page-workspace,page-stats,page-config}/`（**6** 个 crate，mock 已删），crate 名 `omenic-web-*`；壳=App/launch/build.rs/tailwind 全在 `bin/web/`，bin/web 是入口 crate 不进 crates） | 5.1/5.2a/5.2b/5.3/5.4/5.10 ✅；5.6 ✅（#365 计时接线）；5.9 ✅（#366 删 mock crate）；5.7 ✅（#364 stats 真数据）；5.5 谱系、5.8 配置页（已接线零测试）仍留待办 | G4 ✅ 已过 |
+| **R4 web** ✅ 主线完成（#340-#352 + #356/#357） | C5（5.1–5.10） | `crates/web/{client,state,components,page-workspace,page-stats,page-config}/`（**6** 个 crate，mock 已删），crate 名 `omenic-web-*`；壳=App/launch/build.rs/tailwind 全在 `bin/web/`，bin/web 是入口 crate 不进 crates） | 5.1/5.2a/5.2b/5.3/5.4/5.10 ✅；5.6 ✅（#365 计时接线）；5.9 ✅（#366 删 mock crate）；5.7 ✅（#364 stats 真数据）；5.5 谱系仍留待办；5.8 配置页测试已补（#364） | G4 ✅ 已过 |
 | **R5（占位，暂不做）** ⏸️ | C8（8.1–8.4） | `crates/harness/{interaction,metering}/`（新）、`adaptor/retry.rs` | 2026-09-15 裁定暂缓 | — |
 | **R6 总装（G5）** ✅ 已过（#363–#366，2026-09-16） | 6.5 真装配 + 5.9 删 mock | `crates/composition/` 装配根接通、page-stats/page-workspace 换数据源、`crates/web/mock/` 删除 | G4 已过 | G5（不含 tag） |
 
