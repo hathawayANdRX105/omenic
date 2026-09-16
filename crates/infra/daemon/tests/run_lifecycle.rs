@@ -23,7 +23,8 @@ use tempfile::tempdir;
 
 /// `agent_end_status` maps the wire stop reason onto the ledger's own status
 /// vocabulary. Budget caps are clean stops; an empty reason (legacy frame or
-/// an omp-compat peer that never sends one) is "unknown", not "failed".
+/// an omp-compat peer that never sends one) means the caller said nothing, so
+/// it degrades to "ok" alongside every other reason we do not recognise.
 #[test]
 fn agent_end_status_maps_stop_reasons() {
     assert_eq!(agent_end_status("aborted"), "aborted");
@@ -99,4 +100,37 @@ fn in_flight_run_stays_open_until_agent_end() {
         "AgentEnd closes the run and it is no longer in flight"
     );
     assert_eq!(closed.ok_runs, 1, "an end_turn close counts as ok");
+}
+
+/// `finish` must be idempotent at the ledger level: the caller's "not already
+/// finished" check and the write itself are two separate lock acquisitions, so
+/// a repeated `AgentEnd` that wins the gap between them must not overwrite the
+/// first close or append a second `TurnEnd`. The start/end balance is exactly
+/// what `interrupted_run_closers` walks at startup.
+#[test]
+fn finish_twice_keeps_the_first_close() {
+    let dir = tempdir().expect("temp dir");
+    let socket = dir.path().join("daemon.sock");
+    let ledger = RunLedger::open_for_socket(&socket).expect("open ledger");
+    ledger.start("r-double", "s1", 1_000).expect("ledger start");
+    ledger
+        .finish("r-double", 2_000, "ok")
+        .expect("first finish");
+    // A late duplicate close for the same run.
+    ledger
+        .finish("r-double", 9_999, "failed")
+        .expect("second finish is not an error, just a no-op");
+
+    let run = ledger.get("r-double").expect("run exists");
+    assert_eq!(
+        run.finished_at_ms,
+        Some(2_000),
+        "the first close must survive a duplicate"
+    );
+    assert_eq!(
+        run.status.as_deref(),
+        Some("ok"),
+        "the first status must survive a duplicate: {:?}",
+        run.status
+    );
 }

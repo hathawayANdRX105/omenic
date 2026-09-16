@@ -137,6 +137,13 @@ impl RunLedger {
         let mut touched = false;
         for run in inner.runs.iter_mut() {
             if run.run_id == run_id {
+                // 幂等：已结算的 run 不重写。turn log 必须保持每个 TurnStart
+                // 恰好一个 TurnEnd，interrupted_run_closers 靠这个配平做启动
+                // 修复；调用方的「未结算才关」检查与这里的写入分属两次加锁，
+                // 中间的窗口会让重复的 AgentEnd 追加第二个 TurnEnd。
+                if run.finished_at_ms.is_some() {
+                    continue;
+                }
                 run.finished_at_ms = Some(finished_at_ms);
                 run.status = Some(status.to_string());
                 touched = true;

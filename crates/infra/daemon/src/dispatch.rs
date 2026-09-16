@@ -229,7 +229,9 @@ fn close_run_on_agent_end(
     }
     let status = crate::state::agent_end_status(stop_reason);
     let ts_ms = crate::state::now_ms();
-    let _ = runs.finish(run_id, ts_ms, status);
+    if let Err(e) = runs.finish(run_id, ts_ms, status) {
+        eprintln!("daemon: AgentEnd close failed for run {run_id}: {e}");
+    }
     record_turn(
         sessions,
         &record.session_id,
@@ -614,7 +616,9 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                     // omp-compat: `prompt` blocks for the whole turn, so its
                     // return *is* the terminal state — close synchronously.
                     if !run_id.is_empty() {
-                        let _ = ctx.runs.finish(run_id, finished, "ok");
+                        if let Err(e) = ctx.runs.finish(run_id, finished, "ok") {
+                            eprintln!("daemon: run finish failed for {run_id}: {e}");
+                        }
                     }
                     record_turn(
                         &ctx.sessions,
@@ -634,7 +638,9 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                     // start at all — closing it as failed here is correct in
                     // either mode.
                     if !run_id.is_empty() {
-                        let _ = ctx.runs.finish(run_id, finished, "failed");
+                        if let Err(e) = ctx.runs.finish(run_id, finished, "failed") {
+                            eprintln!("daemon: run finish-failed marking failed for {run_id}: {e}");
+                        }
                     }
                     record_turn(
                         &ctx.sessions,
