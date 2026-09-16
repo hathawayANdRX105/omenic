@@ -56,6 +56,6 @@ impl Tool for Glob {
 
         let header = format!("{} files:\n", paths.len());
         let body = paths.join("\n");
-        Ok(truncate_output(&format!("{header}{body}"), 0)?)
+        Ok(truncate_output(&format!("{header}{body}"))?)
     }
 }

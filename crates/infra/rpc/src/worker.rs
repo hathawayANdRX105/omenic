@@ -31,7 +31,7 @@
 //! for event in worker.events() {
 //!     match event {
 //!         WorkerEvent::Message { text } => println!("{text}"),
-//!         WorkerEvent::AgentEnd => break,
+//!         WorkerEvent::AgentEnd { .. } => break,
 //!         _ => {}
 //!     }
 //! }
@@ -41,15 +41,30 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+/// Map orbit's loop-level stop reason onto the snake_case wire string
+/// [`WorkerEvent::AgentEnd`] carries — `end_turn` / `max_tokens` / `aborted`
+/// / `error` / `max_turns` — so a clean turn end, an abort, an error and the
+/// turn cap stay distinguishable downstream.
+fn turn_stop_to_string(s: &orbit::TurnStop) -> String {
+    match s {
+        orbit::TurnStop::EndTurn => "end_turn",
+        orbit::TurnStop::MaxTokens => "max_tokens",
+        orbit::TurnStop::Aborted => "aborted",
+        orbit::TurnStop::Error => "error",
+        orbit::TurnStop::MaxTurns => "max_turns",
+    }
+    .to_string()
+}
 
 /// Events emitted by the worker during agent execution.
 ///
 /// R2 2.2: one dedicated variant per known omp wire event type (mirrors the
 /// dsh `known-event-types` discipline); `Unknown` stays as the forward-compat
 /// branch for genuinely unrecognized frames only — never as an error dump.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum WorkerEvent {
     /// Agent started processing (`agent_start`).
@@ -61,7 +76,15 @@ pub enum WorkerEvent {
     /// Tool dispatch completes (`tool_execution_end`).
     ToolExecutionEnd { name: String, result: Option<Value> },
     /// Agent finished (session idle) (`agent_end`).
-    AgentEnd,
+    ///
+    /// `stop_reason` mirrors orbit's `TurnStop`: how the turn ended (clean,
+    /// aborted, errored, or a budget cap).  Defaults to empty for legacy
+    /// wire frames and omp-compat peers that never send it — downstream
+    /// bookkeeping treats empty as "unknown, not necessarily clean".
+    AgentEnd {
+        #[serde(default)]
+        stop_reason: String,
+    },
     /// Synthetic transport error: the event stream itself failed and the
     /// raw error is surfaced to the consumer instead of killing the iterator.
     Error { error: String },
@@ -333,7 +356,11 @@ impl OrbitEngine {
                                                 .or(Some(serde_json::Value::String(result))),
                                         }
                                     }
-                                    orbit::AgentEvent::TurnEnd { .. } => WorkerEvent::AgentEnd,
+                                    orbit::AgentEvent::TurnEnd { stop_reason } => {
+                                        WorkerEvent::AgentEnd {
+                                            stop_reason: turn_stop_to_string(&stop_reason),
+                                        }
+                                    }
                                 };
                                 let mut s = run_subs.lock().unwrap_or_else(|e| e.into_inner());
                                 s.retain(|(_, tx)| tx.send(we.clone()).is_ok());
@@ -343,9 +370,12 @@ impl OrbitEngine {
                     }));
                     if result.is_err() {
                         eprintln!("[orbit-worker] turn panicked, recovered");
+                        let ev = WorkerEvent::AgentEnd {
+                            stop_reason: "error".to_string(),
+                        };
                         let mut s = run_subs.lock().unwrap_or_else(|e| e.into_inner());
-                        s.retain(|(_, tx)| tx.send(WorkerEvent::AgentEnd).is_ok());
-                        let _ = run_pull.send(WorkerEvent::AgentEnd);
+                        s.retain(|(_, tx)| tx.send(ev.clone()).is_ok());
+                        let _ = run_pull.send(ev);
                     }
                 }
             })
@@ -595,7 +625,13 @@ fn frame_to_event(raw: Value) -> Option<WorkerEvent> {
     let event = match ty {
         "response" => return None,
         "agent_start" => WorkerEvent::AgentStart,
-        "agent_end" => WorkerEvent::AgentEnd,
+        "agent_end" => WorkerEvent::AgentEnd {
+            stop_reason: raw
+                .get("stop_reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        },
         "message_start" | "message_update" => {
             let text = raw
                 .pointer("/message/content")

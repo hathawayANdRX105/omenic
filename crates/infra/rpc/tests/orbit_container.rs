@@ -146,7 +146,7 @@ fn drain_until_end(rx: &std::sync::mpsc::Receiver<WorkerEvent>) -> Vec<WorkerEve
     let mut out = Vec::new();
     while let Ok(ev) = rx.recv_timeout(Duration::from_secs(10)) {
         out.push(ev.clone());
-        if matches!(ev, WorkerEvent::AgentEnd) {
+        if matches!(ev, WorkerEvent::AgentEnd { .. }) {
             break;
         }
     }
@@ -181,7 +181,9 @@ fn agents_md_from_container_cwd_reaches_the_backend() {
     worker.prompt("hello").expect("prompt accepted");
     let events = drain_until_end(&rx);
     assert!(
-        events.iter().any(|e| matches!(e, WorkerEvent::AgentEnd)),
+        events
+            .iter()
+            .any(|e| matches!(e, WorkerEvent::AgentEnd { .. })),
         "run must terminate"
     );
 
@@ -244,9 +246,10 @@ fn tool_turn() -> Vec<StreamEvent> {
 
 /// The turn cap flows document -> `harness.loop` -> worker -> loop: the run
 /// stops after exactly `max_turns` rounds even though the model keeps calling
-/// tools. `WorkerEvent` collapses every `TurnEnd` into `AgentEnd`, so the cap
-/// is observed as the count of `AgentStart` rounds before the run ends — the
-/// exact `MaxTurns` variant is asserted in the loop-level test below.
+/// tools. `WorkerEvent` collapses every `TurnEnd` into `AgentEnd` (carrying
+/// the stop reason), so the cap is observed as the count of `AgentStart`
+/// rounds before the run ends — the exact `MaxTurns` variant is asserted in
+/// the loop-level test below.
 #[test]
 fn container_max_turns_caps_the_worker_run() {
     // More tool-turns than the cap: the model never ends a turn on its own, so
@@ -267,7 +270,9 @@ fn container_max_turns_caps_the_worker_run() {
         .count();
     assert_eq!(rounds, 3, "exactly max_turns LLM rounds before the cap");
     assert!(
-        events.iter().any(|e| matches!(e, WorkerEvent::AgentEnd)),
+        events
+            .iter()
+            .any(|e| matches!(e, WorkerEvent::AgentEnd { .. })),
         "the capped run must still end cleanly"
     );
     // The backend was called exactly max_turns times — the 4th round the

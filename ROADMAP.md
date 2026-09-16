@@ -61,9 +61,9 @@
 | 5.1 `AgentEvent` DTO + 转译层（纯函数可单测，15 测试） | `crates/web/state/`（含 `memory_link`） | `packages/core/session/src/surface.ts` |
 | 5.2a daemon RPC 读客户端（封装 `session.*`/`run.list` + DTO 转换，#341） | `crates/web/client/`（`daemon.rs`；`llm.rs` 保留） | `packages/client/runtime/src/client/sessions/{manager.ts,remotes.ts}` |
 | 5.2b 订阅接收端（`WireTranslator` 双形状兼容 + 工具同名 LIFO 配对；断线退避重连 1s→5s；error 帧→TurnEnd 兜底） | `crates/web/client/`、`page-workspace/` | `packages/client/runtime/src/client/sessions/{notifier.ts,service.ts}` |
-| 5.3 真数据已接 + 状态三态（#356，`run.list` 推断 Idle/Active/Aborted）；谱系分组未做（见 PROGRESS） | `crates/web/page-workspace/` | `packages/client/runtime/src/client/sessions/{session.ts,lineage.ts}` |
+| 5.3 真数据已接 + 状态三态（#356，`run.list` 推断 Idle/Active/Aborted）；谱系分组（#376，G7）：`sessions.parent_id` 列 + 幂等迁移，侧栏按树缩进 | `crates/web/page-workspace/` | `packages/client/runtime/src/client/sessions/{session.ts,lineage.ts}` |
 | 5.4 聊天流式：delta 追加 + tool 折叠卡（由订阅管线承载） | `crates/web/components/`（chat.rs） | `client/conversation/{event-registry.ts,view-registry.ts}` + `sessions/tool-call-tree.ts` |
-| 5.5 sidebar 真会话已接；谱系分组未做（见 PROGRESS） | `crates/web/components/`（sidebar.rs） | `packages/client/runtime/src/client/sessions/lineage.ts` |
+| 5.5 sidebar 真会话已接；谱系分组（#376，G7）：`group_sessions` 扁平转树（孤儿当根 / visited 防环 / 深度封顶）+ 行内新建子会话钮 | `crates/web/components/`（sidebar.rs） | `packages/client/runtime/src/client/sessions/lineage.ts` |
 | 5.6 statusline 计时（#365）：`run_started_at_ms`/`elapsed_ms` + 起表/结算，13 个计时测试 | `crates/web/state/tests/statusline_timing.rs`（状态行内联在 `components/chat.rs`） | `packages/client/runtime/src/client/sessions/assistant-timing.ts` |
 | 5.7 stats 走 `stats.summary` 真实 ledger（#364）；token 用量卡**无真数据则隐藏**（完整需 C8.3，已裁定不做） | `crates/web/page-stats/` | `packages/llm/token-meter/src/{usage-projection.ts,projection.ts}` |
 | 5.8 配置页 TOML 往返（#364 测试：`client/tests/config_roundtrip.rs`）；`load_from_system`/`save_to_file`/`test_connection` 已接线 | `crates/web/page-config/` | `packages/settings/settings-file/src/index.ts` |
@@ -113,6 +113,7 @@
 | **G4 事件流汇合** ✅ | ① 3.4 e2e 绿（`event_push.rs`）；② web 聊天页流式 delta 逐字追加（**用户浏览器实测 2026-09-15**）；③ 断线重连不白屏（`reconnect.rs` 3 测试）；④ 半开 run 标 aborted（`run_status.rs` 8 测试）；⑤ web 全仓零 `read_event` 调用 |
 | **G5 总装** ✅ | ① C1–C6 全绿（C6.5 由 #363 接通）；② main CI `cargo test --locked --all-targets` 在 `e6039d6` 上 SUCCESS；③ `oi-web` 起在 8026，页面内联 40KB 真实 Tailwind，`grep -ci mock` = 0 |
 | **G6 总装消费** ✅（#373/#374，2026-09-16） | ① daemon worker 从装配容器取 cwd/compaction/max_turns，AGENTS.md 注入首次在生产路径生效；② crash-repair 接线，`Daemon::start` 修复半开 run；③ orbit 压缩接缝 56→3 行；④ 真链路 e2e（`g6_e2e.rs` 3 测试）：起真实 daemon + 本地 OpenAI mock server，断言**真实 HTTP 请求体字节**含 AGENTS.md 标记、max_turns 卡住真实多轮 run、孤儿 run 重启修复 |
+| **G7 谱系 + 并发归属** ✅（#376，2026-09-16） | ① `sessions.parent_id` 列 + 幂等迁移（`apply_parent_id_column`），`SessionSummary`/`Session` 双层贯通；② 侧栏 `group_sessions` 树渲染（孤儿当根 / visited 防环 / 深度封顶不丢节点）+ 行内新建子会话钮；③ `EventFrame.run_id`（serde-optional）+ sticky active-run 槽 + `RunFilteredSubscription` 按 run 过滤；④ 真二进制 smoke 10/10（含手工造 pre-G7 旧库的升级路径）；⑤ 逻辑层测试 14 例（lineage 5 + run_routing 2 + group_sessions 7） |
 
 ## 边界决定（稳定，勿翻案）
 
@@ -120,9 +121,10 @@
 
 **独有功能保护区**（omenic 独有，dsh 无对应物——任何路线**只读/单向依赖**，不许重构、不许当缺口往里塞）：
 - `crates/infra/memory`（jcode：`embed/graph/recall/inject/pipeline`）
-- `crates/agent/task`（`runner/graph/store/template` RPC 任务模型）
-- `crates/agent/subagent`、`crates/agent/mcp`
+- `crates/agent/task`（`runner/graph/store/template` RPC 任务模型；dsh 的 `workflow` 是模型在运行时自己写编排，方向相反，不算对应物）
 - `crates/evidence/spec` + `bin/gate`（合规工具；远期归宿 = C6 插件面落地后注册成工具插件，现在不动）
+
+> **2026-09-16 更正**：此前本表把 `crates/agent/subagent` 与 `crates/agent/mcp` 也列为「dsh 无对应物」，经核对 dsh 源码**不成立**——dsh 有 `packages/subagent/`（11 子包：spawn/fork 进程内后端 + ACP/Codex/Claude Code/SDK 四个进程外后端 + control/report 工具）与 `packages/mcp/mcp-client/`（多传输客户端）。omenic 的 subagent 相当于 `subagent-spawn-in-process` 的只读工具简化版且**未接 daemon/web 生产路径**；mcp 客户端是 stdio 单传输形态。两者移出保护区，按普通缺口排优先级。
 
 **冻结契约**（改动权归首发路线，他路线按冻结类型消费）：`AgentEvent` serde（3.1）、daemon protocol（3.3）、harness trait（6.1）。改 `daemon/protocol.rs` **只能加命令**，不许改既有 `session.*` / `run.list` 语义（task/memory 的 RPC 依赖这些）。
 
