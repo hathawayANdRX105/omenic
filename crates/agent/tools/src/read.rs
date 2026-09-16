@@ -24,6 +24,6 @@ impl Tool for ReadFile {
     fn execute(&self, args: &Value, _signal: &AtomicBool) -> Result<String, ToolError> {
         let path = arg_str(args, "path")?;
         let content = std::fs::read_to_string(path)?;
-        Ok(truncate_output(&content, 0)?)
+        Ok(truncate_output(&content)?)
     }
 }

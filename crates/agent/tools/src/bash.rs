@@ -92,8 +92,8 @@ impl Tool for RunBash {
         let wrapped = format!("({command}) 2>&1");
         let (code, output) = run_shell(&wrapped, signal);
         match code {
-            Some(0) => truncate_output(&output, 0).map_err(ToolError::from),
-            Some(code) => Ok(truncate_output(&format!("[exit {code}] {output}"), 0)?),
+            Some(0) => truncate_output(&output).map_err(ToolError::from),
+            Some(code) => Ok(truncate_output(&format!("[exit {code}] {output}"))?),
             None => Ok(output),
         }
     }

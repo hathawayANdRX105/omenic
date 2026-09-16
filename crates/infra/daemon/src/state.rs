@@ -137,6 +137,13 @@ impl RunLedger {
         let mut touched = false;
         for run in inner.runs.iter_mut() {
             if run.run_id == run_id {
+                // 幂等：已结算的 run 不重写。turn log 必须保持每个 TurnStart
+                // 恰好一个 TurnEnd，interrupted_run_closers 靠这个配平做启动
+                // 修复；调用方的「未结算才关」检查与这里的写入分属两次加锁，
+                // 中间的窗口会让重复的 AgentEnd 追加第二个 TurnEnd。
+                if run.finished_at_ms.is_some() {
+                    continue;
+                }
                 run.finished_at_ms = Some(finished_at_ms);
                 run.status = Some(status.to_string());
                 touched = true;
@@ -386,6 +393,31 @@ impl StatsSummary {
     /// Whether a metric key is known to have no backing data.
     pub fn is_unavailable(&self, key: &str) -> bool {
         self.unavailable.iter().any(|k| k == key)
+    }
+}
+
+/// Map a worker `AgentEnd { stop_reason }` onto a [`RunLedger::finish`]
+/// status (G8).  The daemon's event pump calls this when it forwards the end
+/// of an orbit turn — the first moment the run is provably over, since an
+/// orbit `prompt` only acknowledges that the message was queued.
+///
+/// The mapping stays inside the ledger's own status vocabulary (the same
+/// strings [`aggregate_stats`] buckets on):
+///
+/// * `"aborted"` — the loop was aborted mid-flight → `"aborted"`.
+/// * `"error"` — the loop errored, or panicked and was recovered →
+///   `"failed"`.
+/// * anything else (`"end_turn"`, `"max_tokens"`, `"max_turns"`, …) →
+///   `"ok"`.  Hitting a budget cap is a clean stop, not a run failure.
+/// * `""` — the wire frame carried no reason (a legacy frame, or an
+///   omp-compat peer that never sends one).  "Unknown" is not "failed": an
+///   empty reason means the caller said nothing, not that the run went
+///   wrong, so it degrades to `"ok"` with every other unrecognized reason.
+pub fn agent_end_status(stop_reason: &str) -> &'static str {
+    match stop_reason {
+        "aborted" => "aborted",
+        "error" => "failed",
+        _ => "ok",
     }
 }
 
