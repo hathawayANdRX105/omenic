@@ -8,7 +8,7 @@
 //! * `Daemon` owns the lock + worker state; `Drop` performs the
 //!   shutdown sequence so accidental early-return cleanup is automatic.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
