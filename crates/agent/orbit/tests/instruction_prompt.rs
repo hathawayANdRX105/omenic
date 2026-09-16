@@ -200,7 +200,7 @@ fn instruction_failures_degrade_silently_to_task() {
     // An AGENTS.md alongside the nested run dir still resolves relative to
     // the host-supplied cwd, not the process cwd.
     let root = workspace();
-    fs::write(root.path().join("AGENTS.md"), format!("{MARKER}")).unwrap();
+    fs::write(root.path().join("AGENTS.md"), MARKER.to_string()).unwrap();
     let nested = root.path().join("sub");
     fs::create_dir(&nested).unwrap();
     assert!(prompt_sent_with(&nested).contains(MARKER));

@@ -905,7 +905,7 @@ pub fn intercept_pr_merge(args: &[String]) -> i32 {
             "PR_MERGE",
             &format!("PR #{}", pr_num.unwrap_or_default()),
             "FAIL",
-            &crate::shared::truncate_utf8(&err, 80),
+            crate::shared::truncate_utf8(&err, 80),
         );
         return rc;
     }

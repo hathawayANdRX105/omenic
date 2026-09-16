@@ -43,10 +43,10 @@ impl SseParser {
 
         let mut out = SseLineOut::default();
 
-        if let Some(text) = choice["delta"]["content"].as_str() {
-            if !text.is_empty() {
-                out.text_delta = Some(text.to_string());
-            }
+        if let Some(text) = choice["delta"]["content"].as_str()
+            && !text.is_empty()
+        {
+            out.text_delta = Some(text.to_string());
         }
 
         // tool_call deltas: accumulate name + partial-JSON arguments by index.

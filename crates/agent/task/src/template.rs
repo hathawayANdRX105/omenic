@@ -874,10 +874,10 @@ pub fn apply(
 
     let mut task_list = store.load_all().map_err(|e| format!("store error: {e}"))?;
     for (tid, did) in &explicit {
-        if let Some(t) = task_list.iter_mut().find(|t| &t.id == tid) {
-            if !t.deps.contains(did) {
-                t.deps.push(did.clone());
-            }
+        if let Some(t) = task_list.iter_mut().find(|t| &t.id == tid)
+            && !t.deps.contains(did)
+        {
+            t.deps.push(did.clone());
         }
     }
     for t in task_list {

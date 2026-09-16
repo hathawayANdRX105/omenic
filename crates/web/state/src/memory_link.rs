@@ -76,7 +76,7 @@ pub fn extract_and_remember(
     turns_used: u32,
     session_ending: bool,
     transcript: &[adaptor::Message],
-    now: u64,
+    _now: u64,
 ) -> usize {
     if !memory_enabled() {
         return 0;
@@ -114,7 +114,7 @@ pub fn extract_and_remember(
     window.reverse();
     let mut chars: usize = window.iter().map(|m| message_len(m)).sum();
     while chars > 8000 && window.len() > 1 {
-        chars -= message_len(&window[0]);
+        chars -= message_len(window[0]);
         window.remove(0);
     }
     let conversation = window
