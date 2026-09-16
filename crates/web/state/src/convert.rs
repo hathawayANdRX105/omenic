@@ -19,7 +19,8 @@ use crate::ui_state::AgentEvent;
 /// 运行态（含半开 run 的 [`SessionStatus::Aborted`]）由调用方拿
 /// [`infer_session_status`] 的结果在渲染时覆盖（见 page-workspace 的
 /// `run_status_cache`）。存储侧也没有 model 字段，占位 `default`。
-/// `last_active` 取 `updated_at_ms` 的相对时间。
+/// `last_active` 取 `updated_at_ms` 的相对时间。`parent_id` 原样透传
+/// （`None` 即根会话），谱系分组（5.3/5.5）由侧栏按它自己组装树。
 pub fn summary_to_session(s: &SessionSummary) -> Session {
     let updated = s.updated_at_ms.max(0) as u64;
     Session {
@@ -29,6 +30,7 @@ pub fn summary_to_session(s: &SessionSummary) -> Session {
         model: "default".into(),
         status: SessionStatus::Idle,
         last_active_epoch: updated,
+        parent_id: s.parent_id.clone(),
     }
 }
 

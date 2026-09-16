@@ -96,7 +96,21 @@ impl WebDaemon {
 
     /// 新建会话（存储侧幂等：已存在的 id 原样返回原行）。
     pub fn create_session(&self, sid: &str, title: &str) -> Result<(), ClientError> {
-        self.client.session_create(sid, title)?;
+        self.create_session_with_parent(sid, title, None)
+    }
+
+    /// [`Self::create_session`] 的带谱系版本：`parent_id` 指明本会话从哪个
+    /// 会话 fork 而来（5.3/5.5 分组的父子边），`None` 建根会话。返回值
+    /// 仍是 `()`——调用方（page-workspace）拿内存里的 id 直接插列表，
+    /// 不需要 daemon 回执的 summary。
+    pub fn create_session_with_parent(
+        &self,
+        sid: &str,
+        title: &str,
+        parent_id: Option<&str>,
+    ) -> Result<(), ClientError> {
+        self.client
+            .session_create_with_parent(sid, title, parent_id)?;
         Ok(())
     }
 

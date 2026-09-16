@@ -53,6 +53,11 @@ pub struct Session {
     /// Unix epoch milliseconds for last activity (for real relative-time display)
     #[serde(default)]
     pub last_active_epoch: u64,
+    /// 谱系边：本会话从哪个父会话 fork 而来（5.3/5.5 分组）。`None` = 根
+    /// 会话。serde-optional：前端残留的旧缓存（缺该 key）反序列化成
+    /// `None` 而不是报错，保证字段上线时不需要清缓存。
+    #[serde(default)]
+    pub parent_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

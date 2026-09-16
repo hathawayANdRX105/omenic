@@ -50,6 +50,35 @@ fn summary_recent_activity_is_just_now() {
 }
 
 #[test]
+fn summary_maps_parent_edge_and_root() {
+    let now = now_ms();
+    // 有父边：parent_id 原样透传，供侧栏按谱系分组（5.3/5.5）
+    let child = SessionSummary {
+        id: "s-child".into(),
+        title: "子会话".into(),
+        parent_id: Some("s-parent".into()),
+        created_at_ms: now as i64,
+        updated_at_ms: now as i64,
+        message_count: 0,
+    };
+    assert_eq!(
+        summary_to_session(&child).parent_id,
+        Some("s-parent".into())
+    );
+
+    // 根会话：None 透传成 None，不变成空串或别的占位
+    let root = SessionSummary {
+        id: "s-root".into(),
+        title: "根会话".into(),
+        parent_id: None,
+        created_at_ms: now as i64,
+        updated_at_ms: now as i64,
+        message_count: 0,
+    };
+    assert_eq!(summary_to_session(&root).parent_id, None);
+}
+
+#[test]
 fn message_user_maps_role_and_timestamp() {
     let now = now_ms();
     let m = SessionMessage {
