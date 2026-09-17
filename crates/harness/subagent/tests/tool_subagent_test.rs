@@ -125,17 +125,17 @@ fn tool_subagent_execute_rejects_unknown_provider() {
         .into_iter()
         .find(|s| s.name == "subagent")
         .unwrap();
-    let out = catalog
+    // An unknown provider is a tool-level error (mirrors `ToolCatalog::execute`
+    // for an unknown tool), not an `is_error` output.
+    let err = catalog
         .execute(
             &spec,
             &serde_json::json!({"prompt": "hi", "provider": "nope"}),
             &AbortSignal::new(),
         )
-        .unwrap();
-    assert!(out.is_error);
+        .expect_err("unknown provider must be a tool error");
     assert!(
-        out.output.contains("unknown subagent provider: nope"),
-        "got: {}",
-        out.output
+        err.to_string().contains("unknown subagent provider: nope"),
+        "error must name the rejected provider, got: {err}"
     );
 }

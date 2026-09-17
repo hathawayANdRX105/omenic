@@ -75,11 +75,18 @@ fn core_plugins_register_in_dependency_order() {
     let (_fiber, registry) = assemble(json!({ "cwd": cwd.as_str() }), Vec::new())
         .expect("assemble with no host plugins");
 
-    // Compaction before instruction: the order the assembly root documents,
-    // and the order a host must be able to rely on when it re-provides one.
+    // The subagent seam (runtime service, then the model-facing tools)
+    // registers before compaction/instruction, and both stay ahead of host
+    // plugins.
     assert_eq!(
         registry.plugins(),
-        vec!["harness-compaction", "harness-instruction"]
+        vec![
+            "harness.subagents",
+            "tool-subagent",
+            "tool-subagent-control",
+            "harness-compaction",
+            "harness-instruction"
+        ]
     );
 }
 
@@ -178,7 +185,14 @@ fn host_plugins_register_after_the_core_ones() {
 
     assert_eq!(
         registry.plugins(),
-        vec!["harness-compaction", "harness-instruction", "host-extra"],
+        vec![
+            "harness.subagents",
+            "tool-subagent",
+            "tool-subagent-control",
+            "harness-compaction",
+            "harness-instruction",
+            "host-extra",
+        ],
         "host plugins go last so they may provide over core services"
     );
     assert_eq!(ran.load(Ordering::SeqCst), 1);
