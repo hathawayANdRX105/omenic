@@ -6,6 +6,7 @@
 
 use serde_json::Value;
 
+use crate::PluginError;
 use crate::context::{PluginContext, ServiceRegistry};
 use crate::events::EventBus;
 
@@ -15,6 +16,11 @@ use crate::events::EventBus;
 /// adopts the plugin, `on_unload` runs once when it drops, in reverse
 /// adoption order.
 pub trait PluginLifecycle: Send {
+    /// Plugin name used by `Fiber::unload(name)` to identify the instance.
+    /// Default to an empty string for plugins that do not need named unload.
+    fn name(&self) -> &str {
+        ""
+    }
     fn on_load(&mut self, _ctx: &mut PluginContext<'_>) {}
     fn on_unload(&mut self, _ctx: &mut PluginContext<'_>) {}
 }
@@ -84,6 +90,22 @@ impl Fiber {
         // it, so the last loaded must be the first dropped.
         while let Some(mut plugin) = self.plugins.pop() {
             plugin.on_unload(&mut self.context());
+        }
+    }
+
+    /// Unload the plugin named `name` from this fiber. Runs `on_unload` on
+    /// the matching lifecycle instance and removes it. Returns `Ok(None)` when
+    /// no plugin with that name is loaded (idempotent).
+    pub fn unload_named(
+        &mut self,
+        name: &str,
+    ) -> Result<Option<Box<dyn PluginLifecycle>>, PluginError> {
+        if let Some(pos) = self.plugins.iter().position(|p| p.name() == name) {
+            let mut plugin = self.plugins.remove(pos);
+            plugin.on_unload(&mut self.context());
+            Ok(Some(plugin))
+        } else {
+            Ok(None)
         }
     }
 }

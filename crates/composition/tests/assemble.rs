@@ -153,6 +153,7 @@ fn host_plugin_reusing_a_core_name_is_rejected() {
         // this match non-exhaustive by design, so the test is forced to
         // decide the new case instead of silently passing.
         Err(PluginError::Duplicate(name)) => assert_eq!(name, "harness-compaction"),
+        Err(PluginError::InvalidConfig(msg)) => panic!("unexpected config error: {msg}"),
     }
     // The registry rejects before running the plugin, so the shadowing host
     // plugin never got to touch the context.
