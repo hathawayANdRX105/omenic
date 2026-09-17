@@ -10,11 +10,11 @@
 
 - G6（#373/#374）把装配容器接进 daemon→web 生产路径，C4 的 AGENTS.md 注入与压缩第一次对真实用户生效，并补了真链路 e2e。
 - G7（#376）关掉最后两条：**谱系分组**（5.3/5.5，数据模型 + 侧栏树）与 **per-run 事件归属**（协议帧 run_id + 订阅端过滤）。
-- G8（#377，2026-09-16 合并）修三处「单测绿、生产路径失效」的缺陷（见下表），让三态生命周期在真实 orbit run 下可观测。**验收**：gate merge --dry-run ALL PASS（119 checks）；PR CI 三连绿（`35130516365` 1m29s、`35130936505` 1m20s）；合并后 main CI `35134561055` SUCCESS（2m10s）；真二进制 smoke 7/7；终审 ocr 34 条裁定 7 真阳性全部已修。
+- G8（#377/#378，2026-09-16/17）修三处「单测绿、生产失效」的缺陷（见下表），让三态生命周期在真实 orbit run 下可观测。**验收**：#377 gate merge --dry-run ALL PASS（119 checks）；PR CI 三连绿；合并后 main CI `35134561055` SUCCESS；真二进制 smoke 7/7；终审 ocr 34 条裁定 7 真阳性全部已修。#378（2026-09-17）以 `a91caee` 为 base 重走主控规范：codegraph 覆盖三条修复链、3 子代理 audit、CRG 0 affected flows、ocr 20 条全 pre-existing、23 个 G8 单测绿、gate 105 checks ALL PASS。
 - C7（tag）前置条件全满足，**等用户拍板时机**。
 - C8 已裁定不做。
 
-**G8 之后没有排队中的整合点。** 下一步是 dsh 全量对照 backlog（见文末，2026-09-16 archify 盘点），或等用户对 C7 拍板。
+**G8 之后没有排队中的整合点。** 接下来只有两件事：dsh 全量对照 backlog（见下文，2026-09-17 子代理调查完成），或等用户对 C7 拍板。
 
 ## 缺口表（全部已关闭，留作记账）
 
@@ -46,37 +46,37 @@
 - **测试**：`daemon/tests/run_lifecycle.rs`（4 例，含 `finish` 幂等）、`rpc/tests/subscribe_pump.rs`（+54 行，`AgentEnd` 透传 `stop_reason` + 旧帧反序列化）、`web/client/tests/config_roundtrip.rs`（2 例回退路径：`omp_path` 不在首行、`[llm]` 非表不 panic）、`agent/tools/tests/truncate.rs`（3 例，溢出不碰撞）。
 - **过程教训**：`truncate.rs` 一个测试扫整个 `/tmp` 读每个文件，CI 连挂 3 次每次 25 分钟超时；ocr 曾把这条标 high 被误判驳回。修后该二进制从超时降到秒级。
 
-## 后续 backlog（按价值÷成本排序）
+## 后续 backlog
+
+### 近期（同一 trait / registry / fiber 合并做）
 
 | 优先 | 项 | 说明 |
 |---|---|---|
-| 1 | 插件 per-plugin Config schema + inject 依赖门控 | `DshPlugin` trait 现在只有 `name()` + `register()`（`registry.rs:14`）；要加关联类型/serde 结构 + 从主文档切插件切片 + 校验失败拒注册。两项改同一个 trait + registry，合并做省一半 |
-| 2 | 插件反注册（单插件卸载） | `fiber.rs:82` 的 `unload()` 只能逆序拆全部；`EventBus::unsubscribe` 已有 |
-| — | 插件发现/加载层（loader） | dsh 的 loader 绑 Node ESM hook，Rust 侧等价物是目录扫描+声明式注册表；**范围外**（C6 只对齐 cordis），暂不分配 |
-| — | token-meter（C8.3） | 已裁定不做，stats 卡靠「无真数据则隐藏」兜底 |
-| — | interaction 交互层（C8.1/8.2） | 已裁定不做，omenic 无 agent→用户提问通路 |
-| — | C7（tag） | 前置全满足，等用户拍板时机 |
+| 1 | **插件 per-plugin Config schema + inject 依赖门控** | `DshPlugin` trait 现在只有 `name()` + `register()`（`registry.rs:14-19`）。dsh cordis `Plugin.Base` 有 `Config?: StandardSchemaV1`，`resolveConfig()` 在插件启动前跑标准 schema 校验，失败直接 `ValidationError` 拒注册（`fiber.ts:50-62`）。omenic 要补：① trait 加关联类型或 serde 结构；② registry 校验失败返回 `PluginError::InvalidConfig` 而非 panic；③ 主文档切插件子文档能力。两项改同一组 trait + registry + fiber，合并做省一半。 |
+| 2 | **插件反注册（单插件卸载）** | `Fiber::unload()`（`fiber.rs:82-88`）只能逆序拆全部；dsh 每个插件有独立 `Fiber` 实例，`dispose()` 只回收该插件，`RegistryService.delete(plugin)` 定向移除。omenic 要补：① `Fiber::unload(name)` 只移除指定插件并跑 `on_unload`；② `EventBus::unsubscribe` 已有（`events.rs`）但未暴露给 `PluginLifecycle`；③ `Fiber::resolve` 卸载后返回 `None`，避免悬垂句柄。 |
 
-## dsh 全量对照 backlog（2026-09-16 archify 盘点）
+### 中期（composition-root + 新 crate）
 
-用 archify 把 dsh（55 顶层包 / 约 227 子包，commit `b150a55`）聚合成 12 个功能域，逐域标注 omenic 复刻状态。图：`dsh-architecture.architecture.html`（deliver SHA-256 `9b2bc572…`），清单：`dsh-functional-inventory.md`。
+| 域 | dsh 现状 | omenic 现状 | 缺口 |
+|---|---|---|---|
+| **subagent 能力 seam** | `SubagentRuntime` 服务（provider registry + one-shot/continuable + 生命周期事件）+ 11 子包（spawn/fork 进程内 + ACP/Codex/Claude Code/SDK 四个进程外后端 + control/report 工具） | `crates/agent/subagent/` 是**只读单线程一次性并行探索工具**（read/grep/glob，5 分钟 Time-to-Live，无持久身份、无 mailbox、无 model switch），`TaskTool` 不在 `builtin_tools()` 里，不接 daemon/web 生产路径 | daemon 路径零 subagent 表面；需要 `SubagentRuntime` 服务 + 进程内/外后端 + model-facing `subagent` 工具 + `send_message`/`interrupt_agent` 控制工具 + `report` 部分交付工具，全部注册进 orbit tool catalog |
+| **MCP 多传输 + 重连** | `mcp-client` Cordis 插件：stdio + Streamable HTTP 双传输，`RECONNECT_DEFAULTS` 重连监督，`failOnStartupError` 启动失败即熔断，per-tool call timeout，`cwd` 每服务 | `crates/agent/mcp/`：stdio-only `StdioTransport`，`Mcp::spawn()` 一次性，掉线即工具死亡；`McpServerConfig` 无 `cwd`/`toolCallTimeoutMs`/`reconnect`/`failOnStartupError`；**仅 task CLI 路径接线**（`task/runner.rs:203-209`），daemon/orbit 路径零 MCP | 需补 `StreamableHTTPClientTransport` + reconnect supervisor + 启动失败熔断 + per-server timeout/cwd，并将 MCP 服务注入 daemon `orbit_setup` 容器 |
+| **session resume 生产路径** | `SessionPersistence` 抽象（`prepare`/`load`/`inspect`/`readFrom`）+ JSONL/SQLite 双后端 + `session-checkpoint-policy` 在 llm/tools/pre-step 前自动 flush durable log | `crates/infra/session/src/lib.rs` 只有 libSQL 查询 plumbing；grep `prepare`/`inspect`/`loadStored`/`readFrom` = 0 命中；daemon 不引 resume seam | daemon 重启后 worker ctx 为空，模型只见最新一条消息（审计域 2a 最高优先） |
+| **附件全链路** | `AttachmentStore` 抽象（`validateImage`/`saveImage`/`readImage`/`readImageRequest`）+ `LocalAttachmentStore` 内容寻址 + `ui-attachment` 前端 + adapter `resolveAttachments` 注入 | omenic 全仓 grep `attachment`/`image` = 0 命中（仅 `ETXTBSY` 误匹配） | 前端上传 UI + 后端持久化 + 上下文投影注入三段全缺 |
+| **LLM provider 注册表/路由 + retry + token-meter** | `LlmRuntime` 服务（`registerAdapter`/`registerConfigurableProviders`/`stream` waterfall）+ DeepSeek/PiAi 双 adapter + `llm-retry` 插件（provider 路由指数退避）+ `TokenMeter`（event tail 回放算用量） | `crates/agent/adaptor/src/sse.rs`：单硬编码 OpenAI 兼容 SSE 流；grep `registerAdapter`/`LlmRuntime`/`deepseek-official`/`pi-ai`/`llm-retry`/`token-meter` = 0 | 锁死单 provider，无注册表、无第二路由、无重试、无 token 计量 |
+| **jobs 后台作业 + terminal 持久 PTY** | `JobRegistry` 抽象（`start`/`list`/`kill`/`wait`/`onJobDone`）+ `LocalJobRegistry` 内存实现 + `terminal` PTY 后端（bash/pwsh）+ 6 个模型工具 | 无 `jobs`/`terminal`/`pty` crate；`Cargo.toml` 无相关依赖；grep `pty` 仅误匹配 `subagent`/`opportunity` | 长命令被 30s 超时杀掉；模型无法维持跨 tool call 的交互 shell 状态 |
+| **session telemetry/otel + title-llm** | `SessionTelemetryBackend` 抽象 + OTel SDK 导出 + `SessionTitleService`（确定性 fallback + LLM 生成） | omenic 全仓 grep `session_telemetry`/`opentelemetry`/`session-title`/`title-llm` = 0 | 无 OTel 可观测性管道，无自动 session 标题 |
+| **credentials/authorization + identity** | `CredentialProvider` 抽象（分层 env 解析 + YAML 持久化 + 跨进程锁）+ `AuthorizationService`（one-attempt-per-key）+ `AnonymousUserId` | omenic 全仓 grep `credentials`/`identity`/`anonymous-user-id` = 0 | 无托管凭据存储、无 OAuth 交互授权流、无稳定匿名身份 |
 
-**完全缺失（omenic 零实现）**：
+### 范围外（维持现状）
 
-1. **元工具与治理整片** — goal / todo / plan-mode / schedule / skill / lsp / hooks / guard / feedback / workflow（约 60 子包）。复刻差距最大的功能域。
-2. **LLM provider 注册表/路由 + token-meter** — 单 adaptor 硬编码，无第二 provider、无重试、无计量。
-3. **jobs 后台作业 + terminal 持久 PTY + persistent shell** — 长命令只能被 30s 超时杀掉。
-4. **会话恢复（resume）生产路径** — daemon 重启后 worker ctx 为空，模型只见最新一条消息（审计域2a 最高优先）。
-5. **附件全链路** — ui-attachment 前端 + 后端存储 + 上下文注入三段都缺。
-6. **host apiproxy + directory-picker** — 多 provider 路由与目录选择无对应物。
-7. **session telemetry/otel + title-llm** — 可观测性与自动标题。
-8. **core scope + agent-tool-presentation** — 作用域隔离与工具结果呈现策略。
-9. **acp 协议 + boot/bundle 声明式装配** — omenic composition 的 dsh 对应物，但声明式层（profile/bundle）缺失。
-10. **credentials authorization + identity** — 授权流与匿名身份（依赖 C8 已裁的交互通路，需重新裁定）。
-
-**已复刻但生产路径有缺陷（G8 已修）**：run 收尾时机、配置抹段、spill 碰撞。
-
-**已复刻的功能性偏差（未修）**：压缩配对方向与 dsh 相反（`cut += 1` 前缩 vs `keepFromIdx -= 1` 后扩，丢弃更多原文）；压缩阈值固定字符而非按窗口比例。
+| 项 | 原因 |
+|---|---|
+| 元工具与治理整片（goal/todo/plan-mode/schedule/skill/lsp/hooks/guard/feedback/workflow，约 60 子包） | 复刻差距最大的功能域，不与 C1–C8 主线耦合，独立规划 |
+| core scope + agent-tool-presentation | dsh 作用域隔离与工具结果呈现策略，不与主线耦合 |
+| acp 协议 + boot/bundle 声明式装配 | omenic `composition` 已对齐 cordis 运行时；声明式层（profile/bundle）留给 C7 或独立路线 |
+| C7（tag omenic-harness-v0.1.0 + ferrite 接线） | 前置全满足，等用户拍板时机 |
+| C8 interaction + token-meter | 已裁定不做 |
 
 ## G7 验收记录（#376）
 

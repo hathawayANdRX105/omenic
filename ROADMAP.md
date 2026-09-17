@@ -114,7 +114,7 @@
 | **G5 总装** ✅ | ① C1–C6 全绿（C6.5 由 #363 接通）；② main CI `cargo test --locked --all-targets` 在 `e6039d6` 上 SUCCESS；③ `oi-web` 起在 8026，页面内联 40KB 真实 Tailwind，`grep -ci mock` = 0 |
 | **G6 总装消费** ✅（#373/#374，2026-09-16） | ① daemon worker 从装配容器取 cwd/compaction/max_turns，AGENTS.md 注入首次在生产路径生效；② crash-repair 接线，`Daemon::start` 修复半开 run；③ orbit 压缩接缝 56→3 行；④ 真链路 e2e（`g6_e2e.rs` 3 测试）：起真实 daemon + 本地 OpenAI mock server，断言**真实 HTTP 请求体字节**含 AGENTS.md 标记、max_turns 卡住真实多轮 run、孤儿 run 重启修复 |
 | **G7 谱系 + 并发归属** ✅（#376，2026-09-16） | ① `sessions.parent_id` 列 + 幂等迁移（`apply_parent_id_column`），`SessionSummary`/`Session` 双层贯通；② 侧栏 `group_sessions` 树渲染（孤儿当根 / visited 防环 / 深度封顶不丢节点）+ 行内新建子会话钮；③ `EventFrame.run_id`（serde-optional）+ sticky active-run 槽 + `RunFilteredSubscription` 按 run 过滤；④ 真二进制 smoke 10/10（含手工造 pre-G7 旧库的升级路径）；⑤ 逻辑层测试 14 例（lineage 5 + run_routing 2 + group_sessions 7） |
-| **G8 会话生命周期正确性** ✅（#377，2026-09-16） | ① 三处「单测绿、生产失效」缺陷：orbit run 在 prompt ack 时就被关闭（`in_flight_runs` 恒 0、三态状态机失效）→ 改由事件泵在 `AgentEnd` 收尾，泵在 prompt 前启动（不订阅也能关闭）；`save_to_file` 整文件重写抹掉 `[mcp]`/`[memory]`/`[daemon]` → `toml_edit` 增量写；spill 文件名恒 `oi-output-0.txt` 互相覆盖 → `oi-output-{pid}-{seq}.txt`；② gate merge --dry-run ALL PASS（119 checks）；③ PR CI 三连绿 + 合并后 main CI `35134561055` SUCCESS；④ 真二进制 smoke 7/7（ack 后 run open、泵在失败的 turn 上仍正确关闭）；⑤ 终审 ocr 34 条裁定 7 真阳性全部已修（含 G8-B 自己代码里的 1 个 high） |
+| **G8 会话生命周期正确性** ✅（#377/#378，2026-09-16/17） | ① 三处「单测绿、生产失效」缺陷：orbit run 在 prompt ack 时就被关闭（`in_flight_runs` 恒 0、三态状态机失效）→ 改由事件泵在 `AgentEnd` 收尾，泵在 prompt 前启动（不订阅也能关闭）；`save_to_file` 整文件重写抹掉 `[mcp]`/`[memory]`/`[daemon]` → `toml_edit` 增量写；spill 文件名恒 `oi-output-0.txt` 互相覆盖 → `oi-output-{pid}-{seq}.txt`；② #377 gate merge --dry-run ALL PASS（119 checks）；③ PR CI 三连绿 + 合并后 main CI `35134561055` SUCCESS；④ 真二进制 smoke 7/7（ack 后 run open、泵在失败的 turn 上仍正确关闭）；⑤ 终审 ocr 34 条裁定 7 真阳性全部已修（含 G8-B 自己代码里的 1 个 high）；⑥ 补验 PR #378（2026-09-17）以 `a91caee` 为 base 重走主控规范流程：codegraph 覆盖三条修复链、3 子代理 audit、CRG 0 affected flows、ocr 20 条全 pre-existing、23 个 G8 单测绿、真 daemon+oi smoke 通过、gate 105 checks ALL PASS |
 
 ## 边界决定（稳定，勿翻案）
 
@@ -130,6 +130,41 @@
 **冻结契约**（改动权归首发路线，他路线按冻结类型消费）：`AgentEvent` serde（3.1）、daemon protocol（3.3）、harness trait（6.1）。改 `daemon/protocol.rs` **只能加命令**，不许改既有 `session.*` / `run.list` 语义（task/memory 的 RPC 依赖这些）。
 
 **领域依赖方向**：harness ✗→ agent 域；agent 域 ✓→ harness；跨域只走 contract DTO。
+
+## dsh 全量对照结论（2026-09-17 子代理调查）
+
+> 2026-09-16 archify 盘点的 10 条「完全缺失」已由 3 个 Explore 子代理逐域核对 dsh 源码确认。以下按「是否影响 daemon/web 生产路径」分级。
+
+### 已确认缺失且需接线进 daemon/orbit
+
+| 域 | dsh 现状（参考文件） | omenic 现状 | 接线优先级 |
+|---|---|---|---|
+| **subagent 能力 seam** | `SubagentRuntime` 服务（provider registry + one-shot/continuable + 生命周期事件）+ 11 子包：spawn/fork 进程内 + ACP/Codex/Claude Code/SDK 四个进程外后端 + control/report 工具（`subagent/src/index.ts`） | `crates/agent/subagent/` 是**只读单线程一次性并行探索工具**（read/grep/glob，5 分钟 TTL，无持久身份），`TaskTool` 不在 `builtin_tools()`，不接 daemon/web | **高** — 需 `SubagentRuntime` 服务 + 后端 + model-facing `subagent` 工具 + 控制工具，注册进 orbit tool catalog |
+| **MCP 多传输 + 重连** | `mcp-client` Cordis 插件：stdio + Streamable HTTP 双传输，`RECONNECT_DEFAULTS` 重连，`failOnStartupError` 熔断，per-tool timeout，`cwd` 每服务（`mcp-client/src/{index,transport,connection}.ts`） | `crates/agent/mcp/`：stdio-only，`Mcp::spawn()` 一次性，掉线即工具死；`McpServerConfig` 无 `cwd`/`toolCallTimeoutMs`/`reconnect`；**仅 task CLI 路径接线**（`task/runner.rs:203-209`） | **高** — 需补 HTTP transport + reconnect + 熔断，并将 MCP 服务注入 daemon `orbit_setup` |
+| **session resume 生产路径** | `SessionPersistence` 抽象（`prepare`/`load`/`inspect`/`readFrom`）+ JSONL/SQLite 双后端 + `session-checkpoint-policy` 在 llm/tools/pre-step 前 flush（`session/session-persistence*/src/index.ts`） | `crates/infra/session/src/lib.rs` 只有 libSQL 查询 plumbing；grep `prepare`/`inspect`/`loadStored`/`readFrom` = 0；daemon 不引 resume seam | **高** — daemon 重启后 worker ctx 为空，模型只见最新一条消息（审计域 2a） |
+| **附件全链路** | `AttachmentStore` 抽象 + `LocalAttachmentStore` 内容寻址 + `ui-attachment` 前端 + adapter `resolveAttachments` 注入（`attachment/attachment*/src/index.ts`） | omenic 全仓 grep `attachment`/`image` = 0（仅 `ETXTBSY` 误匹配） | **中** — 前端 UI + 后端存储 + 上下文投影三段全缺 |
+| **LLM provider 注册表/路由 + retry + token-meter** | `LlmRuntime` 服务（`registerAdapter`/`stream` waterfall）+ DeepSeek/PiAi 双 adapter + `llm-retry` 插件 + `TokenMeter`（`llm/llm*/src/index.ts`） | `crates/agent/adaptor/src/sse.rs`：单硬编码 OpenAI 兼容 SSE 流；grep `registerAdapter`/`LlmRuntime`/`llm-retry`/`token-meter` = 0 | **中** — 锁死单 provider，无注册表、无重试、无 token 计量 |
+| **jobs 后台作业 + terminal 持久 PTY** | `JobRegistry` 抽象 + `LocalJobRegistry` + `terminal` PTY 后端（bash/pwsh）+ 6 个模型工具（`jobs/jobs*/src/index.ts`、`terminal/terminal*/src/index.ts`） | 无 `jobs`/`terminal`/`pty` crate；grep `pty` 仅误匹配 `subagent`/`opportunity` | **中** — 长命令被 30s 超时杀掉；模型无法维持跨 tool call 的交互 shell 状态 |
+| **session telemetry/otel + title-llm** | `SessionTelemetryBackend` 抽象 + OTel SDK 导出 + `SessionTitleService`（确定性 fallback + LLM 生成）（`session/session-telemetry*/src/index.ts`、`session/session-title*/src/index.ts`） | omenic 全仓 grep `session_telemetry`/`opentelemetry`/`session-title`/`title-llm` = 0 | **低** — 无 OTel 可观测性管道，无自动 session 标题 |
+| **credentials/authorization + identity** | `CredentialProvider` 抽象（分层 env 解析 + YAML 持久化 + 跨进程锁）+ `AuthorizationService` + `AnonymousUserId`（`credentials/*/src/index.ts`、`identity/*/src/index.ts`） | omenic 全仓 grep `credentials`/`identity`/`anonymous-user-id` = 0 | **低** — 无托管凭据存储、无 OAuth 授权流、无稳定匿名身份 |
+
+### 已复刻但仍有功能性偏差（G8 已修生产路径缺陷）
+
+| 域 | 偏差说明 |
+|---|---|
+| run 收尾时机 / 配置写回抹段 / spill 碰撞 | G8（#377/#378）已修。详见 PROGRESS.md G8 节。 |
+| 压缩配对方向 | omenic `cut += 1` 前缩 vs dsh `keepFromIdx -= 1` 后扩，omenic 丢弃更多原文；阈值固定字符而非按窗口比例。 |
+
+### 边界决定（稳定，勿翻案）
+
+**明确不做**（dsh 有但 omenic 不复刻）：`hooks`（外部 agent hook 协议）、`skill`（SKILL.md 加载）、`guard`（timeout-policy/repeat-reminder）、`lsp`、`sandbox`、`subprocess`、`e2b`、react `ui-*`（40+ 包）、以及 dsh 的 Node ESM loader 层（`vendor/loader`，C6 只对齐 `vendor/cordis`）。
+
+**独有功能保护区**（omenic 独有，dsh 无对应物——任何路线**只读/单向依赖**，不许重构、不许当缺口往里塞）：
+- `crates/infra/memory`（jcode：`embed/graph/recall/inject/pipeline`）
+- `crates/agent/task`（`runner/graph/store/template` RPC 任务模型；dsh 的 `workflow` 是模型在运行时自己写编排，方向相反，不算对应物）
+- `crates/evidence/spec` + `bin/gate`（合规工具；远期归宿 = C6 插件面落地后注册成工具插件，现在不动）
+
+> **2026-09-16 更正**：此前本表把 `crates/agent/subagent` 与 `crates/agent/mcp` 也列为「dsh 无对应物」，经核对 dsh 源码**不成立**——dsh 有 `packages/subagent/`（11 子包：spawn/fork 进程内后端 + ACP/Codex/Claude Code/SDK 四个进程外后端 + control/report 工具）与 `packages/mcp/mcp-client/`（多传输客户端）。omenic 的 subagent 相当于 `subagent-spawn-in-process` 的只读工具简化版且**未接 daemon/web 生产路径**；mcp 客户端是 stdio 单传输形态。两者移出保护区，按普通缺口排优先级。
 
 ## 历史锚点
 
