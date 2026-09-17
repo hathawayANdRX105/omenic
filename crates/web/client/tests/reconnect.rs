@@ -66,6 +66,7 @@ fn start_daemon(dir: &Path, tag: &str, omp: &Path) -> Daemon {
         orbit_model: None,
         cwd: dir.to_path_buf(),
         max_turns: 64,
+        mcp_servers: Vec::new(),
     })
     .expect("daemon start")
 }

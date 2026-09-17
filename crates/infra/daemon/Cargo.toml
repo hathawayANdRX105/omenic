@@ -16,6 +16,8 @@ orbit = { path = "../../agent/orbit" }
 rpc = { path = "../rpc" }
 session = { path = "../session" }
 config = { path = "../config" }
+mcp = { path = "../../agent/mcp" }
+tools = { path = "../../agent/tools" }
 omenic-composition = { path = "../../composition" }
 omenic-harness-tools = { path = "../../harness/tools" }
 omenic-harness-compaction = { path = "../../harness/compaction" }
@@ -28,4 +30,3 @@ ctrlc = { workspace = true, features = ["termination"] }
 tempfile = { workspace = true }
 libc = "0.2"
 omenic-harness-subagent = { path = "../../harness/subagent" }
-tools = { path = "../../agent/tools" }
