@@ -114,6 +114,7 @@
 | **G5 总装** ✅ | ① C1–C6 全绿（C6.5 由 #363 接通）；② main CI `cargo test --locked --all-targets` 在 `e6039d6` 上 SUCCESS；③ `oi-web` 起在 8026，页面内联 40KB 真实 Tailwind，`grep -ci mock` = 0 |
 | **G6 总装消费** ✅（#373/#374，2026-09-16） | ① daemon worker 从装配容器取 cwd/compaction/max_turns，AGENTS.md 注入首次在生产路径生效；② crash-repair 接线，`Daemon::start` 修复半开 run；③ orbit 压缩接缝 56→3 行；④ 真链路 e2e（`g6_e2e.rs` 3 测试）：起真实 daemon + 本地 OpenAI mock server，断言**真实 HTTP 请求体字节**含 AGENTS.md 标记、max_turns 卡住真实多轮 run、孤儿 run 重启修复 |
 | **G7 谱系 + 并发归属** ✅（#376，2026-09-16） | ① `sessions.parent_id` 列 + 幂等迁移（`apply_parent_id_column`），`SessionSummary`/`Session` 双层贯通；② 侧栏 `group_sessions` 树渲染（孤儿当根 / visited 防环 / 深度封顶不丢节点）+ 行内新建子会话钮；③ `EventFrame.run_id`（serde-optional）+ sticky active-run 槽 + `RunFilteredSubscription` 按 run 过滤；④ 真二进制 smoke 10/10（含手工造 pre-G7 旧库的升级路径）；⑤ 逻辑层测试 14 例（lineage 5 + run_routing 2 + group_sessions 7） |
+| **G8 会话生命周期正确性** ✅（#377，2026-09-16） | ① 三处「单测绿、生产失效」缺陷：orbit run 在 prompt ack 时就被关闭（`in_flight_runs` 恒 0、三态状态机失效）→ 改由事件泵在 `AgentEnd` 收尾，泵在 prompt 前启动（不订阅也能关闭）；`save_to_file` 整文件重写抹掉 `[mcp]`/`[memory]`/`[daemon]` → `toml_edit` 增量写；spill 文件名恒 `oi-output-0.txt` 互相覆盖 → `oi-output-{pid}-{seq}.txt`；② gate merge --dry-run ALL PASS（119 checks）；③ PR CI 三连绿 + 合并后 main CI `35134561055` SUCCESS；④ 真二进制 smoke 7/7（ack 后 run open、泵在失败的 turn 上仍正确关闭）；⑤ 终审 ocr 34 条裁定 7 真阳性全部已修（含 G8-B 自己代码里的 1 个 high） |
 
 ## 边界决定（稳定，勿翻案）
 

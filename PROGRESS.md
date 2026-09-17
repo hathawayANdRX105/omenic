@@ -4,13 +4,13 @@
 >
 > 编号体系沿用 ROADMAP：`C1–C8` / `R1–R7` / `G1–G8`。
 
-## 当前位置（2026-09-16）
+## 当前位置（2026-09-17）
 
-**G1–G7 全部已过；G8（会话生命周期正确性）已落地 PR #377。** G6 之前的 6 条开放缺口**全部关闭**（1/2/3/5 由 G6，4/6 由 G7）：
+**G1–G8 全部已过，main 干净（`a91caee`）。** G6 之前的 6 条开放缺口**全部关闭**（1/2/3/5 由 G6，4/6 由 G7）：
 
 - G6（#373/#374）把装配容器接进 daemon→web 生产路径，C4 的 AGENTS.md 注入与压缩第一次对真实用户生效，并补了真链路 e2e。
 - G7（#376）关掉最后两条：**谱系分组**（5.3/5.5，数据模型 + 侧栏树）与 **per-run 事件归属**（协议帧 run_id + 订阅端过滤）。
-- G8（#377）修三处「单测绿、生产路径失效」的缺陷（见下表），让三态生命周期在真实 orbit run 下可观测。
+- G8（#377，2026-09-16 合并）修三处「单测绿、生产路径失效」的缺陷（见下表），让三态生命周期在真实 orbit run 下可观测。**验收**：gate merge --dry-run ALL PASS（119 checks）；PR CI 三连绿（`35130516365` 1m29s、`35130936505` 1m20s）；合并后 main CI `35134561055` SUCCESS（2m10s）；真二进制 smoke 7/7；终审 ocr 34 条裁定 7 真阳性全部已修。
 - C7（tag）前置条件全满足，**等用户拍板时机**。
 - C8 已裁定不做。
 
@@ -27,7 +27,7 @@
 | 5 | 2.3 turn codec 零生产写入 | ✅ G6（#373）：`turn_log` 列 + `append_turn_log`/`load_turn_log` 有了生产读写路径 |
 | 6 | 单 worker 事件无会话归属 | ✅ **G7（#376）**：`EventFrame.run_id`（serde-optional，旧订阅端无感）+ `WorkerHandle` sticky active-run 槽（prompt 前设、下一个归属 prompt 覆盖、reset 清）+ `RunFilteredSubscription` 按 run 过滤且不侵占调用方 tick 预算 |
 
-## G8：会话生命周期正确性（#377）
+## G8：会话生命周期正确性（#377，已合并）
 
 三处「单测绿、生产失效」缺陷。共同特征是验收测试恰好绕开了生产路径的真实条件。
 
@@ -36,6 +36,15 @@
 | **G8-A** run 收尾过早 | orbit 模式 `prompt()` 只投 channel 就返回，dispatch 紧接着 `runs.finish("ok")` + `TurnEnd{ok}` → `in_flight_runs` 恒 0，三态状态机失效，`interrupted_run_closers` 无半开记录可修（G6 的崩溃修复被掏空） | `AgentEnd` 携带 `stop_reason`（`#[serde(default)]` 向后兼容旧帧）→ pump 线程收到 `AgentEnd` 才 `finish` + `record_turn` + CAS 清 sticky 槽；orbit prompt 只回 ack 不同步收尾，omp 兼容模式保留同步收尾；pump 改在 orbit prompt 前启动（不再依赖客户端订阅） |
 | **G8-B** 配置写回抹段 | `save_to_file` 用 `format!()` 整文件重写 6 个键，`[mcp]`/`[memory]`/`[daemon]` 静默消失；`config_roundtrip` 正好只覆盖被重写的键 | `toml_edit::DocumentMut` 增量写回，未管理段/注释/排版逐字节保留；解析失败时备份失败即中止（不吞错误）；`omp_path` 缺失才补，全量路径沿用原值 |
 | **G8-C** spill 文件碰撞 | `truncate_output` 的 `counter` 参数 5 个调用点全传 0 → 文件名恒 `oi-output-0.txt`，第二次溢出覆盖第一次全文（另有一处 mcp 调用点子代理与 cg 都漏） | 删参数，文件名 `oi-output-{pid}-{seq}.txt`（pid 隔进程、seq 进程内单调） |
+
+**验收记录**：
+
+- **CI**：PR 三连绿（`35130516365` 1m29s、`35130936505` 1m20s、`35126051332` 1m35s）；合并后 main push `35134561055` SUCCESS（2m10s）。
+- **gate**：`gate merge --dry-run` ALL PASS（119 checks）。
+- **审查**：CRG `detect-changes --base 84ba2a4` 报 0 affected flow；ocr 终审 34 条逐条裁定，**7 真阳性全部已修**——其中 1 个 high 在 G8-B 自己的代码里（`preserve_omp_path` 行循环的 `?` 在首个注释行就返回 None，第二行的自定义路径被丢）；另有 `write_managed_keys` 的 `expect` panic、`runs.finish()` 三处静默丢错误、`close_run_on_agent_end` 检查-写入窗口可能追加第二个 TurnEnd（已让 `finish` 在 ledger 层幂等）。
+- **smoke**：真 `daemon` 二进制（`cpulimit -l 60` 构建）orbit 模式 7/7——prompt 回 `{"started":true}` 立即返回、ack 后 run 为 **open**（修复前不可能出现的状态）、事件泵在 `AgentEnd` 后关闭它；LLM 端口故意指向死端口，turn 以 `TurnStop::Error` 结束**仍然正确关闭**，顺带覆盖「不订阅的客户端也能关闭 run」。
+- **测试**：`daemon/tests/run_lifecycle.rs`（4 例，含 `finish` 幂等）、`rpc/tests/subscribe_pump.rs`（+54 行，`AgentEnd` 透传 `stop_reason` + 旧帧反序列化）、`web/client/tests/config_roundtrip.rs`（2 例回退路径：`omp_path` 不在首行、`[llm]` 非表不 panic）、`agent/tools/tests/truncate.rs`（3 例，溢出不碰撞）。
+- **过程教训**：`truncate.rs` 一个测试扫整个 `/tmp` 读每个文件，CI 连挂 3 次每次 25 分钟超时；ocr 曾把这条标 high 被误判驳回。修后该二进制从超时降到秒级。
 
 ## 后续 backlog（按价值÷成本排序）
 
