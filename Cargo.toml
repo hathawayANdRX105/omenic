@@ -12,6 +12,7 @@ members = [
   "crates/harness/core", "crates/harness/prompt", "crates/harness/tools",
   "crates/harness/runtime", "crates/harness/plugin",
   "crates/harness/compaction", "crates/harness/instruction",
+  "crates/harness/subagent",
 ]
 resolver = "2"
 

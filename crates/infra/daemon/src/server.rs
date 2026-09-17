@@ -23,6 +23,11 @@ use crate::protocol::{Request, Response, ResponseError};
 use crate::socket::{Connection, Listener, SocketAddr};
 use crate::state::{RunLedger, SessionState, now_ms};
 
+/// Tool set a fork subagent run receives: the read-only built-in
+/// subset (matching dsh subagent-fork-in-process). Write/exec tools
+/// stay out of subagent runs by default.
+const FORK_SUBAGENT_TOOLS: &[&str] = &["read_file", "grep", "glob"];
+
 /// Knobs for `Daemon::start`.  All paths default to "ask `Config`"; supply
 /// overrides for tests.
 #[derive(Debug, Clone)]
@@ -218,15 +223,51 @@ impl Daemon {
             .resolve::<omenic_harness_runtime::LoopEngine>("harness.loop")
             .map(|engine| engine.max_turns)
             .unwrap_or(cfg.max_turns);
+        // The fork subagent shares the engine's turn budget (documented
+        // choice: one knob, no new config surface in this task).
+        let subagent_max_turns = max_turns;
+        let backend: std::sync::Arc<dyn orbit::LlmBackend + Send + Sync> =
+            std::sync::Arc::new(orbit::HttpLlm);
+        // Subagent seam: resolve the container's SubagentRuntimeService and
+        // register the in-process fork provider into it (mutating the
+        // container's shared service — a documented side effect of
+        // daemon startup), so the model-facing `subagent` tool resolves a
+        // real provider. Resolution degrades to a fresh service when the
+        // container lacks the key (same style as the catalog/compaction
+        // fallbacks above).
+        let subagents = fiber
+            .resolve::<omenic_harness_subagent::SubagentRuntimeService>("harness.subagents")
+            .unwrap_or_else(|| {
+                std::sync::Arc::new(omenic_harness_subagent::SubagentRuntimeService::default())
+            });
+        let fork_tools = std::sync::Arc::new(omenic_harness_tools::filter_builtin_tools(
+            FORK_SUBAGENT_TOOLS,
+        ));
+        subagents.register(
+            "fork",
+            std::sync::Arc::new(omenic_harness_subagent::ForkProvider::new(
+                std::sync::Arc::clone(&backend),
+                model.clone(),
+                fork_tools,
+                subagent_max_turns,
+            )),
+        );
         rpc::worker::OrbitSetup {
             model: model.clone(),
-            backend: std::sync::Arc::new(orbit::HttpLlm),
+            backend,
             config: rpc::worker::OrbitConfig {
                 cwd: Some(std::sync::Arc::from(cfg.cwd.clone())),
                 max_turns,
                 compaction,
                 catalog,
             },
+            // Seam intent: the daemon registers the in-process fork provider
+            // above; `providers` carries the (name, tool allow-list) intent
+            // forward for Phase 4 out-of-process providers.
+            providers: vec![(
+                "fork".into(),
+                FORK_SUBAGENT_TOOLS.iter().map(|s| s.to_string()).collect(),
+            )],
         }
     }
 

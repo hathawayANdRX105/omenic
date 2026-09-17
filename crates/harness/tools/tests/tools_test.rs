@@ -33,7 +33,7 @@ fn catalog_register_and_find() {
         }
     }
 
-    let mut cat = ToolCatalog::new();
+    let cat = ToolCatalog::new();
     cat.register(Arc::new(DummyTool));
     let specs = cat.specs();
     assert_eq!(specs.len(), 1);

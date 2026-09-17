@@ -165,6 +165,10 @@ pub struct OrbitSetup {
     pub model: adaptor::Model,
     pub backend: std::sync::Arc<dyn orbit::LlmBackend + Send + Sync>,
     pub config: OrbitConfig,
+    /// Subagent provider names and their tool allow-lists; the daemon registers
+    /// a fork provider per entry into the container's SubagentRuntimeService.
+    /// Empty vec means no subagent providers.
+    pub providers: Vec<(String, Vec<String>)>,
 }
 
 /// harness `Tool` -> omenic `tools::Tool`. orbit's loop dispatches
@@ -268,6 +272,8 @@ impl OrbitEngine {
             model,
             backend,
             config,
+            providers: _, // Phase 4: out-of-process providers consume this; the
+                          // in-process fork is registered by the daemon instead.
         } = setup;
         let (pull_push, pull_queue) = std::sync::mpsc::channel();
         let (run_tx, run_rx) = std::sync::mpsc::channel::<String>();

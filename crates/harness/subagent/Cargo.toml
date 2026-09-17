@@ -1,0 +1,17 @@
+[package]
+name = "omenic-harness-subagent"
+version = "0.1.0"
+edition = "2024"
+description = "Subagent provider trait, runtime service, and in-process fork backend"
+license = "MIT"
+publish = false
+
+[dependencies]
+omenic-harness-core = { path = "../core" }
+omenic-harness-plugin = { path = "../plugin" }
+omenic-harness-tools = { path = "../tools" }
+adaptor = { path = "../../agent/adaptor" }
+orbit = { path = "../../agent/orbit" }
+tools = { path = "../../agent/tools" }
+subagent = { path = "../../agent/subagent" }
+serde_json = { workspace = true }
