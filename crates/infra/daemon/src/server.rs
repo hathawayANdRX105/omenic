@@ -228,22 +228,21 @@ impl Daemon {
         let subagent_max_turns = max_turns;
         let backend: std::sync::Arc<dyn orbit::LlmBackend + Send + Sync> =
             std::sync::Arc::new(orbit::HttpLlm);
-        // Subagent seam: register the in-process fork provider into the
-        // container's SubagentRuntimeService so the model-facing `subagent`
-        // tool resolves a real provider. Resolution degrades to a fresh
-        // service when the container lacks the key (same style as the
-        // catalog/compaction fallbacks above).
+        // Subagent seam: resolve the container's SubagentRuntimeService and
+        // register the in-process fork provider into it (mutating the
+        // container's shared service — a documented side effect of
+        // daemon startup), so the model-facing `subagent` tool resolves a
+        // real provider. Resolution degrades to a fresh service when the
+        // container lacks the key (same style as the catalog/compaction
+        // fallbacks above).
         let subagents = fiber
             .resolve::<omenic_harness_subagent::SubagentRuntimeService>("harness.subagents")
             .unwrap_or_else(|| {
                 std::sync::Arc::new(omenic_harness_subagent::SubagentRuntimeService::default())
             });
-        let fork_tools = std::sync::Arc::new(
-            tools::builtin_tools()
-                .into_iter()
-                .filter(|t| FORK_SUBAGENT_TOOLS.contains(&tools::def(&**t).name.as_str()))
-                .collect(),
-        );
+        let fork_tools = std::sync::Arc::new(omenic_harness_tools::filter_builtin_tools(
+            FORK_SUBAGENT_TOOLS,
+        ));
         subagents.register(
             "fork",
             std::sync::Arc::new(omenic_harness_subagent::ForkProvider::new(

@@ -9,7 +9,7 @@
 //!   (`name()` is `"fork"`);
 //! - registering a second provider under the same name overwrites (the
 //!   service's documented contract — composition controls load order);
-//! - the read-only tool filter from `tools::builtin_tools()` yields exactly
+//! - the read-only tool filter via `filter_builtin_tools` yields exactly
 //!   the three fork tools.
 
 use std::sync::Arc;
@@ -28,15 +28,9 @@ fn register_fork(service: &SubagentRuntimeService) {
         max_tokens: None,
     };
     let backend: Arc<dyn LlmBackend + Send + Sync> = Arc::new(orbit::HttpLlm);
-    let tools: Arc<Vec<Box<dyn tools::Tool>>> = Arc::new(
-        tools::builtin_tools()
-            .into_iter()
-            .filter(|t| {
-                let wanted = ["read_file", "grep", "glob"];
-                wanted.contains(&tools::def(&**t).name.as_str())
-            })
-            .collect(),
-    );
+    let wanted = ["read_file", "grep", "glob"];
+    let tools: Arc<Vec<Box<dyn tools::Tool>>> =
+        Arc::new(omenic_harness_tools::filter_builtin_tools(&wanted));
     service.register(
         "fork",
         Arc::new(ForkProvider::new(backend, model, tools, 8)),
@@ -74,9 +68,8 @@ fn re_register_same_name_overwrites() {
 #[test]
 fn fork_tools_filter_yields_read_only_subset() {
     let wanted = ["read_file", "grep", "glob"];
-    let names: Vec<String> = tools::builtin_tools()
+    let names: Vec<String> = omenic_harness_tools::filter_builtin_tools(&wanted)
         .into_iter()
-        .filter(|t| wanted.contains(&tools::def(&**t).name.as_str()))
         .map(|t| tools::def(&*t).name)
         .collect();
     assert_eq!(

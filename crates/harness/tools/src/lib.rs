@@ -144,3 +144,14 @@ pub fn default_catalog() -> ToolCatalog {
     }
     catalog
 }
+
+/// Built-in tools whose names are in `wanted`, in `builtin_tools()` order.
+///
+/// Shared filter used by the daemon's fork subagent registration and its
+/// test, so the read-only allow-list lives in one place.
+pub fn filter_builtin_tools(wanted: &[&str]) -> Vec<Box<dyn tools::Tool>> {
+    tools::builtin_tools()
+        .into_iter()
+        .filter(|t| wanted.contains(&tools::def(&**t).name.as_str()))
+        .collect()
+}
