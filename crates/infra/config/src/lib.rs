@@ -48,19 +48,42 @@ pub struct Config {
     pub max_turns: Option<usize>,
 }
 
-/// One external MCP server: a child process spoken to over stdio.
+/// One external MCP server: a stdio child process (`command`), or a running
+/// HTTP endpoint (`url`) for the streamable-HTTP transport.
 #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 pub struct McpServerConfig {
     /// Short handle used to namespace this server's tool names.
     pub name: String,
-    /// Executable to spawn.
-    pub command: String,
+    /// Executable to spawn. Omit for HTTP servers (use `url` instead).
+    #[serde(default)]
+    pub command: Option<String>,
     /// Arguments passed to `command`.
     #[serde(default)]
     pub args: Vec<String>,
     /// Extra environment variables for the child.
     #[serde(default)]
     pub env: std::collections::HashMap<String, String>,
+    /// HTTP endpoint for the streamable-HTTP transport.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Per-call timeout in ms. `None` = crate default (`MCP_TIMEOUT`).
+    #[serde(default)]
+    pub tool_call_timeout_ms: Option<u64>,
+    /// Reconnect policy. `None` = default (500ms → 30s, 10 attempts).
+    #[serde(default)]
+    pub reconnect: Option<McpReconnectConfig>,
+}
+
+/// Per-server reconnect/backoff tuning. Absent fields fall back to the
+/// defaults in the mcp crate (`ReconnectPolicy::default`).
+#[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
+pub struct McpReconnectConfig {
+    #[serde(default)]
+    pub initial_delay_ms: Option<u64>,
+    #[serde(default)]
+    pub max_delay_ms: Option<u64>,
+    #[serde(default)]
+    pub max_attempts: Option<u32>,
 }
 
 /// Errors that can occur during config loading.
@@ -270,10 +293,17 @@ impl Config {
                     message: "must not be empty".to_string(),
                 });
             }
-            if s.command.trim().is_empty() {
+            // A server is startable if it names a command or a url; an entry
+            // with neither can only fail later at spawn/connect time.
+            let has_command = s
+                .command
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|c| !c.is_empty());
+            if !has_command && s.url.as_deref().map(str::trim).is_none_or(str::is_empty) {
                 return Err(ConfigError::Invalid {
-                    field: "mcp.servers.command",
-                    message: format!("server '{}' has no command", s.name),
+                    field: "mcp.servers",
+                    message: format!("server '{}' has neither command nor url", s.name),
                 });
             }
             // Checked last so a duplicate error only names an otherwise-valid server.

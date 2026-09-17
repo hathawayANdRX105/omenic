@@ -1,4 +1,4 @@
-//! MCP (Model Context Protocol) client: JSON-RPC 2.0 over stdio.
+//! MCP (Model Context Protocol) client: JSON-RPC 2.0 over stdio or HTTP.
 //!
 //! Default off — nothing is spawned unless `[[mcp.servers]]` is configured.
 //! An MCP server is a child process; its `tools/list` entries map onto the
@@ -7,8 +7,11 @@
 //!
 //! Layering: JSON-RPC framing is free functions over an [`McpTransport`], so
 //! the protocol is testable without spawning anything. [`StdioTransport`] is
-//! the only real implementation.
+//! the process implementation; [`HttpTransport`] posts to a running server;
+//! [`McpReconnect`] wraps either with exponential-backoff retries.
 
+pub mod http;
+pub mod reconnect;
 pub mod tool;
 
 use std::io::{BufRead, BufReader, Write};
@@ -24,6 +27,8 @@ use config::McpServerConfig;
 use serde_json::{Value, json};
 use tools::{Tool, ToolError};
 
+pub use http::HttpTransport;
+pub use reconnect::{McpReconnect, ReconnectPolicy};
 pub use tool::{McpTool, ToolMeta};
 
 /// MCP basic spec revision this client implements.
@@ -330,7 +335,12 @@ impl StdioTransport {
     /// Spawn `command` with pipes wired up. stderr is inherited so server
     /// diagnostics land in the host's log instead of filling an unread pipe.
     pub fn spawn(cfg: &McpServerConfig) -> Result<StdioTransport, McpError> {
-        let mut cmd = Command::new(&cfg.command);
+        let command = cfg
+            .command
+            .clone()
+            .filter(|c| !c.trim().is_empty())
+            .ok_or_else(|| McpError::Spawn("no command for stdio transport".into()))?;
+        let mut cmd = Command::new(&command);
         cmd.args(&cfg.args)
             .envs(&cfg.env)
             .stdin(Stdio::piped())
@@ -341,7 +351,7 @@ impl StdioTransport {
 
         let mut child = cmd
             .spawn()
-            .map_err(|e| McpError::Spawn(format!("{}: {e}", cfg.command)))?;
+            .map_err(|e| McpError::Spawn(format!("{command}: {e}")))?;
 
         let stdin = child
             .stdin
@@ -477,6 +487,32 @@ impl Mcp {
         })
     }
 
+    /// Connect over streamable-HTTP with an optional reconnect policy.
+    ///
+    /// The server must already be running — this transport spawns nothing.
+    /// `cfg.url` is required; `cfg.command` is ignored.
+    pub fn connect_http(cfg: &McpServerConfig, signal: &AtomicBool) -> Result<Mcp, McpError> {
+        let url = cfg
+            .url
+            .clone()
+            .ok_or_else(|| McpError::Spawn("no url for http transport".into()))?;
+        let timeout_ms = cfg
+            .tool_call_timeout_ms
+            .unwrap_or_else(|| MCP_TIMEOUT.as_millis() as u64);
+        let transport: Arc<dyn McpTransport> = Arc::new(HttpTransport::new(url, timeout_ms));
+        let defaults = ReconnectPolicy::default();
+        let policy = match &cfg.reconnect {
+            Some(r) => ReconnectPolicy {
+                initial_delay_ms: r.initial_delay_ms.unwrap_or(defaults.initial_delay_ms),
+                max_delay_ms: r.max_delay_ms.unwrap_or(defaults.max_delay_ms),
+                max_attempts: r.max_attempts.unwrap_or(defaults.max_attempts),
+            },
+            None => defaults,
+        };
+        let wrapped = McpReconnect::new(transport, policy);
+        Self::connect(cfg, Arc::new(wrapped), signal)
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -524,7 +560,13 @@ pub fn external_tools_from_mcp(
 ) -> Vec<Box<dyn Tool>> {
     let mut out = Vec::new();
     for cfg in servers {
-        match Mcp::spawn(cfg, signal) {
+        // A configured `url` means streamable-HTTP; otherwise spawn a stdio child.
+        let res: Result<Mcp, McpError> = if cfg.url.is_some() {
+            Mcp::connect_http(cfg, signal)
+        } else {
+            Mcp::spawn(cfg, signal)
+        };
+        match res {
             Ok(mcp) => out.extend(mcp.into_tools()),
             Err(e) => eprintln!("mcp: skipping server `{}`: {e}", cfg.name),
         }

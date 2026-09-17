@@ -1807,6 +1807,7 @@ dependencies = [
  "config",
  "serde_json",
  "tools",
+ "ureq",
 ]
 
 [[package]]
