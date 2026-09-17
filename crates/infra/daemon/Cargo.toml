@@ -20,9 +20,12 @@ omenic-composition = { path = "../../composition" }
 omenic-harness-tools = { path = "../../harness/tools" }
 omenic-harness-compaction = { path = "../../harness/compaction" }
 omenic-harness-runtime = { path = "../../harness/runtime" }
+omenic-harness-subagent = { path = "../../harness/subagent" }
+tools = { path = "../../agent/tools" }
 parking_lot = "0.12"
 ctrlc = { workspace = true, features = ["termination"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
 libc = "0.2"
+omenic-harness-subagent = { path = "../../harness/subagent" }

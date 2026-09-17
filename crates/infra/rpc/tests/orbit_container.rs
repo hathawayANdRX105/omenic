@@ -128,6 +128,7 @@ fn setup(doc: serde_json::Value, backend: Arc<Shared>) -> OrbitSetup {
             compaction,
             catalog,
         },
+        providers: Vec::new(),
     }
 }
 
