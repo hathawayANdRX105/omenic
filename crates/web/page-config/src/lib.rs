@@ -1,14 +1,16 @@
 //! 设置弹窗（dsh SettingsRoot 复刻）：800px r24 面板 + 188px 内导航。
-//! 「模型与渠道」承载 LLM 配置表单；「关于」放版本与项目信息。
+//! 「模型与渠道」承载 LLM 配置表单；「MCP 服务器」承载 [[mcp.servers]]
+//! 的列表编辑；「关于」放版本与项目信息。
 
 use dioxus::prelude::*;
-use omenic_web_client::llm::LlmRuntimeConfig;
-use omenic_web_components::icons::{Gear, X};
+use omenic_web_client::llm::{LlmRuntimeConfig, McpServerForm};
+use omenic_web_components::icons::{Gear, Terminal, Trash, X};
 use omenic_web_components::ui::{Button, ButtonSize, ButtonVariant, IconButton, Modal};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
     Models,
+    Mcp,
     About,
 }
 
@@ -28,6 +30,12 @@ pub fn SettingsModal(
         }
     };
 
+    let title = match section() {
+        Section::Models => "模型与渠道",
+        Section::Mcp => "MCP 服务器",
+        Section::About => "关于 omenic",
+    };
+
     rsx! {
         Modal { width_class: "w-[800px]", on_close: on_close,
             div { class: "flex h-[min(760px,80vh)]",
@@ -42,6 +50,13 @@ pub fn SettingsModal(
                     }
                     button {
                         r#type: "button",
+                        class: "{nav_cell(section() == Section::Mcp)}",
+                        onclick: move |_| section.set(Section::Mcp),
+                        Terminal { size: 16, class: "text-label-3" }
+                        span { "MCP 服务器" }
+                    }
+                    button {
+                        r#type: "button",
                         class: "{nav_cell(section() == Section::About)}",
                         onclick: move |_| section.set(Section::About),
                         span { class: "w-4 text-center text-[14px] text-label-3", "i" }
@@ -51,14 +66,14 @@ pub fn SettingsModal(
                 // 右内容列
                 div { class: "flex-1 min-w-0 flex flex-col",
                     div { class: "h-[54px] px-6 flex items-center justify-between border-b border-b1 shrink-0",
-                        span { class: "text-[14px] leading-5 font-medium text-label",
-                            if section() == Section::Models { "模型与渠道" } else { "关于 omenic" }
-                        }
+                        span { class: "text-[14px] leading-5 font-medium text-label", "{title}" }
                         IconButton { title: "关闭", onclick: move |_| on_close.call(()), X { size: 16 } }
                     }
                     div { class: "flex-1 overflow-y-auto",
                         if section() == Section::Models {
                             ConfigForm { config: config.clone(), on_update_config: on_update_config }
+                        } else if section() == Section::Mcp {
+                            McpServersPane { config: config.clone(), on_update_config: on_update_config }
                         } else {
                             AboutPane {}
                         }
@@ -278,6 +293,9 @@ fn ConfigForm(
                                     model: model().trim().to_string(),
                                     max_tokens: max_tokens().parse::<u32>().unwrap_or(4096),
                                     data_dir: data_dir().trim().to_string(),
+                                    // LLM 保存沿用当前已保存的 MCP 表单状态：
+                                    // 空表单时 [mcp] 完全不被触碰。
+                                    mcp_servers: config.mcp_servers.clone(),
                                 };
                                 match new_cfg.save_to_file() {
                                     Ok(()) => {
@@ -304,6 +322,9 @@ fn ConfigForm(
                                 model: model().trim().to_string(),
                                 max_tokens: max_tokens().parse::<u32>().unwrap_or(4096),
                                 data_dir: data_dir().trim().to_string(),
+                                // 探针只读 base_url/api_key，不落盘：空 vec
+                                // 让它即使被误存也不会碰 [mcp]。
+                                mcp_servers: Vec::new(),
                             };
                             let res = probe_cfg.test_connection();
                             test_status.set(Some(res));
@@ -353,6 +374,248 @@ fn ConfigForm(
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 「MCP 服务器」页：`[[mcp.servers]]` 的卡片列表编辑。表单状态是
+/// `Vec<McpServerForm>`（args 以逗号分隔文本承载），保存走
+/// `save_to_file` 的增量路径：按 `name` 匹配更新管理键，`env` /
+/// `reconnect` 等高级键与表单外的服务器原样保留。
+#[component]
+fn McpServersPane(
+    config: LlmRuntimeConfig,
+    on_update_config: EventHandler<LlmRuntimeConfig>,
+) -> Element {
+    let mut servers = use_signal(|| config.mcp_servers.clone());
+    let mut save_status = use_signal(|| None::<Result<String, String>>);
+
+    let list = servers();
+
+    // 保存前置校验：name 非空且不重复、command/url 至少其一、
+    // 超时毫秒数留空或为正整数。失败只禁用保存钮并提示，不改输入。
+    let mut seen_names = std::collections::HashSet::new();
+    let mut empty_name = false;
+    let mut dup_name = false;
+    let mut no_transport = false;
+    let mut bad_timeout = false;
+    for server in &list {
+        let name = server.name.trim();
+        if name.is_empty() {
+            empty_name = true;
+        } else if !seen_names.insert(name.to_string()) {
+            dup_name = true;
+        }
+        if server.command.trim().is_empty() && server.url.trim().is_empty() {
+            no_transport = true;
+        }
+        let timeout = server.tool_call_timeout_ms.trim();
+        if !timeout.is_empty() && timeout.parse::<u64>().is_err() {
+            bad_timeout = true;
+        }
+    }
+    let invalid_hint: Option<&'static str> = if empty_name {
+        Some("存在未命名的服务器：保存按 name 匹配，请先填写 name")
+    } else if dup_name {
+        Some("存在重复的 name：保存时会更新到同一台服务器，请改名区分")
+    } else if no_transport {
+        Some("每台服务器至少填写 command 或 url 其一")
+    } else if bad_timeout {
+        Some("tool_call_timeout_ms 必须为空或正整数毫秒")
+    } else {
+        None
+    };
+    let is_form_valid = invalid_hint.is_none();
+
+    let err_class = "text-[12px] leading-4 text-danger";
+
+    rsx! {
+        div { class: "px-6 py-6 flex flex-col gap-4",
+            // 保存反馈
+            if let Some(res) = save_status.read().as_ref() {
+                match res {
+                    Ok(msg) => rsx! {
+                        div { class: "px-4 py-2.5 rounded-[10px] text-[13px] leading-5 bg-chip-success text-success-2", "{msg}" }
+                    },
+                    Err(err) => rsx! {
+                        div { class: "px-4 py-2.5 rounded-[10px] text-[13px] leading-5 bg-chip-danger text-danger", "{err}" }
+                    },
+                }
+            }
+
+            // 页头：说明 + 添加按钮
+            div { class: "flex items-center justify-between gap-3",
+                div { class: "min-w-0 flex flex-col gap-0.5",
+                    div { class: "text-[15px] leading-[22px] font-medium text-label", "MCP 服务器" }
+                    span { class: "text-[12px] leading-4 text-caption",
+                        "stdio 子进程（command）或 HTTP 端点（url）；保存按 name 更新。env / reconnect 等高级键请直接编辑 .oi/config.toml，不会被覆盖；删除仅移除编辑卡，不从配置文件删服务器。"
+                    }
+                }
+                Button {
+                    variant: ButtonVariant::Outline,
+                    onclick: move |_| servers.write().push(McpServerForm::default()),
+                    "添加 MCP 服务器"
+                }
+            }
+
+            // 服务器卡列表
+            if list.is_empty() {
+                div { class: "bg-layer-1 border border-b1 rounded-2xl px-6 py-8 flex flex-col items-center gap-1.5",
+                    span { class: "text-[13px] leading-5 text-label-3", "尚未配置 MCP 服务器" }
+                    span { class: "text-[12px] leading-4 text-caption", "MCP 默认关闭：不添加服务器时 agent 不会启动任何外部工具进程" }
+                }
+            }
+            for (i, server) in list.iter().enumerate() {
+                McpServerCard { key: "{i}", index: i, server: server.clone(), servers }
+            }
+
+            // 保存行
+            div { class: "flex items-center gap-2.5",
+                Button {
+                    variant: ButtonVariant::Primary,
+                    disabled: !is_form_valid,
+                    onclick: move |_| {
+                        if is_form_valid {
+                            let new_cfg = LlmRuntimeConfig {
+                                base_url: config.base_url.clone(),
+                                api_key: config.api_key.clone(),
+                                model: config.model.clone(),
+                                max_tokens: config.max_tokens,
+                                data_dir: config.data_dir.clone(),
+                                mcp_servers: servers(),
+                            };
+                            match new_cfg.save_to_file() {
+                                Ok(()) => {
+                                    save_status.set(Some(Ok("MCP 配置已写入 .oi/config.toml".into())));
+                                    on_update_config.call(new_cfg);
+                                }
+                                Err(e) => {
+                                    save_status.set(Some(Err(format!("保存失败: {}", e))));
+                                }
+                            }
+                        }
+                    },
+                    "保存 MCP 配置"
+                }
+                if let Some(hint) = invalid_hint {
+                    span { class: "{err_class}", "{hint}" }
+                }
+            }
+        }
+    }
+}
+
+/// 单台 MCP 服务器的编辑卡：卡头是 name + 启动方式摘要 + 删除钮，
+/// 下方两列网格排布可编辑字段。所有输入直接写回 `servers[index]`。
+#[component]
+fn McpServerCard(
+    server: McpServerForm,
+    index: usize,
+    mut servers: Signal<Vec<McpServerForm>>,
+) -> Element {
+    let input_class = "w-full h-9 rounded-[10px] bg-layer-2 border border-b2 px-3 text-[14px] leading-[22px] text-label outline-none transition-colors focus:border-brand placeholder:text-caption";
+    let label_class = "text-[13px] leading-5 font-medium text-label-2";
+
+    let transport = if !server.command.trim().is_empty() {
+        format!("stdio · {}", server.command.trim())
+    } else if !server.url.trim().is_empty() {
+        format!("http · {}", server.url.trim())
+    } else {
+        "未配置启动方式".to_string()
+    };
+    let card_class = "bg-layer-1 border border-b1 rounded-xl px-4 py-4 flex flex-col gap-3";
+
+    rsx! {
+        div { class: "{card_class}",
+            // 卡头：name + 启动方式摘要 + 删除
+            div { class: "flex items-center justify-between gap-3",
+                div { class: "min-w-0 flex flex-col gap-0.5",
+                    span { class: "text-[14px] leading-5 font-medium text-label truncate",
+                        if server.name.trim().is_empty() { "（未命名服务器）" } else { "{server.name}" }
+                    }
+                    span { class: "text-[12px] leading-4 text-caption font-mono truncate", "{transport}" }
+                }
+                IconButton {
+                    title: "删除",
+                    onclick: move |_| {
+                        servers.write().remove(index);
+                    },
+                    Trash { size: 14 }
+                }
+            }
+
+            div { class: "grid grid-cols-2 gap-3",
+                div { class: "flex flex-col gap-1.5",
+                    label { class: "{label_class}", "name" }
+                    input {
+                        class: "{input_class}",
+                        value: "{server.name}",
+                        oninput: move |e| servers.write()[index].name = e.value(),
+                        placeholder: "fs",
+                    }
+                }
+                div { class: "flex flex-col gap-1.5",
+                    label { class: "{label_class}", "command" }
+                    input {
+                        class: "{input_class} font-mono",
+                        value: "{server.command}",
+                        oninput: move |e| servers.write()[index].command = e.value(),
+                        placeholder: "npx",
+                    }
+                }
+                div { class: "flex flex-col gap-1.5",
+                    label { class: "{label_class}", "url" }
+                    input {
+                        class: "{input_class} font-mono",
+                        value: "{server.url}",
+                        oninput: move |e| servers.write()[index].url = e.value(),
+                        placeholder: "http://127.0.0.1:9100/mcp",
+                    }
+                }
+                div { class: "flex flex-col gap-1.5",
+                    label { class: "{label_class}", "cwd" }
+                    input {
+                        class: "{input_class} font-mono",
+                        value: "{server.cwd}",
+                        oninput: move |e| servers.write()[index].cwd = e.value(),
+                        placeholder: "默认继承进程工作目录",
+                    }
+                }
+                div { class: "flex flex-col gap-1.5",
+                    label { class: "{label_class}", "tool_call_timeout_ms" }
+                    input {
+                        class: "{input_class}",
+                        r#type: "number",
+                        value: "{server.tool_call_timeout_ms}",
+                        oninput: move |e| servers.write()[index].tool_call_timeout_ms = e.value(),
+                        placeholder: "默认",
+                    }
+                }
+                // bool 字段沿用本页既有习惯：Ghost 小按钮切换（同 show_key）
+                div { class: "flex flex-col gap-1.5",
+                    label { class: "{label_class}", "fail_on_startup_error" }
+                    div { class: "flex items-center h-9",
+                        Button {
+                            variant: ButtonVariant::Ghost,
+                            size: ButtonSize::Sm,
+                            onclick: move |_| {
+                                let next = !servers.read()[index].fail_on_startup_error;
+                                servers.write()[index].fail_on_startup_error = next;
+                            },
+                            if server.fail_on_startup_error { "开启" } else { "关闭" }
+                        }
+                    }
+                }
+                div { class: "flex flex-col gap-1.5 col-span-2",
+                    label { class: "{label_class}", "args (逗号分隔)" }
+                    input {
+                        class: "{input_class} font-mono",
+                        value: "{server.args}",
+                        oninput: move |e| servers.write()[index].args = e.value(),
+                        placeholder: "-y, @modelcontextprotocol/server-filesystem",
                     }
                 }
             }

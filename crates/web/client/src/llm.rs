@@ -11,6 +11,36 @@ pub struct LlmRuntimeConfig {
     pub model: String,
     pub max_tokens: u32,
     pub data_dir: String,
+    /// 设置页「MCP 服务器」表单的行数据。空 vec 表示表单没有服务器，
+    /// 保存时完全不碰 `[mcp]`（不创建、不改写）。
+    pub mcp_servers: Vec<McpServerForm>,
+}
+
+/// 设置页单个 MCP 服务器的表单行（web 侧 DTO，不依赖 config crate）：
+/// 与 `crates/infra/config` 的 `McpServerConfig` 一一对应，但统一成文本框
+/// 友好的 `String`——空串表示「未设置」，`args` 是逗号分隔文本。
+///
+/// `env` / `reconnect` 不进表单（高级键，直接编辑 TOML）：保存路径按
+/// `name` 匹配已有服务器，这两个键（及任何未知键）逐字保留。
+///
+/// `Default` 是「添加服务器」按钮的空白行：全空串 + false。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct McpServerForm {
+    /// 短句柄；保存时按它匹配 `[[mcp.servers]]` 里的既有表。
+    pub name: String,
+    /// 可执行文件；空串 = 未设置（HTTP 服务器改用 `url`）。
+    pub command: String,
+    /// streamable-HTTP 端点；空串 = 未设置。
+    pub url: String,
+    /// 参数列表的逗号分隔文本（UI 形态，保存时切回 `Vec<String>`）。
+    /// 局限：参数本身含逗号无法在此文本框表达。
+    pub args: String,
+    /// 子进程工作目录；空串 = 未设置（继承进程 cwd）。
+    pub cwd: String,
+    /// 单次 tool call 超时毫秒数的十进制文本；空串 = 用 crate 默认。
+    pub tool_call_timeout_ms: String,
+    /// 启动失败是否中止整个 MCP bring-up（false 与 serde 默认等价）。
+    pub fail_on_startup_error: bool,
 }
 
 impl Default for LlmRuntimeConfig {
@@ -27,6 +57,7 @@ impl LlmRuntimeConfig {
         let mut model = "agnes-2.5-flash".to_string();
         let mut max_tokens = 4096;
         let mut data_dir = "./.oi".to_string();
+        let mut mcp_servers = Vec::new();
 
         // 1. Try reading config.toml
         for path in ["./.oi/config.toml", "../.oi/config.toml", "omenic.toml"] {
@@ -56,6 +87,20 @@ impl LlmRuntimeConfig {
                             max_tokens = t as u32;
                         }
                     }
+
+                    // [mcp] → 表单行。没有该段（或 servers 不是表数组）时
+                    // 保持空 vec，表单显示「未配置」。
+                    if let Some(servers) = value
+                        .get("mcp")
+                        .and_then(|m| m.get("servers"))
+                        .and_then(toml::Value::as_array)
+                    {
+                        for server in servers {
+                            if let Some(form) = mcp_server_form_from_value(server) {
+                                mcp_servers.push(form);
+                            }
+                        }
+                    }
                 }
                 break;
             }
@@ -81,15 +126,19 @@ impl LlmRuntimeConfig {
             model,
             max_tokens,
             data_dir,
+            mcp_servers,
         }
     }
 
     /// Persist to `.oi/config.toml`.
     ///
     /// **增量写回**：若文件已存在，用 [`toml_edit::DocumentMut`] 只更新本结构体
-    /// 管理的键——根表的 `omp_path` / `data_dir` / `model` 与 `[llm]` 段下的
-    /// `base_url` / `api_key` / `model` / `max_tokens`——**其余内容原样保留**：
-    /// `[mcp]` / `[memory]` / `[daemon]` 等未管理段、注释、空行与排版。
+    /// 管理的键——根表的 `omp_path` / `data_dir` / `model`、`[llm]` 段下的
+    /// `base_url` / `api_key` / `model` / `max_tokens`，以及按 `name` 逐台
+    /// 编辑的 `[[mcp.servers]]`（见 [`Self::mcp_servers`]）——**其余内容
+    /// 原样保留**：`[memory]` / `[daemon]` 等未管理段、MCP 服务器上的
+    /// `env` / `reconnect` / 未知键、注释、空行与排版。表单状态里没有的
+    /// MCP 服务器一律不动（表单是追加/按名编辑，不做整体重写）。
     ///
     /// 旧实现用 `format!()` 整文件重写，只写上述 6 个键，会把配置页一次保存
     /// 变成对 `[mcp]` / `[memory]` / `[daemon]` 的静默抹除。
@@ -193,7 +242,8 @@ impl LlmRuntimeConfig {
         set_item(llm, "model", toml_edit::value(self.model.as_str()));
         // TOML 整数是 i64；u32 → i64 无损。
         set_item(llm, "max_tokens", toml_edit::value(self.max_tokens as i64));
-        Ok(())
+
+        write_mcp_servers(root, &self.mcp_servers)
     }
 
     /// Test connection by querying /v1/models
@@ -295,6 +345,186 @@ fn set_item(table: &mut toml_edit::Table, key: &str, item: toml_edit::Item) {
     } else {
         table.insert(key, item);
     }
+}
+
+/// 把表单的 MCP 服务器行写进文档的 `[[mcp.servers]]` 表数组（G8-B 语义的
+/// MCP 延伸）：
+///
+/// - 空表单**完全不碰** `[mcp]`——不创建该段，已有的服务器、注释、排版
+///   原样保留（与没有 MCP 表单的旧版保存行为一致）；
+/// - 表单里的每一行按 `name` 匹配既有表：命中就只替换管理键
+///   （command/url/args/cwd/tool_call_timeout_ms/fail_on_startup_error），
+///   `env` / `reconnect` / 未知键及其注释逐字保留；未命中才追加新表；
+/// - 文件里有、表单里没有的服务器一律不动——表单是追加/按名编辑，
+///   绝不整体重写。
+fn write_mcp_servers(root: &mut toml_edit::Table, forms: &[McpServerForm]) -> Result<(), String> {
+    if forms.is_empty() {
+        return Ok(());
+    }
+
+    if !root.contains_key("mcp") {
+        root.insert("mcp", toml_edit::Item::Table(toml_edit::Table::new()));
+    }
+    // 与 [llm] 同样的畸形防御：段存在但不是表时返回错误而不是 panic。
+    let mcp = root
+        .get_mut("mcp")
+        .and_then(toml_edit::Item::as_table_mut)
+        .ok_or_else(|| "[mcp] 段已存在但不是表，无法增量更新".to_string())?;
+    if !mcp.contains_key("servers") {
+        mcp.insert(
+            "servers",
+            toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()),
+        );
+    }
+    let servers = mcp
+        .get_mut("servers")
+        .and_then(toml_edit::Item::as_array_of_tables_mut)
+        .ok_or_else(|| {
+            "[mcp].servers 已存在但不是 [[mcp.servers]] 表数组，无法增量更新".to_string()
+        })?;
+
+    for form in forms {
+        let name = form.name.trim();
+        if name.is_empty() {
+            // name 是匹配键：没有它既无法定位旧表也无法命名新表，
+            // 与其静默追加一台无名服务器，不如让调用方修好表单再存。
+            return Err("[mcp] 存在缺少 name 的服务器，已中止保存".to_string());
+        }
+        let existing = servers
+            .iter()
+            .position(|t| t.get("name").and_then(toml_edit::Item::as_str) == Some(name));
+        match existing {
+            Some(idx) => {
+                // 匹配键本身不重写（保住 name 上的注释与排版），只动管理键。
+                let table = servers.get_mut(idx).expect("position 刚返回的索引必然存在");
+                update_server_managed_keys(table, form)?;
+            }
+            None => {
+                let mut table = toml_edit::Table::new();
+                table.insert("name", toml_edit::value(name));
+                update_server_managed_keys(&mut table, form)?;
+                servers.push(table);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 把一个服务器表单行的管理键写进单个 `[[mcp.servers]]` 表。
+///
+/// 空串字段表示「未设置」：原地**清键**而不是写空串/零值（与 config crate
+/// 的 `Option` / `#[serde(default)]` 语义一致，也避免留下 `command = ""`
+/// 这类会让 spawn 失败的值）；`fail_on_startup_error` 为 false 时同样清键
+/// （false 就是 serde 默认）。`env` / `reconnect` / 未知键根本不触碰。
+fn update_server_managed_keys(
+    table: &mut toml_edit::Table,
+    form: &McpServerForm,
+) -> Result<(), String> {
+    set_or_clear_str(table, "command", &form.command);
+    set_or_clear_str(table, "url", &form.url);
+
+    let args = split_args_text(&form.args);
+    if args.is_empty() {
+        table.remove("args");
+    } else {
+        let mut arr = toml_edit::Array::new();
+        for arg in args {
+            arr.push(arg);
+        }
+        set_item(table, "args", toml_edit::value(arr));
+    }
+
+    set_or_clear_str(table, "cwd", &form.cwd);
+
+    let timeout_text = form.tool_call_timeout_ms.trim();
+    if timeout_text.is_empty() {
+        table.remove("tool_call_timeout_ms");
+    } else {
+        let ms: u64 = timeout_text.parse().map_err(|_| {
+            format!(
+                "[mcp] 服务器 {:?} 的 tool_call_timeout_ms 不是有效的毫秒数: {:?}",
+                form.name.trim(),
+                timeout_text
+            )
+        })?;
+        let ms = i64::try_from(ms).map_err(|_| {
+            format!(
+                "[mcp] 服务器 {:?} 的 tool_call_timeout_ms 超出可表示范围",
+                form.name.trim()
+            )
+        })?;
+        set_item(table, "tool_call_timeout_ms", toml_edit::value(ms));
+    }
+
+    if form.fail_on_startup_error {
+        set_item(table, "fail_on_startup_error", toml_edit::value(true));
+    } else {
+        table.remove("fail_on_startup_error");
+    }
+    Ok(())
+}
+
+/// 写一个「空串 = 未设置」的字符串管理键：非空就原地替换 value（保住键的
+/// 注释与排版），空串则把整个键清掉。
+fn set_or_clear_str(table: &mut toml_edit::Table, key: &str, value: &str) {
+    let value = value.trim();
+    if value.is_empty() {
+        table.remove(key);
+    } else {
+        set_item(table, key, toml_edit::value(value));
+    }
+}
+
+/// 逗号分隔文本 → 参数列表：按逗号切分、逐项去首尾空白、丢弃空项。
+/// 局限见 [`McpServerForm::args`]：参数本身含逗号时直接编辑 TOML。
+fn split_args_text(text: &str) -> Vec<String> {
+    text.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// 把一个 `[[mcp.servers]]` 的 toml 值转成表单行；缺 `name` 的条目返回
+/// `None`（不进表单）。无名条目因此也永远不会被保存路径改写——保存按
+/// `name` 匹配，表单外的一切原样保留。
+fn mcp_server_form_from_value(server: &toml::Value) -> Option<McpServerForm> {
+    let name = server.get("name")?.as_str()?;
+    let args = server
+        .get("args")
+        .and_then(toml::Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(toml::Value::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    Some(McpServerForm {
+        name: name.to_string(),
+        command: toml_str_field(server, "command"),
+        url: toml_str_field(server, "url"),
+        args,
+        cwd: toml_str_field(server, "cwd"),
+        tool_call_timeout_ms: server
+            .get("tool_call_timeout_ms")
+            .and_then(toml::Value::as_integer)
+            .map(|n| n.to_string())
+            .unwrap_or_default(),
+        fail_on_startup_error: server
+            .get("fail_on_startup_error")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+/// 取一个字符串字段的值，缺失或类型不符时给空串（表单语义：未设置）。
+fn toml_str_field(server: &toml::Value, key: &str) -> String {
+    server
+        .get(key)
+        .and_then(toml::Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// 从一份**不可解析**的原始配置里抢救 `omp_path` 的值（若有）。
