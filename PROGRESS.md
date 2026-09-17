@@ -6,7 +6,7 @@
 
 ## 当前位置（2026-09-17）
 
-**G1–G8 全部已过，main 干净（`a91caee`）。** G6 之前的 6 条开放缺口**全部关闭**（1/2/3/5 由 G6，4/6 由 G7）：
+**G1–G8 全部已过，main 干净（`8d862e4`）。subagent 能力 seam Phase 1 已落地（#380，main `73493b5`，2026-09-17）：harness 容器现在有 `harness.subagents` 服务 + model-facing `subagent` 工具 + fork backend（复用 `subagent::runner`），daemon 生产路径可解析。** G6 之前的 6 条开放缺口**全部关闭**（1/2/3/5 由 G6，4/6 由 G7）：
 
 - G6（#373/#374）把装配容器接进 daemon→web 生产路径，C4 的 AGENTS.md 注入与压缩第一次对真实用户生效，并补了真链路 e2e。
 - G7（#376）关掉最后两条：**谱系分组**（5.3/5.5，数据模型 + 侧栏树）与 **per-run 事件归属**（协议帧 run_id + 订阅端过滤）。
@@ -46,20 +46,28 @@
 - **测试**：`daemon/tests/run_lifecycle.rs`（4 例，含 `finish` 幂等）、`rpc/tests/subscribe_pump.rs`（+54 行，`AgentEnd` 透传 `stop_reason` + 旧帧反序列化）、`web/client/tests/config_roundtrip.rs`（2 例回退路径：`omp_path` 不在首行、`[llm]` 非表不 panic）、`agent/tools/tests/truncate.rs`（3 例，溢出不碰撞）。
 - **过程教训**：`truncate.rs` 一个测试扫整个 `/tmp` 读每个文件，CI 连挂 3 次每次 25 分钟超时；ocr 曾把这条标 high 被误判驳回。修后该二进制从超时降到秒级。
 
+## P0 #1+#2 插件生命周期（#379，已合并）
+
+- **#1** per-plugin Config schema + inject 依赖门控：`DshPlugin::validate_config` 默认方法 + `PluginError::InvalidConfig` + `PluginRegistry::register_with_config` + `do_register`；schema 校验失败在 `plugin.register` 之前拦截，不污染 context。
+- **#2** 单插件卸载：`PluginRegistry::unregister(name)` + `Fiber::unload_named(name)` + `PluginLifecycle::name()` 默认实现；卸载后 `on_unload` 自动跑，剩余插件不受影响。
+- **测试**：`plugin_test.rs` 新增 8 例（invalid config rejection / valid config pass / unregister + unload named / re-register / full LIFO）；`assemble.rs` 补充 `InvalidConfig` 穷尽匹配。
+- **CRI/CI/gate**：CRG 0 affected flows；CI test job PASS；`gate merge --dry-run` PASS（自定义 checklist 通过）。
+- **合并**：2026-09-17 `8d862e4` squash merge，远程分支已删。
+
 ## 后续 backlog
 
 ### 近期（同一 trait / registry / fiber 合并做）
 
 | 优先 | 项 | 说明 |
 |---|---|---|
-| 1 | **插件 per-plugin Config schema + inject 依赖门控** | `DshPlugin` trait 现在只有 `name()` + `register()`（`registry.rs:14-19`）。dsh cordis `Plugin.Base` 有 `Config?: StandardSchemaV1`，`resolveConfig()` 在插件启动前跑标准 schema 校验，失败直接 `ValidationError` 拒注册（`fiber.ts:50-62`）。omenic 要补：① trait 加关联类型或 serde 结构；② registry 校验失败返回 `PluginError::InvalidConfig` 而非 panic；③ 主文档切插件子文档能力。两项改同一组 trait + registry + fiber，合并做省一半。 |
-| 2 | **插件反注册（单插件卸载）** | `Fiber::unload()`（`fiber.rs:82-88`）只能逆序拆全部；dsh 每个插件有独立 `Fiber` 实例，`dispose()` 只回收该插件，`RegistryService.delete(plugin)` 定向移除。omenic 要补：① `Fiber::unload(name)` 只移除指定插件并跑 `on_unload`；② `EventBus::unsubscribe` 已有（`events.rs`）但未暴露给 `PluginLifecycle`；③ `Fiber::resolve` 卸载后返回 `None`，避免悬垂句柄。 |
+| 1 | ✅ **插件 per-plugin Config schema + inject 依赖门控**（#379） | `DshPlugin` trait 现在只有 `name()` + `register()`（`registry.rs:14-19`）。dsh cordis `Plugin.Base` 有 `Config?: StandardSchemaV1`，`resolveConfig()` 在插件启动前跑标准 schema 校验，失败直接 `ValidationError` 拒注册（`fiber.ts:50-62`）。omenic 要补：① trait 加关联类型或 serde 结构；② registry 校验失败返回 `PluginError::InvalidConfig` 而非 panic；③ 主文档切插件子文档能力。两项改同一组 trait + registry + fiber，合并做省一半。 |
+| 2 | ✅ **插件反注册（单插件卸载）**（#379） | `Fiber::unload()`（`fiber.rs:82-88`）只能逆序拆全部；dsh 每个插件有独立 `Fiber` 实例，`dispose()` 只回收该插件，`RegistryService.delete(plugin)` 定向移除。omenic 要补：① `Fiber::unload(name)` 只移除指定插件并跑 `on_unload`；② `EventBus::unsubscribe` 已有（`events.rs`）但未暴露给 `PluginLifecycle`；③ `Fiber::resolve` 卸载后返回 `None`，避免悬垂句柄。 |
 
 ### 中期（composition-root + 新 crate）
 
 | 域 | dsh 现状 | omenic 现状 | 缺口 |
 |---|---|---|---|
-| **subagent 能力 seam** | `SubagentRuntime` 服务（provider registry + one-shot/continuable + 生命周期事件）+ 11 子包（spawn/fork 进程内 + ACP/Codex/Claude Code/SDK 四个进程外后端 + control/report 工具） | `crates/agent/subagent/` 是**只读单线程一次性并行探索工具**（read/grep/glob，5 分钟 Time-to-Live，无持久身份、无 mailbox、无 model switch），`TaskTool` 不在 `builtin_tools()` 里，不接 daemon/web 生产路径 | daemon 路径零 subagent 表面；需要 `SubagentRuntime` 服务 + 进程内/外后端 + model-facing `subagent` 工具 + `send_message`/`interrupt_agent` 控制工具 + `report` 部分交付工具，全部注册进 orbit tool catalog |
+| **subagent 能力 seam** | `SubagentRuntime` 服务（provider registry + one-shot/continuable + 生命周期事件）+ 11 子包（spawn/fork 进程内 + ACP/Codex/Claude Code/SDK 四个进程外后端 + control/report 工具） | **Phase 1 已落地（#380）**：新增 crate `omenic-harness-subagent`（`SubagentProvider` trait / `SubagentRuntimeService` / `ForkProvider` in-process backend 复用 `subagent::runner` / model-facing `subagent` + `subagent_control`（list only）工具）；`ToolCatalog` 内建可变；composition 注册三个插件；daemon `orbit_setup` 注册 fork provider（只读工具子集）；e2e smoke 通过 | Phase 4 余量：出进程后端（SDK/ACP/Codex/Claude Code）消费 `OrbitSetup.providers` 预留 seam；`interrupt_subagent`；`inherits_parent_context` session-seeding；continuable/background run + 生命周期事件 |
 | **MCP 多传输 + 重连** | `mcp-client` Cordis 插件：stdio + Streamable HTTP 双传输，`RECONNECT_DEFAULTS` 重连监督，`failOnStartupError` 启动失败即熔断，per-tool call timeout，`cwd` 每服务 | `crates/agent/mcp/`：stdio-only `StdioTransport`，`Mcp::spawn()` 一次性，掉线即工具死亡；`McpServerConfig` 无 `cwd`/`toolCallTimeoutMs`/`reconnect`/`failOnStartupError`；**仅 task CLI 路径接线**（`task/runner.rs:203-209`），daemon/orbit 路径零 MCP | 需补 `StreamableHTTPClientTransport` + reconnect supervisor + 启动失败熔断 + per-server timeout/cwd，并将 MCP 服务注入 daemon `orbit_setup` 容器 |
 | **session resume 生产路径** | `SessionPersistence` 抽象（`prepare`/`load`/`inspect`/`readFrom`）+ JSONL/SQLite 双后端 + `session-checkpoint-policy` 在 llm/tools/pre-step 前自动 flush durable log | `crates/infra/session/src/lib.rs` 只有 libSQL 查询 plumbing；grep `prepare`/`inspect`/`loadStored`/`readFrom` = 0 命中；daemon 不引 resume seam | daemon 重启后 worker ctx 为空，模型只见最新一条消息（审计域 2a 最高优先） |
 | **附件全链路** | `AttachmentStore` 抽象（`validateImage`/`saveImage`/`readImage`/`readImageRequest`）+ `LocalAttachmentStore` 内容寻址 + `ui-attachment` 前端 + adapter `resolveAttachments` 注入 | omenic 全仓 grep `attachment`/`image` = 0 命中（仅 `ETXTBSY` 误匹配） | 前端上传 UI + 后端持久化 + 上下文投影注入三段全缺 |
