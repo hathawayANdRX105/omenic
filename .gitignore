@@ -22,3 +22,7 @@ bin/web/.tailwind.gen-input.css
 
 # local-only planning / handoff notes
 todo/
+
+# archify generated architecture docs + local backpass config
+archify/
+.backpassrc.json
