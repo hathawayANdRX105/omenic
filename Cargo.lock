@@ -1987,6 +1987,7 @@ dependencies = [
  "omenic-harness-plugin",
  "omenic-harness-prompt",
  "omenic-harness-runtime",
+ "omenic-harness-subagent",
  "omenic-harness-tools",
  "orbit",
  "serde_json",

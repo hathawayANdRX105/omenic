@@ -9,6 +9,7 @@ pub mod fork;
 pub mod provider;
 pub mod runtime;
 pub mod tool_subagent;
+pub mod tool_subagent_control;
 
 pub use fork::ForkProvider;
 pub use provider::{
@@ -16,3 +17,4 @@ pub use provider::{
 };
 pub use runtime::{SubagentRuntime, SubagentRuntimeService};
 pub use tool_subagent::ToolSubagentPlugin;
+pub use tool_subagent_control::ToolSubagentControlPlugin;

@@ -13,6 +13,7 @@ use omenic_harness_compaction::CompactionPlugin;
 use omenic_harness_instruction::InstructionPlugin;
 use omenic_harness_prompt::PromptTemplate;
 use omenic_harness_runtime::LoopEngine;
+use omenic_harness_subagent::{SubagentRuntime, ToolSubagentControlPlugin, ToolSubagentPlugin};
 
 // Re-export the container vocabulary: a host wiring `assemble` in speaks
 // only to this root, and never declares the plugin crate itself.
@@ -47,6 +48,11 @@ pub fn assemble(
             .to_string();
         let max_turns = ctx.config()["max_turns"].as_u64().unwrap_or(64) as usize;
         ctx.provide("harness.loop", LoopEngine { max_turns, model });
+        // 2b. subagent seam: runtime service, then the model-facing tools
+        // (order: SubagentRuntime provides the service the tool plugins resolve).
+        registry.register(Arc::new(SubagentRuntime), ctx)?;
+        registry.register(Arc::new(ToolSubagentPlugin::default()), ctx)?;
+        registry.register(Arc::new(ToolSubagentControlPlugin::default()), ctx)?;
         // 4. agent domain (allowed direction: agent → harness): orbit defaults.
         orbit::register(ctx);
         // 5. core plugins the framework always ships. They go through the
