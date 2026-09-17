@@ -80,6 +80,8 @@
 | 6.4 插件注册表 + 重名拒绝 | 同上（`registry.rs`） | `vendor/cordis/src/registry.ts` |
 | 6.5 装配根（#363）：`assemble()` 由 `Daemon::start` 在 bind 之前调用，注册 Compaction / Instruction 两个核心插件；`tests/assemble.rs` 5 测试 | `crates/composition/src/lib.rs` + `crates/infra/daemon/src/server.rs` | `packages/bundle/base/src/index.ts` |
 | 6.6 orbit `run_agent` 服务化接线（daemon orbit worker 模式，#349/#350） | `crates/infra/rpc/src/worker.rs`（`OrbitEngine`） | `packages/core/agent-loop/src/index.ts` |
+| 6.7 per-plugin Config schema + inject 依赖门控（#379） | `crates/harness/plugin/src/{registry.rs,context.rs,fiber.rs}` | `vendor/cordis/src/{registry.ts,fiber.ts}`（`resolveConfig` / `Fiber.start` inject check） |
+| 6.8 单插件卸载（#379） | `crates/harness/plugin/src/{registry.rs,fiber.rs}` + `tests/plugin_test.rs` | `vendor/cordis/src/{registry.ts,fiber.ts}`（`RegistryService.delete` / `Fiber.dispose`） |
 
 > **G6 装配消费（#373）**：`Fiber::resolve` 有了生产调用者——`Daemon::orbit_setup` 从容器解析 `harness.tools` / `harness.compaction` / `harness.loop`（缺失回退各自家族默认）；`assemble_plugins` 把 cwd/max_turns 写进文档；fiber 字段不再带下划线，`Fiber::resolve`/`Fiber::config` 是它的读路径。
 
@@ -125,7 +127,7 @@
 - `crates/agent/task`（`runner/graph/store/template` RPC 任务模型；dsh 的 `workflow` 是模型在运行时自己写编排，方向相反，不算对应物）
 - `crates/evidence/spec` + `bin/gate`（合规工具；远期归宿 = C6 插件面落地后注册成工具插件，现在不动）
 
-> **2026-09-16 更正**：此前本表把 `crates/agent/subagent` 与 `crates/agent/mcp` 也列为「dsh 无对应物」，经核对 dsh 源码**不成立**——dsh 有 `packages/subagent/`（11 子包：spawn/fork 进程内后端 + ACP/Codex/Claude Code/SDK 四个进程外后端 + control/report 工具）与 `packages/mcp/mcp-client/`（多传输客户端）。omenic 的 subagent 相当于 `subagent-spawn-in-process` 的只读工具简化版且**未接 daemon/web 生产路径**；mcp 客户端是 stdio 单传输形态。两者移出保护区，按普通缺口排优先级。
+> **2026-09-16 更正**：此前本表把 `crates/agent/subagent` 与 `crates/agent/mcp` 也列为「dsh 无对应物」，经核对 dsh 源码**不成立**——dsh 有 `packages/subagent/`（11 子包：spawn/fork 进程内后端 + ACP/Codex/Claude Code/SDK 四个进程外后端 + control/report 工具）与 `packages/mcp/mcp-client/`（多传输客户端）。omenic 的 subagent 相当于 `subagent-spawn-in-process` 的只读工具简化版；**Phase 1 已接 daemon 生产路径（#380，daemon `orbit_setup` 注册 fork provider + model-facing 工具）**，出进程后端仍缺；mcp 客户端是 stdio 单传输形态。两者移出保护区，按普通缺口排优先级。
 
 **冻结契约**（改动权归首发路线，他路线按冻结类型消费）：`AgentEvent` serde（3.1）、daemon protocol（3.3）、harness trait（6.1）。改 `daemon/protocol.rs` **只能加命令**，不许改既有 `session.*` / `run.list` 语义（task/memory 的 RPC 依赖这些）。
 
@@ -139,7 +141,7 @@
 
 | 域 | dsh 现状（参考文件） | omenic 现状 | 接线优先级 |
 |---|---|---|---|
-| **subagent 能力 seam** | `SubagentRuntime` 服务（provider registry + one-shot/continuable + 生命周期事件）+ 11 子包：spawn/fork 进程内 + ACP/Codex/Claude Code/SDK 四个进程外后端 + control/report 工具（`subagent/src/index.ts`） | `crates/agent/subagent/` 是**只读单线程一次性并行探索工具**（read/grep/glob，5 分钟 TTL，无持久身份），`TaskTool` 不在 `builtin_tools()`，不接 daemon/web | **高** — 需 `SubagentRuntime` 服务 + 后端 + model-facing `subagent` 工具 + 控制工具，注册进 orbit tool catalog |
+| **subagent 能力 seam** | `SubagentRuntime` 服务（provider registry + one-shot/continuable + 生命周期事件）+ 11 子包：spawn/fork 进程内 + ACP/Codex/Claude Code/SDK 四个进程外后端 + control/report 工具（`subagent/src/index.ts`） | **Phase 1 已落地（#380）**：新增 crate `omenic-harness-subagent`（`SubagentProvider`/`SubagentRuntimeService`/`ForkProvider` 复用 `subagent::runner`）；model-facing `subagent` + `subagent_control`（list only，interrupt 诚实拒绝）；daemon `orbit_setup` 注册 fork provider（只读工具子集 read_file/grep/glob）；`OrbitSetup.providers` 为 Phase 4 出进程后端预留 seam（worker 暂不消费）。仍缺：出进程后端、continuable/background run、`send_message`/`report`、session-seeding | **中** — Phase 1 完成；余量为 Phase 4：出进程后端（SDK/ACP/Codex/Claude Code）消费 `providers` seam + interrupt/send_message/continuable + session-seeding |
 | **MCP 多传输 + 重连** | `mcp-client` Cordis 插件：stdio + Streamable HTTP 双传输，`RECONNECT_DEFAULTS` 重连，`failOnStartupError` 熔断，per-tool timeout，`cwd` 每服务（`mcp-client/src/{index,transport,connection}.ts`） | `crates/agent/mcp/`：stdio-only，`Mcp::spawn()` 一次性，掉线即工具死；`McpServerConfig` 无 `cwd`/`toolCallTimeoutMs`/`reconnect`；**仅 task CLI 路径接线**（`task/runner.rs:203-209`） | **高** — 需补 HTTP transport + reconnect + 熔断，并将 MCP 服务注入 daemon `orbit_setup` |
 | **session resume 生产路径** | `SessionPersistence` 抽象（`prepare`/`load`/`inspect`/`readFrom`）+ JSONL/SQLite 双后端 + `session-checkpoint-policy` 在 llm/tools/pre-step 前 flush（`session/session-persistence*/src/index.ts`） | `crates/infra/session/src/lib.rs` 只有 libSQL 查询 plumbing；grep `prepare`/`inspect`/`loadStored`/`readFrom` = 0；daemon 不引 resume seam | **高** — daemon 重启后 worker ctx 为空，模型只见最新一条消息（审计域 2a） |
 | **附件全链路** | `AttachmentStore` 抽象 + `LocalAttachmentStore` 内容寻址 + `ui-attachment` 前端 + adapter `resolveAttachments` 注入（`attachment/attachment*/src/index.ts`） | omenic 全仓 grep `attachment`/`image` = 0（仅 `ETXTBSY` 误匹配） | **中** — 前端 UI + 后端存储 + 上下文投影三段全缺 |
@@ -164,7 +166,7 @@
 - `crates/agent/task`（`runner/graph/store/template` RPC 任务模型；dsh 的 `workflow` 是模型在运行时自己写编排，方向相反，不算对应物）
 - `crates/evidence/spec` + `bin/gate`（合规工具；远期归宿 = C6 插件面落地后注册成工具插件，现在不动）
 
-> **2026-09-16 更正**：此前本表把 `crates/agent/subagent` 与 `crates/agent/mcp` 也列为「dsh 无对应物」，经核对 dsh 源码**不成立**——dsh 有 `packages/subagent/`（11 子包：spawn/fork 进程内后端 + ACP/Codex/Claude Code/SDK 四个进程外后端 + control/report 工具）与 `packages/mcp/mcp-client/`（多传输客户端）。omenic 的 subagent 相当于 `subagent-spawn-in-process` 的只读工具简化版且**未接 daemon/web 生产路径**；mcp 客户端是 stdio 单传输形态。两者移出保护区，按普通缺口排优先级。
+> **2026-09-16 更正**：此前本表把 `crates/agent/subagent` 与 `crates/agent/mcp` 也列为「dsh 无对应物」，经核对 dsh 源码**不成立**——dsh 有 `packages/subagent/`（11 子包：spawn/fork 进程内后端 + ACP/Codex/Claude Code/SDK 四个进程外后端 + control/report 工具）与 `packages/mcp/mcp-client/`（多传输客户端）。omenic 的 subagent 相当于 `subagent-spawn-in-process` 的只读工具简化版；**Phase 1 已接 daemon 生产路径（#380，daemon `orbit_setup` 注册 fork provider + model-facing 工具）**，出进程后端仍缺；mcp 客户端是 stdio 单传输形态。两者移出保护区，按普通缺口排优先级。
 
 ## 历史锚点
 
