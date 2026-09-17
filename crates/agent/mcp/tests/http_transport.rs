@@ -6,9 +6,8 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use mcp::{
-    DEFAULT_TIMEOUT_MS, HttpTransport, McpError, McpReconnect, McpTransport, ReconnectPolicy,
-};
+use mcp::http::DEFAULT_TIMEOUT_MS;
+use mcp::{HttpTransport, McpError, McpReconnect, McpTransport, ReconnectPolicy};
 
 /// A fake transport that fails its first `n_failures` calls with a
 /// transport error, then succeeds forever after.

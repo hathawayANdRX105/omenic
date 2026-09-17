@@ -349,9 +349,20 @@ impl StdioTransport {
             // Own process group: Drop can then reap the server's children too.
             .process_group(0);
 
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| McpError::Spawn(format!("{command}: {e}")))?;
+        // Optional per-server working directory: the OS resolves `command`
+        // and relative `args` paths against it. Empty/whitespace means
+        // inherit, same as an absent field. A bad path is not pre-checked —
+        // `spawn` surfaces the OS error, and the message below names the cwd
+        // so a missing directory is distinguishable from a missing program.
+        let cwd = cfg.cwd.as_deref().map(str::trim).filter(|d| !d.is_empty());
+        if let Some(dir) = cwd {
+            cmd.current_dir(dir);
+        }
+
+        let mut child = cmd.spawn().map_err(|e| match cwd {
+            Some(dir) => McpError::Spawn(format!("cwd {dir}: {command}: {e}")),
+            None => McpError::Spawn(format!("{command}: {e}")),
+        })?;
 
         let stdin = child
             .stdin
@@ -553,11 +564,13 @@ impl Mcp {
 /// Default off: an empty `servers` slice spawns nothing and returns nothing, so
 /// `builtin_tools()` stays exactly as it was. A server that fails to start,
 /// handshake, or list contributes zero tools and is skipped — one broken entry
-/// in the user's config must not take down the agent.
+/// in the user's config must not take down the agent. A server that sets
+/// `fail_on_startup_error = true` opts out: its first failure is returned as
+/// `Err` and aborts the whole bring-up instead of being silently skipped.
 pub fn external_tools_from_mcp(
     servers: &[McpServerConfig],
     signal: &AtomicBool,
-) -> Vec<Box<dyn Tool>> {
+) -> Result<Vec<Box<dyn Tool>>, McpError> {
     let mut out = Vec::new();
     for cfg in servers {
         // A configured `url` means streamable-HTTP; otherwise spawn a stdio child.
@@ -568,8 +581,13 @@ pub fn external_tools_from_mcp(
         };
         match res {
             Ok(mcp) => out.extend(mcp.into_tools()),
-            Err(e) => eprintln!("mcp: skipping server `{}`: {e}", cfg.name),
+            Err(e) => {
+                if cfg.fail_on_startup_error == Some(true) {
+                    return Err(e);
+                }
+                eprintln!("mcp: skipping server `{}`: {e}", cfg.name);
+            }
         }
     }
-    out
+    Ok(out)
 }

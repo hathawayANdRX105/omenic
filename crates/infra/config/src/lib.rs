@@ -72,6 +72,14 @@ pub struct McpServerConfig {
     /// Reconnect policy. `None` = default (500ms → 30s, 10 attempts).
     #[serde(default)]
     pub reconnect: Option<McpReconnectConfig>,
+    /// Working directory for the stdio child process. `None` = inherit the
+    /// daemon/CLI process cwd.
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// When true, a server that fails to start/handshake aborts the whole MCP
+    /// bring-up instead of being skipped. Default false (skip + log).
+    #[serde(default)]
+    pub fail_on_startup_error: Option<bool>,
 }
 
 /// Per-server reconnect/backoff tuning. Absent fields fall back to the
