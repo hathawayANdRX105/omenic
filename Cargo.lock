@@ -526,6 +526,7 @@ dependencies = [
  "omenic-composition",
  "omenic-harness-compaction",
  "omenic-harness-runtime",
+ "omenic-harness-subagent",
  "omenic-harness-tools",
  "orbit",
  "parking_lot",
@@ -535,6 +536,7 @@ dependencies = [
  "session",
  "tempfile",
  "thiserror 2.0.20",
+ "tools",
 ]
 
 [[package]]
@@ -1987,6 +1989,7 @@ dependencies = [
  "omenic-harness-plugin",
  "omenic-harness-prompt",
  "omenic-harness-runtime",
+ "omenic-harness-subagent",
  "omenic-harness-tools",
  "orbit",
  "serde_json",
@@ -2048,6 +2051,20 @@ dependencies = [
  "omenic-harness-tools",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "omenic-harness-subagent"
+version = "0.1.0"
+dependencies = [
+ "adaptor",
+ "omenic-harness-core",
+ "omenic-harness-plugin",
+ "omenic-harness-tools",
+ "orbit",
+ "serde_json",
+ "subagent",
+ "tools",
 ]
 
 [[package]]
