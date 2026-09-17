@@ -192,3 +192,247 @@ fn duplicate_plugin_name_rejected() {
         "the rejected twin never touched the context"
     );
 }
+
+/// Schema validation failure prevents `register` and plugin is not pushed.
+#[test]
+fn invalid_config_rejected_before_register() {
+    struct StrictPlugin {
+        registered: Arc<Mutex<Vec<&'static str>>>,
+    }
+    impl DshPlugin for StrictPlugin {
+        fn name(&self) -> &str {
+            "strict"
+        }
+        fn register(&self, _ctx: &mut PluginContext<'_>) {
+            self.registered.lock().push("should-not-fire");
+            panic!("register must not be called when validate_config fails");
+        }
+        fn validate_config(&self, _config: &serde_json::Value) -> Result<(), PluginError> {
+            Err(PluginError::InvalidConfig(
+                "missing required field 'threshold'".into(),
+            ))
+        }
+    }
+
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let mut fiber = Fiber::default();
+    let mut registry = PluginRegistry::default();
+
+    let plugin = Arc::new(StrictPlugin {
+        registered: Arc::clone(&log),
+    });
+    let err = registry
+        .register(plugin, &mut fiber.context())
+        .expect_err("schema validation failure must reject");
+    assert!(
+        matches!(&err, PluginError::InvalidConfig(msg) if msg == "missing required field 'threshold'"),
+        "{err}"
+    );
+    assert!(log.lock().is_empty(), "register was not called");
+    assert!(registry.is_empty(), "rejected plugin not pushed");
+}
+
+/// Default validate_config returns Ok, so registration proceeds normally.
+#[test]
+fn valid_config_allows_register() {
+    struct LenientPlugin {
+        registered: Arc<Mutex<Vec<&'static str>>>,
+    }
+    impl DshPlugin for LenientPlugin {
+        fn name(&self) -> &str {
+            "lenient"
+        }
+        fn register(&self, _ctx: &mut PluginContext<'_>) {
+            self.registered.lock().push("ok");
+        }
+    }
+
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let mut fiber = Fiber::default();
+    let mut registry = PluginRegistry::default();
+
+    let plugin = Arc::new(LenientPlugin {
+        registered: Arc::clone(&log),
+    });
+    assert!(registry.register(plugin, &mut fiber.context()).is_ok());
+    assert_eq!(registry.plugins(), vec!["lenient"]);
+    assert_eq!(*log.lock(), vec!["ok"], "register was called");
+}
+
+/// Unregister removes a single plugin definition by name; the remaining
+/// plugins keep their order and are still fully functional.
+#[test]
+fn unregister_removes_single_plugin() {
+    struct DualPlugin {
+        name: &'static str,
+        registered: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl DshPlugin for DualPlugin {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn register(&self, _ctx: &mut PluginContext<'_>) {
+            self.registered.lock().push(self.name);
+        }
+    }
+
+    impl PluginLifecycle for DualPlugin {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn on_unload(&mut self, _ctx: &mut PluginContext<'_>) {
+            self.registered.lock().push(self.name);
+        }
+    }
+
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let mut fiber = Fiber::default();
+    let mut registry = PluginRegistry::default();
+    let ctx = &mut fiber.context();
+
+    let a = Arc::new(DualPlugin {
+        name: "a",
+        registered: Arc::clone(&log),
+    });
+    let b = Arc::new(DualPlugin {
+        name: "b",
+        registered: Arc::clone(&log),
+    });
+
+    registry.register(a, ctx).unwrap();
+    registry.register(b, ctx).unwrap();
+    fiber.load(Box::new(DualPlugin {
+        name: "a",
+        registered: Arc::clone(&log),
+    }));
+    fiber.load(Box::new(DualPlugin {
+        name: "b",
+        registered: Arc::clone(&log),
+    }));
+
+    let removed = registry.unregister("a").unwrap();
+    assert!(removed.is_some(), "registry must return the removed plugin");
+    assert_eq!(registry.plugins(), vec!["b"], "b stays registered");
+
+    let unloaded = fiber.unload_named("a").unwrap();
+    assert!(unloaded.is_some(), "fiber must return the unloaded plugin");
+    assert_eq!(fiber.len(), 1, "only b remains loaded");
+    assert_eq!(
+        *log.lock(),
+        vec!["a", "b", "a"],
+        "register a/b, then unload a's on_unload"
+    );
+}
+
+/// Unregistering a name that was never registered is idempotent and leaves
+/// the registry empty.
+#[test]
+fn unregister_nonexistent_returns_none() {
+    let mut fiber = Fiber::default();
+    let mut registry = PluginRegistry::default();
+
+    assert!(registry.unregister("ghost").unwrap().is_none());
+    assert!(fiber.unload_named("ghost").unwrap().is_none());
+}
+
+/// After a plugin is unloaded from both the registry and the fiber, the same
+/// name can be registered again without hitting the duplicate-name guard.
+#[test]
+fn unload_then_register_same_name() {
+    struct Once {
+        registered: Arc<Mutex<Vec<&'static str>>>,
+    }
+    impl DshPlugin for Once {
+        fn name(&self) -> &str {
+            "once"
+        }
+        fn register(&self, _ctx: &mut PluginContext<'_>) {
+            self.registered.lock().push("registered");
+        }
+    }
+    impl PluginLifecycle for Once {
+        fn name(&self) -> &str {
+            "once"
+        }
+    }
+
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let mut fiber = Fiber::default();
+    let mut registry = PluginRegistry::default();
+
+    {
+        let ctx = &mut fiber.context();
+        registry
+            .register(
+                Arc::new(Once {
+                    registered: Arc::clone(&log),
+                }),
+                ctx,
+            )
+            .unwrap();
+        fiber.load(Box::new(Once {
+            registered: Arc::clone(&log),
+        }));
+    }
+
+    registry.unregister("once").unwrap();
+    fiber.unload_named("once").unwrap();
+
+    assert!(registry.is_empty());
+    assert!(fiber.is_empty());
+
+    // Re-register under the same name must succeed now.
+    {
+        let ctx = &mut fiber.context();
+        registry
+            .register(
+                Arc::new(Once {
+                    registered: Arc::clone(&log),
+                }),
+                ctx,
+            )
+            .unwrap();
+    }
+    assert_eq!(registry.plugins(), vec!["once"]);
+}
+
+/// Full LIFO unload is preserved after adding named unload.
+#[test]
+fn full_unload_is_still_reverse_order() {
+    struct Order {
+        tag: &'static str,
+        order: Arc<Mutex<Vec<&'static str>>>,
+    }
+    impl PluginLifecycle for Order {
+        fn name(&self) -> &str {
+            self.tag
+        }
+        fn on_unload(&mut self, _ctx: &mut PluginContext<'_>) {
+            self.order.lock().push(self.tag);
+        }
+    }
+
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let mut fiber = Fiber::default();
+    fiber.load(Box::new(Order {
+        tag: "first",
+        order: Arc::clone(&order),
+    }));
+    fiber.load(Box::new(Order {
+        tag: "second",
+        order: Arc::clone(&order),
+    }));
+    fiber.load(Box::new(Order {
+        tag: "third",
+        order: Arc::clone(&order),
+    }));
+
+    fiber.unload();
+
+    assert_eq!(
+        *order.lock(),
+        vec!["third", "second", "first"],
+        "full unload remains LIFO"
+    );
+}
