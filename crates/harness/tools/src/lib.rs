@@ -9,7 +9,7 @@
 
 use omenic_harness_core::{AbortSignal, ToolError, ToolResult, ToolSpec};
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// A registered tool with its own spec and execution logic.
 pub trait Tool: Send + Sync {
@@ -18,30 +18,43 @@ pub trait Tool: Send + Sync {
 }
 
 /// Registry of available tools, keyed by name.
+///
+/// Interior mutability: plugins register tools through a shared
+/// `PluginContext` during load (`register` takes `&self`), matching
+/// `dsh ctx.tools.register(...)`.
 pub struct ToolCatalog {
-    tools: Vec<Arc<dyn Tool>>,
+    tools: Mutex<Vec<Arc<dyn Tool>>>,
 }
 
 impl ToolCatalog {
     pub fn new() -> Self {
-        Self { tools: Vec::new() }
+        Self {
+            tools: Mutex::new(Vec::new()),
+        }
     }
 
-    pub fn register(&mut self, tool: Arc<dyn Tool>) {
-        self.tools.push(tool);
+    pub fn register(&self, tool: Arc<dyn Tool>) {
+        self.tools.lock().unwrap().push(tool);
     }
 
     /// Look up a tool by name.
-    pub fn find(&self, name: &str) -> Option<&dyn Tool> {
+    pub fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
         self.tools
+            .lock()
+            .unwrap()
             .iter()
             .find(|t| t.spec().name == name)
-            .map(|t| t.as_ref() as &dyn Tool)
+            .cloned()
     }
 
     /// All specs in registration order.
     pub fn specs(&self) -> Vec<ToolSpec> {
-        self.tools.iter().map(|t| t.spec()).collect()
+        self.tools
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|t| t.spec())
+            .collect()
     }
 
     /// Cloned handles to every registered tool, in registration order. A
@@ -49,7 +62,7 @@ impl ToolCatalog {
     /// `tools::Tool`) adapts each handle at the seam instead of re-building
     /// the catalog.
     pub fn all(&self) -> Vec<Arc<dyn Tool>> {
-        self.tools.iter().cloned().collect()
+        self.tools.lock().unwrap().iter().cloned().collect()
     }
 }
 
@@ -125,7 +138,7 @@ impl Tool for Builtin {
 /// Reference: `omenic agent/tools/src/lib.rs:319` (`builtin_tools`).
 /// Non-goal: no MCP tools; no `Guarded`/`Policy` wrapping (omenic-specific).
 pub fn default_catalog() -> ToolCatalog {
-    let mut catalog = ToolCatalog::new();
+    let catalog = ToolCatalog::new();
     for tool in tools::builtin_tools() {
         catalog.register(Arc::new(Builtin(tool)));
     }

@@ -2051,6 +2051,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "omenic-harness-subagent"
+version = "0.1.0"
+dependencies = [
+ "adaptor",
+ "omenic-harness-core",
+ "omenic-harness-plugin",
+ "omenic-harness-tools",
+ "orbit",
+ "serde_json",
+ "subagent",
+ "tools",
+]
+
+[[package]]
 name = "omenic-harness-tools"
 version = "0.1.0"
 dependencies = [

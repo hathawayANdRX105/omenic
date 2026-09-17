@@ -113,7 +113,7 @@ impl omenic_harness_tools::Tool for EchoTool {
 }
 
 fn catalog_with(tool: Arc<dyn omenic_harness_tools::Tool>) -> ToolCatalog {
-    let mut cat = ToolCatalog::new();
+    let cat = ToolCatalog::new();
     cat.register(tool);
     cat
 }
