@@ -85,17 +85,18 @@ impl MockProvider {
                         let resp_head =
                             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n";
                         let _ = stream.write_all(resp_head.as_bytes());
-                        // One delta with no `finish_reason`, then a clean
-                        // close. The client sees the leaked delta and then a
-                        // normal end-of-stream *without* a finish marker —
-                        // `stream_round_trip` surfaces that as a terminal
-                        // `Error` (truncated response), which is exactly the
-                        // "content leaked, no switch" case the waterfall
-                        // must honor.
+                        // Leak one delta, then *hold the connection open and
+                        // stall* — the client's per-socket read timeout turns
+                        // the stall into a read failure, and `stream_round_trip`
+                        // surfaces a terminal `Error` *after content leaked*.
+                        // That is the "no switch" case the waterfall must
+                        // honor. (A clean close here would only end the read
+                        // loop as a normal end-of-stream → `Done`, not the
+                        // failure path we're pinning.)
                         let delta = sse_delta("part");
                         let _ = stream.write_all(delta.as_bytes());
                         let _ = stream.flush();
-                        return;
+                        thread::sleep(Duration::from_secs(10));
                     }
                     serve_clean(stream);
                 });
@@ -240,6 +241,7 @@ fn waterfall_drops_to_fallback_after_retries_exhausted() {
         max_attempts: 2,
         base_delay_ms: 1,
         max_delay_ms: 2,
+        read_timeout_ms: 1000,
     };
     let a = MockProvider::start(usize::MAX, false); // always 500
     let b = MockProvider::start(0, false); // always clean
@@ -268,18 +270,20 @@ fn waterfall_drops_to_fallback_after_retries_exhausted() {
     );
 }
 
-/// A provider that emits one text delta before its stream dies must NOT
-/// hand off to the next provider — the consumer already saw content, so a
-/// replay would duplicate. The round ends in that provider's `Error`, and
-/// the fallback is never touched.
+/// A provider that leaks a text delta and then *stalls* (holds the
+/// connection open, no more bytes) must NOT hand off to the next provider
+/// — the consumer already saw content, so a replay would duplicate. The
+/// client's read timeout turns the stall into a terminal `Error`; the
+/// fallback is never touched.
 #[test]
 fn no_switch_after_content_leaked() {
     let policy = RetryPolicy {
         max_attempts: 2,
         base_delay_ms: 1,
         max_delay_ms: 2,
+        read_timeout_ms: 300, // short so the stall fails fast
     };
-    let a = MockProvider::start(0, true); // delta then mid-stream drop
+    let a = MockProvider::start(0, true); // delta then stall (hold open)
     let b = MockProvider::start(0, false);
     let wf = WaterfallLlm {
         primary: provider(&a.addr, "primary"),
@@ -307,6 +311,7 @@ fn all_providers_fail_yields_indexed_error() {
         max_attempts: 1,
         base_delay_ms: 1,
         max_delay_ms: 2,
+        read_timeout_ms: 1000,
     };
     let a = MockProvider::start(usize::MAX, false);
     let b = MockProvider::start(usize::MAX, false);
@@ -357,6 +362,7 @@ fn waterfall_through_dyn_backend() {
             max_attempts: 1,
             base_delay_ms: 1,
             max_delay_ms: 2,
+            read_timeout_ms: 1000,
         },
     });
     let backend: Arc<dyn LlmBackend + Send + Sync> = wf;
