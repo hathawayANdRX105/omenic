@@ -582,6 +582,10 @@ pub fn external_tools_from_mcp(
         match res {
             Ok(mcp) => out.extend(mcp.into_tools()),
             Err(e) => {
+                // Name the config entry that failed: callers surface this
+                // error verbatim (e.g. daemon bring-up), and a bare command
+                // string does not tell the user which server row to fix.
+                let e = McpError::Protocol(format!("server `{}`: {e}", cfg.name));
                 if cfg.fail_on_startup_error == Some(true) {
                     return Err(e);
                 }
