@@ -6,6 +6,12 @@
 //! never replayed on another provider; when every provider fails before
 //! emitting anything, one terminal `Error` names the last provider.
 //!
+//! The per-provider intermediate `Error` is swallowed by the waterfall —
+//! the agent loop's `stream_failed` latch is one-way, so a forwarded
+//! intermediate Error would fail the whole turn even when a fallback
+//! succeeds. A fallback success therefore ends the turn with a clean
+//! `Done` and no `Error` event anywhere in the stream.
+//!
 //! Two `std::net::TcpListener` mocks stand in for the providers (shape
 //! mirrors `crates/infra/daemon/tests/session_resume.rs`'s `MockOpenAi`):
 //! each counts its `/chat/completions` requests so the test can assert
@@ -259,6 +265,16 @@ fn waterfall_drops_to_fallback_after_retries_exhausted() {
         "terminal must be the fallback's Done, saw {events:?}"
     );
     assert!(
+        !events.iter().any(|e| matches!(e, StreamEvent::Error(_))),
+        "primary's swallowed intermediate Error must not reach the consumer, saw {events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::TextDelta(t) if t == "ok")),
+        "the fallback's text delta must be forwarded, saw {events:?}"
+    );
+    assert!(
         a.hits() == 2,
         "primary mock must see max_attempts=2 requests (per-provider retry), saw {}",
         a.hits()
@@ -303,8 +319,9 @@ fn no_switch_after_content_leaked() {
 }
 
 /// Every provider fails before emitting anything → one terminal `Error`
-/// naming the last provider's index. Each mock sees `max_attempts`
-/// requests.
+/// naming the last provider's index — and it is the *only* Error in the
+/// stream (each provider's raw intermediate Error is swallowed, the caller
+/// synthesizes the final one). Each mock sees `max_attempts` requests.
 #[test]
 fn all_providers_fail_yields_indexed_error() {
     let policy = RetryPolicy {
@@ -329,6 +346,63 @@ fn all_providers_fail_yields_indexed_error() {
         "error must name the last provider index, got {err:?}"
     );
     assert!(err.contains("all providers exhausted"), "got {err:?}");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, StreamEvent::Error(_)))
+            .count(),
+        1,
+        "the synthesized error must be the only Error in the stream, saw {events:?}"
+    );
+}
+
+/// Primary 500s through its whole retry budget, the fallback serves a clean
+/// stream: the consumer must see **no Error event at all** (the primary's
+/// intermediate Error is swallowed), exactly one terminal `Done{EndTurn}`,
+/// and the fallback's text delta. This pins the agent-loop contract — the
+/// loop's `stream_failed` latch is one-way, so any forwarded Error here
+/// would fail the turn despite the fallback success.
+#[test]
+fn fallback_success_yields_clean_done_no_intermediate_error() {
+    let policy = RetryPolicy {
+        max_attempts: 2,
+        base_delay_ms: 1,
+        max_delay_ms: 2,
+        read_timeout_ms: 1000,
+    };
+    let a = MockProvider::start(usize::MAX, false); // always 500
+    let b = MockProvider::start(0, false); // always clean
+    let wf = WaterfallLlm {
+        primary: provider(&a.addr, "primary"),
+        fallbacks: vec![provider(&b.addr, "fallback")],
+        retry: policy,
+    };
+    let events = run_once(&wf);
+    assert!(
+        !events.iter().any(|e| matches!(e, StreamEvent::Error(_))),
+        "no Error event may reach the consumer on fallback success, saw {events:?}"
+    );
+    let dones: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, StreamEvent::Done { .. }))
+        .collect();
+    assert_eq!(
+        dones.len(),
+        1,
+        "exactly one terminal Done expected, saw {events:?}"
+    );
+    assert!(
+        matches!(dones[0], StreamEvent::Done { stop_reason } if *stop_reason == StopReason::EndTurn),
+        "the Done must be EndTurn, saw {events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::TextDelta(t) if t == "ok")),
+        "the fallback's text delta must be in the stream, saw {events:?}"
+    );
+    assert_eq!(a.hits(), 2, "primary must exhaust its retry budget");
+    assert_eq!(b.hits(), 1, "fallback must see exactly 1 request");
 }
 
 /// `WaterfallLlm::solo` against a clean provider: one request, one `Done`,
