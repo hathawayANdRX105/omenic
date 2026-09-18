@@ -53,6 +53,11 @@ pub struct DaemonConfig {
     /// 每 run 的 LLM 往返上限（`.oi/config.toml` 的 `[daemon] max_turns`）。
     /// 写入装配文档，由 daemon 从 `harness.loop` 服务解析回读。
     pub max_turns: usize,
+    /// External MCP servers brought up once at daemon start
+    /// (`.oi/config.toml` `[[mcp.servers]]`, wired in by
+    /// [`DaemonConfig::from_config`]). Their tools ride the orbit engine
+    /// only — see [`Self::orbit_setup`]. Empty = nothing is spawned.
+    pub mcp_servers: Vec<config::McpServerConfig>,
 }
 
 impl DaemonConfig {
@@ -90,6 +95,7 @@ impl DaemonConfig {
             orbit_model,
             cwd: cfg.cwd.clone(),
             max_turns: cfg.max_turns.unwrap_or(orbit::DEFAULT_MAX_TURNS),
+            mcp_servers: cfg.mcp_servers.clone(),
         })
     }
 }
@@ -159,10 +165,16 @@ impl Daemon {
         // the plugins provided (falling back to each family's own default
         // when a service is absent). orbit stays the production loop; the
         // container supplies config and policy, the worker bridges.
-        let orbit_setup = cfg
-            .orbit_model
-            .as_ref()
-            .map(|model| Self::orbit_setup(&fiber, model, &cfg));
+        //
+        // B1/T3: MCP rides the orbit engine — the configured servers are
+        // spawned and handshaken exactly once, inside `orbit_setup`. In
+        // omp-compat mode (`orbit_model` is None) this never runs and MCP
+        // tools don't exist for the daemon worker; omp peers have their own
+        // external-tool registration path (task CLI).
+        let orbit_setup = match cfg.orbit_model.as_ref() {
+            Some(model) => Some(Self::orbit_setup(&fiber, model, &cfg)?),
+            None => None,
+        };
 
         let worker = Arc::new(Mutex::new(WorkerHandle::new(
             cfg.omp_path.clone(),
@@ -206,11 +218,15 @@ impl Daemon {
     /// Every resolution degrades to the family's own default rather than
     /// failing the daemon start: a container that doesn't provide a service
     /// still yields a working engine on the documented defaults.
+    ///
+    /// Errors only from MCP bring-up: a server with
+    /// `fail_on_startup_error = true` that fails to start aborts the daemon
+    /// start loudly (B1/T2 semantics honored at the daemon boundary).
     fn orbit_setup(
         fiber: &omenic_composition::Fiber,
         model: &adaptor::Model,
         cfg: &DaemonConfig,
-    ) -> rpc::worker::OrbitSetup {
+    ) -> Result<rpc::worker::OrbitSetup, DaemonError> {
         let catalog = fiber
             .resolve::<omenic_harness_tools::ToolCatalog>("harness.tools")
             .unwrap_or_else(|| std::sync::Arc::new(omenic_harness_tools::default_catalog()));
@@ -252,7 +268,23 @@ impl Daemon {
                 subagent_max_turns,
             )),
         );
-        rpc::worker::OrbitSetup {
+        // B1/T3 — MCP bring-up: spawn every configured server exactly once
+        // per daemon start and hand their tools to the engine. Default
+        // policy is best-effort: a server that fails to start/handshake
+        // contributes zero tools and is skipped (logged by the mcp crate) —
+        // one broken entry in the user's config must not take down the
+        // daemon. Each handshake is bounded by the mcp crate's 30s
+        // MCP_TIMEOUT, so worst-case bring-up latency is
+        // N servers × 30s: bounded, a hung server cannot block `Daemon::start`
+        // forever.
+        //
+        // The tools cross into the engine through `OrbitConfig::mcp_tools`
+        // (agent-domain `tools::Tool`), deliberately NOT through the harness
+        // `ToolCatalog`: the two tool traits are separate on purpose (C6) —
+        // infra/daemon may bridge them, the catalog must not be polluted.
+        let signal = std::sync::atomic::AtomicBool::new(false);
+        let mcp_tools = Self::mcp_tools(cfg, &signal)?;
+        Ok(rpc::worker::OrbitSetup {
             model: model.clone(),
             backend,
             config: rpc::worker::OrbitConfig {
@@ -260,6 +292,7 @@ impl Daemon {
                 max_turns,
                 compaction,
                 catalog,
+                mcp_tools,
             },
             // Seam intent: the daemon registers the in-process fork provider
             // above; `providers` carries the (name, tool allow-list) intent
@@ -268,7 +301,35 @@ impl Daemon {
                 "fork".into(),
                 FORK_SUBAGENT_TOOLS.iter().map(|s| s.to_string()).collect(),
             )],
-        }
+        })
+    }
+
+    /// Spawn the configured MCP servers and collect their tools as shared
+    /// handles. `external_tools_from_mcp` yields owned `Box<dyn Tool>`s;
+    /// `Arc::from` re-owns each box so the list can be shared across engine
+    /// respawns (`OrbitSetup` is cloned per spawn, and a `Box` cannot be).
+    ///
+    /// `Err` only when a server set `fail_on_startup_error = true` and its
+    /// startup failed. The mcp crate's error names the failing command, not
+    /// the config entry, so the mapped message also lists every configured
+    /// server name — with the usual single-server setup that names the
+    /// offender exactly.
+    fn mcp_tools(
+        cfg: &DaemonConfig,
+        signal: &std::sync::atomic::AtomicBool,
+    ) -> Result<std::sync::Arc<Vec<std::sync::Arc<dyn tools::Tool>>>, DaemonError> {
+        let brought = mcp::external_tools_from_mcp(&cfg.mcp_servers, signal).map_err(|e| {
+            let names = cfg
+                .mcp_servers
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            DaemonError::Protocol(format!("mcp server startup failed ({names}): {e}"))
+        })?;
+        Ok(std::sync::Arc::new(
+            brought.into_iter().map(std::sync::Arc::from).collect(),
+        ))
     }
 
     /// Append synthetic `TurnEnd { aborted }` records for every run a prior
