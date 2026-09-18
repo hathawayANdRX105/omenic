@@ -3,7 +3,7 @@
 # bin/web/tests/ui_contract.rs 的「源码锚点抽查」测试自动核对。
 name: settings
 target: crates/web/page-config/src/lib.rs
-description: 设置弹窗（SettingsModal / ConfigForm / McpServersPane / AboutPane）——800 面板、188 导航、模型与渠道表单、MCP 服务器卡列表、关于页版本号。
+description: 设置弹窗（SettingsModal / ConfigForm / LlmFallbackCard / McpServersPane / AboutPane）——800 面板、188 导航、模型与渠道表单（含 Fallback Provider 卡列表）、MCP 服务器卡列表、关于页版本号。
 anchors:
   - key: modal-width
     find: 'w-[800px]'
@@ -50,6 +50,14 @@ anchors:
     find: '添加 MCP 服务器'
     expect: '「添加 MCP 服务器」按钮：向表单追加一张空白服务器卡（Outline 变体）。'
     source: 'omenic: crates/web/page-config/src/lib.rs:460（McpServersPane 页头行）；new, no dsh anchor'
+  - key: llm-fallback-card
+    find: 'bg-layer-1 border border-b1 rounded-xl px-4 py-4 flex flex-col gap-3'
+    expect: 'Fallback Provider 卡容器（同 mcp-server-card 形态）：layer-1 底、r12 圆角、纵向 gap-3；卡头 model（mono）+ 端点摘要 + 删除钮，卡体两列字段网格（base_url / api_key password 输入 + 同卡 Ghost 显隐钮 / max_tokens number）。'
+    source: 'omenic: crates/web/page-config/src/lib.rs:708（LlmFallbackCard card_class）；new, no dsh anchor'
+  - key: llm-fallback-add
+    find: '添加 Fallback Provider'
+    expect: '「添加 Fallback Provider」按钮（Outline 变体，卡在区头行右侧）：向表单追加一行 LlmFallbackForm::default()。'
+    source: 'omenic: crates/web/page-config/src/lib.rs:380（ConfigForm Fallback Provider 区头行）；new, no dsh anchor'
 notes: |
   表单校验/保存逻辑（save_to_file、test_connection）不在本契约内；
   锚点只锁面板几何、导航结构与输入样式。

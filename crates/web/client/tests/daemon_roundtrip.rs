@@ -23,6 +23,7 @@ fn daemon_roundtrip() {
         cwd: dir.path().to_path_buf(),
         max_turns: 64,
         mcp_servers: Vec::new(),
+        llm_fallbacks: Vec::new(),
     })
     .expect("启动 daemon");
 

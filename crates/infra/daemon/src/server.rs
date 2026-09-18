@@ -58,6 +58,11 @@ pub struct DaemonConfig {
     /// [`DaemonConfig::from_config`]). Their tools ride the orbit engine
     /// only — see [`Self::orbit_setup`]. Empty = nothing is spawned.
     pub mcp_servers: Vec<config::McpServerConfig>,
+    /// Fallback LLM providers tried in order after the primary `[llm]`
+    /// provider fails before emitting any content
+    /// (`.oi/config.toml` `[[llm.fallbacks]]`). Empty = single-provider
+    /// behaviour (`orbit::HttpLlm`, historic path, zero change).
+    pub llm_fallbacks: Vec<config::LlmFallbackConfig>,
 }
 
 impl DaemonConfig {
@@ -96,6 +101,7 @@ impl DaemonConfig {
             cwd: cfg.cwd.clone(),
             max_turns: cfg.max_turns.unwrap_or(orbit::DEFAULT_MAX_TURNS),
             mcp_servers: cfg.mcp_servers.clone(),
+            llm_fallbacks: cfg.llm_fallbacks.clone(),
         })
     }
 }
@@ -242,8 +248,38 @@ impl Daemon {
         // The fork subagent shares the engine's turn budget (documented
         // choice: one knob, no new config surface in this task).
         let subagent_max_turns = max_turns;
+        // B2b1 — waterfall LLM fallback: with `[[llm.fallbacks]]`
+        // configured the backend becomes `WaterfallLlm` (primary +
+        // fallbacks, per-provider retry inside, no switch after content
+        // leaks). Empty list keeps the historic `HttpLlm` path verbatim —
+        // zero behaviour change for single-provider configs.
         let backend: std::sync::Arc<dyn orbit::LlmBackend + Send + Sync> =
-            std::sync::Arc::new(orbit::HttpLlm);
+            if cfg.llm_fallbacks.is_empty() {
+                std::sync::Arc::new(orbit::HttpLlm)
+            } else {
+                let primary = orbit::LlmProvider {
+                    api_key: model.api_key.clone(),
+                    model: model.model.clone(),
+                    base_url: model.base_url.clone(),
+                    max_tokens: model.max_tokens,
+                };
+                let fallbacks = cfg
+                    .llm_fallbacks
+                    .iter()
+                    .filter(|f| f.model.as_deref().is_some_and(|m| !m.trim().is_empty()))
+                    .map(|f| orbit::LlmProvider {
+                        api_key: f
+                            .api_key
+                            .clone()
+                            .or_else(|| Some(model.api_key.clone()))
+                            .unwrap_or_default(),
+                        model: f.model.clone().expect("filtered above"),
+                        base_url: f.base_url.clone().or_else(|| model.base_url.clone()),
+                        max_tokens: f.max_tokens,
+                    })
+                    .collect();
+                std::sync::Arc::new(orbit::WaterfallLlm::new(primary, fallbacks))
+            };
         // Subagent seam: resolve the container's SubagentRuntimeService and
         // register the in-process fork provider into it (mutating the
         // container's shared service — a documented side effect of

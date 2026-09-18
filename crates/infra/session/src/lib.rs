@@ -755,7 +755,15 @@ impl SessionDb {
         })
     }
 
-    /// Load up to `limit` messages for `session_id`, ordered by `seq ASC`.
+    /// Load the most recent `limit` messages for `session_id`, returned in
+    /// ascending `seq` order.
+    ///
+    /// The window is anchored at the tail of the session (highest `seq`
+    /// wins), which is the context resume / "last N turns" semantics call
+    /// sites want.  The query fetches those rows with `ORDER BY seq DESC`
+    /// so the SQL itself picks the tail window, then the rows are flipped
+    /// back to ascending `seq` before return so the public API order is
+    /// unchanged.
     pub fn load_messages(
         &self,
         session_id: &str,
@@ -772,7 +780,7 @@ impl SessionDb {
                 .query(
                     "SELECT session_id, seq, role, text, created_at \
                      FROM messages WHERE session_id = ?1 \
-                     ORDER BY seq ASC LIMIT ?2",
+                     ORDER BY seq DESC LIMIT ?2",
                     libsql::params![id_owned.as_str(), limit],
                 )
                 .await?;
@@ -788,6 +796,10 @@ impl SessionDb {
                     created_at_ms: row.get(4)?,
                 });
             }
+            // SQL walked the tail window backwards (DESC); flip it so
+            // callers see ascending `seq` order, unchanged from the prior
+            // contract.
+            out.reverse();
             Ok(out)
         })
     }

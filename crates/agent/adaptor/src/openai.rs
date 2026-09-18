@@ -127,6 +127,10 @@ pub struct RetryPolicy {
     pub base_delay_ms: u64,
     /// Backoff ceiling.
     pub max_delay_ms: u64,
+    /// Per-socket read timeout. 90s covers slow long-thinking models
+    /// between deltas; tests use a small value so a stalled stream fails
+    /// fast.
+    pub read_timeout_ms: u64,
 }
 
 impl Default for RetryPolicy {
@@ -135,6 +139,7 @@ impl Default for RetryPolicy {
             max_attempts: 4,
             base_delay_ms: 500,
             max_delay_ms: 10_000,
+            read_timeout_ms: 90_000,
         }
     }
 }
@@ -222,10 +227,11 @@ pub fn stream_cb_with_policy(
     let url = format!("{}/chat/completions", base.trim_end_matches('/'));
 
     // Per-socket-read timeout so a stalled gateway fails instead of hanging the
-    // agent thread forever. 90s covers slow long-thinking models between deltas.
+    // agent thread forever. The default 90s covers slow long-thinking models
+    // between deltas; tests use a small value so a stalled stream fails fast.
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(90))
+        .timeout_read(Duration::from_millis(policy.read_timeout_ms))
         .build();
 
     let mut attempt = 0u32;

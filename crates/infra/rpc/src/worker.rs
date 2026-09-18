@@ -324,6 +324,13 @@ struct OrbitEngine {
     model: adaptor::Model,
     backend: std::sync::Arc<dyn orbit::LlmBackend + Send + Sync>,
     ctx: std::sync::Arc<std::sync::Mutex<adaptor::Context>>,
+    /// Session id already replayed into [`Self::ctx`]. The engine's context
+    /// is rebuilt from scratch on every (re)spawn, so a session may only be
+    /// resumed once per engine: a second call with the same id is a no-op
+    /// that returns the count recorded on the first, and a *different* id
+    /// replaces the replay (e.g. the daemon switched sessions on the same
+    /// live worker).
+    resumed_session: Option<String>,
     abort_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     subs: std::sync::Arc<std::sync::Mutex<Vec<(String, std::sync::mpsc::Sender<WorkerEvent>)>>>,
     pull_push: std::sync::mpsc::Sender<WorkerEvent>,
@@ -365,6 +372,7 @@ impl OrbitEngine {
             model: model.clone(),
             backend: Arc::clone(&backend),
             ctx: std::sync::Arc::new(std::sync::Mutex::new(adaptor::Context::default())),
+            resumed_session: None,
             abort_flag: std::sync::Arc::clone(&abort_flag),
             subs: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             pull_push,
@@ -474,6 +482,54 @@ impl OrbitEngine {
     fn broadcast(&self, event: WorkerEvent) {
         let mut subs = self.subs.lock().unwrap_or_else(|e| e.into_inner());
         subs.retain(|(_, tx)| tx.send(event.clone()).is_ok());
+    }
+
+    /// Replay persisted session messages into the engine's context before a
+    /// prompt (B2a resume). Only user/assistant text is carried: orbit
+    /// context is a user/assistant text loop, so `System` and `Tool` rows
+    /// are skipped.
+    ///
+    /// Idempotent per session, and isolating across sessions — the engine's
+    /// context is rebuilt on every (re)spawn, and the daemon calls this on
+    /// *every* prompt that carries a `session_id`:
+    /// - same session as the last resume: append nothing (the history is
+    ///   already in the context), report the current context length.
+    /// - a *different* session: clear the context (drop the previous
+    ///   session's history — it would otherwise linger and cross-contaminate
+    ///   this session's LLM requests), then append this session's rows.
+    ///
+    /// Returns the context length *after* the call (`0` for an empty
+    /// `session_id`).
+    fn resume_orbit_context(
+        &mut self,
+        session_id: &str,
+        messages: &[session::SessionMessage],
+    ) -> usize {
+        if session_id.is_empty() {
+            return 0;
+        }
+        let mut ctx = self.ctx.lock().unwrap_or_else(|e| e.into_inner());
+        if self.resumed_session.as_deref() != Some(session_id) {
+            // New or switched session: drop any previous session's history so
+            // the context only ever carries one session's context at a time,
+            // then append this session's rows.
+            ctx.messages.clear();
+            for m in messages.iter() {
+                match m.role {
+                    session::SessionRole::User => {
+                        ctx.messages
+                            .push(adaptor::Message::user_text(m.text.clone()));
+                    }
+                    session::SessionRole::Assistant => {
+                        ctx.messages
+                            .push(adaptor::Message::assistant_text(m.text.clone()));
+                    }
+                    session::SessionRole::System | session::SessionRole::Tool => {}
+                }
+            }
+            self.resumed_session = Some(session_id.to_string());
+        }
+        ctx.messages.len()
     }
 }
 
@@ -605,6 +661,32 @@ impl Worker {
                     .to_string(),
             ))
         }
+    }
+
+    /// Rebuild a resume of session history before a prompt (B2a).
+    ///
+    /// In orbit mode the engine's context was rebuilt from scratch on (re)
+    /// spawn — a daemon restart, a worker `reset()` — so the persisted
+    /// session's recent messages are replayed into it here, ahead of
+    /// [`Self::prompt`], and the turn does not start from a blank slate.
+    /// `System` / `Tool` rows are dropped: orbit context is a user/assistant
+    /// text loop. The engine dedupes per session id: a repeated call for the
+    /// same session (the daemon calls this on every prompt that carries one)
+    /// appends nothing new; a call for a *different* session clears the
+    /// previous session's history first so contexts never cross-contaminate.
+    /// The returned `usize` is the engine context's message count *after*
+    /// the call (`0` in omp mode).
+    ///
+    /// In omp mode (no engine) there is nothing to resume: `Ok(0)`.
+    pub fn resume_session(
+        &mut self,
+        session_id: &str,
+        messages: &[session::SessionMessage],
+    ) -> Result<usize, crate::client::RpcError> {
+        let Some(orbit) = self.orbit.as_mut() else {
+            return Ok(0);
+        };
+        Ok(orbit.resume_orbit_context(session_id, messages))
     }
 
     /// Send a prompt to the agent (initial task brief or follow-up).

@@ -53,6 +53,7 @@ fn cfg(dir: &Path, servers: Vec<config::McpServerConfig>) -> DaemonConfig {
         cwd: dir.to_path_buf(),
         max_turns: 64,
         mcp_servers: servers,
+        llm_fallbacks: Vec::new(),
     }
 }
 
@@ -90,6 +91,7 @@ fn from_config_carries_mcp_servers() {
         llm_base_url: None,
         llm_model: None,
         llm_max_tokens: None,
+        llm_fallbacks: Vec::new(),
         mcp_servers: Vec::new(),
         memory_enabled: false,
         memory_dir: None,

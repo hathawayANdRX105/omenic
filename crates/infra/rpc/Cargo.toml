@@ -14,6 +14,7 @@ libc = "0.2"
 adaptor = { path = "../../agent/adaptor" }
 orbit = { path = "../../agent/orbit" }
 tools = { path = "../../agent/tools" }
+session = { path = "../session" }
 omenic-harness-core = { path = "../../harness/core" }
 omenic-harness-tools = { path = "../../harness/tools" }
 omenic-harness-compaction = { path = "../../harness/compaction" }

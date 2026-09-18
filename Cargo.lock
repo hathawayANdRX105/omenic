@@ -2486,6 +2486,7 @@ dependencies = [
  "orbit",
  "serde",
  "serde_json",
+ "session",
  "tempfile",
  "tools",
 ]

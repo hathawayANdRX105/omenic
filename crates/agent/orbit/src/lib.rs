@@ -273,9 +273,13 @@ impl ContextLog {
 
 mod compaction_bridge;
 
+mod fallback;
+
 pub use compaction_bridge::{
     LlmSummarizer, compact_context, compact_context_with, message_chars, select_compaction_cut,
 };
+
+pub use fallback::{LlmProvider, WaterfallLlm};
 
 // ===== workspace instructions (WP-A) =====
 // Direct call into the harness `instruction` crate: discover `AGENTS.md` up
