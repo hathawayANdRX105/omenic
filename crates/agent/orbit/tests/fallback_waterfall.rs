@@ -64,7 +64,7 @@ impl MockProvider {
                         // closed after the head is flushed.
                         let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
                         let _ = stream.write_all(
-                            b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 11\r\nConnection: close\r\n\r\nboom-b2b150",
+                            b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 12\r\nConnection: close\r\n\r\nboom-b2b1500",
                         );
                         let _ = stream.flush();
                         return;
@@ -77,6 +77,14 @@ impl MockProvider {
                     };
                     if dry_this_conn {
                         read_request(&mut stream);
+                        // A real SSE stream needs its HTTP status line first
+                        // — without it the client rejects the whole round as
+                        // "Bad Status" before a single byte of body is read,
+                        // so no delta would ever leak and the test would be
+                        // asserting on the wrong path.
+                        let resp_head =
+                            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n";
+                        let _ = stream.write_all(resp_head.as_bytes());
                         let delta = sse_delta("part");
                         let _ = stream.write_all(delta.as_bytes());
                         let _ = stream.flush();
