@@ -200,12 +200,14 @@ pub fn run(ctx: &Ctx, task_id: &str) -> Result<RunOutcome, RunnerError> {
     let mut worker = Worker::new(ctx.omp_path.to_str().unwrap_or("omp"), None)
         .map_err(|e| RunnerError::Blocked(format!("worker spawn: {e}")))?;
     let abort_signal = AtomicBool::new(false);
+    // MCP bring-up happens before the worker registers tools: a server with
+    // `fail_on_startup_error` that fails blocks the run instead of starting
+    // it with a silently missing toolset.
+    let external = mcp::external_tools_from_mcp(&ctx.mcp_servers, &abort_signal)
+        .map_err(|e| RunnerError::Blocked(format!("mcp: {e}")))?;
     let tool_boxes = tools::builtin_tools()
         .into_iter()
-        .chain(mcp::external_tools_from_mcp(
-            &ctx.mcp_servers,
-            &abort_signal,
-        ))
+        .chain(external)
         .collect::<Vec<_>>();
     let defs: Vec<adaptor::ToolDef> = tool_boxes
         .iter()

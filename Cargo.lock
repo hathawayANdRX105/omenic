@@ -523,6 +523,7 @@ dependencies = [
  "ctrlc",
  "fs2",
  "libc",
+ "mcp",
  "omenic-composition",
  "omenic-harness-compaction",
  "omenic-harness-runtime",
@@ -1807,6 +1808,7 @@ dependencies = [
  "config",
  "serde_json",
  "tools",
+ "ureq",
 ]
 
 [[package]]

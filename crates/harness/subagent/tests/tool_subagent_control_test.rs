@@ -3,8 +3,8 @@ use std::sync::Arc;
 use omenic_harness_core::AbortSignal;
 use omenic_harness_plugin::{DshPlugin, Fiber};
 use omenic_harness_subagent::{
-    SubagentCapabilities, SubagentProvider, SubagentResult, SubagentRun, SubagentRuntime,
-    SubagentRuntimeService, SubagentStartRequest, ToolSubagentControlPlugin,
+    SubagentCapabilities, SubagentProvider, SubagentRun, SubagentRuntime, SubagentRuntimeService,
+    SubagentStartRequest, ToolSubagentControlPlugin,
 };
 use omenic_harness_tools::{ToolCatalog, ToolExecutor};
 

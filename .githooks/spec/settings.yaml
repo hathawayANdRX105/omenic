@@ -3,7 +3,7 @@
 # bin/web/tests/ui_contract.rs 的「源码锚点抽查」测试自动核对。
 name: settings
 target: crates/web/page-config/src/lib.rs
-description: 设置弹窗（SettingsModal / ConfigForm / AboutPane）——800 面板、188 导航、模型与渠道表单、关于页版本号。
+description: 设置弹窗（SettingsModal / ConfigForm / McpServersPane / AboutPane）——800 面板、188 导航、模型与渠道表单、MCP 服务器卡列表、关于页版本号。
 anchors:
   - key: modal-width
     find: 'w-[800px]'
@@ -38,6 +38,18 @@ anchors:
     find: 'env!("CARGO_PKG_VERSION")'
     expect: '「关于」页展示编译期版本号（v{CARGO_PKG_VERSION} chip）。'
     source: 'omenic: crates/web/page-config/src/lib.rs:365-370（AboutPane）'
+  - key: mcp-nav-unit
+    find: 'MCP 服务器'
+    expect: '左导航新增「MCP 服务器」单元：h40 r12，复用 nav_cell 激活态（bg-[#434546]），Terminal 图标。'
+    source: 'omenic: crates/web/page-config/src/lib.rs:56（SettingsModal 导航第三项）；new, no dsh anchor'
+  - key: mcp-server-card
+    find: 'bg-layer-1 border border-b1 rounded-xl px-4 py-4 flex flex-col gap-3'
+    expect: 'MCP 服务器卡容器：layer-1 底、r12 圆角、纵向 gap-3；卡头 name + stdio/http 摘要 + 删除钮，卡体两列字段网格。'
+    source: 'omenic: crates/web/page-config/src/lib.rs:529（McpServerCard card_class）；new, no dsh anchor'
+  - key: mcp-add-server
+    find: '添加 MCP 服务器'
+    expect: '「添加 MCP 服务器」按钮：向表单追加一张空白服务器卡（Outline 变体）。'
+    source: 'omenic: crates/web/page-config/src/lib.rs:460（McpServersPane 页头行）；new, no dsh anchor'
 notes: |
   表单校验/保存逻辑（save_to_file、test_connection）不在本契约内；
   锚点只锁面板几何、导航结构与输入样式。

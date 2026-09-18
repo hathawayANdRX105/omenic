@@ -207,6 +207,7 @@ fn daemon_cfg(dir: &std::path::Path, mock: &MockOpenAi, max_turns: usize) -> Dae
         // The workspace the loop searches for AGENTS.md.
         cwd: dir.to_path_buf(),
         max_turns,
+        mcp_servers: Vec::new(),
     }
 }
 

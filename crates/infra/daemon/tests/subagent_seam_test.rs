@@ -253,6 +253,7 @@ fn daemon_cfg_smoke(
         }),
         cwd: dir.to_path_buf(),
         max_turns,
+        mcp_servers: Vec::new(),
     }
 }
 

@@ -153,6 +153,15 @@ pub struct OrbitConfig {
     /// Tool catalog (`harness.tools`), adapted onto orbit's tool trait at
     /// the seam — see [`orbit_tools`].
     pub catalog: std::sync::Arc<omenic_harness_tools::ToolCatalog>,
+    /// External MCP tools brought up once at daemon start, shared by every
+    /// engine (re)spawn. `Arc<Vec<Arc<_>>>` because `OrbitSetup` is cloned
+    /// per worker respawn and a `Box<dyn Tool>` cannot be shared; the
+    /// `Tool` trait's `Send + Sync` supertraits make the Arc itself
+    /// `Send + Sync`, which the engine's run thread requires. Merged into
+    /// the per-engine tool list by [`combined_tools`]. Empty (no servers
+    /// configured, or every server skipped) leaves engine behavior
+    /// identical to the pre-MCP engine.
+    pub mcp_tools: std::sync::Arc<Vec<std::sync::Arc<dyn tools::Tool>>>,
 }
 
 /// orbit-mode construction bundle: the model, the streaming backend, and the
@@ -241,6 +250,70 @@ fn orbit_tools(
         .collect()
 }
 
+/// Shared MCP tool -> per-engine `Box<dyn tools::Tool>`. The daemon owns the
+/// live MCP connections behind `Arc<dyn tools::Tool>` handles (brought up
+/// once at start, shared across respawns); each engine spawn wraps every
+/// shared handle in this thin delegating shim so the loop keeps its
+/// `&[Box<dyn tools::Tool>]` shape — mirroring how [`HarnessTool`] wraps the
+/// catalog's `Arc<dyn harness Tool>`. `execute` forwards the caller's signal
+/// verbatim: the orbit loop hands it the engine's abort flag, so an abort
+/// reaches an in-flight MCP round trip (the transport polls that flag).
+struct McpToolShim {
+    name: String,
+    description: String,
+    parameters: Value,
+    inner: std::sync::Arc<dyn tools::Tool>,
+}
+
+impl McpToolShim {
+    fn new(inner: std::sync::Arc<dyn tools::Tool>) -> Self {
+        McpToolShim {
+            name: inner.name().to_string(),
+            description: inner.description(),
+            parameters: inner.parameters(),
+            inner,
+        }
+    }
+}
+
+impl tools::Tool for McpToolShim {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn description(&self) -> String {
+        self.description.clone()
+    }
+    fn parameters(&self) -> Value {
+        self.parameters.clone()
+    }
+    fn execute(
+        &self,
+        args: &Value,
+        signal: &std::sync::atomic::AtomicBool,
+    ) -> Result<String, tools::ToolError> {
+        self.inner.execute(args, signal)
+    }
+}
+
+/// The engine's full tool list: catalog tools first (registration order),
+/// then one [`McpToolShim`] per shared MCP tool. Split out from
+/// [`OrbitEngine::new`] so the merge contract is unit-testable without a
+/// daemon; with an empty `mcp_tools` slice it is exactly the pre-MCP
+/// [`orbit_tools`] result.
+pub fn combined_tools(
+    catalog: &omenic_harness_tools::ToolCatalog,
+    mcp_tools: &[std::sync::Arc<dyn tools::Tool>],
+    abort: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Vec<Box<dyn tools::Tool>> {
+    let mut tools = orbit_tools(catalog, std::sync::Arc::clone(&abort));
+    tools.extend(
+        mcp_tools
+            .iter()
+            .map(|t| Box::new(McpToolShim::new(std::sync::Arc::clone(t))) as Box<dyn tools::Tool>),
+    );
+    tools
+}
+
 /// omenic 自家引擎（OMENIC_WORKER_MODE=orbit）：进程内跑 orbit agent
 /// 循环（C1 `run_agent_streaming`），把 orbit::AgentEvent 1:1 映射成
 /// [`WorkerEvent`]（词汇与 omp 转发层一致，下游零改动）。模型配置由
@@ -271,14 +344,23 @@ impl OrbitEngine {
         let OrbitSetup {
             model,
             backend,
-            config,
+            config:
+                OrbitConfig {
+                    cwd,
+                    max_turns,
+                    compaction,
+                    catalog,
+                    mcp_tools,
+                },
             providers: _, // Phase 4: out-of-process providers consume this; the
                           // in-process fork is registered by the daemon instead.
         } = setup;
         let (pull_push, pull_queue) = std::sync::mpsc::channel();
         let (run_tx, run_rx) = std::sync::mpsc::channel::<String>();
         let abort_flag = std::sync::Arc::new(AtomicBool::new(false));
-        let tools = orbit_tools(&config.catalog, std::sync::Arc::clone(&abort_flag));
+        // Catalog tools + shared MCP tools (each shimmed per spawn); abort
+        // flag shared so an engine abort reaches both tool families.
+        let tools = combined_tools(&catalog, &mcp_tools, std::sync::Arc::clone(&abort_flag));
         let engine = OrbitEngine {
             model: model.clone(),
             backend: Arc::clone(&backend),
@@ -288,9 +370,9 @@ impl OrbitEngine {
             pull_push,
             pull_queue,
             run_tx,
-            cwd: config.cwd,
-            max_turns: config.max_turns,
-            compaction: config.compaction,
+            cwd,
+            max_turns,
+            compaction,
         };
         // 专用 run 线程：串行消费 prompt，LLM 调用不占 dispatch 锁，
         // abort 标志（Arc）随时可从别的连接置位

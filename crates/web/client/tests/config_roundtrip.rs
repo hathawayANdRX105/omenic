@@ -2,7 +2,8 @@
 //! 读写代码早已接线，`crates/web/client/tests/` 却零覆盖）。
 //!
 //! 覆盖 `save_to_file` → `load_from_system` 的往返、`[llm]` 段对顶层键的
-//! 覆盖、以及无配置文件时的兜底默认值。
+//! 覆盖、`[mcp]` 段按 name 的增量编辑（env/reconnect/未知键/注释保留）、
+//! 以及无配置文件时的兜底默认值。
 //!
 //! **为什么全部串行**：`load_from_system` 读的是相对路径
 //! （`./.oi/config.toml` 等）并叠加进程级环境变量覆盖，都是进程全局状态。
@@ -10,7 +11,7 @@
 //! 全局锁把它们排成队，并在每个用例里显式清掉相关 env（开发机上可能真的
 //! 设了 `OMENIC_LLM_*`，不清会让断言随环境飘）。
 
-use omenic_web_client::llm::LlmRuntimeConfig;
+use omenic_web_client::llm::{LlmRuntimeConfig, McpServerForm};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -92,6 +93,7 @@ fn save_then_load_preserves_every_field() {
         max_tokens: 8192,
         // 相对路径：save 写 ./.oi/config.toml，load 的第一个候选正是它
         data_dir: "./.oi".to_string(),
+        mcp_servers: Vec::new(),
     };
 
     saved.save_to_file().expect("保存配置失败");
@@ -121,6 +123,7 @@ fn resaving_a_loaded_config_is_byte_identical() {
         model: "agnes-2.5-flash".to_string(),
         max_tokens: 4096,
         data_dir: "./.oi".to_string(),
+        mcp_servers: Vec::new(),
     };
     original.save_to_file().expect("首次保存失败");
 
@@ -148,6 +151,7 @@ fn save_creates_a_missing_data_dir() {
         model: "m".to_string(),
         max_tokens: 128,
         data_dir: nested.to_string_lossy().to_string(),
+        mcp_servers: Vec::new(),
     };
     cfg.save_to_file().expect("保存到不存在的目录应自动建目录");
 
@@ -236,6 +240,7 @@ fn env_overrides_take_precedence_over_the_file() {
         model: "model-from-file".to_string(),
         max_tokens: 512,
         data_dir: "./.oi".to_string(),
+        mcp_servers: Vec::new(),
     }
     .save_to_file()
     .expect("保存失败");
@@ -312,6 +317,7 @@ fn save_preserves_unmanaged_sections() {
         model: "agnes-3.0-pro".to_string(),
         max_tokens: 8192,
         data_dir: "./.oi".to_string(),
+        mcp_servers: Vec::new(),
     }
     .save_to_file()
     .expect("保存配置失败");
@@ -373,6 +379,7 @@ fn save_adds_missing_llm_section() {
         model: "agnes-2.5-flash".to_string(),
         max_tokens: 2048,
         data_dir: "./.oi".to_string(),
+        mcp_servers: Vec::new(),
     }
     .save_to_file()
     .expect("保存配置失败");
@@ -424,6 +431,7 @@ fn save_preserves_comments() {
         model: "m".to_string(),
         max_tokens: 100,
         data_dir: "./.oi".to_string(),
+        mcp_servers: Vec::new(),
     }
     .save_to_file()
     .expect("保存配置失败");
@@ -463,6 +471,7 @@ fn fallback_preserves_omp_path_not_on_first_line() {
         model: "m".to_string(),
         max_tokens: 100,
         data_dir: "./.oi".to_string(),
+        mcp_servers: Vec::new(),
     }
     .save_to_file()
     .expect("保存配置失败");
@@ -500,6 +509,7 @@ fn save_errors_instead_of_panicking_when_llm_is_not_a_table() {
         model: "m".to_string(),
         max_tokens: 100,
         data_dir: "./.oi".to_string(),
+        mcp_servers: Vec::new(),
     }
     .save_to_file();
 
@@ -507,5 +517,218 @@ fn save_errors_instead_of_panicking_when_llm_is_not_a_table() {
     assert!(
         err.contains("[llm]"),
         "错误信息应指出是 [llm] 段的问题: {err}"
+    );
+}
+
+/// MCP 表单按 name 编辑既有服务器：改 `command` 后保存，`env` / `reconnect`
+/// 与两处注释必须逐字保留（G8-B「只动管理键」语义延伸到 [[mcp.servers]]）。
+#[test]
+fn mcp_edit_preserves_env_reconnect_and_comments() {
+    let sb = Sandbox::new();
+
+    std::fs::create_dir_all(sb.path().join(".oi")).expect("建 .oi 失败");
+    std::fs::write(
+        sb.path().join(".oi/config.toml"),
+        "data_dir = \"./.oi\"\n\
+         model = \"m\"\n\
+         \n\
+         [mcp]\n\
+         \n\
+         # filesystem server, spawn per session\n\
+         [[mcp.servers]]\n\
+         name = \"fs\"\n\
+         # npx downloads on first run\n\
+         command = \"npx\"\n\
+         args = [\"-y\", \"@modelcontextprotocol/server-filesystem\"]\n\
+         env = { RUST_LOG = \"debug\", FS_ROOT = \"/tmp\" }\n\
+         \n\
+         [mcp.servers.reconnect]\n\
+         initial_delay_ms = 500\n\
+         max_delay_ms = 30000\n\
+         max_attempts = 10\n",
+    )
+    .expect("写配置失败");
+
+    let mut loaded = LlmRuntimeConfig::load_from_system();
+
+    assert_eq!(loaded.mcp_servers.len(), 1, "应加载出 1 台 MCP 服务器");
+    assert_eq!(loaded.mcp_servers[0].name, "fs");
+    assert_eq!(
+        loaded.mcp_servers[0].args, "-y, @modelcontextprotocol/server-filesystem",
+        "args 应以逗号分隔文本进表单"
+    );
+
+    // 模拟用户在表单里改 command 后保存
+    loaded.mcp_servers[0].command = "npx-dlx".to_string();
+    loaded.save_to_file().expect("保存配置失败");
+
+    let saved = std::fs::read_to_string(sb.path().join(".oi/config.toml")).expect("读回配置失败");
+    let doc = saved
+        .parse::<toml_edit::DocumentMut>()
+        .expect("保存后的配置必须是合法 TOML");
+
+    let server = doc["mcp"]["servers"]
+        .as_array_of_tables()
+        .and_then(|a| a.get(0))
+        .expect("[[mcp.servers]] 首项应存在");
+    // 管理键确实被更新
+    assert_eq!(
+        server["command"].as_str(),
+        Some("npx-dlx"),
+        "command 应被更新"
+    );
+    assert_eq!(
+        server["args"].as_array().map(|a| a.len()),
+        Some(2),
+        "args 数组应保留"
+    );
+
+    // 未管理键逐字保留
+    let env = server["env"].as_inline_table().expect("env 应保留为内联表");
+    assert_eq!(env.get("RUST_LOG").and_then(|v| v.as_str()), Some("debug"));
+    assert_eq!(env.get("FS_ROOT").and_then(|v| v.as_str()), Some("/tmp"));
+    let reconnect = server["reconnect"]
+        .as_table()
+        .expect("reconnect 子表应保留");
+    assert_eq!(reconnect["initial_delay_ms"].as_integer(), Some(500));
+    assert_eq!(reconnect["max_delay_ms"].as_integer(), Some(30000));
+    assert_eq!(reconnect["max_attempts"].as_integer(), Some(10));
+
+    // 注释逐字保留：段头注释（表 decor）与键前注释（key decor，set_item 不动它）
+    assert!(
+        saved.contains("# filesystem server, spawn per session"),
+        "[[mcp.servers]] 头部注释应保留: {saved}"
+    );
+    assert!(
+        saved.contains("# npx downloads on first run"),
+        "managed 键前的行注释应保留: {saved}"
+    );
+}
+
+/// 文件原本没有 `[mcp]`：空表单保存不创建该段；表单添加服务器后保存，
+/// `[[mcp.servers]]` 才出现，且未填的键（command/args/cwd）不写出。
+#[test]
+fn mcp_section_written_only_when_form_has_servers() {
+    let sb = Sandbox::new();
+
+    let base = LlmRuntimeConfig {
+        base_url: "http://127.0.0.1:3182".to_string(),
+        api_key: "sk-b".to_string(),
+        model: "m".to_string(),
+        max_tokens: 128,
+        data_dir: "./.oi".to_string(),
+        mcp_servers: Vec::new(),
+    };
+    base.save_to_file().expect("首次保存失败");
+
+    let cfg_path = sb.path().join(".oi/config.toml");
+    let after_empty = std::fs::read_to_string(&cfg_path).expect("读回配置失败");
+    assert!(
+        !after_empty.contains("[mcp]"),
+        "空表单不得写 [mcp] 段: {after_empty}"
+    );
+
+    let mut with_server = LlmRuntimeConfig::load_from_system();
+    with_server.mcp_servers.push(McpServerForm {
+        name: "fetch".to_string(),
+        command: String::new(),
+        url: "http://127.0.0.1:9100/mcp".to_string(),
+        args: String::new(),
+        cwd: String::new(),
+        tool_call_timeout_ms: "1500".to_string(),
+        fail_on_startup_error: true,
+    });
+    with_server.save_to_file().expect("带服务器保存失败");
+
+    let doc = std::fs::read_to_string(&cfg_path)
+        .expect("读回配置失败")
+        .parse::<toml_edit::DocumentMut>()
+        .expect("保存后的配置必须是合法 TOML");
+
+    let servers = doc["mcp"]["servers"]
+        .as_array_of_tables()
+        .expect("应写出 [[mcp.servers]] 表数组");
+    assert_eq!(servers.len(), 1);
+    let server = servers.get(0).expect("表数组首项应存在");
+    assert_eq!(server["name"].as_str(), Some("fetch"));
+    // url 型服务器：command 未填 → 不写该键（而不是留一个空串值）
+    assert!(server.get("command").is_none(), "空 command 不应写出");
+    assert_eq!(server["url"].as_str(), Some("http://127.0.0.1:9100/mcp"));
+    assert_eq!(server["tool_call_timeout_ms"].as_integer(), Some(1500));
+    assert_eq!(server["fail_on_startup_error"].as_bool(), Some(true));
+    assert!(server.get("args").is_none(), "空 args 不应写出");
+    assert!(server.get("cwd").is_none(), "空 cwd 不应写出");
+}
+
+/// 表单状态里没有的服务器保存后原样保留——包括其 `env` 与未知键：
+/// 表单是「按 name 追加/编辑」，绝不整体重写 `[mcp]`（删卡不等于删配置）。
+#[test]
+fn mcp_servers_missing_from_form_are_left_untouched() {
+    let sb = Sandbox::new();
+
+    std::fs::create_dir_all(sb.path().join(".oi")).expect("建 .oi 失败");
+    std::fs::write(
+        sb.path().join(".oi/config.toml"),
+        "data_dir = \"./.oi\"\n\
+         model = \"m\"\n\
+         \n\
+         [mcp]\n\
+         \n\
+         [[mcp.servers]]\n\
+         name = \"fs\"\n\
+         command = \"npx\"\n\
+         args = [\"-y\", \"fs-server\"]\n\
+         custom_future_key = \"keep-me\"\n\
+         \n\
+         [[mcp.servers]]\n\
+         name = \"other\"\n\
+         url = \"http://127.0.0.1:9200/mcp\"\n\
+         env = { TOKEN = \"t\" }\n",
+    )
+    .expect("写配置失败");
+
+    // 加载两台后把 other 从表单状态里删掉（模拟用户删卡），再编辑 fs
+    let mut loaded = LlmRuntimeConfig::load_from_system();
+    assert_eq!(loaded.mcp_servers.len(), 2, "应加载出 2 台 MCP 服务器");
+    loaded.mcp_servers.retain(|s| s.name == "fs");
+    loaded.mcp_servers[0].command = "npx-updated".to_string();
+    loaded.save_to_file().expect("保存配置失败");
+
+    let doc = std::fs::read_to_string(sb.path().join(".oi/config.toml"))
+        .expect("读回配置失败")
+        .parse::<toml_edit::DocumentMut>()
+        .expect("保存后的配置必须是合法 TOML");
+
+    let servers = doc["mcp"]["servers"]
+        .as_array_of_tables()
+        .expect("[[mcp.servers]] 应保留为表数组");
+    assert_eq!(
+        servers.len(),
+        2,
+        "表单外的服务器不得被删除（按 name 编辑，不整体重写）"
+    );
+
+    // fs 原地更新，未知键保留
+    let fs = servers.get(0).expect("表数组首项应存在");
+    assert_eq!(fs["command"].as_str(), Some("npx-updated"));
+    assert_eq!(
+        fs["args"].as_array().map(|a| a.len()),
+        Some(2),
+        "args 数组应保留"
+    );
+    assert_eq!(
+        fs["custom_future_key"].as_str(),
+        Some("keep-me"),
+        "服务器上的未知键必须逐字保留"
+    );
+
+    // other 完全不在表单状态里 → 逐键原样
+    let other = servers.get(1).expect("表数组第二项应存在");
+    assert_eq!(other["name"].as_str(), Some("other"));
+    assert_eq!(other["url"].as_str(), Some("http://127.0.0.1:9200/mcp"));
+    assert_eq!(
+        other["env"]["TOKEN"].as_str(),
+        Some("t"),
+        "表单外服务器的 env 应原样保留"
     );
 }

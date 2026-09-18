@@ -127,6 +127,8 @@ fn setup(doc: serde_json::Value, backend: Arc<Shared>) -> OrbitSetup {
             max_turns,
             compaction,
             catalog,
+            // No MCP servers under test here: empty list = pre-MCP behavior.
+            mcp_tools: std::sync::Arc::new(Vec::new()),
         },
         providers: Vec::new(),
     }

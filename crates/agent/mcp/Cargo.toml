@@ -11,3 +11,4 @@ adaptor = { path = "../adaptor" }
 config = { path = "../../infra/config" }
 tools = { path = "../tools" }
 serde_json = { workspace = true }
+ureq = { workspace = true }
