@@ -350,6 +350,14 @@ fn restart_resumes_session_history_into_the_llm_request() {
         "the restart+third-prompt flow must reach the mock twice, saw {}",
         dedupe_msgs.len(),
     );
+    // Dedupe: the *second* post-restart request (the third prompt overall)
+    // carries the live context — system + the two replayed rows + both
+    // prompts and their "ok" replies — exactly once each.  If the engine
+    // re-replayed the persisted history on the repeated `resume_session`
+    // call, "第一轮" / "第一轮回复" would each appear *twice* here.  (The
+    // user row and its reply are counted together: `contains("第一轮")`
+    // matches the assistant row too, so the expected live-context count is
+    // 2, and a double replay would make it 4.)
     let second_req = &dedupe_msgs[dedupe_msgs.len() - 1];
     let third_hits: Vec<&String> = second_req
         .iter()
@@ -365,9 +373,9 @@ fn restart_resumes_session_history_into_the_llm_request() {
         .collect();
     assert_eq!(
         res_user.len(),
-        1,
-        "in the third request the resumed user row must appear exactly once \
-         (the engine's resumed_session gate blocked a second replay), saw: {second_req:?}"
+        2,
+        "the live context carries the replayed user row + its assistant reply \
+         exactly once each (a re-replay would double both); saw: {second_req:?}"
     );
 }
 
