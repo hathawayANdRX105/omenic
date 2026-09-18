@@ -3,7 +3,7 @@
 //! 的列表编辑；「关于」放版本与项目信息。
 
 use dioxus::prelude::*;
-use omenic_web_client::llm::{LlmRuntimeConfig, McpServerForm};
+use omenic_web_client::llm::{LlmFallbackForm, LlmRuntimeConfig, McpServerForm};
 use omenic_web_components::icons::{Gear, Terminal, Trash, X};
 use omenic_web_components::ui::{Button, ButtonSize, ButtonVariant, IconButton, Modal};
 
@@ -100,6 +100,35 @@ fn ConfigForm(
     let mut save_status = use_signal(|| None::<Result<String, String>>);
     let mut is_testing = use_signal(|| false);
 
+    // Fallback Provider（[[llm.fallbacks]]）表单状态与校验
+    let mut fallbacks = use_signal(|| config.llm_fallbacks.clone());
+    let fallback_list = fallbacks();
+    let mut fallback_empty_model = false;
+    let mut fallback_dup_model = false;
+    let mut fallback_bad_tokens = false;
+    let mut seen_fallback_models = std::collections::HashSet::new();
+    for fallback in &fallback_list {
+        let model = fallback.model.trim();
+        if model.is_empty() {
+            fallback_empty_model = true;
+        } else if !seen_fallback_models.insert(model.to_string()) {
+            fallback_dup_model = true;
+        }
+        let tokens = fallback.max_tokens.trim();
+        if !tokens.is_empty() && tokens.parse::<u32>().is_err() {
+            fallback_bad_tokens = true;
+        }
+    }
+    let fallback_hint: Option<&'static str> = if fallback_empty_model {
+        Some("每个 Fallback Provider 必须填写 model：保存按 model 匹配既有行")
+    } else if fallback_dup_model {
+        Some("存在重复的 fallback model：保存时会更新到同一行，请改名区分")
+    } else if fallback_bad_tokens {
+        Some("fallback max_tokens 必须为空或正整数")
+    } else {
+        None
+    };
+
     let url_val = base_url();
     let url_error: Option<&'static str> = if url_val.trim().is_empty() {
         Some("Base URL 不能为空")
@@ -146,7 +175,8 @@ fn ConfigForm(
         && key_error.is_none()
         && model_error.is_none()
         && tokens_error.is_none()
-        && dir_error.is_none();
+        && dir_error.is_none()
+        && fallback_hint.is_none();
 
     let models = test_status().and_then(|r| r.ok()).unwrap_or_else(|| {
         vec![
@@ -296,6 +326,9 @@ fn ConfigForm(
                                     // LLM 保存沿用当前已保存的 MCP 表单状态：
                                     // 空表单时 [mcp] 完全不被触碰。
                                     mcp_servers: config.mcp_servers.clone(),
+                                    // Fallback 表单当前状态随本次保存写出
+                                    // [[llm.fallbacks]]（空表单不碰该段）。
+                                    llm_fallbacks: fallbacks(),
                                 };
                                 match new_cfg.save_to_file() {
                                     Ok(()) => {
@@ -325,6 +358,7 @@ fn ConfigForm(
                                 // 探针只读 base_url/api_key，不落盘：空 vec
                                 // 让它即使被误存也不会碰 [mcp]。
                                 mcp_servers: Vec::new(),
+                                llm_fallbacks: Vec::new(),
                             };
                             let res = probe_cfg.test_connection();
                             test_status.set(Some(res));
@@ -332,6 +366,32 @@ fn ConfigForm(
                         },
                         if is_testing() { "正在测试..." } else { "测试连接" }
                     }
+                }
+            }
+
+            // Fallback Provider 卡（[[llm.fallbacks]]，主 provider 失败后按序切换）
+            div { class: "bg-layer-1 border border-b1 rounded-2xl px-6 py-5 flex flex-col gap-4",
+                div { class: "flex items-center justify-between pb-3 border-b border-b1",
+                    div { class: "text-[15px] leading-[22px] font-medium text-label", "Fallback Provider（主 provider 失败后按序切换）" }
+                    Button {
+                        variant: ButtonVariant::Outline,
+                        size: ButtonSize::Sm,
+                        onclick: move |_| fallbacks.write().push(LlmFallbackForm::default()),
+                        "添加 Fallback Provider"
+                    }
+                }
+
+                if fallback_list.is_empty() {
+                    div { class: "bg-layer-1 border border-b1 rounded-xl px-4 py-6 flex flex-col items-center gap-1.5",
+                        span { class: "text-[13px] leading-5 text-label-3", "尚未配置 Fallback Provider" }
+                        span { class: "text-[12px] leading-4 text-caption", "主 provider 无可用内容时按列表顺序切换；base_url / api_key 留空 = 继承主 provider" }
+                    }
+                }
+                for (i, fallback) in fallback_list.iter().enumerate() {
+                    LlmFallbackCard { key: "{i}", index: i, fallback: fallback.clone(), fallbacks }
+                }
+                if let Some(hint) = fallback_hint {
+                    span { class: "{err_class}", "{hint}" }
                 }
             }
 
@@ -486,6 +546,9 @@ fn McpServersPane(
                                 max_tokens: config.max_tokens,
                                 data_dir: config.data_dir.clone(),
                                 mcp_servers: servers(),
+                                // MCP 保存不动 LLM 区：沿用当前已保存的
+                                // fallbacks（空表单时 [[llm.fallbacks]] 不被触碰）。
+                                llm_fallbacks: config.llm_fallbacks.clone(),
                             };
                             match new_cfg.save_to_file() {
                                 Ok(()) => {
@@ -616,6 +679,102 @@ fn McpServerCard(
                         value: "{server.args}",
                         oninput: move |e| servers.write()[index].args = e.value(),
                         placeholder: "-y, @modelcontextprotocol/server-filesystem",
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 单个 Fallback Provider 的编辑卡：卡头是 model（mono）+ 端点摘要 + 删除钮，
+/// 卡体两列网格排 base_url / api_key / max_tokens。所有输入直接写回
+/// `fallbacks[index]`。api_key 是 password 输入框，同卡内一个 Ghost 钮切换显隐。
+#[component]
+fn LlmFallbackCard(
+    fallback: LlmFallbackForm,
+    index: usize,
+    mut fallbacks: Signal<Vec<LlmFallbackForm>>,
+) -> Element {
+    let input_class = "w-full h-9 rounded-[10px] bg-layer-2 border border-b2 px-3 text-[14px] leading-[22px] text-label outline-none transition-colors focus:border-brand placeholder:text-caption";
+    let label_class = "text-[13px] leading-5 font-medium text-label-2";
+
+    let mut show_key = use_signal(|| false);
+
+    let summary = if fallback.base_url.trim().is_empty() {
+        "继承主 provider 端点".to_string()
+    } else {
+        format!(
+            "{} · {}",
+            fallback.base_url.trim(),
+            fallback.api_key.trim().is_empty()
+        )
+    };
+    let card_class = "bg-layer-1 border border-b1 rounded-xl px-4 py-4 flex flex-col gap-3";
+
+    rsx! {
+        div { class: "{card_class}",
+            // 卡头：model + 端点摘要 + 删除
+            div { class: "flex items-center justify-between gap-3",
+                div { class: "min-w-0 flex flex-col gap-0.5",
+                    span { class: "text-[14px] leading-5 font-medium text-label truncate",
+                        if fallback.model.trim().is_empty() { "（未填写 model）" } else { "{fallback.model}" }
+                    }
+                    span { class: "text-[12px] leading-4 text-caption font-mono truncate", "{summary}" }
+                }
+                IconButton {
+                    title: "删除",
+                    onclick: move |_| {
+                        fallbacks.write().remove(index);
+                    },
+                    Trash { size: 14 }
+                }
+            }
+
+            div { class: "grid grid-cols-2 gap-3",
+                div { class: "flex flex-col gap-1.5 col-span-2",
+                    label { class: "{label_class}", "model (必填)" }
+                    input {
+                        class: "{input_class} font-mono",
+                        value: "{fallback.model}",
+                        oninput: move |e| fallbacks.write()[index].model = e.value(),
+                        placeholder: "fallback-model-id",
+                    }
+                }
+                div { class: "flex flex-col gap-1.5",
+                    label { class: "{label_class}", "base_url (空 = 继承主 provider)" }
+                    input {
+                        class: "{input_class} font-mono",
+                        value: "{fallback.base_url}",
+                        oninput: move |e| fallbacks.write()[index].base_url = e.value(),
+                        placeholder: "http://127.0.0.1:3182",
+                    }
+                }
+                div { class: "flex flex-col gap-1.5",
+                    div { class: "flex justify-between",
+                        label { class: "{label_class}", "api_key (空 = 继承主 provider)" }
+                        Button {
+                            variant: ButtonVariant::Ghost,
+                            size: ButtonSize::Sm,
+                            onclick: move |_| show_key.set(!show_key()),
+                            if show_key() { "隐藏" } else { "显示" }
+                        }
+                    }
+                    input {
+                        class: "{input_class} font-mono",
+                        r#type: if show_key() { "text" } else { "password" },
+                        value: "{fallback.api_key}",
+                        oninput: move |e| fallbacks.write()[index].api_key = e.value(),
+                        placeholder: "sk-...",
+                    }
+                }
+                div { class: "flex flex-col gap-1.5 col-span-2",
+                    label { class: "{label_class}", "max_tokens (留空 = 不带 max_tokens)" }
+                    input {
+                        class: "{input_class}",
+                        r#type: "number",
+                        value: "{fallback.max_tokens}",
+                        oninput: move |e| fallbacks.write()[index].max_tokens = e.value(),
+                        placeholder: "4096",
                     }
                 }
             }

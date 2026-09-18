@@ -11,7 +11,7 @@
 //! 全局锁把它们排成队，并在每个用例里显式清掉相关 env（开发机上可能真的
 //! 设了 `OMENIC_LLM_*`，不清会让断言随环境飘）。
 
-use omenic_web_client::llm::{LlmRuntimeConfig, McpServerForm};
+use omenic_web_client::llm::{LlmFallbackForm, LlmRuntimeConfig, McpServerForm};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -94,6 +94,7 @@ fn save_then_load_preserves_every_field() {
         // 相对路径：save 写 ./.oi/config.toml，load 的第一个候选正是它
         data_dir: "./.oi".to_string(),
         mcp_servers: Vec::new(),
+        llm_fallbacks: Vec::new(),
     };
 
     saved.save_to_file().expect("保存配置失败");
@@ -124,6 +125,7 @@ fn resaving_a_loaded_config_is_byte_identical() {
         max_tokens: 4096,
         data_dir: "./.oi".to_string(),
         mcp_servers: Vec::new(),
+        llm_fallbacks: Vec::new(),
     };
     original.save_to_file().expect("首次保存失败");
 
@@ -152,6 +154,7 @@ fn save_creates_a_missing_data_dir() {
         max_tokens: 128,
         data_dir: nested.to_string_lossy().to_string(),
         mcp_servers: Vec::new(),
+        llm_fallbacks: Vec::new(),
     };
     cfg.save_to_file().expect("保存到不存在的目录应自动建目录");
 
@@ -241,6 +244,7 @@ fn env_overrides_take_precedence_over_the_file() {
         max_tokens: 512,
         data_dir: "./.oi".to_string(),
         mcp_servers: Vec::new(),
+        llm_fallbacks: Vec::new(),
     }
     .save_to_file()
     .expect("保存失败");
@@ -318,6 +322,7 @@ fn save_preserves_unmanaged_sections() {
         max_tokens: 8192,
         data_dir: "./.oi".to_string(),
         mcp_servers: Vec::new(),
+        llm_fallbacks: Vec::new(),
     }
     .save_to_file()
     .expect("保存配置失败");
@@ -380,6 +385,7 @@ fn save_adds_missing_llm_section() {
         max_tokens: 2048,
         data_dir: "./.oi".to_string(),
         mcp_servers: Vec::new(),
+        llm_fallbacks: Vec::new(),
     }
     .save_to_file()
     .expect("保存配置失败");
@@ -432,6 +438,7 @@ fn save_preserves_comments() {
         max_tokens: 100,
         data_dir: "./.oi".to_string(),
         mcp_servers: Vec::new(),
+        llm_fallbacks: Vec::new(),
     }
     .save_to_file()
     .expect("保存配置失败");
@@ -472,6 +479,7 @@ fn fallback_preserves_omp_path_not_on_first_line() {
         max_tokens: 100,
         data_dir: "./.oi".to_string(),
         mcp_servers: Vec::new(),
+        llm_fallbacks: Vec::new(),
     }
     .save_to_file()
     .expect("保存配置失败");
@@ -510,6 +518,7 @@ fn save_errors_instead_of_panicking_when_llm_is_not_a_table() {
         max_tokens: 100,
         data_dir: "./.oi".to_string(),
         mcp_servers: Vec::new(),
+        llm_fallbacks: Vec::new(),
     }
     .save_to_file();
 
@@ -618,6 +627,7 @@ fn mcp_section_written_only_when_form_has_servers() {
         max_tokens: 128,
         data_dir: "./.oi".to_string(),
         mcp_servers: Vec::new(),
+        llm_fallbacks: Vec::new(),
     };
     base.save_to_file().expect("首次保存失败");
 
@@ -730,5 +740,88 @@ fn mcp_servers_missing_from_form_are_left_untouched() {
         other["env"]["TOKEN"].as_str(),
         Some("t"),
         "表单外服务器的 env 应原样保留"
+    );
+}
+
+/// `[llm].fallbacks` 段 roundtrip：`save_to_file` 写 2 行（全字段 + 只 model）
+/// → `load_from_system` 读回，行序不丢、空串字段没写成 `= ""`、max_tokens
+/// 数值型保留（断言写法参照同文件 mcp 段先例）。
+#[test]
+fn llm_fallbacks_roundtrip_preserves_rows_and_clears_empty_fields() {
+    let sb = Sandbox::new();
+
+    let cfg = LlmRuntimeConfig {
+        base_url: "http://primary.example.com".to_string(),
+        api_key: "sk-primary".to_string(),
+        model: "primary-model".to_string(),
+        max_tokens: 4096,
+        data_dir: "./.oi".to_string(),
+        mcp_servers: Vec::new(),
+        llm_fallbacks: vec![
+            LlmFallbackForm {
+                base_url: "http://relay-a.example.com/v1".to_string(),
+                api_key: "sk-fallback-a".to_string(),
+                model: "fallback-model-a".to_string(),
+                max_tokens: "8192".to_string(),
+            },
+            // 只填 model 的行：空串字段必须不写出（而不是 `= ""`）
+            LlmFallbackForm {
+                base_url: String::new(),
+                api_key: String::new(),
+                model: "fallback-model-b".to_string(),
+                max_tokens: String::new(),
+            },
+        ],
+    };
+    cfg.save_to_file().expect("保存配置失败");
+
+    let doc = std::fs::read_to_string(sb.path().join(".oi/config.toml"))
+        .expect("读回配置失败")
+        .parse::<toml_edit::DocumentMut>()
+        .expect("保存后的配置必须是合法 TOML");
+
+    let raw = std::fs::read_to_string(sb.path().join(".oi/config.toml")).expect("读回失败");
+    let fallbacks = doc["llm"]["fallbacks"]
+        .as_array_of_tables()
+        .expect("应写出 [[llm.fallbacks]] 表数组");
+    assert_eq!(fallbacks.len(), 2, "两行 fallback 必须按序保留");
+
+    // 全字段行
+    let a = fallbacks.get(0).expect("表数组首项应存在");
+    assert_eq!(a["model"].as_str(), Some("fallback-model-a"));
+    assert_eq!(
+        a["base_url"].as_str(),
+        Some("http://relay-a.example.com/v1")
+    );
+    assert_eq!(a["api_key"].as_str(), Some("sk-fallback-a"));
+    assert_eq!(
+        a["max_tokens"].as_integer(),
+        Some(8192),
+        "max_tokens 必须以数值型保留"
+    );
+
+    // 只 model 行：空串字段键被清掉，不是空串值
+    let b = fallbacks.get(1).expect("表数组第二项应存在");
+    assert_eq!(b["model"].as_str(), Some("fallback-model-b"));
+    assert!(b.get("base_url").is_none(), "空 base_url 不应写出");
+    assert!(b.get("api_key").is_none(), "空 api_key 不应写出");
+    assert!(b.get("max_tokens").is_none(), "空 max_tokens 不应写出");
+    assert!(!raw.contains("base_url = \"\""), "不得出现空串值: {raw}");
+    assert!(!raw.contains("api_key = \"\""), "不得出现空串值: {raw}");
+    assert!(!raw.contains("max_tokens = \"\""), "不得出现空串值: {raw}");
+
+    // load_from_system 读回：2 行按序不丢、空字段是空串、数值转回文本
+    let loaded = LlmRuntimeConfig::load_from_system();
+    assert_eq!(loaded.llm_fallbacks.len(), 2, "load 应读回两行");
+    assert_eq!(loaded.llm_fallbacks[0], cfg.llm_fallbacks[0]);
+    assert_eq!(
+        loaded.llm_fallbacks[1],
+        LlmFallbackForm {
+            base_url: String::new(),
+            api_key: String::new(),
+            model: "fallback-model-b".to_string(),
+            max_tokens: String::new(),
+        },
+        "只 model 行读回后其余字段应为空串"
     );
 }
