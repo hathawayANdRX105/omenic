@@ -155,6 +155,7 @@ fn daemon_cfg(dir: &std::path::Path, mock: &MockOpenAi) -> DaemonConfig {
         cwd: dir.to_path_buf(),
         max_turns: 4,
         mcp_servers: Vec::new(),
+        llm_fallbacks: Vec::new(),
     }
 }
 

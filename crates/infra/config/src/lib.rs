@@ -29,6 +29,9 @@ pub struct Config {
     pub llm_model: Option<String>,
     /// Direct LLM max tokens.
     pub llm_max_tokens: Option<u32>,
+    /// Fallback LLM providers tried in order after the primary `[llm]`
+    /// provider fails before emitting any content. Empty = no waterfall.
+    pub llm_fallbacks: Vec<LlmFallbackConfig>,
     /// External MCP servers to spawn for extra tools. Empty by default —
     /// MCP is opt-in and nothing is spawned unless the user lists a server.
     pub mcp_servers: Vec<McpServerConfig>,
@@ -92,6 +95,22 @@ pub struct McpReconnectConfig {
     pub max_delay_ms: Option<u64>,
     #[serde(default)]
     pub max_attempts: Option<u32>,
+}
+
+/// One fallback LLM provider (`[[llm.fallbacks]]`), tried in listed order
+/// after the primary `[llm]` provider fails without emitting content.
+/// `max_tokens` absent = inherit nothing (the provider's request carries
+/// no `max_tokens`); set it explicitly to bound the fallback's output.
+#[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
+pub struct LlmFallbackConfig {
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
 }
 
 /// Errors that can occur during config loading.
@@ -162,6 +181,7 @@ impl Config {
             llm_base_url: None,
             llm_model: None,
             llm_max_tokens: None,
+            llm_fallbacks: Vec::new(),
             mcp_servers: Vec::new(),
             memory_enabled: false,
             memory_dir: None,
@@ -450,13 +470,16 @@ struct DaemonToml {
     max_turns: Option<u64>,
 }
 
-/// `[llm]` TOML section for direct LLM credentials.
+/// `[llm]` TOML section for direct LLM credentials. `fallbacks` is a list
+/// of `[[llm.fallbacks]]` tables (waterfall, in listed order).
 #[derive(Debug, Default, serde::Deserialize)]
 struct LlmToml {
     api_key: Option<String>,
     base_url: Option<String>,
     model: Option<String>,
     max_tokens: Option<u32>,
+    #[serde(default)]
+    fallbacks: Vec<LlmFallbackConfig>,
 }
 
 /// `[mcp]` TOML section. `servers` is a list of `[[mcp.servers]]` tables.
@@ -488,6 +511,10 @@ impl TomlConfig {
         }
         if let Some(v) = self.llm.max_tokens {
             base.llm_max_tokens = Some(v);
+        }
+        // Same empty-does-not-override semantics as `mcp.servers`.
+        if !self.llm.fallbacks.is_empty() {
+            base.llm_fallbacks = self.llm.fallbacks;
         }
         if !self.mcp.servers.is_empty() {
             base.mcp_servers = self.mcp.servers;
