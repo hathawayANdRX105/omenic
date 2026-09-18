@@ -334,6 +334,30 @@ impl Config {
                     message: format!("server '{}' has neither command nor url", s.name),
                 });
             }
+            // Ambiguous transport: the mcp crate prefers `url` (streamable
+            // HTTP) and silently ignores `command` when both are set. Warn —
+            // don't reject — so a legacy config keeps loading while the
+            // unused `command` stops being a silent surprise.
+            let trimmed_url = s.url.as_deref().map(str::trim);
+            let has_url = trimmed_url.is_some_and(|u| !u.is_empty());
+            if has_command && has_url {
+                eprintln!(
+                    "warn: mcp server `{}` has both `url` and `command`; the HTTP transport (url) takes precedence, `command` is ignored",
+                    s.name
+                );
+            }
+            // A non-http(s) scheme cannot be dialed by the HTTP transport;
+            // warn here so the eventual connect failure points back at the
+            // config line. Still not a rejection: validate stays `Ok`.
+            if let Some(url) = trimmed_url.filter(|u| !u.is_empty())
+                && !url.starts_with("http://")
+                && !url.starts_with("https://")
+            {
+                eprintln!(
+                    "warn: mcp server `{}` url `{url}` does not start with http(s)://; connection will likely fail",
+                    s.name
+                );
+            }
             // Checked last so a duplicate error only names an otherwise-valid server.
             if !seen.insert(s.name.clone()) {
                 return Err(ConfigError::Invalid {
