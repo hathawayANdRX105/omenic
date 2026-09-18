@@ -16,6 +16,11 @@ use crate::{MCP_TIMEOUT, McpError, McpTransport};
 /// Default per-call timeout in ms, used when no `tool_call_timeout_ms` is set.
 pub const DEFAULT_TIMEOUT_MS: u64 = MCP_TIMEOUT.as_millis() as u64;
 
+/// How many characters of a 4xx error response body to carry in the
+/// [`McpError::Server`] message — enough to diagnose (HTML error pages,
+/// JSON `{"error": ...}`) without dumping a huge body into logs.
+const ERROR_BODY_EXCERPT_CHARS: usize = 200;
+
 /// HTTP transport: one blocking `POST` per request, response body is one JSON line.
 pub struct HttpTransport {
     url: String,
@@ -48,9 +53,15 @@ impl HttpTransport {
             .build()
     }
 
-    /// POST `line`, mapping transport errors to [`McpError::Transport`].
+    /// POST `line`, mapping transport errors to [`McpError`].
     ///
     /// Returns the response body (the JSON-RPC response line) on any 2xx.
+    ///
+    /// Status classification: a 4xx (except 408/429) is the *server's*
+    /// answer — bad URL, auth failure, unknown endpoint — so retrying the
+    /// identical request cannot help; it surfaces as a non-retryable
+    /// [`McpError::Server`] with the first bytes of the response body.
+    /// 5xx, 408, and 429 stay retryable [`McpError::Transport`].
     fn post(&self, line: &str) -> Result<String, McpError> {
         let res = self
             .client()
@@ -58,6 +69,20 @@ impl HttpTransport {
             .send_string(line)
             .map_err(|e| {
                 match e {
+                    ureq::Error::Status(code, resp)
+                        if (400..500).contains(&code) && code != 408 && code != 429 =>
+                    {
+                        // Read a bounded excerpt of the body for the message;
+                        // an unreadable body degrades to the bare status.
+                        let body = resp
+                            .into_string()
+                            .map(|b| b.chars().take(ERROR_BODY_EXCERPT_CHARS).collect())
+                            .unwrap_or_else(|_| "<unreadable>".to_string());
+                        McpError::Server {
+                            code: code as i64,
+                            message: body,
+                        }
+                    }
                     // ureq reports timeouts and connection failures alike here.
                     // `McpReconnect` treats any `Transport` as retryable, so the
                     // distinction stays at the supervisor layer, not this one.
@@ -89,7 +114,18 @@ impl McpTransport for HttpTransport {
         if signal.load(Ordering::Relaxed) {
             return Err(McpError::Aborted);
         }
-        let body = self.post(line)?;
+        // Check on both sides of the POST: a successful transport call that
+        // raced an abort must not hand a reply back, and a failed call must
+        // report the abort (caller intent), not the transport error.
+        let body = match self.post(line) {
+            Ok(body) => body,
+            Err(e) => {
+                if signal.load(Ordering::Relaxed) {
+                    return Err(McpError::Aborted);
+                }
+                return Err(e);
+            }
+        };
         if signal.load(Ordering::Relaxed) {
             return Err(McpError::Aborted);
         }
