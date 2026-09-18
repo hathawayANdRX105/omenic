@@ -16,13 +16,21 @@ use std::sync::mpsc::Sender;
 
 use rpc::worker::WorkerEvent;
 use serde_json::{Value, json};
-use session::{SessionRole, TurnRecord};
+use session::{SessionMessage, SessionRole, TurnRecord};
 
 use crate::protocol::{Command, EventFrame, Request, Response, ResponseError};
 use crate::state::{EventBus, RunLedger, SessionState, require_str, require_u32};
 
 /// Topic fed by the `rpc` worker's push event stream (R2 3.3).
 pub const WORKER_TOPIC: &str = "worker";
+
+/// How many persisted messages a resume replays into the worker's live
+/// context on a `worker.prompt` that carries a `session_id` (B2a).  A hard
+/// cap: the tail of a long session can be tens of thousands of rows, and the
+/// orbit context only needs a working window, not the whole history.  50
+/// recent messages is enough to keep the turn coherent without forcing a
+/// respawned engine to swallow an unbounded body.
+const RESUME_CONTEXT_LIMIT: u32 = 50;
 
 /// Shared worker handle.  The dispatch layer takes `&mut` so concurrent
 /// connections are serialized by the server's mutex.
@@ -125,6 +133,35 @@ impl WorkerHandle {
     pub fn reset(&mut self) {
         self.clear_active_run();
         self.inner = None;
+    }
+
+    /// Replay persisted session history into the live worker before a prompt
+    /// (B2a resume).  Delegates to the inner [`rpc::worker::Worker`], which is
+    /// a no-op returning 0 in omp mode (there is no in-process engine context
+    /// to rebuild) and, in orbit mode, appends the user/assistant rows to the
+    /// engine's context — deduped per session id inside the engine, so the
+    /// daemon may safely call this on every prompt that carries a
+    /// `session_id` without doubling the history.
+    ///
+    /// The worker must be live first: callers invoke
+    /// [`Self::ensure_started`] before this.  A no-op `Ok(0)` on a handle
+    /// that was just `reset()` keeps the resume contract total.
+    pub fn resume_session(
+        &mut self,
+        session_id: &str,
+        messages: &[SessionMessage],
+    ) -> Result<(), Response> {
+        if self.inner.is_none() {
+            return Ok(());
+        }
+        let w = self.inner.as_mut().expect("inner checked");
+        match w.resume_session(session_id, messages) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(Response::err(
+                None,
+                ResponseError::new("worker_resume_failed", e.to_string()),
+            )),
+        }
     }
 
     /// Start the worker-side event pump once (R2 3.3): `rpc::Worker::
@@ -594,6 +631,29 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
             // prompt goes out.  The pump stamps it on every frame it pushes
             // while the slot holds it (sticky — see `set_active_run`).
             ctx.worker.set_active_run(run_id);
+            // B2a resume: replay the session's persisted history into the
+            // worker's live context before the prompt so a restarted daemon
+            // (or a respawned engine) does not start from a blank slate.
+            // Best-effort — a load or replay failure must not block the
+            // prompt (the turn still runs, it just misses the history).
+            // In orbit mode the engine dedupes per session id, so calling
+            // this on every prompt is safe; in omp mode it is `Ok(0)`.
+            if !session_id.is_empty() {
+                match ctx.sessions.load_messages(session_id, RESUME_CONTEXT_LIMIT) {
+                    Ok(msgs) => {
+                        if let Err(e) = ctx.worker.resume_session(session_id, &msgs) {
+                            eprintln!(
+                                "daemon: session resume failed for {session_id} (continuing without history): {e:?}"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "daemon: could not load session {session_id} for resume (continuing without history): {e}"
+                        );
+                    }
+                }
+            }
             let w = ctx.worker.inner.as_mut().expect("ensured");
             let resp = w.prompt(msg);
             let finished = crate::state::now_ms();
