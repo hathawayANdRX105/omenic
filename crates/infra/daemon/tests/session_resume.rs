@@ -236,7 +236,7 @@ fn restart_resumes_session_history_into_the_llm_request() {
     // shutdown (accept-loop join + lock release + listener cleanup) happens
     // explicitly so process 1's InstanceLock is guaranteed released before
     // process 2 binds the same socket — no race on the flock.
-    let mut daemon1 = {
+    let daemon1 = {
         let cfg = daemon_cfg(dir.path(), &mock);
         let mut daemon = Daemon::start(cfg).expect("daemon start (1)");
         let client = DaemonClient::connect_to(&socket);
@@ -272,7 +272,7 @@ fn restart_resumes_session_history_into_the_llm_request() {
     let bodies_before_restart = mock.received().len();
 
     // ---- Process 2: same socket + DB, the engine starts fresh.
-    let mut daemon2 = {
+    let daemon2 = {
         let cfg = daemon_cfg(dir.path(), &mock);
         let mut daemon = Daemon::start(cfg).expect("daemon start (2)");
 
