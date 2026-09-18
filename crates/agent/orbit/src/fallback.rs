@@ -15,14 +15,15 @@ use adaptor::{Context, Model, StopReason, StreamEvent, ToolDef, openai::RetryPol
 
 use crate::LlmBackend;
 
-/// One OpenAI-compatible LLM provider endpoint.
-#[derive(Debug, Clone, serde::Deserialize)]
+/// One OpenAI-compatible LLM provider endpoint. Constructed programmatically
+/// (the daemon maps `config::LlmFallbackConfig` onto this in
+/// `orbit_setup`); there is no serde path into it, so it derives only what
+/// the runtime needs.
+#[derive(Debug, Clone)]
 pub struct LlmProvider {
     pub api_key: String,
     pub model: String,
-    #[serde(default)]
     pub base_url: Option<String>,
-    #[serde(default)]
     pub max_tokens: Option<u32>,
 }
 

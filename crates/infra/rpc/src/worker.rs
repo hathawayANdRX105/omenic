@@ -489,14 +489,17 @@ impl OrbitEngine {
     /// context is a user/assistant text loop, so `System` and `Tool` rows
     /// are skipped.
     ///
-    /// Idempotent per session — the engine's context is rebuilt on every
-    /// (re)spawn, and the daemon calls this on *every* prompt that carries
-    /// a `session_id`, so re-applying the same session would double the
-    /// history each turn. The first call records [`Self::resumed_session`]
-    /// and returns the number of messages appended; a repeat of the same
-    /// session returns that same count without touching the context, and a
-    /// different session replaces the replay so a switched session is
-    /// restored as well.
+    /// Idempotent per session, and isolating across sessions — the engine's
+    /// context is rebuilt on every (re)spawn, and the daemon calls this on
+    /// *every* prompt that carries a `session_id`:
+    /// - same session as the last resume: append nothing (the history is
+    ///   already in the context), report the current context length.
+    /// - a *different* session: clear the context (drop the previous
+    ///   session's history — it would otherwise linger and cross-contaminate
+    ///   this session's LLM requests), then append this session's rows.
+    ///
+    /// Returns the context length *after* the call (`0` for an empty
+    /// `session_id`).
     fn resume_orbit_context(
         &mut self,
         session_id: &str,
@@ -505,35 +508,28 @@ impl OrbitEngine {
         if session_id.is_empty() {
             return 0;
         }
-        if self.resumed_session.as_deref() == Some(session_id) {
-            // Already replayed this session: report the count, append nothing.
-            // The context still holds the appended history.
-            return self
-                .ctx
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .messages
-                .len();
-        }
         let mut ctx = self.ctx.lock().unwrap_or_else(|e| e.into_inner());
-        let mut appended = 0usize;
-        for m in messages.iter() {
-            match m.role {
-                session::SessionRole::User => {
-                    ctx.messages
-                        .push(adaptor::Message::user_text(m.text.clone()));
-                    appended += 1;
+        if self.resumed_session.as_deref() != Some(session_id) {
+            // New or switched session: drop any previous session's history so
+            // the context only ever carries one session's context at a time,
+            // then append this session's rows.
+            ctx.messages.clear();
+            for m in messages.iter() {
+                match m.role {
+                    session::SessionRole::User => {
+                        ctx.messages
+                            .push(adaptor::Message::user_text(m.text.clone()));
+                    }
+                    session::SessionRole::Assistant => {
+                        ctx.messages
+                            .push(adaptor::Message::assistant_text(m.text.clone()));
+                    }
+                    session::SessionRole::System | session::SessionRole::Tool => {}
                 }
-                session::SessionRole::Assistant => {
-                    ctx.messages
-                        .push(adaptor::Message::assistant_text(m.text.clone()));
-                    appended += 1;
-                }
-                session::SessionRole::System | session::SessionRole::Tool => {}
             }
+            self.resumed_session = Some(session_id.to_string());
         }
-        self.resumed_session = Some(session_id.to_string());
-        appended
+        ctx.messages.len()
     }
 }
 
@@ -676,8 +672,10 @@ impl Worker {
     /// `System` / `Tool` rows are dropped: orbit context is a user/assistant
     /// text loop. The engine dedupes per session id: a repeated call for the
     /// same session (the daemon calls this on every prompt that carries one)
-    /// appends nothing new and just reports the count recorded on the first
-    /// call.
+    /// appends nothing new; a call for a *different* session clears the
+    /// previous session's history first so contexts never cross-contaminate.
+    /// The returned `usize` is the engine context's message count *after*
+    /// the call (`0` in omp mode).
     ///
     /// In omp mode (no engine) there is nothing to resume: `Ok(0)`.
     pub fn resume_session(
