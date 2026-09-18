@@ -1,10 +1,10 @@
 //! Exponential-backoff reconnect supervisor for MCP connections.
 //!
 //! `McpReconnect` is a *transparent retry layer*: it retries the same
-//! transport on transport-level failures (`Timeout` / `Transport`) with
-//! exponential backoff. It does **not** know how to re-establish a new
-//! connection (no re-spawn logic) — that wiring is the daemon's job (T3).
-//! The practical effect: a hung stdio child whose pipes have closed returns
+//! transport on transport-level failures (`Transport`) with exponential
+//! backoff. It does **not** know how to re-establish a new connection
+//! (no re-spawn logic) — that wiring is the daemon's job (T3). The
+//! practical effect: a hung stdio child whose pipes have closed returns
 //! `Transport("server closed stdout")` on every retry and the wrapper gives
 //! up after `max_attempts`, surfacing the last error.
 
@@ -62,8 +62,20 @@ impl McpReconnect {
     }
 
     /// True for errors worth a retry: the link is dead, not the request.
+    ///
+    /// `Timeout` is deliberately *not* retryable: the request already burned
+    /// its whole 30s budget, so 10 attempts would stretch one call to
+    /// ~5 minutes; and a stdio re-send of the same id risks the server
+    /// executing the request twice (the first attempt may still land after
+    /// the client gave up waiting). A dead link (`Transport`) fails fast and
+    /// identically on retry, so only that is worth the backoff.
+    ///
+    // ponytail: `notify` takes no abort signal, so a retry loop inside
+    // `notify` cannot be interrupted mid-backoff (the sleep is capped, not
+    // cancellable). Adding a signal parameter to `notify` is a public trait
+    // change — defer until a caller actually needs it.
     fn is_retryable(e: &McpError) -> bool {
-        matches!(e, McpError::Transport(_) | McpError::Timeout)
+        matches!(e, McpError::Transport(_))
     }
 }
 

@@ -128,6 +128,59 @@ fn reconnect_notify_retries_then_succeeds() {
     rc.notify("n").expect("notify succeeds after one retry");
 }
 
+/// Pin the retry classification: `Timeout` is NOT retried (the request
+/// already burned its 30s budget; a stdio re-send of the same id risks
+/// duplicate execution), while `Transport` IS. The inner transport
+/// returns `Timeout` on every call — the supervisor must surface it on
+/// the first attempt (no retries happen), not exhaust its budget.
+#[test]
+fn reconnect_does_not_retry_timeout() {
+    struct AlwaysTimeout {
+        next: AtomicU64,
+    }
+    impl McpTransport for AlwaysTimeout {
+        fn next_id(&self) -> u64 {
+            self.next.fetch_add(1, Ordering::Relaxed)
+        }
+        fn notify(&self, _line: &str) -> Result<(), McpError> {
+            Err(McpError::Timeout)
+        }
+        fn roundtrip(
+            &self,
+            _id: u64,
+            _line: &str,
+            _signal: &AtomicBool,
+        ) -> Result<String, McpError> {
+            Err(McpError::Timeout)
+        }
+    }
+    let inner = Arc::new(AlwaysTimeout {
+        next: AtomicU64::new(1),
+    });
+    let rc = McpReconnect::new(
+        inner,
+        ReconnectPolicy {
+            initial_delay_ms: 1,
+            max_delay_ms: 2,
+            max_attempts: 5,
+        },
+    );
+    let signal = AtomicBool::new(false);
+    // err: Timeout passes straight through instead of being retried 5×.
+    let err = rc
+        .roundtrip(1, "{}", &signal)
+        .expect_err("Timeout must not be retried");
+    assert!(
+        matches!(err, McpError::Timeout),
+        "Timeout must surface on the first attempt, got {err:?}"
+    );
+    let err = rc.notify("n").expect_err("Timeout must not be retried");
+    assert!(
+        matches!(err, McpError::Timeout),
+        "Timeout must surface on the first attempt, got {err:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // HttpTransport against a real TCP mock: HTTP status classification
 // ---------------------------------------------------------------------------
