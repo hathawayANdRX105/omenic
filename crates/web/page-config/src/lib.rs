@@ -190,17 +190,25 @@ fn ConfigForm(
     let label_class = "text-[13px] leading-5 font-medium text-label-2";
     let err_class = "text-[12px] leading-4 text-danger";
 
+    // A stale success banner above a now-invalid form (user kept editing
+    // after saving) misleads — hide it whenever validation fails. Pure
+    // render-side condition: no signal writes during render. Same treatment
+    // as McpServersPane.
+    let save_banner_visible = !matches!(save_status.read().as_ref(), Some(Ok(_))) || is_form_valid;
+
     rsx! {
         div { class: "px-6 py-6 flex flex-col gap-4",
             // 保存反馈
-            if let Some(res) = save_status.read().as_ref() {
-                match res {
-                    Ok(msg) => rsx! {
-                        div { class: "px-4 py-2.5 rounded-[10px] text-[13px] leading-5 bg-chip-success text-success-2", "{msg}" }
-                    },
-                    Err(err) => rsx! {
-                        div { class: "px-4 py-2.5 rounded-[10px] text-[13px] leading-5 bg-chip-danger text-danger", "{err}" }
-                    },
+            if save_banner_visible {
+                if let Some(res) = save_status.read().as_ref() {
+                    match res {
+                        Ok(msg) => rsx! {
+                            div { class: "px-4 py-2.5 rounded-[10px] text-[13px] leading-5 bg-chip-success text-success-2", "{msg}" }
+                        },
+                        Err(err) => rsx! {
+                            div { class: "px-4 py-2.5 rounded-[10px] text-[13px] leading-5 bg-chip-danger text-danger", "{err}" }
+                        },
+                    }
                 }
             }
             // 连接测试反馈
@@ -388,7 +396,11 @@ fn ConfigForm(
                     }
                 }
                 for (i, fallback) in fallback_list.iter().enumerate() {
-                    LlmFallbackCard { key: "{i}", index: i, fallback: fallback.clone(), fallbacks }
+                    // `{i}-{model}` key: deleting a middle row must not make
+                    // the rows above inherit the deleted row's component
+                    // state (`show_key`), while the `i` prefix keeps keys
+                    // unique while a duplicate model is mid-edit.
+                    LlmFallbackCard { key: "{i}-{fallback.model}", index: i, fallback: fallback.clone(), fallbacks }
                 }
                 if let Some(hint) = fallback_hint {
                     span { class: "{err_class}", "{hint}" }
@@ -492,17 +504,24 @@ fn McpServersPane(
 
     let err_class = "text-[12px] leading-4 text-danger";
 
+    // A stale success banner above a now-invalid form (user kept editing
+    // after saving) misleads — hide it whenever validation fails. Pure
+    // render-side condition: no signal writes during render.
+    let save_banner_visible = !matches!(save_status.read().as_ref(), Some(Ok(_))) || is_form_valid;
+
     rsx! {
         div { class: "px-6 py-6 flex flex-col gap-4",
             // 保存反馈
-            if let Some(res) = save_status.read().as_ref() {
-                match res {
-                    Ok(msg) => rsx! {
-                        div { class: "px-4 py-2.5 rounded-[10px] text-[13px] leading-5 bg-chip-success text-success-2", "{msg}" }
-                    },
-                    Err(err) => rsx! {
-                        div { class: "px-4 py-2.5 rounded-[10px] text-[13px] leading-5 bg-chip-danger text-danger", "{err}" }
-                    },
+            if save_banner_visible {
+                if let Some(res) = save_status.read().as_ref() {
+                    match res {
+                        Ok(msg) => rsx! {
+                            div { class: "px-4 py-2.5 rounded-[10px] text-[13px] leading-5 bg-chip-success text-success-2", "{msg}" }
+                        },
+                        Err(err) => rsx! {
+                            div { class: "px-4 py-2.5 rounded-[10px] text-[13px] leading-5 bg-chip-danger text-danger", "{err}" }
+                        },
+                    }
                 }
             }
 
@@ -529,7 +548,10 @@ fn McpServersPane(
                 }
             }
             for (i, server) in list.iter().enumerate() {
-                McpServerCard { key: "{i}", index: i, server: server.clone(), servers }
+                // `{i}-{name}` key: same rationale as the fallback cards —
+                // stable across middle-row deletes, unique while a duplicate
+                // name is mid-edit.
+                McpServerCard { key: "{i}-{server.name}", index: i, server: server.clone(), servers }
             }
 
             // 保存行
@@ -703,11 +725,12 @@ fn LlmFallbackCard(
     let summary = if fallback.base_url.trim().is_empty() {
         "继承主 provider 端点".to_string()
     } else {
-        format!(
-            "{} · {}",
-            fallback.base_url.trim(),
-            fallback.api_key.trim().is_empty()
-        )
+        let key_state = if fallback.api_key.trim().is_empty() {
+            "无 key（继承主 provider）"
+        } else {
+            "已设 key"
+        };
+        format!("{} · {}", fallback.base_url.trim(), key_state)
     };
     let card_class = "bg-layer-1 border border-b1 rounded-xl px-4 py-4 flex flex-col gap-3";
 
