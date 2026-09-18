@@ -224,12 +224,21 @@ fn restart_resumes_session_history_into_the_llm_request() {
     std::fs::write(dir.path().join("AGENTS.md"), "# bare\n").expect("AGENTS.md");
     let mock = MockOpenAi::start();
 
-    // ---- Process 1: create the session + history, run one turn, restart.
+    // Both "processes" share one socket path; the restart model is
+    // shutdown process 1's daemon explicitly, then start process 2 on the
+    // same socket + DB file.
     let socket = dir.path().join("daemon.sock");
 
+    // ---- Process 1: create the session + history, run one turn, restart.
+    //
+    // NOTE: `daemon.shutdown()` is called *inside* the block, before the
+    // binding goes out of scope. `Drop` for `Daemon` is documented, but
+    // shutdown (accept-loop join + lock release + listener cleanup) happens
+    // explicitly so process 1's InstanceLock is guaranteed released before
+    // process 2 binds the same socket — no race on the flock.
     let mut daemon1 = {
         let cfg = daemon_cfg(dir.path(), &mock);
-        let daemon = Daemon::start(cfg).expect("daemon start (1)");
+        let mut daemon = Daemon::start(cfg).expect("daemon start (1)");
         let client = DaemonClient::connect_to(&socket);
         let _ = client
             .session_create("s-b2a", "resume session")
@@ -248,11 +257,14 @@ fn restart_resumes_session_history_into_the_llm_request() {
         prompt_with_session(&client, "first prompt");
         let _ = drain_until_agent_end(&mut sub);
 
-        // Drop the client, shut down the daemon (process 1 dies).
+        // Drop the client, then shut down the daemon explicitly so the
+        // accept loop has joined and the InstanceLock is released before
+        // the block ends — no flock race with process 2.
         drop(client);
+        daemon.shutdown();
         daemon
     };
-    daemon1.shutdown();
+    drop(daemon1);
 
     // Snapshot: how many LLM requests have reached the mock so far.  This
     // is the "before restart" count; any request the second process makes
@@ -262,7 +274,7 @@ fn restart_resumes_session_history_into_the_llm_request() {
     // ---- Process 2: same socket + DB, the engine starts fresh.
     let mut daemon2 = {
         let cfg = daemon_cfg(dir.path(), &mock);
-        let daemon = Daemon::start(cfg).expect("daemon start (2)");
+        let mut daemon = Daemon::start(cfg).expect("daemon start (2)");
 
         let client = DaemonClient::connect_to(&socket);
         let mut sub = client.subscribe("worker").expect("subscribe");
@@ -282,9 +294,10 @@ fn restart_resumes_session_history_into_the_llm_request() {
         let _ = drain_until_agent_end(&mut sub);
 
         drop(client);
+        daemon.shutdown();
         daemon
     };
-    daemon2.shutdown();
+    drop(daemon2);
 
     // ---- Assert: the post-restart LLM request carries the persisted
     // history *in order* ahead of the fresh prompt.
