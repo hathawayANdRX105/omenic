@@ -332,6 +332,7 @@ fn stream_round_trip(
     let reader = BufReader::new(response.into_reader());
     let mut parser = SseParser::new();
     let mut stop_reason = StopReason::EndTurn;
+    let mut saw_finish = false;
 
     for line in reader.lines() {
         if signal.load(Ordering::Relaxed) {
@@ -367,11 +368,23 @@ fn stream_round_trip(
         }
         if let Some(reason) = out.stop_reason {
             stop_reason = reason;
+            saw_finish = true;
         }
     }
 
     for tc in parser.flush() {
         emit(&StreamEvent::ToolCall(tc));
+    }
+    if *emitted_text && !saw_finish {
+        // The socket closed after deltas leaked but before a `finish_reason`
+        // arrived: a truncated stream, not a clean end of turn. Surface it
+        // as an error so the round — and the waterfall above it — knows the
+        // turn never completed; a replay on another provider is still
+        // forbidden because content already leaked.
+        emit(&StreamEvent::Error(
+            "stream closed before finish_reason (partial response)".into(),
+        ));
+        return None;
     }
     emit(&StreamEvent::Done { stop_reason });
     None

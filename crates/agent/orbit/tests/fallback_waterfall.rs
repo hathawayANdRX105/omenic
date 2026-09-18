@@ -85,11 +85,16 @@ impl MockProvider {
                         let resp_head =
                             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n";
                         let _ = stream.write_all(resp_head.as_bytes());
+                        // One delta with no `finish_reason`, then a clean
+                        // close. The client sees the leaked delta and then a
+                        // normal end-of-stream *without* a finish marker —
+                        // `stream_round_trip` surfaces that as a terminal
+                        // `Error` (truncated response), which is exactly the
+                        // "content leaked, no switch" case the waterfall
+                        // must honor.
                         let delta = sse_delta("part");
                         let _ = stream.write_all(delta.as_bytes());
                         let _ = stream.flush();
-                        // Drop the socket mid-stream: the next read on the
-                        // client side fails, *after* the delta leaked.
                         return;
                     }
                     serve_clean(stream);
