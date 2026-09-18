@@ -21,6 +21,7 @@ fn cfg(dir: &std::path::Path, socket: &str, db: &std::path::Path) -> DaemonConfi
         cwd: dir.to_path_buf(),
         max_turns: 64,
         mcp_servers: Vec::new(),
+        llm_fallbacks: Vec::new(),
     }
 }
 

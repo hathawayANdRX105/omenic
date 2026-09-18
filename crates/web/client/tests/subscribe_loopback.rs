@@ -70,6 +70,7 @@ fn subscribe_worker_receives_and_translates_full_turn() {
         cwd: dir.path().to_path_buf(),
         max_turns: 64,
         mcp_servers: Vec::new(),
+        llm_fallbacks: Vec::new(),
     })
     .expect("daemon start");
 
