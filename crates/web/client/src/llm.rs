@@ -14,6 +14,33 @@ pub struct LlmRuntimeConfig {
     /// 设置页「MCP 服务器」表单的行数据。空 vec 表示表单没有服务器，
     /// 保存时完全不碰 `[mcp]`（不创建、不改写）。
     pub mcp_servers: Vec<McpServerForm>,
+    /// 设置页「Fallback Provider」表单的行数据（`[[llm.fallbacks]]`，
+    /// 主 provider 失败后按序切换）。空 vec 表示表单没有行，保存时
+    /// 完全不碰 `[llm].fallbacks`（不创建、不改写、不删除既有行）。
+    pub llm_fallbacks: Vec<LlmFallbackForm>,
+}
+
+/// 设置页单个 fallback LLM provider 的表单行（web 侧 DTO，不依赖 config
+/// crate）：与 `crates/infra/config` 的 `LlmFallbackConfig` 一一对应，但
+/// 统一成文本框友好的 `String`——空串表示「未设置」（保存时该键被清掉，
+/// 等价 config crate 的 `Option::None`）。
+///
+/// `model` 是必填的匹配键：保存按它定位既有 `[[llm.fallbacks]]` 表
+/// （同 [`McpServerForm`] 按 `name` 匹配的先例），model 为空的行保存中止。
+/// 空 `base_url` / `api_key` = 继承主 provider；空 `max_tokens` = 该
+/// fallback 请求不带 max_tokens。
+///
+/// `Default` 是「添加 Fallback Provider」按钮的空白行：全空串。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LlmFallbackForm {
+    /// fallback provider 的 base_url（API 基地址）；空串 = 继承主 provider
+    pub base_url: String,
+    /// fallback provider 的 api_key；空串 = 继承主 provider
+    pub api_key: String,
+    /// fallback provider 的 model（必填：空串的表单行不会保存）
+    pub model: String,
+    /// fallback provider 的 max_tokens 十进制文本；空串 = 该 provider 不带 max_tokens
+    pub max_tokens: String,
 }
 
 /// 设置页单个 MCP 服务器的表单行（web 侧 DTO，不依赖 config crate）：
@@ -58,6 +85,7 @@ impl LlmRuntimeConfig {
         let mut max_tokens = 4096;
         let mut data_dir = "./.oi".to_string();
         let mut mcp_servers = Vec::new();
+        let mut llm_fallbacks = Vec::new();
 
         // 1. Try reading config.toml
         for path in ["./.oi/config.toml", "../.oi/config.toml", "omenic.toml"] {
@@ -101,6 +129,20 @@ impl LlmRuntimeConfig {
                             }
                         }
                     }
+
+                    // [[llm.fallbacks]] → 表单行（主 provider 失败后按序切换
+                    // 的 fallback provider）。没有该段时保持空 vec。
+                    if let Some(fallbacks) = value
+                        .get("llm")
+                        .and_then(|l| l.get("fallbacks"))
+                        .and_then(toml::Value::as_array)
+                    {
+                        for fallback in fallbacks {
+                            if let Some(form) = llm_fallback_form_from_value(fallback) {
+                                llm_fallbacks.push(form);
+                            }
+                        }
+                    }
                 }
                 break;
             }
@@ -127,6 +169,7 @@ impl LlmRuntimeConfig {
             max_tokens,
             data_dir,
             mcp_servers,
+            llm_fallbacks,
         }
     }
 
@@ -192,8 +235,10 @@ impl LlmRuntimeConfig {
 
     /// 全量写一份只含管理键的新配置（文件不存在或原文件不可解析时使用）。
     /// `omp_path` 由调用方决定：`None` 用默认 `"omp"`，`Some(v)` 沿用原值。
+    /// 空表单不写 `[mcp]` 段（与增量路径一致）；`[llm].fallbacks` 非空时照
+    /// `[[llm.fallbacks]]` 表数组写出，空串字段不写键。
     fn write_full_config(&self, target_path: &Path, omp_path: Option<&str>) -> Result<(), String> {
-        let toml_content = format!(
+        let mut toml_content = format!(
             "# omenic configuration\n\
              omp_path = \"{}\"\n\
              data_dir = \"{}\"\n\
@@ -211,6 +256,32 @@ impl LlmRuntimeConfig {
             self.model,
             self.max_tokens
         );
+
+        for fallback in &self.llm_fallbacks {
+            let model = fallback.model.trim();
+            if model.is_empty() {
+                return Err("[llm].fallbacks 存在缺少 model 的 provider，已中止保存".to_string());
+            }
+            toml_content.push_str(&format!("\n[[llm.fallbacks]]\nmodel = \"{}\"\n", model));
+            let base_url = fallback.base_url.trim();
+            if !base_url.is_empty() {
+                toml_content.push_str(&format!("base_url = \"{}\"\n", base_url));
+            }
+            let api_key = fallback.api_key.trim();
+            if !api_key.is_empty() {
+                toml_content.push_str(&format!("api_key = \"{}\"\n", api_key));
+            }
+            let max_tokens = fallback.max_tokens.trim();
+            if !max_tokens.is_empty() {
+                let tokens: u32 = max_tokens.parse().map_err(|_| {
+                    format!(
+                        "[llm].fallbacks 的 max_tokens {:?} 不是有效的正整数",
+                        max_tokens
+                    )
+                })?;
+                toml_content.push_str(&format!("max_tokens = {}\n", tokens));
+            }
+        }
 
         std::fs::write(target_path, toml_content)
             .map_err(|e| format!("写入配置文件 {} 失败: {}", target_path.display(), e))
@@ -243,6 +314,7 @@ impl LlmRuntimeConfig {
         // TOML 整数是 i64；u32 → i64 无损。
         set_item(llm, "max_tokens", toml_edit::value(self.max_tokens as i64));
 
+        write_llm_fallbacks(llm, &self.llm_fallbacks)?;
         write_mcp_servers(root, &self.mcp_servers)
     }
 
@@ -345,6 +417,92 @@ fn set_item(table: &mut toml_edit::Table, key: &str, item: toml_edit::Item) {
     } else {
         table.insert(key, item);
     }
+}
+
+/// 把表单的 fallback provider 行写进 `[llm].fallbacks` 表数组（`[[llm.fallbacks]]`，
+/// G8-B 语义的 MCP 先例照搬，匹配键换成 `model`）：
+///
+/// - 空表单**完全不碰** `[llm].fallbacks`——不创建该数组，既有的行、注释、
+///   排版原样保留；
+/// - 表单里的每一行按 `model` 匹配既有表：命中就只替换管理键
+///   （base_url/api_key/model/max_tokens），未知键及其注释逐字保留；
+///   未命中才追加新表；
+/// - 文件里有、表单里没有的 fallback 一律不动——表单是追加/按 model 编辑，
+///   绝不整体重写（删卡不等于删配置）。
+fn write_llm_fallbacks(
+    llm: &mut toml_edit::Table,
+    forms: &[LlmFallbackForm],
+) -> Result<(), String> {
+    if forms.is_empty() {
+        return Ok(());
+    }
+
+    if !llm.contains_key("fallbacks") {
+        llm.insert(
+            "fallbacks",
+            toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()),
+        );
+    }
+    let fallbacks = llm
+        .get_mut("fallbacks")
+        .and_then(toml_edit::Item::as_array_of_tables_mut)
+        .ok_or_else(|| {
+            "[llm].fallbacks 已存在但不是 [[llm.fallbacks]] 表数组，无法增量更新".to_string()
+        })?;
+
+    for form in forms {
+        let model = form.model.trim();
+        if model.is_empty() {
+            // model 是匹配键：没有它既无法定位旧表也无法命名新表，
+            // 与 [mcp] 的「缺少 name 中止保存」同语义。
+            return Err("[llm].fallbacks 存在缺少 model 的 provider，已中止保存".to_string());
+        }
+        let existing = fallbacks
+            .iter()
+            .position(|t| t.get("model").and_then(toml_edit::Item::as_str) == Some(model));
+        match existing {
+            Some(idx) => {
+                // 匹配键本身不重写（保住 model 上的注释与排版），只动管理键。
+                let table = fallbacks
+                    .get_mut(idx)
+                    .expect("position 刚返回的索引必然存在");
+                update_fallback_managed_keys(table, form)?;
+            }
+            None => {
+                let mut table = toml_edit::Table::new();
+                table.insert("model", toml_edit::value(model));
+                update_fallback_managed_keys(&mut table, form)?;
+                fallbacks.push(table);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 把一个 fallback 表单行的管理键写进单个 `[[llm.fallbacks]]` 表：
+/// 空串字段清键（等价 config crate 的 `Option::None`，不留下 `= ""`），
+/// 非空写值；`max_tokens` 解析 u32 后写 i64（TOML 整数是 i64，u32 → i64 无损）。
+fn update_fallback_managed_keys(
+    table: &mut toml_edit::Table,
+    form: &LlmFallbackForm,
+) -> Result<(), String> {
+    set_or_clear_str(table, "base_url", &form.base_url);
+    set_or_clear_str(table, "api_key", &form.api_key);
+
+    let tokens_text = form.max_tokens.trim();
+    if tokens_text.is_empty() {
+        table.remove("max_tokens");
+    } else {
+        let tokens: u32 = tokens_text.parse().map_err(|_| {
+            format!(
+                "[llm].fallbacks provider {:?} 的 max_tokens 不是有效的正整数: {:?}",
+                form.model.trim(),
+                tokens_text
+            )
+        })?;
+        set_item(table, "max_tokens", toml_edit::value(tokens as i64));
+    }
+    Ok(())
 }
 
 /// 把表单的 MCP 服务器行写进文档的 `[[mcp.servers]]` 表数组（G8-B 语义的
@@ -525,6 +683,22 @@ fn toml_str_field(server: &toml::Value, key: &str) -> String {
         .and_then(toml::Value::as_str)
         .unwrap_or_default()
         .to_string()
+}
+
+/// 把一个 `[[llm.fallbacks]]` 的 toml 值转成表单行；缺 `model` 的条目返回
+/// `None`（不进表单——model 是保存路径的匹配键，同 mcp 的 name）。
+fn llm_fallback_form_from_value(fallback: &toml::Value) -> Option<LlmFallbackForm> {
+    let model = fallback.get("model")?.as_str()?;
+    Some(LlmFallbackForm {
+        base_url: toml_str_field(fallback, "base_url"),
+        api_key: toml_str_field(fallback, "api_key"),
+        model: model.to_string(),
+        max_tokens: fallback
+            .get("max_tokens")
+            .and_then(toml::Value::as_integer)
+            .map(|n| n.to_string())
+            .unwrap_or_default(),
+    })
 }
 
 /// 从一份**不可解析**的原始配置里抢救 `omp_path` 的值（若有）。

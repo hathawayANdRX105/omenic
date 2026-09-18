@@ -35,6 +35,9 @@ const RESUME_USER: &str = "第一轮";
 const RESUME_ASSISTANT: &str = "第一轮回复";
 /// A second user prompt that arrives *after* the history has been appended.
 const FRESH_PROMPT: &str = "第二轮";
+/// A third prompt on the same daemon + session: the dedupe gate must keep
+/// the request's `messages` array from re-appending the persisted history.
+const THIRD_PROMPT: &str = "第三轮";
 
 const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -269,6 +272,15 @@ fn restart_resumes_session_history_into_the_llm_request() {
         // into `ctx.messages` before the prompt goes out.
         prompt_with_session(&client, FRESH_PROMPT);
         let _ = drain_until_agent_end(&mut sub);
+
+        // Third prompt, same daemon + same session: the engine's
+        // `resumed_session` gate must block a second replay of the
+        // persisted history.  The request still carries FRESH_PROMPT in
+        // its live context, but the persisted rows reach the LLM body
+        // exactly once.
+        prompt_with_session(&client, THIRD_PROMPT);
+        let _ = drain_until_agent_end(&mut sub);
+
         drop(client);
         daemon
     };
@@ -314,6 +326,35 @@ fn restart_resumes_session_history_into_the_llm_request() {
     assert!(
         user_hist[0] < ass_hist[0],
         "the persisted user row must precede the persisted assistant row (seq order)"
+    );
+
+    // ---- Assert dedupe: the third request on the *same* engine must
+    // re-send the live context (which already holds the replayed rows)
+    // without appending the persisted history a second time.
+    let dedupe_msgs: Vec<Vec<String>> = post_restart.iter().map(|b| body_messages(b)).collect();
+    assert!(
+        dedupe_msgs.len() >= 2,
+        "the restart+third-prompt flow must reach the mock twice, saw {}",
+        dedupe_msgs.len(),
+    );
+    let second_req = &dedupe_msgs[dedupe_msgs.len() - 1];
+    let third_hits: Vec<&String> = second_req
+        .iter()
+        .filter(|m| m.contains(THIRD_PROMPT))
+        .collect();
+    assert!(
+        !third_hits.is_empty(),
+        "the third prompt must reach the LLM body, saw: {second_req:?}"
+    );
+    let res_user: Vec<&String> = second_req
+        .iter()
+        .filter(|m| m.contains(RESUME_USER))
+        .collect();
+    assert_eq!(
+        res_user.len(),
+        1,
+        "in the third request the resumed user row must appear exactly once \
+         (the engine's resumed_session gate blocked a second replay), saw: {second_req:?}"
     );
 }
 
