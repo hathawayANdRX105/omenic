@@ -14,12 +14,36 @@
 //! exists to provide.
 
 use daemon::{Daemon, DaemonClient};
-use serde_json::json;
+use serde_json::{Value, json};
 use tempfile::tempdir;
 
-use common::{MockOpenAi, daemon_cfg, drain_events, one_text_turn, prompt, tool_turn};
+use common::{MockOpenAi, daemon_cfg, drain_events, one_text_turn, prompt};
 
 mod common;
+
+/// One assistant round that issues a single tool call and finishes the turn.
+/// The arguments are sent as a JSON *string*, matching what a real model
+/// streams: the loop parses them per-call.
+fn tool_turn(name: &str, args: &Value) -> String {
+    let call = json!({
+        "choices": [{
+            "delta": {
+                "role": "assistant",
+                "tool_calls": [{
+                    "index": 0,
+                    "id": "call_b3",
+                    "type": "function",
+                    "function": { "name": name, "arguments": args.to_string() }
+                }]
+            },
+            "finish_reason": Value::Null
+        }]
+    });
+    let finish = json!({
+        "choices": [{ "delta": {}, "finish_reason": "tool_calls" }]
+    });
+    format!("data: {}\ndata: {}\n\n", call, finish)
+}
 
 const JOB_MARKER: &str = "B3-JOB-SMOKE";
 const TERM_MARKER: &str = "B3-TERM-SMOKE";

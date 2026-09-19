@@ -145,30 +145,6 @@ pub fn one_text_turn(delta: &str) -> String {
     sse_text(delta, true)
 }
 
-/// One assistant round that issues a single tool call and finishes the turn.
-/// The arguments are sent as a JSON *string*, matching what a real model
-/// streams: the loop parses them per-call.
-pub fn tool_turn(name: &str, args: &Value) -> String {
-    let call = json!({
-        "choices": [{
-            "delta": {
-                "role": "assistant",
-                "tool_calls": [{
-                    "index": 0,
-                    "id": "call_b3",
-                    "type": "function",
-                    "function": { "name": name, "arguments": args.to_string() }
-                }]
-            },
-            "finish_reason": Value::Null
-        }]
-    });
-    let finish = json!({
-        "choices": [{ "delta": {}, "finish_reason": "tool_calls" }]
-    });
-    format!("data: {}\ndata: {}\n\n", call, finish)
-}
-
 /// A daemon pointed at `mock` with a temp socket and DB in `dir`.
 pub fn daemon_cfg(dir: &std::path::Path, mock: &MockOpenAi, max_turns: usize) -> DaemonConfig {
     DaemonConfig {
