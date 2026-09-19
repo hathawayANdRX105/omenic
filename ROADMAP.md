@@ -118,6 +118,36 @@
 | **G7 谱系 + 并发归属** ✅（#376，2026-09-16） | ① `sessions.parent_id` 列 + 幂等迁移（`apply_parent_id_column`），`SessionSummary`/`Session` 双层贯通；② 侧栏 `group_sessions` 树渲染（孤儿当根 / visited 防环 / 深度封顶不丢节点）+ 行内新建子会话钮；③ `EventFrame.run_id`（serde-optional）+ sticky active-run 槽 + `RunFilteredSubscription` 按 run 过滤；④ 真二进制 smoke 10/10（含手工造 pre-G7 旧库的升级路径）；⑤ 逻辑层测试 14 例（lineage 5 + run_routing 2 + group_sessions 7） |
 | **G8 会话生命周期正确性** ✅（#377/#378，2026-09-16/17） | ① 三处「单测绿、生产失效」缺陷：orbit run 在 prompt ack 时就被关闭（`in_flight_runs` 恒 0、三态状态机失效）→ 改由事件泵在 `AgentEnd` 收尾，泵在 prompt 前启动（不订阅也能关闭）；`save_to_file` 整文件重写抹掉 `[mcp]`/`[memory]`/`[daemon]` → `toml_edit` 增量写；spill 文件名恒 `oi-output-0.txt` 互相覆盖 → `oi-output-{pid}-{seq}.txt`；② #377 gate merge --dry-run ALL PASS（119 checks）；③ PR CI 三连绿 + 合并后 main CI `35134561055` SUCCESS；④ 真二进制 smoke 7/7（ack 后 run open、泵在失败的 turn 上仍正确关闭）；⑤ 终审 ocr 34 条裁定 7 真阳性全部已修（含 G8-B 自己代码里的 1 个 high）；⑥ 补验 PR #378（2026-09-17）以 `a91caee` 为 base 重走主控规范流程：codegraph 覆盖三条修复链、3 子代理 audit、CRG 0 affected flows、ocr 20 条全 pre-existing、23 个 G8 单测绿、真 daemon+oi smoke 通过、gate 105 checks ALL PASS |
 
+## 已交付的 dsh 对照批次 B1–B3
+
+2026-09-18 把 dsh 对照 backlog 划成三批，2026-09-19 全部合入 main。验收口径一致：CI test job 全绿 + CRG `detect-changes` 0 affected flow + ocr 逐条裁定 + 真 daemon 二进制 smoke。
+
+| 批次 | PR | squash | 交付 | 余量 |
+|---|---|---|---|---|
+| **B1** MCP 多传输 + 重连 | #381 | — | stdio + Streamable HTTP 双传输、重连监督（指数退避 + 重试上限熔断 unregister）、per-server timeout/cwd、`fail_on_startup_error`、daemon `orbit_setup` 注入；page-config 表单 + `settings.yaml` 契约锚点 | tool-level filter、server-level env 注入 |
+| **B2a** session resume | #382 | — | daemon 重启后 worker 按 `session_id` 回放最近 50 条 user/assistant 历史进 `ctx.messages`（dedupe + 切换清旧 ctx） | checkpoint flush 策略；回放跳过 System/Tool 行 |
+| **B2b** LLM 路由 | #382 | — | `orbit::WaterfallLlm`（`[[llm.fallbacks]]` 按序切换 + per-provider `RetryPolicy` 退避 + 已泄 delta/toolcall 不切 provider）+ web Fallback 表单 | token-meter 不做（C8）；DeepSeek/PiAi 官方 adapter 未接 |
+| **B3-PR1** jobs + terminal | #385 | `bc24a7e` | `crates/harness/jobs`（`JobRegistry` + `LocalJobRegistry`，`std::thread` + Condvar）+ `crates/harness/terminal`（portable-pty，每会话 reader 线程排空 master，`read` 是 drain 语义）；10 把模型工具经 `OrbitConfig.session_tools` 接入；web 词表 + `chat.yaml` 锚点 | `onJobDone` 回调、pwsh 后端、dsh jobs 其余工具 |
+| **B3-PR2** subagent Phase 4 | #387 | `a15171f` | ACP 协议层（JSON-RPC over NDJSON）+ `AcpProvider` 出进程后端（两阶梯 dispose：EOF→SIGKILL，幂等 + exit watcher）+ `RunDisposer` 外化销毁 + runtime run 表 + `subagent_control` 的 `interrupt` + `[[subagent.providers]]` 配置；`OrbitSetup.providers` seam **clean cutover 删除**（装配上移 daemon） | `send_message`/`report`、continuable/background、session-seeding、SIGTERM 中间层、permission option kind、Codex/Claude Code/SDK 三后端 |
+| **补审** B1/B2 合并后审查收尾 | #383 | `b20ebc0` | 补齐 ocr 层（36 文件 37 条）+ code-reviewer 逐文件复审 `c009f20..334e5ab` + ROADMAP 同步 | — |
+
+> **B1/B2 的审查时序**：合并时只走了 CRG + code-reviewer，ocr 层缺失；由 #383 在合并后补齐。B3 起严格执行合并前 CRG + ocr 双层。
+
+### 审查实际拦下的真实缺陷（三批合计）
+
+CI 与 ocr/code-reviewer 在合并前拦下的，不是测试瑕疵：
+
+1. **terminal kill 不彻底（#385，`64a6bad`）**：pty 只要还有进程持有 slave 就不关闭，bash 死时不杀子进程 → 被孤立的 `sleep` 攥着 slave，reader 永久停在 `read(master)`，会话"活着"直到孤儿到期。杀 shell 进程组也不够（job control 给每个作业单独 pgrp），真正共享的是**会话 id**（`portable_pty` 在 exec 前调了 `setsid`）。实测 SIGTERM 根本不杀 pty 上的 bash、SIGHUP 杀 shell 但 pty 永不 EOF，只有 SIGKILL 既 reap 又让 pty 在 ~0.4ms 内 EOF。
+2. **持锁 notify 丢失唤醒（#385）**：原先 drop guard 后再 notify，而 `read` 进入 `wait_timeout` 时已释放互斥锁，落在窗口内的通知无人接收 → reader 空等满整个 timeout。改为持锁 notify。同批还把 `.lock().unwrap()` 全换成 `lock_recover`（对齐 mcp/daemon 的 poison 容忍惯例）。
+3. **pty 回显不可靠（#385）**：`write("echo hi")` 后读端有两份 `hi`（回显 + 真输出），"数出现次数"会因回显跨 read 到达而误判、调用方在命令跑完前就返回。正解是让 shell 拼哨兵字面量（`__DONE_<token>__`），已写进 terminal crate 文档与测试 helper。
+4. **`TerminalRegistry::list()` 自死锁（#385）**：持 `sessions` 锁再调 `status()` → `get()` 重入同一把 `std::sync::Mutex`（本地跑测试挂起 >60s 才发现）；抽 `summarize(&TerminalId, &Session)` 直取 `Arc` 修掉。
+5. **ACP dispose 双重 reap（#387，`5215bd8`）**：Unix 上 `try_wait` 已 reap，尾部 `child.wait()` 撞 ECHILD；reap 成功时 take handle，尾部只 wait 它真正持有的。
+6. **dispose / worker 启动赛跑（#387，`cc5c78a` + `e8ecec2` + `e3bd903`）**：worker 还没 initialize 完 disposer 就拆 stdin → broken pipe。三重门：worker 启动门与 disposer 读同一 abort flag、门拆之后传输失败报 Aborted 而非 Completed。`AcpDisposer` 在 `wait_for_exit` 里重入自己的 Mutex guard 导致全测试死锁，是同一处的第二波（poll 先算 `exited`、guard 出作用域再 take）。
+7. **serde enum 字段命名（#387，`242f45b` + `e8ecec2`）**：enum 级 `rename_all` 只重命名变体名、不覆盖 struct-variant 字段 → `PermissionOutcome::Allow` 的 `option_id` 以 snake_case 上线；`InitializeRequest/Response`、`PromptResponse` 同缺变体级 `rename_all`。本地 `cargo check` 抓不到运行时 serde 错误，靠 CI 暴露。
+8. **`write_full_config` 抹段与 fallback 收尾（#383，`6661a70` + `ae618a0`）**：整文件重写丢 `[[mcp.servers]]` 导致首次保存丢整张表；fallback 成功后仍以 `TurnEnd{Error}` 结束且 `tool_calls` 被丢弃，改用终态 + `leaked_content` 判据。
+9. **daemon seam e2e 的 mock 截断请求体（#385，`1197399`）**：从只含 header 的 buffer 算 body 偏移 → 塌成 0，9401 字节请求只记录 8538，模型从未拿到完整工具表 → 无 `tool_calls` → 循环直接 `agent_end`。既有测试缺陷，非新代码引入。
+10. **config cwd 竞态（#385，`6e722f0`）**：`Config::load` 与 `set_current_dir` 都是进程级，三用例在 cargo 并行线程下互抢；加 `cwd_lock()` 串行化（poison 容忍）。
+
 ## 边界决定（稳定，勿翻案）
 
 **明确不做**（dsh 有但 omenic 不复刻）：`hooks`（外部 agent hook 协议）、`skill`（SKILL.md 加载）、`guard`（timeout-policy/repeat-reminder）、`lsp`、`sandbox`、`subprocess`、`e2b`、react `ui-*`（40+ 包）、以及 dsh 的 Node ESM loader 层（`vendor/loader`，C6 只对齐 `vendor/cordis`）。
@@ -154,7 +184,7 @@
 
 | 域 | 偏差说明 |
 |---|---|
-| run 收尾时机 / 配置写回抹段 / spill 碰撞 | G8（#377/#378）已修。详见 PROGRESS.md G8 节。 |
+| run 收尾时机 / 配置写回抹段 / spill 碰撞 | G8（#377/#378）已修。详见上表 G8 行。 |
 | 压缩配对方向 | omenic `cut += 1` 前缩 vs dsh `keepFromIdx -= 1` 后扩，omenic 丢弃更多原文；阈值固定字符而非按窗口比例。 |
 
 ### 边界决定（稳定，勿翻案）
