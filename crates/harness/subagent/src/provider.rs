@@ -91,6 +91,11 @@ impl SubagentRun {
     pub fn dispose(&self) {
         self.disposer.dispose();
     }
+    /// The run's teardown handle, for registries that track live runs and
+    /// must dispose them from the outside (`SubagentRuntimeService::interrupt`).
+    pub fn disposer(&self) -> Arc<dyn RunDisposer> {
+        Arc::clone(&self.disposer)
+    }
 }
 
 /// One registered transport for running child agents.
