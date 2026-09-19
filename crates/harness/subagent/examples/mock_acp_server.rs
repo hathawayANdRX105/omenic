@@ -178,9 +178,12 @@ fn main() {
             (Some(id), None) => {
                 // A reply to our permission request.
                 if id.as_u64() == Some(PERMISSION_ID) {
+                    // The client replies with { "result": { "outcome":
+                    // { "type": "allow"|"deny", ... } } }.
                     let outcome = value
                         .get("result")
-                        .and_then(|result| result.get("type"))
+                        .and_then(|result| result.get("outcome"))
+                        .and_then(|outcome| outcome.get("type"))
                         .and_then(Value::as_str)
                         .map(str::to_string);
                     let _ = decision_tx.send(Decision::Permission(outcome));

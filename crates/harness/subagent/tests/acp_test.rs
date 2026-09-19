@@ -171,7 +171,9 @@ impl FakeAgent {
                     }),
                 );
             }
-            (Some(id), Some(REQUEST_PERMISSION)) => {
+            // The client's permission reply carries the request id and a
+            // `result` but no `method`, so it cannot be matched on method.
+            (Some(id), _) if value.get("result").is_some() => {
                 self.permission_answers.lock().unwrap().push(json!({
                     "id": id,
                     "result": value.get("result").cloned().unwrap_or(Value::Null),

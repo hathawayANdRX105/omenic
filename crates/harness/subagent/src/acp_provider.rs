@@ -158,6 +158,7 @@ impl SubagentProvider for AcpProvider {
         let client = Arc::new(AcpClient::new(stdin.clone(), stdout, handlers.clone()));
 
         let disposer = Arc::new(AcpDisposer {
+            signal: request.signal.clone(),
             client: client.clone(),
             stdin: stdin.clone(),
             child: child.clone(),
@@ -404,6 +405,10 @@ impl AcpHandlers for AcpHandlersImpl {
 /// docs. Idempotent — the worker calls it to roll back a failed startup, the
 /// caller calls it to interrupt, and only one of them runs the ladder.
 struct AcpDisposer {
+    /// The request's abort flag: flipping it makes the worker's startup gate
+    /// (which checks the same flag) short-circuit instead of writing to a
+    /// stdin this disposer has already taken. Same semantics as `ForkDisposer`.
+    signal: std::sync::Arc<std::sync::atomic::AtomicBool>,
     client: Arc<AcpClient<SharedStdin, ChildStdout>>,
     stdin: SharedStdin,
     child: Arc<Mutex<Option<Child>>>,
@@ -419,6 +424,11 @@ impl RunDisposer for AcpDisposer {
         if self.disposed.swap(true, Ordering::Relaxed) {
             return;
         }
+
+        // The worker's startup gate reads this flag; set it first so a
+        // dispose that won the startup race cannot race the worker's first
+        // write.
+        self.signal.store(true, Ordering::Relaxed);
 
         // Cooperative: a live agent may settle the turn itself on cancel.
         if let Some(session_id) = self.session_id.lock().unwrap().clone() {
