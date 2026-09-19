@@ -36,6 +36,17 @@ use std::sync::{Arc, Condvar, Mutex};
 
 use serde::{Deserialize, Serialize};
 
+/// Lock a shared-state mutex, recovering from poisoning.
+///
+/// A panic elsewhere must not turn the whole registry into a landmine: the
+/// mutated state here is a table of job records, and the code that touches it
+/// only reads and writes that table. `crates/agent/mcp` and
+/// `crates/infra/daemon` take the same view, so a poisoned lock degrades to
+/// "keep going" rather than "panic on every later call".
+fn state_guard<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 // -----------------------------------------------------------------------------
 // Identifiers
 // -----------------------------------------------------------------------------
@@ -381,7 +392,7 @@ impl LocalJobRegistry {
     /// that ignores cancellation would otherwise stall shutdown, and process
     /// exit reclaims the threads regardless.
     pub fn shutdown(&self) {
-        let mut state = self.shared.state.lock().unwrap();
+        let mut state = state_guard(&self.shared.state);
         state.shutdown = true;
         for rec in state.jobs.values_mut() {
             if rec.state == JobState::Running {
@@ -409,7 +420,7 @@ impl JobRegistry for LocalJobRegistry {
         let control = JobControl::default();
         let id;
         {
-            let mut state = self.shared.state.lock().unwrap();
+            let mut state = state_guard(&self.shared.state);
             if state.shutdown {
                 return Err(JobError::Refused("registry is shut down".into()));
             }
@@ -463,7 +474,7 @@ impl JobRegistry for LocalJobRegistry {
                         },
                     ),
                 };
-                let mut state = shared.state.lock().unwrap();
+                let mut state = state_guard(&shared.state);
                 Shared::finish_locked(
                     &mut state,
                     &shared.changed,
@@ -475,7 +486,7 @@ impl JobRegistry for LocalJobRegistry {
             .expect("job thread spawn");
 
         {
-            let mut state = self.shared.state.lock().unwrap();
+            let mut state = state_guard(&self.shared.state);
             match state.jobs.get_mut(&id) {
                 // Still running: keep the handle.
                 Some(rec) if rec.state == JobState::Running => rec.join = Some(handle),
@@ -488,7 +499,7 @@ impl JobRegistry for LocalJobRegistry {
     }
 
     fn list(&self) -> Vec<JobSummary> {
-        let state = self.shared.state.lock().unwrap();
+        let state = state_guard(&self.shared.state);
         let mut rows: Vec<JobSummary> =
             state.jobs.iter().map(|(id, rec)| rec.summary(id)).collect();
         // Newest first. `started_ms` ties break on the id, which carries the
@@ -503,7 +514,7 @@ impl JobRegistry for LocalJobRegistry {
     }
 
     fn status(&self, id: &JobId) -> Result<JobSummary, JobError> {
-        let state = self.shared.state.lock().unwrap();
+        let state = state_guard(&self.shared.state);
         state
             .jobs
             .get(id)
@@ -512,7 +523,7 @@ impl JobRegistry for LocalJobRegistry {
     }
 
     fn kill(&self, id: &JobId) -> Result<JobState, JobError> {
-        let mut state = self.shared.state.lock().unwrap();
+        let mut state = state_guard(&self.shared.state);
         let rec = state
             .jobs
             .get_mut(id)
@@ -528,7 +539,7 @@ impl JobRegistry for LocalJobRegistry {
     }
 
     fn wait(&self, id: &JobId, timeout_ms: Option<u64>) -> Result<JobOutput, JobError> {
-        let mut state = self.shared.state.lock().unwrap();
+        let mut state = state_guard(&self.shared.state);
         if !state.jobs.contains_key(id) {
             return Err(JobError::Unknown(id.clone()));
         }
@@ -542,14 +553,24 @@ impl JobRegistry for LocalJobRegistry {
                 return Ok(rec.output.clone());
             }
             let Some(deadline) = deadline else {
-                state = self.shared.changed.wait(state).unwrap();
+                // A poisoned wait mutex means some other holder panicked while
+                // the record was mid-update. The table is still readable, so
+                // recover the guard and re-check the state rather than
+                // propagating a panic into the caller's loop.
+                state = match self.shared.changed.wait(state) {
+                    Ok(next) => next,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
                 continue;
             };
             let remaining = deadline.saturating_sub(state.epoch.elapsed());
             if remaining.is_zero() {
                 return Err(JobError::StillRunning(id.clone()));
             }
-            let (next, timeout) = self.shared.changed.wait_timeout(state, remaining).unwrap();
+            let (next, timeout) = match self.shared.changed.wait_timeout(state, remaining) {
+                Ok(pair) => pair,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             state = next;
             if timeout.timed_out() {
                 // The job may have finished in the window between the timeout
@@ -563,7 +584,7 @@ impl JobRegistry for LocalJobRegistry {
     }
 
     fn remove(&self, id: &JobId) -> bool {
-        let mut state = self.shared.state.lock().unwrap();
+        let mut state = state_guard(&self.shared.state);
         match state.jobs.get(id) {
             Some(rec) if rec.state.is_terminal() => {
                 state.jobs.remove(id);

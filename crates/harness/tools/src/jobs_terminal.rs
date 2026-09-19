@@ -246,7 +246,10 @@ fn run_command(
 
     let status = loop {
         if control.is_cancelled() {
-            kill_tree(pid);
+            // Best-effort: the group may already be gone. `kill_tree` logs a
+            // real failure; the run still reports `Killed` because the control
+            // flag is what the registry records.
+            let _ = kill_tree(pid);
             let _ = child.wait();
             break None;
         }
@@ -257,8 +260,17 @@ fn run_command(
         }
     };
 
-    let stdout = String::from_utf8_lossy(&out_reader.join().unwrap_or_default()).into_owned();
-    let stderr = String::from_utf8_lossy(&err_reader.join().unwrap_or_default()).into_owned();
+    // A reader thread can only fail by panicking, and a silent empty string
+    // is indistinguishable from "the command printed nothing" — so say which
+    // pipe was lost instead of quietly returning half a result.
+    let drain = |h: std::thread::JoinHandle<Vec<u8>>, which: &str| -> String {
+        match h.join() {
+            Ok(buf) => String::from_utf8_lossy(&buf).into_owned(),
+            Err(_) => format!("[omenic] the {which} reader thread panicked; output lost"),
+        }
+    };
+    let stdout = drain(out_reader, "stdout");
+    let stderr = drain(err_reader, "stderr");
 
     // A cancelled run reports the output captured before the kill; the registry
     // records the `Killed` state from the control flag, not from here.
@@ -270,23 +282,38 @@ fn run_command(
 }
 
 /// Kill a child and everything in its process group.
+///
+/// Returns whether the group signal was delivered. A failure is worth
+/// surfacing rather than discarding: `ESRCH` just means the group already
+/// exited, but `EPERM` means it is still alive and a cancelled job would be
+/// reported as killed while its descendants keep running.
 #[cfg(unix)]
-fn kill_tree(pid: u32) {
+fn kill_tree(pid: u32) -> bool {
     // Negative pid targets the group; SIGKILL because the registry's `kill` is
     // an explicit "stop now" and a shell ignoring SIGTERM would keep the group
     // alive.
     unsafe extern "C" {
         fn kill(pid: i32, sig: i32) -> i32;
     }
-    unsafe {
-        kill(-(pid as i32), 9);
+    let rc = unsafe { kill(-(pid as i32), 9) };
+    if rc == 0 {
+        return true;
     }
+    let err = std::io::Error::last_os_error();
+    // `ESRCH` is the ordinary case: the group finished between `try_wait` and
+    // here. Anything else means the group outlived the kill.
+    let gone = err.raw_os_error() == Some(3);
+    if !gone {
+        eprintln!("omenic: kill(-{pid}, SIGKILL) failed: {err}");
+    }
+    gone
 }
 
 #[cfg(not(unix))]
-fn kill_tree(pid: u32) {
+fn kill_tree(pid: u32) -> bool {
     // No process groups to reach for on this platform; the pid is unused.
     let _ = pid;
+    false
 }
 
 // -----------------------------------------------------------------------------

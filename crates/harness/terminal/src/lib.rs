@@ -60,6 +60,18 @@ use std::sync::{Arc, Condvar, Mutex};
 
 use portable_pty::{Child, ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
+/// Lock a shared-state mutex, recovering from poisoning.
+///
+/// A panic elsewhere must not turn the whole registry into a landmine. What
+/// these mutexes guard is a session table, a byte buffer and a writer handle —
+/// all of which stay readable after a poison, and `read`/`write` sit on the
+/// model's tool path, where a panic costs the whole turn. `crates/agent/mcp`
+/// and `crates/infra/daemon` take the same view, so a poisoned lock degrades to
+/// "keep going" rather than "panic on every later call".
+fn lock_recover<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub use portable_pty::ExitStatus;
 
 // -----------------------------------------------------------------------------
@@ -127,6 +139,16 @@ impl From<std::io::Error> for TerminalError {
 pub const DEFAULT_COLS: u16 = 80;
 pub const DEFAULT_ROWS: u16 = 24;
 
+/// Signal number used for teardown, spelled out rather than taken from a
+/// binding crate: the value is fixed by POSIX and identical on every unix this
+/// crate can build for, so a dependency would buy nothing.
+///
+/// `SIGKILL` is chosen over the catchable `SIGTERM`/`SIGHUP` for the measured
+/// reasons given on [`TerminalRegistry::kill`] and
+/// [`TerminalRegistry::signal_session`].
+#[cfg(unix)]
+const SIGKILL: i32 = 9;
+
 /// How much output one session may buffer before the oldest bytes are dropped.
 ///
 /// A reader thread on a chatty program (`yes`, a build log) would otherwise
@@ -186,14 +208,22 @@ struct SessionMeta {
 impl Session {
     /// Append reader-thread output, dropping the oldest bytes on overflow.
     fn push_output(inner: &SessionInner, chunk: &[u8]) {
-        let mut buf = inner.buffer.lock().unwrap();
+        let mut buf = lock_recover(&inner.buffer);
         buf.bytes.extend_from_slice(chunk);
         if buf.bytes.len() > MAX_BUFFER_BYTES {
             let overflow = buf.bytes.len() - MAX_BUFFER_BYTES;
             buf.bytes.drain(..overflow);
             buf.dropped += overflow as u64;
         }
-        drop(buf);
+        // Notify while the buffer is still locked. The alternative — dropping
+        // the guard and then signalling — has a lost-wakeup window: `read`
+        // checks `bytes.is_empty()` and releases the mutex on its way into
+        // `wait_timeout`, so a notify delivered in that gap reaches nobody and
+        // the reader sleeps out its full timeout with output already sitting in
+        // the buffer. Holding the lock across the notify removes the window,
+        // because no waiter can be between "check" and "sleep" while we hold
+        // it. Waking a waiter under a lock is safe: it is moved to runnable and
+        // simply blocks again on the mutex until this guard drops.
         inner.appended.notify_all();
     }
 }
@@ -271,6 +301,62 @@ impl TerminalRegistry {
     /// `terminal_create` loop is a resource leak. Terminal sessions are also
     /// far more expensive than jobs, so the ceiling is lower.
     pub const MAX_SESSIONS: usize = 16;
+
+    /// Signal every process in the session's terminal session, excluding
+    /// ourselves.
+    ///
+    /// Signalling the shell's process group is **not** enough, and this is the
+    /// trap that makes a killed session look immortal. The pty stays open for
+    /// as long as *any* process holds its slave end, and `bash` leaves its
+    /// children running when it dies. Worse, job control puts each foreground
+    /// and background job in a **process group of its own** — a running
+    /// `sleep 30` sits in a different group from the shell — so a signal to the
+    /// shell's group never reaches it. The orphan then keeps the slave open and
+    /// the reader thread stays parked in `read(master)` until that job's own
+    /// deadline, which is why a session could report itself alive for thirty
+    /// seconds after `kill` returned.
+    ///
+    /// Everything the shell spawns inherits its *session* id, and the pty hands
+    /// the shell a session of its own (`portable_pty` calls `setsid` before
+    /// `exec`), so the session id names exactly the process set we want. The
+    /// signal is addressed to the process group whose id equals that session
+    /// id; by POSIX that group always exists and is the one containing the
+    /// session leader, so the shell is included. Processes that never joined
+    /// the session's groups — the caller, for one — are left alone.
+    #[cfg(unix)]
+    fn signal_session(pid: u32, signal: i32) -> bool {
+        unsafe extern "C" {
+            fn getsid(pid: i32) -> i32;
+            fn kill(pid: i32, sig: i32) -> i32;
+        }
+        // `getsid` is fallible in principle (a bogus pid gives EPERM/ESRCH),
+        // and a failed call returns -1. Never signal group -1: it means "every
+        // process this user may signal", which would take out the harness
+        // itself.
+        let sid = unsafe { getsid(pid as i32) };
+        if sid <= 0 {
+            return false;
+        }
+        let rc = unsafe { kill(-sid, signal) };
+        if rc == 0 {
+            return true;
+        }
+        let err = std::io::Error::last_os_error();
+        // ESRCH means the session is already gone, which is the outcome the
+        // caller wanted. Anything else (EPERM) means processes may still be
+        // running, and the caller deserves to know the signal did not land.
+        let gone = err.raw_os_error() == Some(3);
+        if !gone {
+            eprintln!("omenic: kill(-{sid}, {signal}) failed: {err}");
+        }
+        gone
+    }
+
+    #[cfg(not(unix))]
+    fn signal_session(pid: u32, signal: i32) -> bool {
+        let _ = (pid, signal);
+        false
+    }
 
     pub fn new() -> Self {
         TerminalRegistry {
@@ -352,6 +438,7 @@ impl TerminalRegistry {
                         Err(_) => break,
                     }
                 }
+                let _guard = lock_recover(&reader_inner.buffer);
                 reader_inner.eof.store(true, Ordering::Relaxed);
                 reader_inner.appended.notify_all();
             })
@@ -359,7 +446,7 @@ impl TerminalRegistry {
 
         let id;
         {
-            let mut sessions = self.sessions.lock().unwrap();
+            let mut sessions = lock_recover(&self.sessions);
             let cap = self.max_sessions.load(Ordering::Relaxed) as usize;
             if sessions.len() >= cap {
                 return Err(TerminalError::Refused(format!(
@@ -411,7 +498,7 @@ impl TerminalRegistry {
         if session.inner.eof.load(Ordering::Relaxed) {
             return Err(TerminalError::Exited(id.clone()));
         }
-        let mut writer = session.writer.lock().unwrap();
+        let mut writer = lock_recover(&session.writer);
         writer.write_all(data.as_bytes())?;
         writer.flush()?;
         Ok(())
@@ -433,19 +520,27 @@ impl TerminalRegistry {
 
         if let Some(ms) = timeout_ms {
             let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
-            let mut buf = inner.buffer.lock().unwrap();
+            let mut buf = lock_recover(&inner.buffer);
             while buf.bytes.is_empty() && !inner.eof.load(Ordering::Relaxed) {
                 let remaining = deadline.saturating_duration_since(std::time::Instant::now());
                 if remaining.is_zero() {
                     break;
                 }
-                let (next, _) = inner.appended.wait_timeout(buf, remaining).unwrap();
+                // A poisoned wait mutex means another holder panicked while
+                // the buffer was mid-update. The buffer is still readable, so
+                // recover the guard and re-check rather than panicking here:
+                // `read` is on the model's tool path, and a panic there costs
+                // the whole turn.
+                let (next, _) = match inner.appended.wait_timeout(buf, remaining) {
+                    Ok(pair) => pair,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
                 buf = next;
             }
         }
 
         let (bytes, dropped) = {
-            let mut buf = inner.buffer.lock().unwrap();
+            let mut buf = lock_recover(&inner.buffer);
             let bytes = std::mem::take(&mut buf.bytes);
             let dropped = std::mem::replace(&mut buf.dropped, 0);
             (bytes, dropped)
@@ -461,7 +556,7 @@ impl TerminalRegistry {
     /// process group, so a full-screen program re-layouts.
     pub fn resize(&self, id: &TerminalId, cols: u16, rows: u16) -> Result<(), TerminalError> {
         let session = self.get(id)?;
-        let master = session.master.lock().unwrap();
+        let master = lock_recover(&session.master);
         master.resize(PtySize {
             rows,
             cols,
@@ -476,9 +571,38 @@ impl TerminalRegistry {
     /// The record is kept so a later `read` can still drain the output the
     /// process produced on its way out. [`close`](Self::close) is what removes
     /// it.
+    ///
+    /// The signal goes to the whole terminal session rather than to the shell's
+    /// pid, so jobs the shell started go with it and the pty reaches EOF
+    /// promptly instead of waiting on an orphan (see
+    /// [`signal_session`](Self::signal_session)). It is `SIGKILL` rather than
+    /// the gentler `SIGTERM` for a measured reason: a `bash` on a pty does not
+    /// die on `SIGTERM` at all (it ignores it, and the session outlives the
+    /// call), and it dies on `SIGHUP` while leaving the pty open because the
+    /// foreground job it orphaned still holds the slave. Only a signal that
+    /// cannot be caught and that the kernel also delivers to the foreground
+    /// process group actually ends the session.
     pub fn kill(&self, id: &TerminalId) -> Result<(), TerminalError> {
         let session = self.get(id)?;
-        let mut killer = session.killer.lock().unwrap();
+        Self::signal(&session, SIGKILL)
+    }
+
+    /// Deliver `signal` to the session's process set, falling back to the pty's
+    /// own killer when no pid is available.
+    fn signal(session: &Session, signal: i32) -> Result<(), TerminalError> {
+        let pid = {
+            let child = lock_recover(&session.child);
+            child.process_id()
+        };
+        if let Some(pid) = pid
+            && Self::signal_session(pid, signal)
+        {
+            return Ok(());
+        }
+        // The pid route is unavailable (no pid, or the session was already
+        // gone). portable_pty's killer signals the single pid; it is a weaker
+        // guarantee than the session-wide signal, but it is what remains.
+        let mut killer = lock_recover(&session.killer);
         killer.kill().map_err(TerminalError::from)
     }
 
@@ -488,13 +612,10 @@ impl TerminalRegistry {
         // Signal the reader to stop before killing, so it does not spend its
         // last moments appending output nobody will read.
         session.inner.closed.store(true, Ordering::Relaxed);
-        {
-            let mut killer = session.killer.lock().unwrap();
-            // A session whose shell already exited reports an error from
-            // `kill` (ESRCH); that is success for `close`'s purposes.
-            let _ = killer.kill();
-        }
-        self.sessions.lock().unwrap().remove(id);
+        // A session whose shell already exited reports an error from the kill
+        // (ESRCH); that is success for `close`'s purposes.
+        let _ = Self::signal(&session, SIGKILL);
+        lock_recover(&self.sessions).remove(id);
         Ok(())
     }
 
@@ -512,7 +633,7 @@ impl TerminalRegistry {
     /// the table) would deadlock. This takes the `Arc` directly.
     fn summarize(id: &TerminalId, session: &Session) -> TerminalSummary {
         let exit_code = {
-            let mut child = session.child.lock().unwrap();
+            let mut child = lock_recover(&session.child);
             child.try_wait().ok().flatten().map(|s| s.exit_code())
         };
         TerminalSummary {
@@ -531,7 +652,7 @@ impl TerminalRegistry {
     /// Ordered by id's numeric suffix (creation order) rather than by hash,
     /// so repeated listings are stable.
     pub fn list(&self) -> Vec<TerminalSummary> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = lock_recover(&self.sessions);
         let mut ids: Vec<TerminalId> = sessions.keys().cloned().collect();
         ids.sort_by_key(seq_of);
         ids.iter()
@@ -543,7 +664,7 @@ impl TerminalRegistry {
 
     /// Number of live sessions. Test helper.
     pub fn len(&self) -> usize {
-        self.sessions.lock().unwrap().len()
+        lock_recover(&self.sessions).len()
     }
 
     pub fn is_empty(&self) -> bool {
