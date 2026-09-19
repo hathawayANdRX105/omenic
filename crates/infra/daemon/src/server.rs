@@ -347,6 +347,77 @@ impl Daemon {
                 subagent_max_turns,
             )),
         );
+        // Out-of-process ACP providers (`[[subagent.providers]]`) land here,
+        // not in the worker: the service and every provider are daemon-start
+        // state, so the daemon assembles them and the `subagent` /
+        // `subagent_control` tools below resolve providers from the same
+        // registry. Config validation already rejects an empty name and the
+        // reserved `fork` name, so a duplicate entry here merely overwrites
+        // the earlier one (HashMap semantics) and no entry can shadow the
+        // built-in.
+        for p in &cfg.subagent_providers {
+            let mut spec = omenic_harness_subagent::AcpProviderSpec::new(
+                // ponytail: `AcpProviderSpec` carries one command string that
+                // `build_command` whitespace-splits (no shell, no quoting), so
+                // an arg containing whitespace gets split wrong. Supporting
+                // such args means giving the spec a `Vec<String>` argv and
+                // dropping the split — deliberately not done: ACP flags are
+                // bare tokens in practice. Upgrade: add `args: Vec<String>`
+                // to `AcpProviderSpec`, take it verbatim in `build_command`.
+                if p.args.is_empty() {
+                    p.command.clone()
+                } else {
+                    format!("{} {}", p.command, p.args.join(" "))
+                },
+            );
+            spec.cwd = p.cwd.clone().map(std::path::PathBuf::from);
+            spec.env = p.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            spec.permission = match p.permission {
+                config::SubagentPermission::Allow => omenic_harness_subagent::AcpPermission::Allow,
+                config::SubagentPermission::Reject => {
+                    omenic_harness_subagent::AcpPermission::Reject
+                }
+            };
+            // eof_grace is the post-stdin-EOF quiesce window, kill_grace the
+            // post-SIGKILL reap window (see `AcpProviderSpec`); both config
+            // knobs are `Option` where `None` keeps the spec's own default.
+            if let Some(ms) = p.dispose_eof_grace_ms {
+                spec.eof_grace = Duration::from_millis(ms);
+            }
+            if let Some(ms) = p.dispose_grace_ms {
+                spec.kill_grace = Duration::from_millis(ms);
+            }
+            subagents.register(
+                p.name.as_str(),
+                std::sync::Arc::new(omenic_harness_subagent::AcpProvider::new(spec)),
+            );
+        }
+        // The tool the model calls when it wants a subagent defaults to the
+        // first configured out-of-process provider, falling back to `fork`
+        // when the user configured none.
+        let default_provider = cfg
+            .subagent_providers
+            .first()
+            .map(|p| p.name.as_str())
+            .unwrap_or("fork");
+        // Registered into the harness catalog rather than `session_tools`:
+        // both subagent tools implement the harness `Tool` trait, and the
+        // catalog path already shims harness → orbit `tools::Tool` (rpc's
+        // `HarnessTool`, which also wires the engine's abort flag into the
+        // `AbortSignal` the tools take — the piece an interrupt rides on).
+        catalog.register(std::sync::Arc::new(
+            omenic_harness_subagent::tool_subagent::SubagentTool::new(
+                "subagent".into(),
+                default_provider.into(),
+                std::sync::Arc::clone(&subagents),
+            ),
+        ));
+        catalog.register(std::sync::Arc::new(
+            omenic_harness_subagent::tool_subagent_control::SubagentControlTool::new(
+                "subagent_control".into(),
+                std::sync::Arc::clone(&subagents),
+            ),
+        ));
         // B1/T3 — MCP bring-up: spawn every configured server exactly once
         // per daemon start and hand their tools to the engine. Default
         // policy is best-effort: a server that fails to start/handshake
@@ -375,13 +446,6 @@ impl Daemon {
                 mcp_tools,
                 session_tools,
             },
-            // Seam intent: the daemon registers the in-process fork provider
-            // above; `providers` carries the (name, tool allow-list) intent
-            // forward for Phase 4 out-of-process providers.
-            providers: vec![(
-                "fork".into(),
-                FORK_SUBAGENT_TOOLS.iter().map(|s| s.to_string()).collect(),
-            )],
         })
     }
 
