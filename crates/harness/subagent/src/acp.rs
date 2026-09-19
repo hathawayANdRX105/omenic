@@ -102,6 +102,7 @@ pub struct PromptRequest {
 
 /// Body of the `session/prompt` response.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PromptResponse {
     pub stop_reason: Option<StopReason>,
 }
@@ -112,6 +113,7 @@ pub struct ClientCapabilities {}
 
 /// Body of `initialize`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InitializeRequest {
     pub protocol_version: String,
     pub client_capabilities: ClientCapabilities,
@@ -135,6 +137,7 @@ impl Default for InitializeRequest {
 /// Body of the `initialize` response. Agent capabilities stay raw: agents
 /// differ widely in what they advertise and we only forward them.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InitializeResponse {
     pub protocol_version: String,
     #[serde(default)]
