@@ -530,6 +530,10 @@ mod tests {
     struct FakeAgent {
         requests: Mutex<Vec<Value>>,
         permission_answers: Mutex<Vec<Value>>,
+        /// Reply to `initialize` with an error instead of a result.
+        fail_initialize: std::sync::atomic::AtomicBool,
+        /// Record `session/new` but never answer it.
+        silent_new_session: std::sync::atomic::AtomicBool,
     }
 
     impl FakeAgent {
@@ -548,6 +552,17 @@ mod tests {
             match (id, value.get("method").and_then(Value::as_str)) {
                 (Some(id), Some(METHOD_INITIALIZE)) => {
                     self.requests.lock().unwrap().push(value.clone());
+                    if self.fail_initialize.load(Ordering::Relaxed) {
+                        self.send(
+                            tx,
+                            &json!({
+                                "jsonrpc": JSONRPC,
+                                "id": id,
+                                "error": { "code": -32000, "message": "agent refused" }
+                            }),
+                        );
+                        return;
+                    }
                     self.send(
                         tx,
                         &json!({
@@ -563,6 +578,9 @@ mod tests {
                 }
                 (Some(id), Some(METHOD_SESSION_NEW)) => {
                     self.requests.lock().unwrap().push(value.clone());
+                    if self.silent_new_session.load(Ordering::Relaxed) {
+                        return;
+                    }
                     self.send(
                         tx,
                         &json!({
@@ -626,6 +644,8 @@ mod tests {
         let agent = Arc::new(FakeAgent {
             requests: Mutex::new(Vec::new()),
             permission_answers: Mutex::new(Vec::new()),
+            fail_initialize: std::sync::atomic::AtomicBool::new(false),
+            silent_new_session: std::sync::atomic::AtomicBool::new(false),
         });
         let handlers = Arc::new(TestHandlers {
             chunks: Mutex::new(Vec::new()),
@@ -816,10 +836,16 @@ mod tests {
     #[test]
     fn close_fails_in_flight_request_with_channel_closed() {
         let (client, agent, _handlers, _tx) = harness("allow");
-        // An agent that never replies to session/new.
-        let _ = agent;
+        // The agent accepts session/new but never answers it.
+        agent.silent_new_session.store(true, Ordering::Relaxed);
+        let client = Arc::new(client);
+        let pending = {
+            let client = client.clone();
+            thread::spawn(move || client.new_session("/tmp"))
+        };
+        settle(); // the request is now in flight with no reply coming
         client.close().unwrap();
-        match client.new_session("/tmp") {
+        match pending.join().unwrap() {
             Err(AcpError::ChannelClosed) => {}
             other => panic!("expected ChannelClosed, got {other:?}"),
         }
@@ -827,16 +853,8 @@ mod tests {
 
     #[test]
     fn agent_error_response_becomes_protocol_error() {
-        let (client, _agent, _handlers, agent_tx) = harness("allow");
-        // Reply to whatever initialize asks first: id 1.
-        agent_tx
-            .send(
-                format!(
-                    "{{\"jsonrpc\":\"{JSONRPC}\",\"id\":1,\"error\":{{\"code\":-32000,\"message\":\"nope\"}}}}\n"
-                )
-                .into_bytes(),
-            )
-            .unwrap();
+        let (client, agent, _handlers, _tx) = harness("allow");
+        agent.fail_initialize.store(true, Ordering::Relaxed);
         match client.initialize() {
             Err(AcpError::Protocol(_, _)) => {}
             other => panic!("expected Protocol error, got {other:?}"),
