@@ -385,6 +385,23 @@ impl Config {
             });
         }
 
+        // llm fallbacks: every field is `Option` and inherits from the
+        // primary provider, so an entry that overrides *nothing* replays the
+        // same provider verbatim — a no-op retry rather than a fallback.
+        // Warn (never reject): inheritance is legal, this only spots the
+        // entry that forgot to say what it changes.
+        for (idx, f) in self.llm_fallbacks.iter().enumerate() {
+            if f.base_url.is_none()
+                && f.api_key.is_none()
+                && f.model.is_none()
+                && f.max_tokens.is_none()
+            {
+                eprintln!(
+                    "warn: [[llm.fallbacks]] entry #{idx} overrides nothing; it retries the primary provider unchanged"
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -541,7 +558,21 @@ impl TomlConfig {
             base.llm_fallbacks = self.llm.fallbacks;
         }
         if !self.mcp.servers.is_empty() {
-            base.mcp_servers = self.mcp.servers;
+            // Normalize the transport fields here, at the merge boundary.
+            // `validate` trims only to *test* a value, so a padded
+            // `command = " npx "` would pass there and still be handed to
+            // `Command::new` with its spaces — which then fails to spawn.
+            base.mcp_servers = self
+                .mcp
+                .servers
+                .into_iter()
+                .map(|mut s| {
+                    s.name = s.name.trim().to_string();
+                    s.command = s.command.map(|c| c.trim().to_string());
+                    s.url = s.url.map(|u| u.trim().to_string());
+                    s
+                })
+                .collect();
         }
         if let Some(v) = self.memory.enabled {
             base.memory_enabled = v;

@@ -59,9 +59,7 @@ fn both_url_and_command_still_loads() {
     );
 }
 
-/// A `url` without an `http(s)://` scheme loads fine: `validate` only warns
-/// (on stderr) that the connection will likely fail — the scheme check is
-/// advisory, not a rejection.
+/// A `url` that does not start with `http(s)://` still loads.
 #[test]
 fn bad_url_scheme_still_loads() {
     let cfg = load_with_mcp_server("name = \"bad-scheme\"\nurl = \"127.0.0.1:9100/mcp\"\n")
@@ -70,5 +68,22 @@ fn bad_url_scheme_still_loads() {
     assert_eq!(
         cfg.mcp_servers[0].url.as_deref(),
         Some("127.0.0.1:9100/mcp")
+    );
+}
+
+/// Padded transport fields are trimmed while the config is merged.
+///
+/// `validate` trims only to *test* a value, so without normalizing at the
+/// merge boundary a `command = " npx "` passes validation and is then handed
+/// to `Command::new` with its spaces — which cannot spawn.
+#[test]
+fn padded_transport_fields_are_trimmed() {
+    let cfg = load_with_mcp_server("name = \" padded \"\ncommand = \" npx \"\n")
+        .expect("padded command config must load");
+    assert_eq!(cfg.mcp_servers[0].name, "padded", "name is trimmed");
+    assert_eq!(
+        cfg.mcp_servers[0].command.as_deref(),
+        Some("npx"),
+        "command is trimmed at the merge boundary"
     );
 }
