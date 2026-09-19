@@ -210,6 +210,7 @@ pub struct RequestPermissionRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum PermissionOutcome {
+    #[serde(rename_all = "camelCase")]
     Allow {
         option_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]

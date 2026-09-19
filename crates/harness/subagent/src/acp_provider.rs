@@ -279,12 +279,25 @@ fn run_turn(
         return SubagentResult::Aborted;
     }
 
+    // A dispose that lost the startup race can still win between this gate
+    // and the first write: it takes the stdin under us. Any transport
+    // failure from here to the prompt is teardown, not a child defect.
     if let Err(error) = client.initialize() {
-        return rollback("initialize failed", error, disposer);
+        return if disposer.disposed.load(Ordering::Relaxed) {
+            SubagentResult::Aborted
+        } else {
+            rollback("initialize failed", error, disposer)
+        };
     }
     let session = match client.new_session(&cwd_string(spec)) {
         Ok(session) => session,
-        Err(error) => return rollback("session/new failed", error, disposer),
+        Err(error) => {
+            return if disposer.disposed.load(Ordering::Relaxed) {
+                SubagentResult::Aborted
+            } else {
+                rollback("session/new failed", error, disposer)
+            };
+        }
     };
     if session.session_id.is_empty() {
         return rollback(
