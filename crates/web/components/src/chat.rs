@@ -24,9 +24,13 @@ pub fn markdown_to_html(input: &str) -> String {
 }
 
 /// 工具类型的 chip 配色（dsh 状态色 chip：900 底 + 400 字）。
+///
+/// `job` / `terminal` 复用 brand 家族：它们和 `bash` 一样是"跑命令"，
+/// 换成另一种强调色会让同一类操作在气泡上显得互不相干。三者靠 chip 上的
+/// kind 字符串（`job` / `terminal` / `bash`，见下方渲染处）区分，不靠颜色。
 fn kind_chip(kind: &str) -> &'static str {
     match kind {
-        "bash" => "bg-chip-brand text-brand-300",
+        "bash" | "job" | "terminal" => "bg-chip-brand text-brand-300",
         "edit" | "write" => "bg-chip-success text-success-2",
         "read" | "grep" | "glob" => "bg-chip-warn text-warn-2",
         "delete" => "bg-chip-danger text-danger",
