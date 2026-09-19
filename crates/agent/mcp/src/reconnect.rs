@@ -70,6 +70,11 @@ impl McpReconnect {
     /// the client gave up waiting). A dead link (`Transport`) fails fast and
     /// identically on retry, so only that is worth the backoff.
     ///
+    /// Scope: this makes the `Timeout` *variant* non-retryable. It does not
+    /// remove the retry budget from HTTP calls — the http transport maps its
+    /// own timeouts to `Transport` (see `http::HttpTransport::post`), so a
+    /// stalled HTTP request still retries through this supervisor.
+    ///
     // ponytail: `notify` takes no abort signal, so a retry loop inside
     // `notify` cannot be interrupted mid-backoff (the sleep is capped, not
     // cancellable). Adding a signal parameter to `notify` is a public trait
