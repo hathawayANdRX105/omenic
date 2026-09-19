@@ -166,7 +166,7 @@ fn dispose_aborts_running_subagent() {
     let run = provider.start(request);
     // Worker is now blocked inside stream_cb. dispose flips the signal
     // while the worker is still inside run_subagent.
-    run.dispose(&signal);
+    run.dispose();
     // Release the worker so it can observe the signal and return.
     gate.store(true, std::sync::atomic::Ordering::Relaxed);
     let result = run.result();

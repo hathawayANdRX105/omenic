@@ -20,7 +20,8 @@ pub use acp::{
 };
 pub use fork::ForkProvider;
 pub use provider::{
-    SubagentCapabilities, SubagentProvider, SubagentResult, SubagentRun, SubagentStartRequest,
+    RunDisposer, SubagentCapabilities, SubagentProvider, SubagentResult, SubagentRun,
+    SubagentStartRequest,
 };
 pub use runtime::{SubagentRuntime, SubagentRuntimeService};
 pub use tool_subagent::ToolSubagentPlugin;

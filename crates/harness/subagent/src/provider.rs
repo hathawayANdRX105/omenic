@@ -41,24 +41,40 @@ pub enum SubagentResult {
     Aborted,
 }
 
+/// Side-channel for tearing a run down outside its worker thread.
+///
+/// For in-process backends the implementation flips an abort flag the worker
+/// polls; for out-of-process backends it owns the child's lifetime (close its
+/// stdin, wait, kill). `dispose` MUST be idempotent — the worker thread calls
+/// it to roll back a failed startup, and the caller calls it to interrupt.
+pub trait RunDisposer: Send + Sync {
+    fn dispose(&self);
+}
+
 /// A running subagent handle.
 ///
 /// Usable from synchronous code: spawn a thread, send the terminal
 /// [`SubagentResult`] through an `mpsc` channel, and block the caller on
-/// `recv()`. Call [`SubagentRun::dispose`] to set the abort signal the worker
-/// thread polls between turns.
+/// `recv()`. Call [`SubagentRun::dispose`] to tear the run down: the worker's
+/// [`RunDisposer`] decides what that means for its child.
 pub struct SubagentRun {
     rx: std::sync::mpsc::Receiver<SubagentResult>,
     _join: std::thread::JoinHandle<()>,
+    disposer: std::sync::Arc<dyn RunDisposer>,
 }
 
 impl SubagentRun {
-    /// Construct a run from its receiver and worker handle.
+    /// Construct a run from its receiver, worker handle and disposer.
     pub fn new(
         rx: std::sync::mpsc::Receiver<SubagentResult>,
         _join: std::thread::JoinHandle<()>,
+        disposer: std::sync::Arc<dyn RunDisposer>,
     ) -> Self {
-        Self { rx, _join }
+        Self {
+            rx,
+            _join,
+            disposer,
+        }
     }
 
     /// Block until the worker thread sends its terminal [`SubagentResult`].
@@ -71,13 +87,9 @@ impl SubagentRun {
         })
     }
 
-    /// Signal the worker thread to abort.
-    ///
-    /// Idempotent. `signal` is the same [`std::sync::atomic::AtomicBool`]
-    /// passed into [`SubagentStartRequest`]; the worker polls it at the top of
-    /// each turn and after each `run_agent_streaming` call.
-    pub fn dispose(&self, signal: &std::sync::atomic::AtomicBool) {
-        signal.store(true, std::sync::atomic::Ordering::Relaxed);
+    /// Tear the run down. Idempotent, safe to call from any thread.
+    pub fn dispose(&self) {
+        self.disposer.dispose();
     }
 }
 

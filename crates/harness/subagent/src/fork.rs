@@ -56,7 +56,7 @@ impl SubagentProvider for ForkProvider {
         let tools = self.tools.clone();
         let backend = self.backend.clone();
         let model = self.model.clone();
-        let signal = request.signal;
+        let signal = request.signal.clone();
         let prompt = request.prompt;
         let max_turns = self.max_turns;
         let (tx, rx) = mpsc::channel();
@@ -82,6 +82,24 @@ impl SubagentProvider for ForkProvider {
             let _ = tx.send(result);
         });
 
-        crate::provider::SubagentRun::new(rx, join)
+        crate::provider::SubagentRun::new(
+            rx,
+            join,
+            std::sync::Arc::new(ForkDisposer {
+                signal: request.signal,
+            }),
+        )
+    }
+}
+
+/// In-process disposer: the worker polls `signal` between turns.
+struct ForkDisposer {
+    signal: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl crate::provider::RunDisposer for ForkDisposer {
+    fn dispose(&self) {
+        self.signal
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
