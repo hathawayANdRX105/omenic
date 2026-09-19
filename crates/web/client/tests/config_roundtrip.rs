@@ -670,6 +670,53 @@ fn mcp_section_written_only_when_form_has_servers() {
     assert!(server.get("cwd").is_none(), "空 cwd 不应写出");
 }
 
+/// 首次保存（文件本不存在 → 走全量写）也必须带上 `[[mcp.servers]]`。
+///
+/// 全量写原先只拼 `[llm]` 与 `[[llm.fallbacks]]` 就落盘，而 `mcp_servers`
+/// 非空时增量路径才会写表：于是新机器上的第一次保存会静默丢掉整张服务器
+/// 表，直到第二次保存（文件已存在、走增量）才重新出现。
+#[test]
+fn full_write_persists_mcp_servers_on_first_save() {
+    let sb = Sandbox::new();
+
+    let cfg = LlmRuntimeConfig {
+        base_url: "http://127.0.0.1:3183".to_string(),
+        api_key: "sk-c".to_string(),
+        model: "m".to_string(),
+        max_tokens: 128,
+        data_dir: "./.oi".to_string(),
+        mcp_servers: vec![McpServerForm {
+            name: "fetch".to_string(),
+            command: String::new(),
+            url: "http://127.0.0.1:9100/mcp".to_string(),
+            args: String::new(),
+            cwd: String::new(),
+            tool_call_timeout_ms: "1500".to_string(),
+            fail_on_startup_error: true,
+        }],
+        llm_fallbacks: Vec::new(),
+    };
+    // 目标文件不存在 → write_full_config 分支。
+    assert!(
+        !sb.path().join(".oi/config.toml").exists(),
+        "本用例的前提是配置文件尚不存在"
+    );
+    cfg.save_to_file().expect("首次保存失败");
+
+    let saved = std::fs::read_to_string(sb.path().join(".oi/config.toml")).expect("读回配置失败");
+    let doc = saved
+        .parse::<toml_edit::DocumentMut>()
+        .expect("保存后的配置必须是合法 TOML");
+    let servers = doc["mcp"]["servers"]
+        .as_array_of_tables()
+        .expect("全量写也必须落地 [[mcp.servers]]");
+    assert_eq!(servers.len(), 1, "服务器不得在首次保存时丢失");
+    let server = servers.get(0).expect("表数组首项应存在");
+    assert_eq!(server["name"].as_str(), Some("fetch"));
+    assert_eq!(server["url"].as_str(), Some("http://127.0.0.1:9100/mcp"));
+    assert_eq!(server["tool_call_timeout_ms"].as_integer(), Some(1500));
+}
+
 /// 表单状态里没有的服务器保存后原样保留——包括其 `env` 与未知键：
 /// 表单是「按 name 追加/编辑」，绝不整体重写 `[mcp]`（删卡不等于删配置）。
 #[test]
