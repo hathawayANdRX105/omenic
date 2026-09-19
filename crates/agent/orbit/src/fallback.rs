@@ -4,6 +4,12 @@
 //! provider. Per-provider retries (exponential backoff) still run inside
 //! each attempt; the waterfall is the layer above them.
 //!
+//! A provider's intermediate terminal `Error` is swallowed, never forwarded:
+//! the agent loop's `stream_failed` latch ([`crate::run_agent_streaming`]) is
+//! one-way, so a forwarded Error would sink the whole turn even when a later
+//! provider succeeds. The consumer sees an `Error` only when content already
+//! leaked (no replay possible) or after every provider failed.
+//!
 //! Placement note: the [`LlmBackend`] trait lives in this crate (orbit),
 //! and adaptor is orbit's dependency — so the waterfall *runtime* must
 //! live here, not in `adaptor::fallback`. `adaptor::openai::stream_cb_with_policy`
@@ -11,9 +17,19 @@
 
 use std::sync::atomic::AtomicBool;
 
-use adaptor::{Context, Model, StopReason, StreamEvent, ToolDef, openai::RetryPolicy};
+use adaptor::{Context, Model, StreamEvent, ToolDef, openai::RetryPolicy};
 
 use crate::LlmBackend;
+
+/// Terminal shape of one per-provider call: `stream_cb_with_policy` ends
+/// every attempt with exactly one `Done` or one `Error` (both after any
+/// deltas/tool-calls), so "the last event seen" decides the waterfall move.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Terminal {
+    None,
+    Done,
+    Error,
+}
 
 /// One OpenAI-compatible LLM provider endpoint. Constructed programmatically
 /// (the daemon maps `config::LlmFallbackConfig` onto this in
@@ -80,6 +96,15 @@ impl WaterfallLlm {
     /// just emitted and must not be retried elsewhere) and `false` when the
     /// provider failed *before emitting anything* and the next provider
     /// should take over.
+    ///
+    /// Forwarding rule: every event is passed to the consumer in order,
+    /// *except* a terminal `Error` from a call that leaked no content. That
+    /// Error is swallowed — the agent loop's `stream_failed` latch is
+    /// one-way, so forwarding it would fail the whole turn even when the
+    /// next provider succeeds. When content already leaked, the Error must
+    /// be forwarded (no replay is possible and the consumer needs the
+    /// failure). The per-provider call ends with exactly one terminal event
+    /// (Done or Error), so tracking the last event is enough.
     fn attempt_provider(
         provider: &LlmProvider,
         context: &Context,
@@ -90,11 +115,11 @@ impl WaterfallLlm {
     ) -> bool {
         // Observe every event the per-provider call hands out: record
         // whether content leaked, whether the round ended in a clean abort,
-        // and whether it ended in an Error — while forwarding *every* event
-        // to the consumer via `emit`, unmodified, in order.
+        // and what the terminal event was — while forwarding every event
+        // to the consumer via `emit`, in order, except the swallow case
+        // below.
         let mut leaked_content = false;
-        let mut aborted = false;
-        let mut errored = false;
+        let mut terminal = Terminal::None;
         adaptor::openai::stream_cb_with_policy(
             &provider.to_model(),
             context,
@@ -105,28 +130,32 @@ impl WaterfallLlm {
                     StreamEvent::TextDelta(_) | StreamEvent::ToolCall(_) => {
                         leaked_content = true;
                     }
-                    StreamEvent::Done { stop_reason } => {
-                        aborted = matches!(stop_reason, StopReason::Aborted);
+                    StreamEvent::Done { .. } => {
+                        terminal = Terminal::Done;
                     }
-                    StreamEvent::Error(_) => errored = true,
+                    StreamEvent::Error(_) => terminal = Terminal::Error,
                 }
-                emit(ev);
+                // A terminal Error with nothing leaked is withheld: it only
+                // means "this provider failed, try the next one", not "the
+                // turn failed". Forward everything else verbatim.
+                if terminal != Terminal::Error || leaked_content {
+                    emit(ev);
+                }
             },
             policy,
         );
-        if (errored && leaked_content) || aborted {
-            // Content leaked before the error: the failure was just emitted
-            // and must not be replayed elsewhere. A clean abort is consumer
-            // intent, not a failure. Both stop the waterfall here.
+        if terminal != Terminal::Error {
+            // Clean `Done`: success (an abort is consumer intent, also done).
             return true;
         }
-        if errored {
-            // Error, no content leaked, round ended: the next provider may
-            // take over — the caller decides (continue or final error).
-            return false;
+        if leaked_content {
+            // Content leaked before the error: the failure was just emitted
+            // and must not be replayed elsewhere. The waterfall stops here.
+            return true;
         }
-        // Clean `Done`: success.
-        true
+        // Error, no content leaked, round ended: the next provider may take
+        // over — the caller decides (continue or final error).
+        false
     }
 
     /// Run the waterfall. After all providers fail, emit one terminal

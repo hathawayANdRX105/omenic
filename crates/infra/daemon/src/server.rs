@@ -266,16 +266,32 @@ impl Daemon {
                 let fallbacks = cfg
                     .llm_fallbacks
                     .iter()
-                    .filter(|f| f.model.as_deref().is_some_and(|m| !m.trim().is_empty()))
-                    .map(|f| orbit::LlmProvider {
-                        api_key: f
-                            .api_key
-                            .clone()
-                            .or_else(|| Some(model.api_key.clone()))
-                            .unwrap_or_default(),
-                        model: f.model.clone().expect("filtered above"),
-                        base_url: f.base_url.clone().or_else(|| model.base_url.clone()),
-                        max_tokens: f.max_tokens,
+                    .enumerate()
+                    .filter_map(|(i, f)| {
+                        // A model-less fallback row can never be dialed (the
+                        // waterfall switches by model id) — skip it, but say
+                        // so: a typo'd row silently dropping out of the
+                        // waterfall otherwise looks identical to one that is
+                        // simply never reached.
+                        let fallback_model = f
+                            .model
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|m| !m.is_empty())
+                            .map(str::to_string);
+                        if fallback_model.is_none() {
+                            eprintln!("warn: [[llm.fallbacks]] entry #{i} has no model; skipped");
+                        }
+                        fallback_model.map(|fallback_model| orbit::LlmProvider {
+                            api_key: f
+                                .api_key
+                                .clone()
+                                .or_else(|| Some(model.api_key.clone()))
+                                .unwrap_or_default(),
+                            model: fallback_model,
+                            base_url: f.base_url.clone().or_else(|| model.base_url.clone()),
+                            max_tokens: f.max_tokens,
+                        })
                     })
                     .collect();
                 std::sync::Arc::new(orbit::WaterfallLlm::new(primary, fallbacks))
@@ -346,23 +362,15 @@ impl Daemon {
     /// respawns (`OrbitSetup` is cloned per spawn, and a `Box` cannot be).
     ///
     /// `Err` only when a server set `fail_on_startup_error = true` and its
-    /// startup failed. The mcp crate's error names the failing command, not
-    /// the config entry, so the mapped message also lists every configured
-    /// server name — with the usual single-server setup that names the
-    /// offender exactly.
+    /// startup failed. The mcp crate wraps every per-server failure with the
+    /// config entry's name (`server \`{name}\`: ...`), so this prefix stays
+    /// short and names the offender exactly.
     fn mcp_tools(
         cfg: &DaemonConfig,
         signal: &std::sync::atomic::AtomicBool,
     ) -> Result<std::sync::Arc<Vec<std::sync::Arc<dyn tools::Tool>>>, DaemonError> {
-        let brought = mcp::external_tools_from_mcp(&cfg.mcp_servers, signal).map_err(|e| {
-            let names = cfg
-                .mcp_servers
-                .iter()
-                .map(|s| s.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            DaemonError::Protocol(format!("mcp server startup failed ({names}): {e}"))
-        })?;
+        let brought = mcp::external_tools_from_mcp(&cfg.mcp_servers, signal)
+            .map_err(|e| DaemonError::Protocol(format!("MCP bring-up failed: {e}")))?;
         Ok(std::sync::Arc::new(
             brought.into_iter().map(std::sync::Arc::from).collect(),
         ))

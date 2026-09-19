@@ -235,8 +235,9 @@ impl LlmRuntimeConfig {
 
     /// 全量写一份只含管理键的新配置（文件不存在或原文件不可解析时使用）。
     /// `omp_path` 由调用方决定：`None` 用默认 `"omp"`，`Some(v)` 沿用原值。
-    /// 空表单不写 `[mcp]` 段（与增量路径一致）；`[llm].fallbacks` 非空时照
-    /// `[[llm.fallbacks]]` 表数组写出，空串字段不写键。
+    /// 空表单不写 `[mcp]` 段（与增量路径一致）；非空时复用
+    /// `write_mcp_servers` 落地，否则首次保存（文件本不存在）或解析失败回退
+    /// 到全量写时整张 `[[mcp.servers]]` 会被静默丢掉。
     fn write_full_config(&self, target_path: &Path, omp_path: Option<&str>) -> Result<(), String> {
         let mut toml_content = format!(
             "# omenic configuration\n\
@@ -283,7 +284,18 @@ impl LlmRuntimeConfig {
             }
         }
 
-        std::fs::write(target_path, toml_content)
+        // 没有服务器时保持纯字符串写（与历史输出逐字节一致）；非空服务器表
+        // 必须走 `write_mcp_servers`：它是增量路径写 args/env/timeout/url
+        // 的唯一实现，全量写自己拼一份会静默丢掉整张 [[mcp.servers]]。
+        if self.mcp_servers.is_empty() {
+            return std::fs::write(target_path, toml_content)
+                .map_err(|e| format!("写入配置文件 {} 失败: {}", target_path.display(), e));
+        }
+        let mut doc = toml_content
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("生成的配置文本无法解析: {}", e))?;
+        write_mcp_servers(doc.as_table_mut(), &self.mcp_servers)?;
+        std::fs::write(target_path, doc.to_string())
             .map_err(|e| format!("写入配置文件 {} 失败: {}", target_path.display(), e))
     }
 

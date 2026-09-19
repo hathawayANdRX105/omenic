@@ -115,11 +115,12 @@ fn fail_on_startup_error_fails_daemon_start_naming_the_server() {
     let dir = tempdir().expect("temp dir");
     let cfg = cfg(
         dir.path(),
-        vec![mcp_server(
-            "b1-mcp-fatal",
-            "b1-mcp-still-not-on-path",
-            Some(true),
-        )],
+        vec![
+            // A healthy-name bystander: the error must name only the failing
+            // server, not the whole configured list.
+            mcp_server("b1-mcp-bystander", "b1-mcp-also-not-on-path", None),
+            mcp_server("b1-mcp-fatal", "b1-mcp-still-not-on-path", Some(true)),
+        ],
     );
 
     // `Daemon` isn't Debug, so match instead of `expect_err`.
@@ -129,11 +130,15 @@ fn fail_on_startup_error_fails_daemon_start_naming_the_server() {
     };
     let msg = err.to_string();
     assert!(
-        msg.contains("b1-mcp-fatal"),
-        "error must name the configured server, got: {msg}"
+        msg.contains("server `b1-mcp-fatal`"),
+        "error must name the failing server, got: {msg}"
     );
     assert!(
-        msg.contains("mcp"),
+        !msg.contains("b1-mcp-bystander"),
+        "error must not list servers that did not fail, got: {msg}"
+    );
+    assert!(
+        msg.contains("MCP bring-up failed"),
         "error must point at MCP bring-up, got: {msg}"
     );
 }
