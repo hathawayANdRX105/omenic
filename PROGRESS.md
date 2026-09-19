@@ -41,7 +41,6 @@ main 现为 `b20ebc0`（#383 B1/B2 合并后审查收尾 squash 合并，2026-09
 **G8 之后没有排队中的整合点。** 接下来走 dsh 全量对照 backlog：2026-09-18 已划分三批（B1 MCP 捆绑 web 契约 / B2 session resume + LLM 路由 / B3 jobs + subagent P4），附件与遥测类不排批次（见「后续 backlog」）。B1（#381）/ B2（#382）/ 审查收尾（#383）已合入 main（`b20ebc0`），见上文「当前位置」；**B3 已开工（PR1 本地完成，见下节）。**
 
 **B3-PR1 本地完成（jobs + terminal + web 词表，2026-09-19，分支 `feat/b3-jobs-terminal`，base `e8b271f`）：**
-
 - **两个新 crate**：`crates/harness/jobs`（`JobRegistry` trait + `LocalJobRegistry`；全部方法取 `&self`，`Mutex` + `Condvar` 同步，作业跑在 `std::thread` 上）与 `crates/harness/terminal`（`TerminalRegistry`，portable-pty 0.9 后端，每会话一个 reader 线程把 pty master 排空进内存 buffer，所以 `read` 非阻塞且是 **drain 语义**）。14 + 15 个本地测试全绿。
 - **6 个模型工具 + 4 个 terminal 工具**：`crates/harness/tools/src/jobs_terminal.rs`（`session_tools()` 一次建 10 把，`SESSION_TOOL_NAMES` 常量做单一真源）。实现的是 **agent-domain `tools::Tool`**，不是 harness `Tool` —— 引擎派发的就是前者、MCP 工具也是这个形状，直接实现省掉一层 adapter（C6 的两 trait 分离仍成立）。
 - **daemon 接线**：沿用 MCP 的同款 seam —— `OrbitConfig.session_tools: Arc<Vec<Arc<dyn Tool>>>`（与 `mcp_tools` 并列），daemon `session_tools()` 建一次注册表、每个 engine respawn 克隆同一份 `Arc`。`combined_tools` 合并顺序 catalog → MCP → session。
@@ -51,6 +50,7 @@ main 现为 `b20ebc0`（#383 B1/B2 合并后审查收尾 squash 合并，2026-09
   2. **`TerminalRegistry::list()` 曾自死锁**：持 `sessions` 锁再调 `status()` → `get()` 重入同一把 `std::sync::Mutex`。靠本地跑测试发现（挂起 >60s），抽 `summarize(&TerminalId, &Session)` 直取 `Arc` 修掉。
 - **代码审查（CRG + ocr + 三层）修出的问题**，见下节「B3-PR1 审查修复」。
 - **余量（不阻塞）**：dsh `jobs` 的其余 4 个工具（`jobs_output` 等）；terminal 的 pwsh 后端；`onJobDone` 生命周期回调。
+
 
 ### B3-PR1 审查修复（三个 commit，2026-09-19）
 
@@ -108,6 +108,18 @@ CI 首轮红两次，两次都是**既有测试本身的缺陷**，不是新代�
 - **测试**：`plugin_test.rs` 新增 8 例（invalid config rejection / valid config pass / unregister + unload named / re-register / full LIFO）；`assemble.rs` 补充 `InvalidConfig` 穷尽匹配。
 - **CRI/CI/gate**：CRG 0 affected flows；CI test job PASS；`gate merge --dry-run` PASS（自定义 checklist 通过）。
 - **合并**：2026-09-17 `8d862e4` squash merge，远程分支已删。
+
+**B3-PR2 本地完成（subagent Phase 4：ACP 出进程后端 + interrupt，2026-09-19，分支 `feat/b3-subagent-p4`，base `bc24a7e`，issue #386 / draft PR #387）：**
+
+- **ACP 协议层**（`crates/harness/subagent/src/acp.rs`）：JSON-RPC 2.0 over NDJSON 的 client 最小子集（initialize / session-new / session-prompt / session-cancel / session-update 通知 / session-requestPermission 应答），`AcpClient` 持 stdin/stdout + 读线程分派，`AtomicU64` 请求 id + `mpsc::sync_channel(1)` pending 表，`AcpHandlers` trait 让 provider 注入文本累积与权限应答。9 个集成测试（内存 mpsc 管道，不起进程）覆盖初始化失败、静默 new-session、通道关闭、未知 pending id。
+- **出进程后端**（`acp_provider.rs`）：`AcpProvider` 实现 `SubagentProvider`——spawn 外部 agent，跑 handshake + 一轮 prompt，流式 assistant 文本折叠成最终输出；`AcpDisposer` 两阶梯销毁（cancel → 关 pending 表 → drop stdin EOF → `eof_grace` 轮询 → SIGKILL → `kill_grace` → wait reap），幂等（`AtomicBool::swap`），exit watcher 线程保证 child 中途崩溃不把 `prompt` 楔死。`AcpPermission` Allow 取第一个 option、Reject 一律 Deny。
+- **interrupt 链路**：`RunDisposer` trait 外化销毁（`SubagentRun::new` 三参数、`dispose()` 无参，fork 用 `ForkDisposer` 翻 signal）；`SubagentRuntimeService` 加 run 注册表（`start_run` 发 `sub-N` 序号 id、`interrupt` / `finish_run` / `active_runs`）；`subagent` 工具改走 `start_run` 并在输出 payload 回 `run_id`；`subagent_control` 加 `interrupt` action（未知/已结束的 run 返回 `interrupted:false` 负载而非工具错误，和 list 一致）。
+- **配置 + daemon 装配**：`[[subagent.providers]]`（name/command/args/env/cwd/permission/dispose_grace_ms/dispose_eof_grace_ms，校验拒空 name、保留名 `fork`、空 command，merge trim）+ `DaemonConfig.subagent_providers` 透传；daemon `orbit_setup` 把每条配置翻译成 `AcpProviderSpec` 注册（command+args 空白拼接，含空白参数的升级路径记在注释），并把 `subagent` / `subagent_control` 工具注册进 harness `ToolCatalog`（**不是** `session_tools`：这两个工具实现的是 harness `Tool` 而非 agent-domain `tools::Tool`，而 catalog 路径的 `HarnessTool` 桥接已就绪且把引擎 abort flag 注入 `AbortSignal`——interrupt 就骑在这条线上）。
+- **一处 clean cutover**：`OrbitSetup.providers`（#380 给 Phase 4 预留的 (name, allow-list) 占位字段）**删除**——落地方式确认是 daemon 装配层直接注册 provider 与工具，worker 不再需要这个意图字段；两处 rpc 测试的构造点同步改掉。issue #386 的 Done-when「providers seam 意图传到 worker」因此调整为「daemon 装配层消费」。
+- **web 词表**：`ui_state.rs::tool_call_from_rpc` 加 `subagent` / `subagent_control` → `subagent` kind，标题取 prompt / run_id。
+- **测试规模**：subagent crate 9（协议）+ 9（provider，自带 `mock_acp_server` 脚本化子进程，覆盖 MOCK_HANG 在 eof_grace 内被收 / MOCK_IGNORE_CANCEL 升级 SIGKILL / MOCK_CRASH / MOCK_PERMISSION 双策略 / 无 session id 回滚）+ 4（interrupt，BlockingBackend + gate 做确定性）+ config 8 + daemon e2e 3（装配链路：ACP 文本回传、control list 同时列出配置 provider 与内建 fork、未知 provider 失败不拖垮 daemon）。`cargo check --tests` 全 crate 零警告，`cargo fmt --check` 通过；测试本身推 CI。
+- **明确省略（余量）**：SIGTERM 中间层（std 无可移植信号 API，`libc`/`portable-pty` 可补）；permission option 的 kind 过滤；`send_message`/`report`、continuable/background run、session-seeding；args 含空白的命令行（spec 只有单一 command 字符串）。
+**`cargo check` 只做类型检查，本地不跑 `cargo test`（CI 跑）；B3-PR2 的 daemon e2e 用 `current_exe()` 的相对路径找 `mock_acp_server`（`CARGO_BIN_EXE_` 只在同 crate 的测试里可见）。**
 
 ## 后续 backlog
 
