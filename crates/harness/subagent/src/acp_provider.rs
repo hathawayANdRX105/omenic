@@ -67,8 +67,11 @@ pub enum AcpPermission {
 /// needs to spawn and drive one turn.
 #[derive(Clone, Debug)]
 pub struct AcpProviderSpec {
-    /// Command line, whitespace-split (no shell, no quoting).
+    /// Executable to run. Never split or passed through a shell.
     pub command: String,
+    /// Arguments handed to the child verbatim — no whitespace joining, so an
+    /// argument may itself contain spaces.
+    pub args: Vec<String>,
     /// Working directory of the child process.
     pub cwd: Option<std::path::PathBuf>,
     /// Environment overrides applied on top of the parent's environment.
@@ -86,6 +89,7 @@ impl AcpProviderSpec {
     pub fn new(command: impl Into<String>) -> Self {
         Self {
             command: command.into(),
+            args: Vec::new(),
             cwd: None,
             env: Vec::new(),
             permission: AcpPermission::Allow,
@@ -210,12 +214,11 @@ impl RunDisposer for NoopDisposer {
 
 /// Build the child process from the spec (no shell involved).
 fn build_command(spec: &AcpProviderSpec) -> Result<Command, String> {
-    let mut parts = spec.command.split_whitespace();
-    let program = parts
-        .next()
-        .ok_or_else(|| "empty agent command".to_string())?;
-    let mut command = Command::new(program);
-    command.args(parts);
+    if spec.command.trim().is_empty() {
+        return Err("empty agent command".to_string());
+    }
+    let mut command = Command::new(&spec.command);
+    command.args(&spec.args);
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -309,7 +312,14 @@ fn run_turn(
     *session_id.lock().unwrap() = Some(session.session_id.clone());
 
     match client.prompt(&session.session_id, &request.prompt) {
-        Ok(response) => map_prompt_response(response, &handlers.output.lock().unwrap()),
+        Ok(response) => {
+            if disposer.disposed.load(Ordering::Relaxed) {
+                // The run was torn down while we waited; the agent's reply
+                // is not the outcome the caller asked for.
+                return SubagentResult::Aborted;
+            }
+            map_prompt_response(response, &handlers.output.lock().unwrap())
+        }
         Err(AcpError::ChannelClosed) => {
             // The channel was closed under us: either dispose (our own
             // teardown) or the exit watcher (the child is gone). Only the
@@ -482,7 +492,12 @@ impl AcpDisposer {
         loop {
             match self.child.lock().unwrap().as_mut() {
                 Some(child) => match child.try_wait() {
-                    Ok(Some(_)) => return true,
+                    Ok(Some(_)) => {
+                        // Reaped right here; drop the handle so the tail
+                        // cannot wait an already-reaped child (ECHILD).
+                        drop(self.child.lock().unwrap().take());
+                        return true;
+                    }
                     Ok(None) => {}
                     // Already reaped by the exit watcher or a racing dispose.
                     Err(_) => return true,

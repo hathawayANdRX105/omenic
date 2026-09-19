@@ -30,6 +30,7 @@ const SETTLE_TIMEOUT: Duration = Duration::from_secs(10);
 fn spec(dir: &TempDir, env: &[(&str, &str)]) -> AcpProviderSpec {
     AcpProviderSpec {
         command: MOCK_BIN.to_string(),
+        args: Vec::new(),
         cwd: Some(dir.path().to_path_buf()),
         env: env
             .iter()

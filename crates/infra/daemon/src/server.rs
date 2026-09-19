@@ -356,20 +356,8 @@ impl Daemon {
         // the earlier one (HashMap semantics) and no entry can shadow the
         // built-in.
         for p in &cfg.subagent_providers {
-            let mut spec = omenic_harness_subagent::AcpProviderSpec::new(
-                // ponytail: `AcpProviderSpec` carries one command string that
-                // `build_command` whitespace-splits (no shell, no quoting), so
-                // an arg containing whitespace gets split wrong. Supporting
-                // such args means giving the spec a `Vec<String>` argv and
-                // dropping the split — deliberately not done: ACP flags are
-                // bare tokens in practice. Upgrade: add `args: Vec<String>`
-                // to `AcpProviderSpec`, take it verbatim in `build_command`.
-                if p.args.is_empty() {
-                    p.command.clone()
-                } else {
-                    format!("{} {}", p.command, p.args.join(" "))
-                },
-            );
+            let mut spec = omenic_harness_subagent::AcpProviderSpec::new(&p.command);
+            spec.args = p.args.clone();
             spec.cwd = p.cwd.clone().map(std::path::PathBuf::from);
             spec.env = p.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
             spec.permission = match p.permission {
