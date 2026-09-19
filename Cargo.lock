@@ -2119,6 +2119,7 @@ dependencies = [
  "serde",
  "serde_json",
  "subagent",
+ "tempfile",
  "tools",
 ]
 

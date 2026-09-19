@@ -6,6 +6,7 @@
 //! backend reusing `subagent::runner::run_subagent`.
 
 pub mod acp;
+pub mod acp_provider;
 pub mod fork;
 pub mod provider;
 pub mod runtime;
@@ -18,6 +19,7 @@ pub use acp::{
     PermissionOutcome, PromptRequest, PromptResponse, RequestPermissionRequest,
     RequestPermissionResponse, StopReason, TextContent,
 };
+pub use acp_provider::{AcpPermission, AcpProvider, AcpProviderSpec};
 pub use fork::ForkProvider;
 pub use provider::{
     RunDisposer, SubagentCapabilities, SubagentProvider, SubagentResult, SubagentRun,
