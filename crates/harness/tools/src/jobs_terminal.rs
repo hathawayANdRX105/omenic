@@ -94,6 +94,20 @@ fn need_u16(args: &Value, key: &str) -> Result<u16, ToolError> {
     u16::try_from(n).map_err(|_| ToolError::Message(format!("{key} out of range: {n}")))
 }
 
+/// Read an optional pty dimension, defaulting to `def`.
+///
+/// `as u16` is the tempting one-liner and the wrong one: it silently wraps a
+/// `cols` of 70000 into a geometry nobody asked for. [`need_u16`] validates
+/// the required case; this covers the optional one the same way.
+fn opt_dim(args: &Value, key: &str, def: u16) -> Result<u16, ToolError> {
+    opt_u64(args, key)
+        .map(|n| {
+            u16::try_from(n).map_err(|_| ToolError::Message(format!("{key} out of range: {n}")))
+        })
+        .transpose()
+        .map(|dim| dim.unwrap_or(def))
+}
+
 // -----------------------------------------------------------------------------
 // Error mapping
 // -----------------------------------------------------------------------------
@@ -608,8 +622,8 @@ impl Tool for TerminalCreate {
     fn execute(&self, args: &Value, _signal: &AtomicBool) -> Result<String, ToolError> {
         let shell = opt_str(args, "shell").unwrap_or_else(|| "bash".to_string());
         let cwd = opt_str(args, "cwd").unwrap_or_else(current_dir);
-        let cols = opt_u64(args, "cols").unwrap_or(80) as u16;
-        let rows = opt_u64(args, "rows").unwrap_or(24) as u16;
+        let cols = opt_dim(args, "cols", 80)?;
+        let rows = opt_dim(args, "rows", 24)?;
 
         let id = self
             .reg
