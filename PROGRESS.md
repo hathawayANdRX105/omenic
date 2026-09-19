@@ -4,11 +4,11 @@
 >
 > 编号体系沿用 ROADMAP：`C1–C8` / `R1–R7` / `G1–G8`。
 
-## 当前位置（2026-09-19）
+## 当前位置（2026-09-20）
 
-main 现为 `b20ebc0`（#383 B1/B2 合并后审查收尾 squash 合并，2026-09-19）；B1（#381，main `f514b91`）与 B2（#382）已合入，#383 补齐了两批的审查层与文档同步。
+main 现为 `a15171f`。B1（#381）/ B2（#382）/ 审查收尾（#383，`b20ebc0`）已合入；B3 两块亦已合入：PR1 #385（jobs + terminal + web 词表，squash `bc24a7e`）与 PR2 #387（subagent Phase 4：ACP 出进程后端 + interrupt，squash `a15171f`）。三批全部完成，见下文各节与 ROADMAP 的 dsh 对照表。
 
-**G1–G8 全部已过，main 干净（`8d862e4`）。subagent 能力 seam Phase 1 已落地（#380，main `73493b5`，2026-09-17）：harness 容器现在有 `harness.subagents` 服务 + model-facing `subagent` 工具 + fork backend（复用 `subagent::runner`），daemon 生产路径可解析。** G6 之前的 6 条开放缺口**全部关闭**（1/2/3/5 由 G6，4/6 由 G7）：
+**G1–G8 全部已过，main 干净（`8d862e4`）。subagent 能力 seam Phase 1 已落地（#380，main `73493b5`，2026-09-17）：harness 容器现在有 `harness.subagents` 服务 + model-facing `subagent` 工具 + fork backend（复用 `subagent::runner`），daemon 生产路径可解析；**Phase 4 的 ACP 出进程后端 + interrupt 亦已落地（#387，2026-09-19）。** G6 之前的 6 条开放缺口**全部关闭**（1/2/3/5 由 G6，4/6 由 G7）：
 
 - G6（#373/#374）把装配容器接进 daemon→web 生产路径，C4 的 AGENTS.md 注入与压缩第一次对真实用户生效，并补了真链路 e2e。
 - G7（#376）关掉最后两条：**谱系分组**（5.3/5.5，数据模型 + 侧栏树）与 **per-run 事件归属**（协议帧 run_id + 订阅端过滤）。
@@ -38,9 +38,9 @@ main 现为 `b20ebc0`（#383 B1/B2 合并后审查收尾 squash 合并，2026-09
 - **驳回 4 条（有裁定理由）**：page-config 跨 tab 挂载快照（设计意图，改动要动 Dioxus 状态提升）、worker.rs 持锁回放（临界区仅 ≤50 条内存 push、无 I/O）、llm.rs「只有 name 的 server 能保存」（误报，基线已有 `no_transport` 校验）、page-config 本地 signal 不随 prop 更新（真，tech-debt 记档）。
 - **验收**：CI 全量绿（run 35425569919，1m35s）；`gate merge --dry-run` 118 checks ALL PASS；审查记录三条（round 1 / round 2 / CRG Review）落在 PR conversation。
 
-**G8 之后没有排队中的整合点。** 接下来走 dsh 全量对照 backlog：2026-09-18 已划分三批（B1 MCP 捆绑 web 契约 / B2 session resume + LLM 路由 / B3 jobs + subagent P4），附件与遥测类不排批次（见「后续 backlog」）。B1（#381）/ B2（#382）/ 审查收尾（#383）已合入 main（`b20ebc0`），见上文「当前位置」；**B3 已开工（PR1 本地完成，见下节）。**
+**G8 之后没有排队中的整合点。** 接下来走 dsh 全量对照 backlog：2026-09-18 已划分三批（B1 MCP 捆绑 web 契约 / B2 session resume + LLM 路由 / B3 jobs + subagent P4），附件与遥测类不排批次（见「后续 backlog」）。B1（#381）/ B2（#382）/ 审查收尾（#383）已合入 main（`b20ebc0`），见上文「当前位置」；**B3 全部完成并合入 main（PR1 #385 `bc24a7e` + PR2 #387 `a15171f`，2026-09-19），见下两节。**
 
-**B3-PR1 本地完成（jobs + terminal + web 词表，2026-09-19，分支 `feat/b3-jobs-terminal`，base `e8b271f`）：**
+**B3-PR1 已合并（jobs + terminal + web 词表，2026-09-19，PR #385，squash `bc24a7e`；分支 `feat/b3-jobs-terminal`，base `e8b271f`）：**
 - **两个新 crate**：`crates/harness/jobs`（`JobRegistry` trait + `LocalJobRegistry`；全部方法取 `&self`，`Mutex` + `Condvar` 同步，作业跑在 `std::thread` 上）与 `crates/harness/terminal`（`TerminalRegistry`，portable-pty 0.9 后端，每会话一个 reader 线程把 pty master 排空进内存 buffer，所以 `read` 非阻塞且是 **drain 语义**）。14 + 15 个本地测试全绿。
 - **6 个模型工具 + 4 个 terminal 工具**：`crates/harness/tools/src/jobs_terminal.rs`（`session_tools()` 一次建 10 把，`SESSION_TOOL_NAMES` 常量做单一真源）。实现的是 **agent-domain `tools::Tool`**，不是 harness `Tool` —— 引擎派发的就是前者、MCP 工具也是这个形状，直接实现省掉一层 adapter（C6 的两 trait 分离仍成立）。
 - **daemon 接线**：沿用 MCP 的同款 seam —— `OrbitConfig.session_tools: Arc<Vec<Arc<dyn Tool>>>`（与 `mcp_tools` 并列），daemon `session_tools()` 建一次注册表、每个 engine respawn 克隆同一份 `Arc`。`combined_tools` 合并顺序 catalog → MCP → session。
@@ -109,7 +109,7 @@ CI 首轮红两次，两次都是**既有测试本身的缺陷**，不是新代�
 - **CRI/CI/gate**：CRG 0 affected flows；CI test job PASS；`gate merge --dry-run` PASS（自定义 checklist 通过）。
 - **合并**：2026-09-17 `8d862e4` squash merge，远程分支已删。
 
-**B3-PR2 本地完成（subagent Phase 4：ACP 出进程后端 + interrupt，2026-09-19，分支 `feat/b3-subagent-p4`，base `bc24a7e`，issue #386 / draft PR #387）：**
+**B3-PR2 已合并（subagent Phase 4：ACP 出进程后端 + interrupt，2026-09-19，PR #387，squash `a15171f`；分支 `feat/b3-subagent-p4`，base `bc24a7e`，issue #386）：**
 
 - **ACP 协议层**（`crates/harness/subagent/src/acp.rs`）：JSON-RPC 2.0 over NDJSON 的 client 最小子集（initialize / session-new / session-prompt / session-cancel / session-update 通知 / session-requestPermission 应答），`AcpClient` 持 stdin/stdout + 读线程分派，`AtomicU64` 请求 id + `mpsc::sync_channel(1)` pending 表，`AcpHandlers` trait 让 provider 注入文本累积与权限应答。9 个集成测试（内存 mpsc 管道，不起进程）覆盖初始化失败、静默 new-session、通道关闭、未知 pending id。
 - **出进程后端**（`acp_provider.rs`）：`AcpProvider` 实现 `SubagentProvider`——spawn 外部 agent，跑 handshake + 一轮 prompt，流式 assistant 文本折叠成最终输出；`AcpDisposer` 两阶梯销毁（cancel → 关 pending 表 → drop stdin EOF → `eof_grace` 轮询 → SIGKILL → `kill_grace` → wait reap），幂等（`AtomicBool::swap`），exit watcher 线程保证 child 中途崩溃不把 `prompt` 楔死。`AcpPermission` Allow 取第一个 option、Reject 一律 Deny。
@@ -141,13 +141,13 @@ PR 拆分：PR1 后端（transport + 重连 + 熔断 + 配置扩展）；PR2 dae
 
 PR 拆分：B2a 独立 1 个 PR（纯后端）；B2b 拆 2 个——registry + retry 后端 / settings 表单 + 契约。
 
-### 批次 B3：jobs + terminal（Rust 侧）+ subagent Phase 4（1–2 PR）
+### 批次 B3：jobs + terminal（Rust 侧）+ subagent Phase 4 ✅ 已完成（PR1 #385 / PR2 #387，2026-09-19）
 
 - **jobs + terminal 持久 PTY**（dsh `packages/jobs/jobs*` + `terminal/terminal*` 可对照）：`JobRegistry` trait（`start`/`list`/`kill`/`wait`/`onJobDone`）+ `LocalJobRegistry` 内存实现；PTY 后端 bash 起步（pwsh 可选）；6 个模型工具中先做 `jobs_wait`/`jobs_kill` 两把最刚需的，其余（`jobs_list` 等）可余量。解决长命令 30s 超时被杀、模型无跨 tool call 交互 shell。
-- **subagent Phase 4 余量**（消费 #380 预留的 `OrbitSetup.providers` seam）：`interrupt_subagent` 实现 + 一个出进程后端起步（ACP 优先，dsh `packages/subagent/subagent-acp` 可对照）；`send_message`/`report`、continuable/background run、session-seeding 本批可省记「余量」。
+- **subagent Phase 4** ✅ 已完成（#387）：`interrupt_subagent` 实现（runtime run 表 + `subagent_control` interrupt action + `RunDisposer` 外化销毁）+ ACP 出进程后端起步（`AcpProvider`，照 dsh `packages/subagent/subagent-acp`，两阶梯 dispose）。**消费方式确认后 `OrbitSetup.providers` seam 已删除**（装配上移 daemon，见 B3-PR2 节），不是预留占位。余量（仍缺）：`send_message`/`report`、continuable/background run、session-seeding、SIGTERM 中间层、permission option kind 过滤、其余三个进程外后端（Codex / Claude Code / SDK）。
 - **Web 面小改动**（顺带带上，不独立 PR）：`chat.rs` 工具折叠卡加 `jobs_wait`/`jobs_kill` 工具名进词表（否则 LIFO 当未知折叠掉）；`subagent_report` 新帧进词表；侧栏 `group_sessions` 已有树不用动。
 
-PR 拆分：PR1 jobs + terminal + web 工具词表；PR2 subagent P4（ACP + interrupt，出进程后端是跨系统协议验证，单独一个 PR 便于隔离）。
+PR 拆分（已按此执行）：PR1 jobs + terminal + web 工具词表（#385）；PR2 subagent P4（ACP + interrupt，出进程后端是跨系统协议验证，单独一个 PR 便于隔离，#387）。
 
 ### 不排批次（2026-09-18 裁定）
 
@@ -164,12 +164,12 @@ PR 拆分：PR1 jobs + terminal + web 工具词表；PR2 subagent P4（ACP + int
 
 | 域 | dsh 现状 | omenic 现状 | 缺口（批次） |
 |---|---|---|---|
-| **subagent 能力 seam** | `SubagentRuntime` 服务（provider registry + one-shot/continuable + 生命周期事件）+ 11 子包（spawn/fork 进程内 + ACP/Codex/Claude Code/SDK 四个进程外后端 + control/report 工具） | **Phase 1 已落地（#380）**：新增 crate `omenic-harness-subagent`（`SubagentProvider` trait / `SubagentRuntimeService` / `ForkProvider` in-process backend 复用 `subagent::runner` / model-facing `subagent` + `subagent_control`（list only）工具）；`ToolCatalog` 内建可变；composition 注册三个插件；daemon `orbit_setup` 注册 fork provider（只读工具子集）；e2e smoke 通过 | **B3**：interrupt + ACP 出进程后端；余量：`send_message`/`report`、continuable/background run + 生命周期事件、session-seeding |
+| **subagent 能力 seam** | `SubagentRuntime` 服务（provider registry + one-shot/continuable + 生命周期事件）+ 11 子包（spawn/fork 进程内 + ACP/Codex/Claude Code/SDK 四个进程外后端 + control/report 工具） | **Phase 1 已落地（#380）**：新增 crate `omenic-harness-subagent`（`SubagentProvider` trait / `SubagentRuntimeService` / `ForkProvider` in-process backend 复用 `subagent::runner` / model-facing `subagent` + `subagent_control`（list only）工具）；`ToolCatalog` 内建可变；composition 注册三个插件；daemon `orbit_setup` 注册 fork provider（只读工具子集）；e2e smoke 通过 | **已完成（B3-PR2，#387，2026-09-19，squash `a15171f`）**：interrupt + ACP 出进程后端 + `RunDisposer` 外化销毁 + `[[subagent.providers]]` 配置；余量：`send_message`/`report`、continuable/background run、session-seeding、SIGTERM 层、permission kind、Codex/Claude Code/SDK 三个后端 |
 | **MCP 多传输 + 重连** | `mcp-client` Cordis 插件：stdio + Streamable HTTP 双传输，`RECONNECT_DEFAULTS` 重连监督，`failOnStartupError` 启动失败即熔断，per-tool call timeout，`cwd` 每服务 | **已完成（#381，2026-09-18；#383 补审 2026-09-19）**：stdio + Streamable HTTP 双传输、重连监督（指数退避 + 重试上限熔断）、per-server timeout/cwd、`fail_on_startup_error`、daemon `orbit_setup` 注入；`write_full_config` 丢 `[[mcp.servers]]` 已在 #383 修（`6661a70`） | 余量：dsh `mcp-client` 其余可选项（tool-level filter、server-level env 注入）未对齐 |
 | **session resume 生产路径** | `SessionPersistence` 抽象（`prepare`/`load`/`inspect`/`readFrom`）+ JSONL/SQLite 双后端 + `session-checkpoint-policy` 在 llm/tools/pre-step 前自动 flush durable log | **已完成（#382 B2a，2026-09-18）**：daemon 重启后 orbit worker 按 `session_id` 从 session DB 加载最近 50 条 user/assistant 历史回放进 `ctx.messages`（dedupe + 切换清 ctx） | 余量：checkpoint flush 策略（dsh `session-checkpoint-policy`）；回放跳过 `System`/`Tool` 行 |
 | **附件全链路** | `AttachmentStore` 抽象（`validateImage`/`saveImage`/`readImage`/`readImageRequest`）+ `LocalAttachmentStore` 内容寻址 + `ui-attachment` 前端 + adapter `resolveAttachments` 注入 | omenic 全仓 grep `attachment`/`image` = 0 命中（仅 `ETXTBSY` 误匹配） | **不排批次**（超三批上限；三段全缺，见「不排批次」节） |
 | **LLM provider 注册表/路由 + retry** | `LlmRuntime` 服务（`registerAdapter`/`registerConfigurableProviders`/`stream` waterfall）+ DeepSeek/PiAi 双 adapter + `llm-retry` 插件（provider 路由指数退避）；`TokenMeter` | **waterfall 已完成（#382 B2b，2026-09-18；#383 补审 2026-09-19）**：`orbit::WaterfallLlm`（`[[llm.fallbacks]]` 按序切换 + per-provider `RetryPolicy` 退避 + 中间 Error 判据改用终态/`leaked_content`）+ web settings Fallback 表单 | token-meter 不做（C8 裁定维持）；DeepSeek/PiAi 官方 adapter 未接（现走 OpenAI 兼容端点） |
-| **jobs 后台作业 + terminal 持久 PTY** | `JobRegistry` 抽象（`start`/`list`/`kill`/`wait`/`onJobDone`）+ `LocalJobRegistry` 内存实现 + `terminal` PTY 后端（bash/pwsh）+ 6 个模型工具 | **PR 已开（B3-PR1，#385，2026-09-19，分支 `feat/b3-jobs-terminal`）**：新增 `crates/harness/jobs` + `crates/harness/terminal`（portable-pty）；10 把模型工具（`session_tools()`）+ daemon `OrbitConfig.session_tools` 接线 + web 工具词表；33 个本地测试绿；三轮审查意见已落实（含 kill 打整会话、持锁 notify 等真实缺陷修复） | **余量**：`onJobDone` 回调、pwsh 后端、dsh jobs 其余工具 |
+| **jobs 后台作业 + terminal 持久 PTY** | `JobRegistry` 抽象（`start`/`list`/`kill`/`wait`/`onJobDone`）+ `LocalJobRegistry` 内存实现 + `terminal` PTY 后端（bash/pwsh）+ 6 个模型工具 | **已合并（B3-PR1，#385，2026-09-19，squash `bc24a7e`）**：新增 `crates/harness/jobs` + `crates/harness/terminal`（portable-pty）；10 把模型工具（`session_tools()`）+ daemon `OrbitConfig.session_tools` 接线 + web 工具词表；33 个测试绿（CI）；三轮审查意见已落实（含 kill 打整会话、持锁 notify 等真实缺陷修复） | **余量**：`onJobDone` 回调、pwsh 后端、dsh jobs 其余工具 |
 | **session telemetry/otel + title-llm** | `SessionTelemetryBackend` 抽象 + OTel SDK 导出 + `SessionTitleService`（确定性 fallback + LLM 生成） | omenic 全仓 grep `session_telemetry`/`opentelemetry`/`session-title`/`title-llm` = 0 | **不排批次**（无生产需求） |
 | **credentials/authorization + identity** | `CredentialProvider` 抽象（分层 env 解析 + YAML 持久化 + 跨进程锁）+ `AuthorizationService`（one-attempt-per-key）+ `AnonymousUserId` | omenic 全仓 grep `credentials`/`identity`/`anonymous-user-id` = 0 | **不排批次**（现有 TOML 文件配置够用） |
 
