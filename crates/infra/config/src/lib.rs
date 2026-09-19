@@ -334,6 +334,30 @@ impl Config {
                     message: format!("server '{}' has neither command nor url", s.name),
                 });
             }
+            // Ambiguous transport: the mcp crate prefers `url` (streamable
+            // HTTP) and silently ignores `command` when both are set. Warn —
+            // don't reject — so a legacy config keeps loading while the
+            // unused `command` stops being a silent surprise.
+            let trimmed_url = s.url.as_deref().map(str::trim);
+            let has_url = trimmed_url.is_some_and(|u| !u.is_empty());
+            if has_command && has_url {
+                eprintln!(
+                    "warn: mcp server `{}` has both `url` and `command`; the HTTP transport (url) takes precedence, `command` is ignored",
+                    s.name
+                );
+            }
+            // A non-http(s) scheme cannot be dialed by the HTTP transport;
+            // warn here so the eventual connect failure points back at the
+            // config line. Still not a rejection: validate stays `Ok`.
+            if let Some(url) = trimmed_url.filter(|u| !u.is_empty())
+                && !url.starts_with("http://")
+                && !url.starts_with("https://")
+            {
+                eprintln!(
+                    "warn: mcp server `{}` url `{url}` does not start with http(s)://; connection will likely fail",
+                    s.name
+                );
+            }
             // Checked last so a duplicate error only names an otherwise-valid server.
             if !seen.insert(s.name.clone()) {
                 return Err(ConfigError::Invalid {
@@ -359,6 +383,23 @@ impl Config {
                 field: "max_turns",
                 message: "must be at least 1".to_string(),
             });
+        }
+
+        // llm fallbacks: every field is `Option` and inherits from the
+        // primary provider, so an entry that overrides *nothing* replays the
+        // same provider verbatim — a no-op retry rather than a fallback.
+        // Warn (never reject): inheritance is legal, this only spots the
+        // entry that forgot to say what it changes.
+        for (idx, f) in self.llm_fallbacks.iter().enumerate() {
+            if f.base_url.is_none()
+                && f.api_key.is_none()
+                && f.model.is_none()
+                && f.max_tokens.is_none()
+            {
+                eprintln!(
+                    "warn: [[llm.fallbacks]] entry #{idx} overrides nothing; it retries the primary provider unchanged"
+                );
+            }
         }
 
         Ok(())
@@ -517,7 +558,21 @@ impl TomlConfig {
             base.llm_fallbacks = self.llm.fallbacks;
         }
         if !self.mcp.servers.is_empty() {
-            base.mcp_servers = self.mcp.servers;
+            // Normalize the transport fields here, at the merge boundary.
+            // `validate` trims only to *test* a value, so a padded
+            // `command = " npx "` would pass there and still be handed to
+            // `Command::new` with its spaces — which then fails to spawn.
+            base.mcp_servers = self
+                .mcp
+                .servers
+                .into_iter()
+                .map(|mut s| {
+                    s.name = s.name.trim().to_string();
+                    s.command = s.command.map(|c| c.trim().to_string());
+                    s.url = s.url.map(|u| u.trim().to_string());
+                    s
+                })
+                .collect();
         }
         if let Some(v) = self.memory.enabled {
             base.memory_enabled = v;
