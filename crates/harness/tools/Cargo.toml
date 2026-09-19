@@ -8,4 +8,6 @@ publish = false
 serde = { workspace = true }
 serde_json = { workspace = true }
 omenic-harness-core = { path = "../core" }
+omenic-harness-jobs = { path = "../jobs" }
+omenic-harness-terminal = { path = "../terminal" }
 tools = { path = "../../agent/tools" }

@@ -162,6 +162,14 @@ pub struct OrbitConfig {
     /// configured, or every server skipped) leaves engine behavior
     /// identical to the pre-MCP engine.
     pub mcp_tools: std::sync::Arc<Vec<std::sync::Arc<dyn tools::Tool>>>,
+    /// Job and terminal tools (`omenic-harness-tools::jobs_terminal`), shared
+    /// like `mcp_tools` and for the same reason: the registries they act on
+    /// must outlive any single engine. A job started in one turn has to still
+    /// be listable in the next, and a terminal session has to survive the tool
+    /// call that opened it — both are properties of the daemon, not of an
+    /// engine instance. Empty leaves the tool list exactly as it was before
+    /// this family existed.
+    pub session_tools: std::sync::Arc<Vec<std::sync::Arc<dyn tools::Tool>>>,
 }
 
 /// orbit-mode construction bundle: the model, the streaming backend, and the
@@ -296,19 +304,27 @@ impl tools::Tool for McpToolShim {
 }
 
 /// The engine's full tool list: catalog tools first (registration order),
-/// then one [`McpToolShim`] per shared MCP tool. Split out from
-/// [`OrbitEngine::new`] so the merge contract is unit-testable without a
-/// daemon; with an empty `mcp_tools` slice it is exactly the pre-MCP
-/// [`orbit_tools`] result.
+/// then one [`McpToolShim`] per shared MCP tool, then one per shared
+/// job/terminal tool. Split out from [`OrbitEngine::new`] so the merge contract
+/// is unit-testable without a daemon; with both shared slices empty it is
+/// exactly the pre-existing [`orbit_tools`] result.
+///
+/// A shared tool is never deduplicated against the catalog: the two families
+/// come from different sources and a name collision would mean the catalog
+/// silently shadowing a shared tool (or vice versa) rather than a deliberate
+/// override. Both are shimmed, so a collision shows up as two entries and is
+/// caught by whichever layer validates uniqueness.
 pub fn combined_tools(
     catalog: &omenic_harness_tools::ToolCatalog,
     mcp_tools: &[std::sync::Arc<dyn tools::Tool>],
+    session_tools: &[std::sync::Arc<dyn tools::Tool>],
     abort: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Vec<Box<dyn tools::Tool>> {
     let mut tools = orbit_tools(catalog, std::sync::Arc::clone(&abort));
     tools.extend(
         mcp_tools
             .iter()
+            .chain(session_tools.iter())
             .map(|t| Box::new(McpToolShim::new(std::sync::Arc::clone(t))) as Box<dyn tools::Tool>),
     );
     tools
@@ -358,6 +374,7 @@ impl OrbitEngine {
                     compaction,
                     catalog,
                     mcp_tools,
+                    session_tools,
                 },
             providers: _, // Phase 4: out-of-process providers consume this; the
                           // in-process fork is registered by the daemon instead.
@@ -367,7 +384,12 @@ impl OrbitEngine {
         let abort_flag = std::sync::Arc::new(AtomicBool::new(false));
         // Catalog tools + shared MCP tools (each shimmed per spawn); abort
         // flag shared so an engine abort reaches both tool families.
-        let tools = combined_tools(&catalog, &mcp_tools, std::sync::Arc::clone(&abort_flag));
+        let tools = combined_tools(
+            &catalog,
+            &mcp_tools,
+            &session_tools,
+            std::sync::Arc::clone(&abort_flag),
+        );
         let engine = OrbitEngine {
             model: model.clone(),
             backend: Arc::clone(&backend),
