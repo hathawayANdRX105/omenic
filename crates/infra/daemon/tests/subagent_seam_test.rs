@@ -98,8 +98,10 @@ fn fork_tools_filter_yields_read_only_subset() {
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use daemon::protocol::Command;
 use daemon::{Daemon, DaemonClient, DaemonConfig, EventFrame, Subscription};
@@ -144,38 +146,71 @@ fn one_text_turn(delta: &str) -> String {
     format!("data: {}\n\n", chunk)
 }
 
+// The smoke's mock predates the tool-call path and answers every
+// connection with a plain text turn, which cannot drive a loop that
+// delegates. It is driven from a background thread that replies as fast as
+// the client can ask, counting the requests it has served so the test can
+// wait for call #N instead of guessing at a sleep long enough.
+//
+// The whole test is therefore bounded twice over: by the mock's deadline
+// (a test that never gets the traffic it expects fails on its own) and by
+// the test's own deadlines on the frame stream. Neither is a fixed sleep —
+// both are "wait until the condition holds, or fail saying what never
+// happened".
 struct MockOpenAiSmoke {
     addr: String,
     bodies: Arc<std::sync::Mutex<Vec<String>>>,
+    served: Arc<(Mutex<usize>, Condvar)>,
 }
 
 impl MockOpenAiSmoke {
-    /// `first_call_replies` applies to connection 1 (the parent loop),
-    /// `later_replies` to every subsequent connection.
-    fn start(first_call_replies: Vec<String>, later_replies: Vec<String>) -> Self {
+    /// Start replying `2n+1` with the tool-call turn and `2n+2` with the
+    /// text turn, so the parent loop asks to delegate on its first request
+    /// and the fork's runner gets a completion on its own first request.
+    ///
+    /// The client opens a fresh connection per request, so the body counter
+    /// — not the connection counter — is what advances the script.
+    fn start() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock");
         let addr = listener.local_addr().expect("local addr");
         let bodies = Arc::new(std::sync::Mutex::new(Vec::new()));
         let bodies_srv = Arc::clone(&bodies);
-        let first_srv = first_call_replies.clone();
-        let later_srv = later_replies.clone();
-        let conn = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let served = Arc::new((Mutex::new(0usize), Condvar::new()));
+        let served_srv = Arc::clone(&served);
 
         thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(stream) = stream else { break };
+            listener
+                .set_nonblocking(true)
+                .expect("mock listener nonblocking");
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while Instant::now() < deadline {
+                let stream = match listener.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(_) => break,
+                };
                 let bodies = Arc::clone(&bodies_srv);
-                let first = first_srv.clone();
-                let later = later_srv.clone();
-                let conn = Arc::clone(&conn);
+                let served = Arc::clone(&served_srv);
                 thread::spawn(move || {
-                    let n = conn.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    let replies: Vec<String> = if n == 0 {
-                        first.iter().chain(&later).cloned().collect()
-                    } else {
-                        later.iter().cloned().collect()
+                    // The script position is claimed on accept so that two
+                    // connections arriving together still get distinct
+                    // replies. The count the test waits on is *not* bumped
+                    // here: `serve_smoke` publishes it once the body is read,
+                    // which is what keeps `received()` from being shorter
+                    // than the count `wait_for_served` reported.
+                    let seq = {
+                        static NEXT: AtomicUsize = AtomicUsize::new(0);
+                        NEXT.fetch_add(1, Ordering::SeqCst) + 1
                     };
-                    serve_smoke(stream, bodies, replies);
+                    let reply = if seq % 2 == 1 {
+                        tool_call_turn()
+                    } else {
+                        one_text_turn("SUBAGENT-OK")
+                    };
+                    serve_smoke(stream, bodies, served, reply);
                 });
             }
         });
@@ -183,33 +218,61 @@ impl MockOpenAiSmoke {
         MockOpenAiSmoke {
             addr: format!("http://127.0.0.1:{}", addr.port()),
             bodies,
+            served,
         }
     }
 
     fn received(&self) -> Vec<String> {
         self.bodies.lock().expect("bodies").clone()
     }
+
+    /// Block until at least `n` request *bodies* have been read off the
+    /// wire. Returns `false` if the deadline passes first, so a test that
+    /// sees too little traffic fails with its own message rather than
+    /// panicking inside a helper — and, since the count only advances once
+    /// a body is complete, `received()` is never shorter than `n` when this
+    /// returns `true`.
+    fn wait_for_served(&self, n: usize, timeout: Duration) -> bool {
+        let (lock, cvar) = &*self.served;
+        let deadline = Instant::now() + timeout;
+        let mut count = lock.lock().expect("served count");
+        while *count < n {
+            let now = Instant::now();
+            if now >= deadline {
+                return false;
+            }
+            let (guard, _) = cvar
+                .wait_timeout(count, deadline - now)
+                .expect("served condvar");
+            count = guard;
+        }
+        true
+    }
 }
 
 fn serve_smoke(
     mut stream: TcpStream,
     bodies: Arc<std::sync::Mutex<Vec<String>>>,
-    replies: Vec<String>,
+    served: Arc<(Mutex<usize>, Condvar)>,
+    reply: String,
 ) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    let mut buf: Vec<u8> = Vec::new();
+    // Read until the header terminator. Reading one byte at a time is what
+    // makes the split exact: the body begins at the byte after `\r\n\r\n`,
+    // and a buffered read would have to hand any overshoot back.
+    let mut head: Vec<u8> = Vec::new();
     let mut tmp = [0u8; 1];
     while let Ok(n) = stream.read(&mut tmp) {
         if n == 0 {
             break;
         }
-        buf.extend_from_slice(&tmp[..n]);
-        if buf.ends_with(b"\r\n\r\n") {
+        head.push(tmp[0]);
+        if head.ends_with(b"\r\n\r\n") {
             break;
         }
     }
-    let head = String::from_utf8_lossy(&buf).to_string();
-    let body_len = head
+    let head_str = String::from_utf8_lossy(&head).to_string();
+    let body_len = head_str
         .split("\r\n")
         .find_map(|l| {
             l.to_ascii_lowercase()
@@ -217,22 +280,33 @@ fn serve_smoke(
                 .and_then(|v| v.trim().parse::<usize>().ok())
         })
         .unwrap_or(0);
-    let mut rest = buf[buf.len() - body_len.min(buf.len())..].to_vec();
-    while rest.len() < body_len {
-        let mut chunk = [0u8; 512];
-        let n = stream.read(&mut chunk).unwrap_or(0);
-        if n == 0 {
-            break;
-        }
-        rest.extend_from_slice(&chunk[..n]);
+
+    // `head` holds headers only, so the body starts from empty. Slicing it
+    // from an offset derived from `body_len` (as this once did) seeds the
+    // buffer with header bytes and then stops reading early — the request
+    // reaches the test truncated, and a truncated tool list is
+    // indistinguishable from a model that chose not to call one.
+    let mut body_bytes: Vec<u8> = Vec::new();
+    while body_bytes.len() < body_len {
+        let mut chunk = [0u8; 4096];
+        let n = match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        body_bytes.extend_from_slice(&chunk[..n]);
     }
-    let body = String::from_utf8_lossy(&rest[..body_len.min(rest.len())]).to_string();
+    let body = String::from_utf8_lossy(&body_bytes[..body_len.min(body_bytes.len())]).to_string();
     bodies.lock().expect("bodies").push(body);
-    let mut reply = String::from("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n");
-    for r in &replies {
-        reply.push_str(r);
+    // Publish only now: the body is complete and already in `bodies`, so a
+    // waiter that sees the new count can read it without racing this thread.
+    {
+        let (lock, cvar) = &*served;
+        *lock.lock().expect("served count") += 1;
+        cvar.notify_all();
     }
-    let _ = stream.write_all(reply.as_bytes());
+    let mut wire = String::from("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n");
+    wire.push_str(&reply);
+    let _ = stream.write_all(wire.as_bytes());
     let _ = stream.flush();
 }
 
@@ -258,15 +332,39 @@ fn daemon_cfg_smoke(
     }
 }
 
-fn drain_events_smoke(sub: &mut Subscription) -> Vec<EventFrame> {
-    let mut out = Vec::new();
+/// Poll the frame stream until `pred` accepts a frame, or fail saying which
+/// frame never arrived. The subscription's 200ms ticks keep this honest: it
+/// returns as soon as the condition holds rather than after a fixed wait,
+/// and a `None` (no frame ready yet) is a retry, not a reason to stop.
+fn wait_for_frame(
+    sub: &mut Subscription,
+    what: &str,
+    mut pred: impl FnMut(&EventFrame) -> bool,
+) -> EventFrame {
+    let deadline = Instant::now() + EVENT_TIMEOUT;
+    let mut seen: Vec<String> = Vec::new();
     loop {
+        if Instant::now() >= deadline {
+            panic!("no {what} within {EVENT_TIMEOUT:?}; saw events: {seen:?}");
+        }
         match sub
-            .next_event(EVENT_TIMEOUT)
+            .next_event(Duration::from_millis(200))
             .expect("subscription readable")
         {
-            Some(frame) => out.push(frame),
-            None => return out,
+            Some(frame) => {
+                if pred(&frame) {
+                    return frame;
+                }
+                seen.push(
+                    frame
+                        .event
+                        .get("event")
+                        .and_then(Value::as_str)
+                        .unwrap_or("<missing>")
+                        .to_string(),
+                );
+            }
+            None => continue,
         }
     }
 }
@@ -278,30 +376,57 @@ fn daemon_subagent_seam_e2e() {
     let dir = tempdir().expect("temp dir");
     std::fs::write(dir.path().join("AGENTS.md"), "# bare\n").expect("AGENTS.md");
 
-    // Parent loop: one turn that calls the `subagent` tool, then finishes.
-    // Subagent: a plain text reply (connection 2+).
-    let mock = MockOpenAiSmoke::start(vec![tool_call_turn()], vec![one_text_turn("SUBAGENT-OK")]);
+    // Odd request: the parent loop's delegation turn. Even request: the
+    // fork runner's plain text completion.
+    let mock = MockOpenAiSmoke::start();
     let cfg = daemon_cfg_smoke(dir.path(), &mock, 8);
     let mut daemon = Daemon::start(cfg).expect("daemon start");
 
     let client = DaemonClient::connect_to(daemon.socket_addr().path());
     let mut sub = client.subscribe("worker").expect("subscribe");
+
+    // Wait for the mock to have served the *parent* request before reading
+    // frames. The pre-fix smoke answered every connection with the tool-call
+    // turn, so it produced no traffic at all: the model's delegation turn was
+    // streamed back to it as the answer to its own delegation, and the loop
+    // finished without ever reaching the fork. Stating the precondition
+    // explicitly is what keeps an early exit from being reported as a
+    // missing frame.
+    //
+    // This must come *after* the prompt, not before: in orbit mode
+    // `WorkerPrompt` only enqueues the message and acks, so the engine thread
+    // sends the LLM request strictly after `call_raw` returns and no request
+    // can be in flight while the client is still composing one.
     let resp = client
         .call_raw(Command::WorkerPrompt, json!({ "message": "delegate" }))
         .expect("prompt via daemon");
     assert!(resp.success, "prompt failed: {:?}", resp.error);
-    let events = drain_events_smoke(&mut sub);
+
+    assert!(
+        mock.wait_for_served(1, EVENT_TIMEOUT),
+        "the daemon never sent the parent loop's first LLM request"
+    );
+
+    // The mock must have served 2 requests: parent + subagent runner. The
+    // runner's request is issued while the parent's delegate turn is being
+    // handled, i.e. before that turn can complete, so waiting here makes the
+    // second precondition explicit rather than implied.
+    assert!(
+        mock.wait_for_served(2, EVENT_TIMEOUT),
+        "expected parent + subagent HTTP calls, mock only served {}",
+        mock.received().len()
+    );
 
     // Find the `subagent` tool execution end. WorkerEvent serializes as
     // `{"event":"tool_execution_end","name":"subagent","result":{...}}`
-    // (serde tag="event"), so the frame's `event` field carries it.
-    let subagent_end = events
-        .iter()
-        .find(|f| {
-            f.event.get("event").and_then(Value::as_str) == Some("tool_execution_end")
-                && f.event.get("name").and_then(Value::as_str) == Some("subagent")
-        })
-        .expect("a tool_execution_end frame for the subagent tool");
+    // (serde tag="event"), so the frame's `event` field carries it. Waiting
+    // on the tools' end instead of on `agent_end` keeps the assertion about
+    // the subagent, not about the run's shutdown tail.
+
+    let subagent_end = wait_for_frame(&mut sub, "tool_execution_end for `subagent`", |f| {
+        f.event.get("event").and_then(Value::as_str) == Some("tool_execution_end")
+            && f.event.get("name").and_then(Value::as_str) == Some("subagent")
+    });
     let result = subagent_end
         .event
         .get("result")
@@ -310,14 +435,6 @@ fn daemon_subagent_seam_e2e() {
     assert!(
         result_str.contains("completed"),
         "subagent tool must report completed, got: {result_str}"
-    );
-
-    // The mock must have received at least 2 calls: parent + subagent.
-    let bodies = mock.received();
-    assert!(
-        bodies.len() >= 2,
-        "expected parent + subagent HTTP calls, got {}",
-        bodies.len()
     );
 
     drop(client);

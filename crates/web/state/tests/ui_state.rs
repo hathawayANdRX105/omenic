@@ -110,3 +110,73 @@ fn empty_turn_end_writes_placeholder_text() {
     assert_eq!(ui.messages.len(), 1);
     assert!(ui.messages[0].content.contains("max_turns"));
 }
+
+/// 后台作业与持久终端的工具名归一化。
+///
+/// 这条测试守的是"未知工具走兜底"这个默认行为的边界：jobs_* / terminal_*
+/// 的参数里没有 `path`，一旦落进兜底分支，气泡标题就会退化成工具名本身，
+/// 聊天气泡上看不出这一步在做什么。所以每个名字都必须映射到
+/// bash / job / terminal 三个 kind 之一，并且标题取自 id / data / command。
+#[test]
+fn job_and_terminal_tools_get_a_specific_kind_and_a_useful_title() {
+    let cases = [
+        (
+            "jobs_start",
+            json!({ "command": "cargo test" }),
+            "bash",
+            "cargo test",
+        ),
+        ("jobs_wait", json!({ "id": "job-3" }), "job", "job-3"),
+        ("jobs_list", json!({}), "job", "jobs_list"),
+        ("jobs_kill", json!({ "id": "job-3" }), "job", "job-3"),
+        (
+            "terminal_create",
+            json!({ "shell": "bash" }),
+            "terminal",
+            "terminal_create",
+        ),
+        (
+            "terminal_write",
+            json!({ "id": "term-1", "data": "pwd\n" }),
+            "terminal",
+            "term-1",
+        ),
+        (
+            "terminal_read",
+            json!({ "id": "term-1" }),
+            "terminal",
+            "term-1",
+        ),
+        (
+            "terminal_resize",
+            json!({ "id": "term-1", "cols": 100, "rows": 30 }),
+            "terminal",
+            "term-1",
+        ),
+        (
+            "terminal_kill",
+            json!({ "id": "term-1" }),
+            "terminal",
+            "term-1",
+        ),
+        ("terminal_list", json!({}), "terminal", "terminal_list"),
+    ];
+
+    for (name, args, want_kind, want_title) in cases {
+        let mut ui = UiState::default();
+        ui.apply(&AgentEvent::ToolCall {
+            id: "tc-1".into(),
+            name: name.into(),
+            args,
+        });
+        let MessagePart::Tool(tc) = &ui.messages[0].parts[0] else {
+            panic!("{name}: expected a tool part");
+        };
+        assert_eq!(tc.kind, want_kind, "{name}: wrong kind");
+        assert_eq!(tc.title, want_title, "{name}: wrong title");
+        assert_ne!(
+            tc.kind, "tool",
+            "{name}: fell through to the unknown-tool fallback"
+        );
+    }
+}

@@ -38,7 +38,38 @@ main 现为 `b20ebc0`（#383 B1/B2 合并后审查收尾 squash 合并，2026-09
 - **驳回 4 条（有裁定理由）**：page-config 跨 tab 挂载快照（设计意图，改动要动 Dioxus 状态提升）、worker.rs 持锁回放（临界区仅 ≤50 条内存 push、无 I/O）、llm.rs「只有 name 的 server 能保存」（误报，基线已有 `no_transport` 校验）、page-config 本地 signal 不随 prop 更新（真，tech-debt 记档）。
 - **验收**：CI 全量绿（run 35425569919，1m35s）；`gate merge --dry-run` 118 checks ALL PASS；审查记录三条（round 1 / round 2 / CRG Review）落在 PR conversation。
 
-**G8 之后没有排队中的整合点。** 接下来走 dsh 全量对照 backlog：2026-09-18 已划分三批（B1 MCP 捆绑 web 契约 / B2 session resume + LLM 路由 / B3 jobs + subagent P4），附件与遥测类不排批次（见「后续 backlog」）。B1（#381）/ B2（#382）/ 审查收尾（#383）已合入 main（`b20ebc0`），见上文「当前位置」；**B3 未开工，是下一步。**
+**G8 之后没有排队中的整合点。** 接下来走 dsh 全量对照 backlog：2026-09-18 已划分三批（B1 MCP 捆绑 web 契约 / B2 session resume + LLM 路由 / B3 jobs + subagent P4），附件与遥测类不排批次（见「后续 backlog」）。B1（#381）/ B2（#382）/ 审查收尾（#383）已合入 main（`b20ebc0`），见上文「当前位置」；**B3 已开工（PR1 本地完成，见下节）。**
+
+**B3-PR1 本地完成（jobs + terminal + web 词表，2026-09-19，分支 `feat/b3-jobs-terminal`，base `e8b271f`）：**
+
+- **两个新 crate**：`crates/harness/jobs`（`JobRegistry` trait + `LocalJobRegistry`；全部方法取 `&self`，`Mutex` + `Condvar` 同步，作业跑在 `std::thread` 上）与 `crates/harness/terminal`（`TerminalRegistry`，portable-pty 0.9 后端，每会话一个 reader 线程把 pty master 排空进内存 buffer，所以 `read` 非阻塞且是 **drain 语义**）。14 + 15 个本地测试全绿。
+- **6 个模型工具 + 4 个 terminal 工具**：`crates/harness/tools/src/jobs_terminal.rs`（`session_tools()` 一次建 10 把，`SESSION_TOOL_NAMES` 常量做单一真源）。实现的是 **agent-domain `tools::Tool`**，不是 harness `Tool` —— 引擎派发的就是前者、MCP 工具也是这个形状，直接实现省掉一层 adapter（C6 的两 trait 分离仍成立）。
+- **daemon 接线**：沿用 MCP 的同款 seam —— `OrbitConfig.session_tools: Arc<Vec<Arc<dyn Tool>>>`（与 `mcp_tools` 并列），daemon `session_tools()` 建一次注册表、每个 engine respawn 克隆同一份 `Arc`。`combined_tools` 合并顺序 catalog → MCP → session。
+- **web 词表**：`ui_state.rs::tool_call_from_rpc` 加 `jobs_*` → `bash`/`job`、`terminal_*` → `terminal` 分支，标题取 `id`/`data`/`command`（兜底分支只认 `path`，会退化成工具名）；`chat.rs::kind_chip` 给 `job`/`terminal` 复用 brand 配色；`chat.yaml` 的 `chip-kind-bash` 锚点同步改。
+- **两个真实发现（非测试瑕疵）**：
+  1. **pty 会回显输入，且"数出现次数"不是解法。** `write("echo hi\n")` 后读端有两份 `hi`（回显 + 输出）；想靠"等出现两次"绕过不可靠——pty 无分帧，回显本身可能跨 read 到达而被数两次，调用方在命令跑之前就返回了。正解是让 shell 拼出哨兵（`printf '\n__DONE_%s__\n' OK`），命令行文本里不含该字面量，于是任何一次出现都是真输出。已写进 terminal crate 模块文档 + 测试 helper。
+  2. **`TerminalRegistry::list()` 曾自死锁**：持 `sessions` 锁再调 `status()` → `get()` 重入同一把 `std::sync::Mutex`。靠本地跑测试发现（挂起 >60s），抽 `summarize(&TerminalId, &Session)` 直取 `Arc` 修掉。
+- **代码审查（CRG + ocr + 三层）修出的问题**，见下节「B3-PR1 审查修复」。
+- **余量（不阻塞）**：dsh `jobs` 的其余 4 个工具（`jobs_output` 等）；terminal 的 pwsh 后端；`onJobDone` 生命周期回调。
+
+### B3-PR1 审查修复（三个 commit，2026-09-19）
+
+CI 首轮红两次，两次都是**既有测试本身的缺陷**，不是新代码引入的：
+
+1. **`daemon_subagent_seam_e2e` 的 mock 截断了请求体**（`1197399`）。`serve_smoke` 从 `buf[buf.len() - body_len.min(buf.len())..]` 取 body 起点，但 `buf` 此时只含 header（读循环在 `\r\n\r\n` 停），偏移量塌成 0，于是 `rest` 被塞进 header 字节、补读循环正好短一个 header 长度（实测 9401 字节的请求只记录到 8538）。JSON 解析失败 → 模型从未拿到完整工具表 → 没有 `tool_calls` → 循环直接 `agent_end`。按 `\r\n\r\n` 切分、从空开始补 body 修掉；顺带把脚本槽位从**连接序**改成**请求序**、计数从 accept 时自增改成 body 入列后自增（两者都会掩盖同一故障）。
+2. **`mcp_config_validate` 的 cwd 竞态**（`6e722f0`）。`Config::load` 按**进程** cwd 解析 `./.oi/config.toml` 且无目录参数，`set_current_dir` 同样进程级，三个用例在 cargo 并行线程下互相抢。加 `cwd_lock()` 把（切 cwd、load、还原）整段串行化；锁对 poison 容忍（一个用例失败不该让另两个报"poisoned lock"）。临时禁用锁可稳定复现三个全 fail。
+
+3. **terminal 会话的 kill 不彻底（flaky 的真因，`64a6bad`）**。`kill_leaves_the_record_so_output_can_still_be_drained` 三 crate 合跑时约 1/6 失败，报 `killed shell never reported exit`。根因不在测试：
+
+   - `kill` 委托 `portable_pty` 的 `Child::kill`，它在 unix 只对**单个 pid** 发 `SIGHUP` 然后 reap。pty 只要**还有任何进程持有 slave** 就不关闭，而 `bash` 死时不杀自己的子进程 → 被孤立的 `sleep 30` 攥着 slave，reader 线程一直停在 `read(master)`，会话看起来"还活着"直到孤儿到期（最多 30s，而测试只等 5s）。
+   - **杀 shell 的进程组也不够**：job control 给每个前台/后台作业单独一个进程组，实测 `bash pgrp=700823` / `sleep pgrp=700825`（`sid` 都是 700823），所以 `kill(-shell_pgrp)` 只打到 shell。
+   - 真正共享的是**会话 id**（`portable_pty` 在 `exec` 前调了 `setsid`），信号改成打 `-sid` 对应的进程组。
+
+   实测三种信号：`SIGTERM` **根本不杀** pty 上的 bash（会话存活）；`SIGHUP` 杀掉 shell 但 pty 永不 EOF（孤儿仍持 slave）；`SIGKILL` 才既 reap 又让 pty 在 ~0.4ms 内 EOF。故 `kill` 改用 `SIGKILL`。
+
+   同批还修掉审查意见里的若干项：`push_output` / reader 退出路径改为**持锁 notify**（原先 drop guard 后再 notify，`read` 在进入 `wait_timeout` 时已释放互斥锁，窗口内的通知无人接收 → 丢失唤醒）；全部 `.lock().unwrap()` 换成 `lock_recover` / `state_guard`（对齐 `crates/agent/mcp`、`crates/infra/daemon` 的 poison 容忍惯例）；`run_command` 的 reader join 不再吞 panic（空串与"命令没输出"无法区分）；`kill_tree` 返回并检查结果（仅非 ESRCH 时报错）。
+
+   验证：33 测试全绿（14 jobs + 15 terminal + 4 tools），三 crate 合跑 8 轮无失败；复现用的 kill 探针从近乎全败变为 60/60 通过。
 
 ## 缺口表（全部已关闭，留作记账）
 
@@ -126,7 +157,7 @@ PR 拆分：PR1 jobs + terminal + web 工具词表；PR2 subagent P4（ACP + int
 | **session resume 生产路径** | `SessionPersistence` 抽象（`prepare`/`load`/`inspect`/`readFrom`）+ JSONL/SQLite 双后端 + `session-checkpoint-policy` 在 llm/tools/pre-step 前自动 flush durable log | **已完成（#382 B2a，2026-09-18）**：daemon 重启后 orbit worker 按 `session_id` 从 session DB 加载最近 50 条 user/assistant 历史回放进 `ctx.messages`（dedupe + 切换清 ctx） | 余量：checkpoint flush 策略（dsh `session-checkpoint-policy`）；回放跳过 `System`/`Tool` 行 |
 | **附件全链路** | `AttachmentStore` 抽象（`validateImage`/`saveImage`/`readImage`/`readImageRequest`）+ `LocalAttachmentStore` 内容寻址 + `ui-attachment` 前端 + adapter `resolveAttachments` 注入 | omenic 全仓 grep `attachment`/`image` = 0 命中（仅 `ETXTBSY` 误匹配） | **不排批次**（超三批上限；三段全缺，见「不排批次」节） |
 | **LLM provider 注册表/路由 + retry** | `LlmRuntime` 服务（`registerAdapter`/`registerConfigurableProviders`/`stream` waterfall）+ DeepSeek/PiAi 双 adapter + `llm-retry` 插件（provider 路由指数退避）；`TokenMeter` | **waterfall 已完成（#382 B2b，2026-09-18；#383 补审 2026-09-19）**：`orbit::WaterfallLlm`（`[[llm.fallbacks]]` 按序切换 + per-provider `RetryPolicy` 退避 + 中间 Error 判据改用终态/`leaked_content`）+ web settings Fallback 表单 | token-meter 不做（C8 裁定维持）；DeepSeek/PiAi 官方 adapter 未接（现走 OpenAI 兼容端点） |
-| **jobs 后台作业 + terminal 持久 PTY** | `JobRegistry` 抽象（`start`/`list`/`kill`/`wait`/`onJobDone`）+ `LocalJobRegistry` 内存实现 + `terminal` PTY 后端（bash/pwsh）+ 6 个模型工具 | 无 `jobs`/`terminal`/`pty` crate；`Cargo.toml` 无相关依赖；grep `pty` 仅误匹配 `subagent`/`opportunity` | **B3**：trait + 内存实现 + bash PTY；模型工具先 `jobs_wait`/`jobs_kill`，余量其余 4 个 + web 工具词表 |
+| **jobs 后台作业 + terminal 持久 PTY** | `JobRegistry` 抽象（`start`/`list`/`kill`/`wait`/`onJobDone`）+ `LocalJobRegistry` 内存实现 + `terminal` PTY 后端（bash/pwsh）+ 6 个模型工具 | **PR 已开（B3-PR1，#385，2026-09-19，分支 `feat/b3-jobs-terminal`）**：新增 `crates/harness/jobs` + `crates/harness/terminal`（portable-pty）；10 把模型工具（`session_tools()`）+ daemon `OrbitConfig.session_tools` 接线 + web 工具词表；33 个本地测试绿；三轮审查意见已落实（含 kill 打整会话、持锁 notify 等真实缺陷修复） | **余量**：`onJobDone` 回调、pwsh 后端、dsh jobs 其余工具 |
 | **session telemetry/otel + title-llm** | `SessionTelemetryBackend` 抽象 + OTel SDK 导出 + `SessionTitleService`（确定性 fallback + LLM 生成） | omenic 全仓 grep `session_telemetry`/`opentelemetry`/`session-title`/`title-llm` = 0 | **不排批次**（无生产需求） |
 | **credentials/authorization + identity** | `CredentialProvider` 抽象（分层 env 解析 + YAML 持久化 + 跨进程锁）+ `AuthorizationService`（one-attempt-per-key）+ `AnonymousUserId` | omenic 全仓 grep `credentials`/`identity`/`anonymous-user-id` = 0 | **不排批次**（现有 TOML 文件配置够用） |
 

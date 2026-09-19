@@ -23,3 +23,7 @@ omenic-harness-compaction = { path = "../../harness/compaction" }
 tempfile = { workspace = true }
 omenic-composition = { path = "../../composition" }
 omenic-harness-runtime = { path = "../../harness/runtime" }
+# The merge test builds the real job/terminal tool family, so the registries
+# those tools capture must be nameable here.
+omenic-harness-jobs = { path = "../../harness/jobs" }
+omenic-harness-terminal = { path = "../../harness/terminal" }
