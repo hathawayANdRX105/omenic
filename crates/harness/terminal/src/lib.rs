@@ -417,7 +417,7 @@ impl TerminalRegistry {
         // fail. Here a spawn failure bails out having created nothing.
         let reader = pair.master.try_clone_reader()?;
         let reader_inner = Arc::clone(&inner);
-        let reader_handle = std::thread::Builder::new()
+        std::thread::Builder::new()
             .name("omenic-pty-reader".into())
             .spawn(move || {
                 let mut reader = reader;
@@ -456,9 +456,6 @@ impl TerminalRegistry {
 
         let writer = pair.master.take_writer()?;
         let killer = child.clone_killer();
-        // The reader is now fed by a live child; the handle is kept only so a
-        // future shutdown could join it, matching how `jobs` keeps its handles.
-        drop(reader_handle);
 
         let id;
         {
@@ -493,7 +490,7 @@ impl TerminalRegistry {
         }
         Ok(id)
     }
-
+    /// Look up a session, or report it unknown.
     fn get(&self, id: &TerminalId) -> Result<Arc<Session>, TerminalError> {
         lock_recover(&self.sessions)
             .get(id)
