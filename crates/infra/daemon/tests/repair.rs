@@ -20,8 +20,7 @@ fn cfg(dir: &std::path::Path, socket: &str, db: &std::path::Path) -> DaemonConfi
         // Scope instruction discovery to the temp dir.
         cwd: dir.to_path_buf(),
         max_turns: 64,
-        mcp_servers: Vec::new(),
-        llm_fallbacks: Vec::new(),
+        ..Default::default()
     }
 }
 

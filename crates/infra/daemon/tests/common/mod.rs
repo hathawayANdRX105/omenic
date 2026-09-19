@@ -159,8 +159,7 @@ pub fn daemon_cfg(dir: &std::path::Path, mock: &MockOpenAi, max_turns: usize) ->
         }),
         cwd: dir.to_path_buf(),
         max_turns,
-        mcp_servers: Vec::new(),
-        llm_fallbacks: Vec::new(),
+        ..Default::default()
     }
 }
 

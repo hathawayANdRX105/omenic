@@ -63,6 +63,11 @@ pub struct DaemonConfig {
     /// (`.oi/config.toml` `[[llm.fallbacks]]`). Empty = single-provider
     /// behaviour (`orbit::HttpLlm`, historic path, zero change).
     pub llm_fallbacks: Vec<config::LlmFallbackConfig>,
+    /// Out-of-process subagent providers (`[[subagent.providers]]` in
+    /// `.oi/config.toml`), each a spawned ACP child agent the daemon can
+    /// delegate runs to. Wired in by [`DaemonConfig::from_config`]; empty =
+    /// no out-of-process provider is registered (only the built-in `fork`).
+    pub subagent_providers: Vec<config::SubagentProviderConfig>,
 }
 
 impl DaemonConfig {
@@ -102,7 +107,29 @@ impl DaemonConfig {
             max_turns: cfg.max_turns.unwrap_or(orbit::DEFAULT_MAX_TURNS),
             mcp_servers: cfg.mcp_servers.clone(),
             llm_fallbacks: cfg.llm_fallbacks.clone(),
+            subagent_providers: cfg.subagent_providers.clone(),
         })
+    }
+}
+
+/// Structural default: every field is its own type's default (paths empty,
+/// orbit model `None`, lists empty). Test fixtures build on it with
+/// `..Default::default()`; production code goes through
+/// [`DaemonConfig::from_config`], which fills `max_turns` from the loop
+/// default instead of leaving it at 0.
+impl Default for DaemonConfig {
+    fn default() -> Self {
+        Self {
+            socket_path: None,
+            omp_path: String::new(),
+            session_db_path: None,
+            orbit_model: None,
+            cwd: PathBuf::new(),
+            max_turns: 0,
+            mcp_servers: Vec::new(),
+            llm_fallbacks: Vec::new(),
+            subagent_providers: Vec::new(),
+        }
     }
 }
 
