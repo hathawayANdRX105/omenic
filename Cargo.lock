@@ -2116,6 +2116,7 @@ dependencies = [
  "omenic-harness-plugin",
  "omenic-harness-tools",
  "orbit",
+ "serde",
  "serde_json",
  "subagent",
  "tools",
