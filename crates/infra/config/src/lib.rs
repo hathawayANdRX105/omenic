@@ -35,6 +35,10 @@ pub struct Config {
     /// External MCP servers to spawn for extra tools. Empty by default —
     /// MCP is opt-in and nothing is spawned unless the user lists a server.
     pub mcp_servers: Vec<McpServerConfig>,
+    /// Out-of-process subagent providers (`[[subagent.providers]]`): spawned
+    /// ACP child agents the daemon can delegate runs to. Empty by default —
+    /// subagents are opt-in, same as `mcp_servers`.
+    pub subagent_providers: Vec<SubagentProviderConfig>,
 
     /// Persistent local memory. Off by default: nothing is written to disk
     /// until the user opts in via `[memory] enabled = true`.
@@ -95,6 +99,51 @@ pub struct McpReconnectConfig {
     pub max_delay_ms: Option<u64>,
     #[serde(default)]
     pub max_attempts: Option<u32>,
+}
+
+/// Permission policy for ACP child requests: how the client auto-answers
+/// the child agent's permission prompts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SubagentPermission {
+    Allow,
+    Reject,
+}
+
+impl Default for SubagentPermission {
+    fn default() -> Self {
+        Self::Reject
+    }
+}
+
+/// One out-of-process subagent provider (`[[subagent.providers]]`): a spawned
+/// ACP child agent the daemon can delegate runs to. The transport is ACP for
+/// now; the spawn fields (`command`/`args`/`env`/`cwd`) are kept generic so a
+/// future transport reuses them without a config migration.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct SubagentProviderConfig {
+    /// Registry name; must not collide with the built-in `fork`.
+    pub name: String,
+    /// Executable to spawn (the child ACP agent). Required.
+    pub command: String,
+    /// Arguments passed to `command`.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Extra env for the child, merged over the scrubbed parent env.
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
+    /// Child cwd. `None` = inherit the daemon session cwd.
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// How the client auto-answers the child's permission prompts.
+    #[serde(default)]
+    pub permission: SubagentPermission,
+    /// SIGTERM→SIGKILL grace on dispose, ms. `None` = provider default (3000).
+    #[serde(default)]
+    pub dispose_grace_ms: Option<u64>,
+    /// stdin-EOF quiesce window on dispose, ms. `None` = provider default (6000).
+    #[serde(default)]
+    pub dispose_eof_grace_ms: Option<u64>,
 }
 
 /// One fallback LLM provider (`[[llm.fallbacks]]`), tried in listed order
@@ -183,6 +232,7 @@ impl Config {
             llm_max_tokens: None,
             llm_fallbacks: Vec::new(),
             mcp_servers: Vec::new(),
+            subagent_providers: Vec::new(),
             memory_enabled: false,
             memory_dir: None,
             cwd: Self::default_cwd(),
@@ -367,6 +417,32 @@ impl Config {
             }
         }
 
+        // subagent providers: a listed provider must be startable, and must
+        // not shadow `fork` — the built-in in-process provider. A user config
+        // that redefines `fork` would silently route runs to the wrong place.
+        for (i, p) in self.subagent_providers.iter().enumerate() {
+            if p.name.trim().is_empty() {
+                return Err(ConfigError::Invalid {
+                    field: "subagent.providers",
+                    message: format!("entry {i}: name must not be empty"),
+                });
+            }
+            if p.name == "fork" {
+                return Err(ConfigError::Invalid {
+                    field: "subagent.providers",
+                    message: format!(
+                        "entry {i}: name 'fork' is the built-in in-process provider and cannot be overridden"
+                    ),
+                });
+            }
+            if p.command.trim().is_empty() {
+                return Err(ConfigError::Invalid {
+                    field: "subagent.providers",
+                    message: format!("entry {i}: an out-of-process provider requires a command"),
+                });
+            }
+        }
+
         // cwd: when it exists it must be a directory — instruction discovery
         // walks its ancestor chain, and a file would never hold AGENTS.md.
         if self.cwd.exists() && !self.cwd.is_dir() {
@@ -494,6 +570,8 @@ struct TomlConfig {
     memory: MemoryToml,
     #[serde(default)]
     daemon: DaemonToml,
+    #[serde(default)]
+    subagent: SubagentToml,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -528,6 +606,14 @@ struct LlmToml {
 struct McpToml {
     #[serde(default)]
     servers: Vec<McpServerConfig>,
+}
+
+/// `[subagent]` TOML section. `providers` is a list of
+/// `[[subagent.providers]]` tables.
+#[derive(Debug, Default, serde::Deserialize)]
+struct SubagentToml {
+    #[serde(default)]
+    providers: Vec<SubagentProviderConfig>,
 }
 
 impl TomlConfig {
@@ -571,6 +657,23 @@ impl TomlConfig {
                     s.command = s.command.map(|c| c.trim().to_string());
                     s.url = s.url.map(|u| u.trim().to_string());
                     s
+                })
+                .collect();
+        }
+        // Same empty-does-not-override + merge-boundary trim as
+        // `mcp.servers` above: `validate` only *tests* the trimmed value, so
+        // a padded `command = " /bin/echo "` would pass and still spawn with
+        // its spaces.
+        if !self.subagent.providers.is_empty() {
+            base.subagent_providers = self
+                .subagent
+                .providers
+                .into_iter()
+                .map(|mut p| {
+                    p.name = p.name.trim().to_string();
+                    p.command = p.command.trim().to_string();
+                    p.cwd = p.cwd.map(|c| c.trim().to_string());
+                    p
                 })
                 .collect();
         }

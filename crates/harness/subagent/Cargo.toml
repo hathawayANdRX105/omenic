@@ -5,6 +5,13 @@ edition = "2024"
 description = "Subagent provider trait, runtime service, and in-process fork backend"
 license = "MIT"
 publish = false
+# The mock agent doubles as the tests' child binary under `[[bin]]` below, so
+# it must not also be picked up as an auto-discovered example target.
+autoexamples = false
+
+[[bin]]
+name = "mock_acp_server"
+path = "examples/mock_acp_server.rs"
 
 [dependencies]
 omenic-harness-core = { path = "../core" }
@@ -14,4 +21,8 @@ adaptor = { path = "../../agent/adaptor" }
 orbit = { path = "../../agent/orbit" }
 tools = { path = "../../agent/tools" }
 subagent = { path = "../../agent/subagent" }
+serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

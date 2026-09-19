@@ -63,6 +63,11 @@ pub struct DaemonConfig {
     /// (`.oi/config.toml` `[[llm.fallbacks]]`). Empty = single-provider
     /// behaviour (`orbit::HttpLlm`, historic path, zero change).
     pub llm_fallbacks: Vec<config::LlmFallbackConfig>,
+    /// Out-of-process subagent providers (`[[subagent.providers]]` in
+    /// `.oi/config.toml`), each a spawned ACP child agent the daemon can
+    /// delegate runs to. Wired in by [`DaemonConfig::from_config`]; empty =
+    /// no out-of-process provider is registered (only the built-in `fork`).
+    pub subagent_providers: Vec<config::SubagentProviderConfig>,
 }
 
 impl DaemonConfig {
@@ -102,7 +107,29 @@ impl DaemonConfig {
             max_turns: cfg.max_turns.unwrap_or(orbit::DEFAULT_MAX_TURNS),
             mcp_servers: cfg.mcp_servers.clone(),
             llm_fallbacks: cfg.llm_fallbacks.clone(),
+            subagent_providers: cfg.subagent_providers.clone(),
         })
+    }
+}
+
+/// Structural default: every field is its own type's default (paths empty,
+/// orbit model `None`, lists empty). Test fixtures build on it with
+/// `..Default::default()`; production code goes through
+/// [`DaemonConfig::from_config`], which fills `max_turns` from the loop
+/// default instead of leaving it at 0.
+impl Default for DaemonConfig {
+    fn default() -> Self {
+        Self {
+            socket_path: None,
+            omp_path: String::new(),
+            session_db_path: None,
+            orbit_model: None,
+            cwd: PathBuf::new(),
+            max_turns: 0,
+            mcp_servers: Vec::new(),
+            llm_fallbacks: Vec::new(),
+            subagent_providers: Vec::new(),
+        }
     }
 }
 
@@ -320,6 +347,65 @@ impl Daemon {
                 subagent_max_turns,
             )),
         );
+        // Out-of-process ACP providers (`[[subagent.providers]]`) land here,
+        // not in the worker: the service and every provider are daemon-start
+        // state, so the daemon assembles them and the `subagent` /
+        // `subagent_control` tools below resolve providers from the same
+        // registry. Config validation already rejects an empty name and the
+        // reserved `fork` name, so a duplicate entry here merely overwrites
+        // the earlier one (HashMap semantics) and no entry can shadow the
+        // built-in.
+        for p in &cfg.subagent_providers {
+            let mut spec = omenic_harness_subagent::AcpProviderSpec::new(&p.command);
+            spec.args = p.args.clone();
+            spec.cwd = p.cwd.clone().map(std::path::PathBuf::from);
+            spec.env = p.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            spec.permission = match p.permission {
+                config::SubagentPermission::Allow => omenic_harness_subagent::AcpPermission::Allow,
+                config::SubagentPermission::Reject => {
+                    omenic_harness_subagent::AcpPermission::Reject
+                }
+            };
+            // eof_grace is the post-stdin-EOF quiesce window, kill_grace the
+            // post-SIGKILL reap window (see `AcpProviderSpec`); both config
+            // knobs are `Option` where `None` keeps the spec's own default.
+            if let Some(ms) = p.dispose_eof_grace_ms {
+                spec.eof_grace = Duration::from_millis(ms);
+            }
+            if let Some(ms) = p.dispose_grace_ms {
+                spec.kill_grace = Duration::from_millis(ms);
+            }
+            subagents.register(
+                p.name.as_str(),
+                std::sync::Arc::new(omenic_harness_subagent::AcpProvider::new(spec)),
+            );
+        }
+        // The tool the model calls when it wants a subagent defaults to the
+        // first configured out-of-process provider, falling back to `fork`
+        // when the user configured none.
+        let default_provider = cfg
+            .subagent_providers
+            .first()
+            .map(|p| p.name.as_str())
+            .unwrap_or("fork");
+        // Registered into the harness catalog rather than `session_tools`:
+        // both subagent tools implement the harness `Tool` trait, and the
+        // catalog path already shims harness → orbit `tools::Tool` (rpc's
+        // `HarnessTool`, which also wires the engine's abort flag into the
+        // `AbortSignal` the tools take — the piece an interrupt rides on).
+        catalog.register(std::sync::Arc::new(
+            omenic_harness_subagent::tool_subagent::SubagentTool::new(
+                "subagent".into(),
+                default_provider.into(),
+                std::sync::Arc::clone(&subagents),
+            ),
+        ));
+        catalog.register(std::sync::Arc::new(
+            omenic_harness_subagent::tool_subagent_control::SubagentControlTool::new(
+                "subagent_control".into(),
+                std::sync::Arc::clone(&subagents),
+            ),
+        ));
         // B1/T3 — MCP bring-up: spawn every configured server exactly once
         // per daemon start and hand their tools to the engine. Default
         // policy is best-effort: a server that fails to start/handshake
@@ -348,13 +434,6 @@ impl Daemon {
                 mcp_tools,
                 session_tools,
             },
-            // Seam intent: the daemon registers the in-process fork provider
-            // above; `providers` carries the (name, tool allow-list) intent
-            // forward for Phase 4 out-of-process providers.
-            providers: vec![(
-                "fork".into(),
-                FORK_SUBAGENT_TOOLS.iter().map(|s| s.to_string()).collect(),
-            )],
         })
     }
 
