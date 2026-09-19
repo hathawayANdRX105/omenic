@@ -398,14 +398,6 @@ impl TerminalRegistry {
             pixel_width: 0,
             pixel_height: 0,
         })?;
-        let child = pair.slave.spawn_command(cmd)?;
-        // The slave handle must be dropped promptly: holding it open keeps the
-        // pty from ever reporting EOF when the shell exits.
-        drop(pair.slave);
-
-        let reader = pair.master.try_clone_reader()?;
-        let writer = pair.master.take_writer()?;
-        let killer = child.clone_killer();
 
         let inner = Arc::new(SessionInner {
             buffer: Mutex::new(Buffer::default()),
@@ -417,8 +409,15 @@ impl TerminalRegistry {
         // Reader thread: the pty master is drained here for the whole session
         // life. `read` never touches the master, so a `terminal_read` on an
         // idle shell returns promptly instead of blocking on the pty.
+        //
+        // Spawned *before* the child deliberately. `thread::Builder::spawn`
+        // fails under resource limits; had the child already been started it
+        // would be left running with no session record and no killer to stop
+        // it with — a process leak on exactly the starved path where threads
+        // fail. Here a spawn failure bails out having created nothing.
+        let reader = pair.master.try_clone_reader()?;
         let reader_inner = Arc::clone(&inner);
-        std::thread::Builder::new()
+        let reader_handle = std::thread::Builder::new()
             .name("omenic-pty-reader".into())
             .spawn(move || {
                 let mut reader = reader;
@@ -443,6 +442,23 @@ impl TerminalRegistry {
                 reader_inner.appended.notify_all();
             })
             .map_err(|e| TerminalError::Pty(e.to_string()))?;
+
+        let child = pair.slave.spawn_command(cmd).inspect_err(|_| {
+            // No child will ever write, and the cloned master reader keeps the
+            // pty from reporting EOF on its own (a dup of the master fd
+            // outlives `pair`). Without this the reader thread would block for
+            // the process lifetime on an open fd with nothing to read.
+            inner.closed.store(true, Ordering::Relaxed);
+        })?;
+        // The slave handle must be dropped promptly: holding it open keeps the
+        // pty from ever reporting EOF when the shell exits.
+        drop(pair.slave);
+
+        let writer = pair.master.take_writer()?;
+        let killer = child.clone_killer();
+        // The reader is now fed by a live child; the handle is kept only so a
+        // future shutdown could join it, matching how `jobs` keeps its handles.
+        drop(reader_handle);
 
         let id;
         {
@@ -478,16 +494,12 @@ impl TerminalRegistry {
         Ok(id)
     }
 
-    /// Look up a session, or report it unknown.
     fn get(&self, id: &TerminalId) -> Result<Arc<Session>, TerminalError> {
-        self.sessions
-            .lock()
-            .unwrap()
+        lock_recover(&self.sessions)
             .get(id)
             .cloned()
             .ok_or_else(|| TerminalError::Unknown(id.clone()))
     }
-
     /// Send input to the session's shell.
     ///
     /// No newline is appended: the model sends `"ls\n"` when it wants the
