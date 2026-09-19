@@ -138,7 +138,7 @@ pub struct SubagentProviderConfig {
     /// How the client auto-answers the child's permission prompts.
     #[serde(default)]
     pub permission: SubagentPermission,
-    /// SIGTERM→SIGKILL grace on dispose, ms. `None` = provider default (3000).
+    /// Post-SIGKILL reap window on dispose, ms (`AcpProviderSpec::kill_grace`). `None` = provider default (3000).
     #[serde(default)]
     pub dispose_grace_ms: Option<u64>,
     /// stdin-EOF quiesce window on dispose, ms. `None` = provider default (6000).
