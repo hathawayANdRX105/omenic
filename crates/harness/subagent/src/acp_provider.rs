@@ -490,20 +490,24 @@ impl AcpDisposer {
     fn wait_for_exit(&self, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
         loop {
-            match self.child.lock().unwrap().as_mut() {
+            // Whether the poll observed an exit. Kept as a bool so the guard
+            // is dropped before the take below — re-locking under the borrow
+            // would deadlock.
+            let exited = match self.child.lock().unwrap().as_mut() {
                 Some(child) => match child.try_wait() {
-                    Ok(Some(_)) => {
-                        // Reaped right here; drop the handle so the tail
-                        // cannot wait an already-reaped child (ECHILD).
-                        drop(self.child.lock().unwrap().take());
-                        return true;
-                    }
-                    Ok(None) => {}
+                    Ok(Some(_)) => true,
+                    Ok(None) => false,
                     // Already reaped by the exit watcher or a racing dispose.
-                    Err(_) => return true,
+                    Err(_) => true,
                 },
                 // The child is already taken care of.
                 None => return true,
+            };
+            if exited {
+                // try_wait reaps on Unix: drop the handle here so the ladder
+                // tail cannot wait an already-reaped child (ECHILD).
+                drop(self.child.lock().unwrap().take());
+                return true;
             }
             if Instant::now() >= deadline {
                 return false;
