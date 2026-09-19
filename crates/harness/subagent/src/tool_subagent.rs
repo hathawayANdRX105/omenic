@@ -100,10 +100,6 @@ impl Tool for SubagentTool {
             .and_then(Value::as_str)
             .unwrap_or(&self.provider_name);
 
-        let provider = self.runtime.get(provider_name).ok_or_else(|| {
-            ToolError::Execute(format!("unknown subagent provider: {provider_name}"))
-        })?;
-
         let signal = abort.flag();
         let request = SubagentStartRequest {
             prompt: prompt.into(),
@@ -111,19 +107,28 @@ impl Tool for SubagentTool {
             inherits_parent_context: false,
         };
 
-        let run = provider.start(request);
+        let (run_id, run) = self
+            .runtime
+            .start_run(provider_name, request)
+            .map_err(ToolError::Execute)?;
         let result = run.result();
+        // The run has settled, win or lose — retire it so a later
+        // `interrupt` cannot target a handle whose worker is already gone.
+        self.runtime.finish_run(&run_id);
 
         // `SubagentResult` is not `Serialize`; shape the model-facing JSON
-        // by hand so the output stays stable across backends.
+        // by hand so the output stays stable across backends. `run_id` lets
+        // the model follow up with `subagent_control` while the run is live.
         let payload = match &result {
             SubagentResult::Completed { output } => {
-                serde_json::json!({ "status": "completed", "output": output })
+                serde_json::json!({ "status": "completed", "output": output, "run_id": run_id })
             }
             SubagentResult::Failed { error } => {
-                serde_json::json!({ "status": "failed", "error": error })
+                serde_json::json!({ "status": "failed", "error": error, "run_id": run_id })
             }
-            SubagentResult::Aborted => serde_json::json!({ "status": "aborted" }),
+            SubagentResult::Aborted => {
+                serde_json::json!({ "status": "aborted", "run_id": run_id })
+            }
         };
 
         Ok(ToolResult {

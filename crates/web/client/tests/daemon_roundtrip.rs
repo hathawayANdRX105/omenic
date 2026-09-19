@@ -22,8 +22,7 @@ fn daemon_roundtrip() {
         orbit_model: None,
         cwd: dir.path().to_path_buf(),
         max_turns: 64,
-        mcp_servers: Vec::new(),
-        llm_fallbacks: Vec::new(),
+        ..Default::default()
     })
     .expect("启动 daemon");
 

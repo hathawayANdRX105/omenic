@@ -3,8 +3,8 @@ use std::sync::Arc;
 use omenic_harness_core::AbortSignal;
 use omenic_harness_plugin::{DshPlugin, Fiber};
 use omenic_harness_subagent::{
-    SubagentCapabilities, SubagentProvider, SubagentResult, SubagentRun, SubagentRuntime,
-    SubagentRuntimeService, SubagentStartRequest, ToolSubagentPlugin,
+    RunDisposer, SubagentCapabilities, SubagentProvider, SubagentResult, SubagentRun,
+    SubagentRuntime, SubagentRuntimeService, SubagentStartRequest, ToolSubagentPlugin,
 };
 use omenic_harness_tools::{ToolCatalog, ToolExecutor};
 
@@ -27,8 +27,19 @@ impl SubagentProvider for MockProvider {
         // Build a run with a pre-resolved result (channel already has result)
         let (tx, rx) = std::sync::mpsc::channel();
         let _ = tx.send(self.result.clone());
-        SubagentRun::new(rx, std::thread::spawn(|| {}))
+        SubagentRun::new(
+            rx,
+            std::thread::spawn(|| {}),
+            std::sync::Arc::new(NoopDisposer),
+        )
     }
+}
+
+/// No-op disposer: the result is already resolved, nothing to tear down.
+struct NoopDisposer;
+
+impl RunDisposer for NoopDisposer {
+    fn dispose(&self) {}
 }
 
 #[test]

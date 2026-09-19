@@ -146,6 +146,7 @@ fn tool_call_from_rpc(id: &str, name: &str, args: &Value) -> ToolCall {
         "jobs_wait" | "jobs_list" | "jobs_kill" => "job",
         "terminal_create" | "terminal_write" | "terminal_read" | "terminal_resize"
         | "terminal_kill" | "terminal_list" => "terminal",
+        "subagent" | "subagent_control" => "subagent",
         other => {
             return ToolCall {
                 id: id.to_string(),
@@ -167,6 +168,17 @@ fn tool_call_from_rpc(id: &str, name: &str, args: &Value) -> ToolCall {
             .or_else(|| args.get("data").and_then(Value::as_str))
             .or_else(|| args.get("command").and_then(Value::as_str))
             .unwrap_or(name),
+        // `subagent_control` names the run it acts on; `subagent` shows the
+        // prompt it delegated. Both normalize to one kind, so the tool name
+        // is what tells them apart.
+        "subagent" => {
+            let v = if name == "subagent_control" {
+                args.get("run_id").or_else(|| args.get("action"))
+            } else {
+                args.get("prompt")
+            };
+            v.and_then(Value::as_str).unwrap_or(name)
+        }
         _ => args.get("path").and_then(Value::as_str).unwrap_or(name),
     };
     ToolCall {

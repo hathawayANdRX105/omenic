@@ -96,17 +96,19 @@ fn tool_subagent_control_rejects_unsupported_action() {
         .into_iter()
         .find(|s| s.name == "subagent_control")
         .unwrap();
+    // `interrupt` is a supported action as of Phase 4; the unsupported-action
+    // contract is exercised by an action the tool genuinely does not know.
     let err = catalog
         .execute(
             &spec,
-            &serde_json::json!({"action": "interrupt"}),
+            &serde_json::json!({"action": "bogus"}),
             &AbortSignal::new(),
         )
         .err()
         .expect("unsupported action must be a tool error, not a fake success");
     assert!(
         err.to_string()
-            .contains("unsupported subagent control action: interrupt"),
+            .contains("unsupported subagent control action: bogus"),
         "error must name the rejected action, got: {err}"
     );
 }
