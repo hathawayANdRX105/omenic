@@ -336,6 +336,7 @@ impl Daemon {
         // infra/daemon may bridge them, the catalog must not be polluted.
         let signal = std::sync::atomic::AtomicBool::new(false);
         let mcp_tools = Self::mcp_tools(cfg, &signal)?;
+        let session_tools = Self::session_tools();
         Ok(rpc::worker::OrbitSetup {
             model: model.clone(),
             backend,
@@ -345,6 +346,7 @@ impl Daemon {
                 compaction,
                 catalog,
                 mcp_tools,
+                session_tools,
             },
             // Seam intent: the daemon registers the in-process fork provider
             // above; `providers` carries the (name, tool allow-list) intent
@@ -373,6 +375,24 @@ impl Daemon {
             .map_err(|e| DaemonError::Protocol(format!("MCP bring-up failed: {e}")))?;
         Ok(std::sync::Arc::new(
             brought.into_iter().map(std::sync::Arc::from).collect(),
+        ))
+    }
+
+    /// Build the job/terminal tool family on fresh registries.
+    ///
+    /// One registry of each kind is created here and captured by the tools for
+    /// the daemon's lifetime — that is what makes a job listable in a later
+    /// turn and a terminal session survive its creating call. Called once per
+    /// `orbit_setup`; the resulting `Arc` handles are cloned into every engine
+    /// respawn, so the registries are never rebuilt while the daemon lives.
+    ///
+    /// No cwd is threaded through: the tools default to the process cwd when a
+    /// caller omits one, which for the daemon is the configured session root.
+    fn session_tools() -> std::sync::Arc<Vec<std::sync::Arc<dyn tools::Tool>>> {
+        let jobs = std::sync::Arc::new(omenic_harness_jobs::LocalJobRegistry::new());
+        let terminals = std::sync::Arc::new(omenic_harness_terminal::TerminalRegistry::new());
+        std::sync::Arc::new(omenic_harness_tools::jobs_terminal::session_tools(
+            jobs, terminals,
         ))
     }
 

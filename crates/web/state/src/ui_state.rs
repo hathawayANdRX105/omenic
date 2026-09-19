@@ -131,14 +131,21 @@ pub fn apply_event(state: &mut UiState, ev: &AgentEvent) {
 
 /// RPC 工具调用 → 展示用 `ToolCall`（标题取 command/path，kind 归一化）。
 fn tool_call_from_rpc(id: &str, name: &str, args: &Value) -> ToolCall {
+    // 后台作业与持久终端（`omenic-harness-tools::jobs_terminal`）也要在这里
+    // 归一化：本函数对未知名字走 "tool" 兜底，而兜底分支只按 `path` 取标题 ——
+    // jobs_* 的参数是 `command` / `id`，terminal_* 是 `id` / `data`，都不带
+    // `path`，落进兜底后标题会退化成工具名本身，聊天气泡上看不出在做什么。
     let kind = match name {
-        "run_bash" => "bash",
+        "run_bash" | "jobs_start" => "bash",
         "edit" => "edit",
         "read_file" => "read",
         "write_file" => "write",
         "delete_file" => "delete",
         "grep" => "grep",
         "glob" => "glob",
+        "jobs_wait" | "jobs_list" | "jobs_kill" => "job",
+        "terminal_create" | "terminal_write" | "terminal_read" | "terminal_resize"
+        | "terminal_kill" | "terminal_list" => "terminal",
         other => {
             return ToolCall {
                 id: id.to_string(),
@@ -152,6 +159,14 @@ fn tool_call_from_rpc(id: &str, name: &str, args: &Value) -> ToolCall {
     };
     let title = match kind {
         "bash" => args.get("command").and_then(Value::as_str).unwrap_or(name),
+        // `id` first: naming the session or job the call acts on is what makes a
+        // sequence of jobs_kill / terminal_read legible at a glance.
+        "job" | "terminal" => args
+            .get("id")
+            .and_then(Value::as_str)
+            .or_else(|| args.get("data").and_then(Value::as_str))
+            .or_else(|| args.get("command").and_then(Value::as_str))
+            .unwrap_or(name),
         _ => args.get("path").and_then(Value::as_str).unwrap_or(name),
     };
     ToolCall {

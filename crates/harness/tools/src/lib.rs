@@ -7,6 +7,8 @@
 //! registering and dispatching tool calls. Tool specs live in
 //! `omenic-harness-core`.
 
+pub mod jobs_terminal;
+
 use omenic_harness_core::{AbortSignal, ToolError, ToolResult, ToolSpec};
 use serde_json::Value;
 use std::sync::{Arc, Mutex};

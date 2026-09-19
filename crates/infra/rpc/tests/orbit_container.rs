@@ -129,6 +129,9 @@ fn setup(doc: serde_json::Value, backend: Arc<Shared>) -> OrbitSetup {
             catalog,
             // No MCP servers under test here: empty list = pre-MCP behavior.
             mcp_tools: std::sync::Arc::new(Vec::new()),
+            // Likewise no job/terminal tools: empty list = the engine's tool
+            // list is exactly what it was before that family existed.
+            session_tools: std::sync::Arc::new(Vec::new()),
         },
         providers: Vec::new(),
     }

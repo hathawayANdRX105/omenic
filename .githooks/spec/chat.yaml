@@ -39,9 +39,9 @@ anchors:
     expect: '工具 kind chip：mono 10px 大写、圆角 r6、shrink-0。'
     source: 'omenic: crates/web/components/src/chat.rs:373；dsh: 状态 chip 900 底 + 400 字规格'
   - key: chip-kind-bash
-    find: '"bash" => "bg-chip-brand text-brand-300"'
-    expect: 'bash 类工具 chip 为 brand 配色。'
-    source: 'omenic: crates/web/components/src/chat.rs:29；dsh: kind→状态色映射'
+    find: '"bash" | "job" | "terminal" => "bg-chip-brand text-brand-300"'
+    expect: 'bash / job / terminal 类工具 chip 同为 brand 配色（三者都是「跑命令」，靠 chip 上的 kind 文字区分，不靠颜色）。'
+    source: 'omenic: crates/web/components/src/chat.rs:31；dsh: kind→状态色映射'
   - key: chip-kind-edit
     find: '"edit" | "write" => "bg-chip-success text-success-2"'
     expect: 'edit/write 类工具 chip 为 success 配色。'

@@ -126,7 +126,8 @@ fn combined_tools_appends_mcp_shims_after_catalog_tools() {
     ]);
 
     let flag = Arc::new(AtomicBool::new(false));
-    let merged = combined_tools(&catalog, &mcp_tools, Arc::clone(&flag));
+    let no_sessions: Arc<Vec<Arc<dyn tools::Tool>>> = Arc::new(Vec::new());
+    let merged = combined_tools(&catalog, &mcp_tools, &no_sessions, Arc::clone(&flag));
     assert_eq!(
         names_of(&merged),
         vec![
@@ -139,7 +140,7 @@ fn combined_tools_appends_mcp_shims_after_catalog_tools() {
 
     // Zero-diff guarantee: an empty MCP list is exactly the pre-MCP result.
     let empty: Arc<Vec<Arc<dyn tools::Tool>>> = Arc::new(Vec::new());
-    let merged = combined_tools(&catalog, &empty, Arc::clone(&flag));
+    let merged = combined_tools(&catalog, &empty, &empty, Arc::clone(&flag));
     assert_eq!(names_of(&merged), vec!["harness_native".to_string()]);
 }
 
@@ -156,7 +157,8 @@ fn mcp_shim_forwards_spec_and_engine_abort_to_the_shared_tool() {
 
     // The engine's abort flag: what the orbit loop passes into tool execute.
     let abort = Arc::new(AtomicBool::new(false));
-    let merged = combined_tools(&catalog, &mcp_tools, Arc::clone(&abort));
+    let no_sessions: Arc<Vec<Arc<dyn tools::Tool>>> = Arc::new(Vec::new());
+    let merged = combined_tools(&catalog, &mcp_tools, &no_sessions, Arc::clone(&abort));
     let shim = merged
         .iter()
         .find(|t| t.name() == "mcp__fake__alpha")
@@ -205,6 +207,7 @@ fn orbit_setup_with_mcp_tools_stays_clone_and_shares_the_list() {
             compaction: Arc::new(omenic_harness_compaction::CharBudgetPolicy::default()),
             catalog: Arc::new(ToolCatalog::new()),
             mcp_tools: Arc::clone(&mcp_tools),
+            session_tools: Arc::new(Vec::new()),
         },
         providers: Vec::new(),
     };
@@ -221,7 +224,69 @@ fn orbit_setup_with_mcp_tools_stays_clone_and_shares_the_list() {
     let merged = combined_tools(
         &cloned.config.catalog,
         &cloned.config.mcp_tools,
+        &cloned.config.session_tools,
         Arc::clone(&flag),
     );
     assert_eq!(names_of(&merged), vec!["mcp__fake__solo".to_string()]);
+}
+
+// ---------------------------------------------------------------------------
+// 4. Session (job/terminal) tools merge after MCP tools
+// ---------------------------------------------------------------------------
+
+#[test]
+fn combined_tools_appends_session_tools_after_mcp_tools() {
+    // Order is catalog -> MCP -> session, so the two shipped families never
+    // trade places on a config change. Asserted explicitly because the merge
+    // is a chain over two slices and a swapped `chain` operand would be
+    // invisible in every other test.
+    let catalog = ToolCatalog::new();
+    catalog.register(Arc::new(FakeHarnessTool));
+
+    let mcp_tools: Arc<Vec<Arc<dyn tools::Tool>>> =
+        Arc::new(vec![
+            Arc::new(FakeMcpTool::new("mcp__fake__alpha")) as Arc<dyn tools::Tool>
+        ]);
+    let session_tools: Arc<Vec<Arc<dyn tools::Tool>>> = Arc::new(vec![
+        Arc::new(FakeMcpTool::new("jobs_start")) as Arc<dyn tools::Tool>,
+        Arc::new(FakeMcpTool::new("terminal_create")) as Arc<dyn tools::Tool>,
+    ]);
+
+    let flag = Arc::new(AtomicBool::new(false));
+    let merged = combined_tools(&catalog, &mcp_tools, &session_tools, Arc::clone(&flag));
+
+    assert_eq!(
+        names_of(&merged),
+        vec![
+            "harness_native".to_string(),
+            "mcp__fake__alpha".to_string(),
+            "jobs_start".to_string(),
+            "terminal_create".to_string(),
+        ],
+        "catalog, then MCP, then job/terminal tools"
+    );
+}
+
+#[test]
+fn real_session_tools_register_every_name_in_the_constant() {
+    // The constant is the single source of truth the daemon and the web UI's
+    // tool vocabulary both read. Building the real list here keeps it honest:
+    // adding a tool without updating the constant fails this test rather than
+    // silently shipping an unlisted name.
+    let jobs = Arc::new(omenic_harness_jobs::LocalJobRegistry::new());
+    let terminals = Arc::new(omenic_harness_terminal::TerminalRegistry::new());
+    let built = omenic_harness_tools::jobs_terminal::session_tools(jobs, terminals);
+
+    let mut built_names: Vec<String> = built.iter().map(|t| t.name().to_string()).collect();
+    let mut declared: Vec<String> = omenic_harness_tools::jobs_terminal::SESSION_TOOL_NAMES
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+    built_names.sort();
+    declared.sort();
+    assert_eq!(
+        built_names, declared,
+        "SESSION_TOOL_NAMES must list exactly the registered tools"
+    );
 }

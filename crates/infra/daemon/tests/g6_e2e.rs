@@ -20,140 +20,27 @@
 //!    is the cap flowing document -> assemble -> resolve -> worker -> loop.
 //! 3. A daemon killed mid-run, restarted on the same DB, closes the orphan.
 
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
+use std::path::Path;
 
-use daemon::protocol::Command;
-use daemon::{Daemon, DaemonClient, DaemonConfig, EventFrame, Subscription};
+use daemon::{Daemon, DaemonClient};
 use serde_json::{Value, json};
 use tempfile::tempdir;
+
+use common::{MockOpenAi, daemon_cfg, drain_events, one_text_turn, prompt};
+
+mod common;
 
 /// Distinctive token written into the workspace `AGENTS.md`. If instruction
 /// injection works end to end, this string is inside the HTTP request body
 /// the mock server received.
 const MARKER: &str = "G6-E2E-INSTRUCTION-MARKER";
 
-const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// A tiny OpenAI-compatible server: one thread per connection, replays the
-/// canned SSE stream for every `/chat/completions` POST, and records the raw
-/// request bodies so the test can assert on what the loop really sent.
-struct MockOpenAi {
-    addr: String,
-    bodies: Arc<Mutex<Vec<String>>>,
-}
-
-impl MockOpenAi {
-    fn start(replies: Vec<String>) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock");
-        let addr = listener.local_addr().expect("local addr");
-        let bodies = Arc::new(Mutex::new(Vec::new()));
-        let bodies_srv = Arc::clone(&bodies);
-        let replies_srv = replies.clone();
-
-        thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(stream) = stream else { break };
-                let bodies = Arc::clone(&bodies_srv);
-                let replies = replies_srv.clone();
-                thread::spawn(move || serve(stream, bodies, replies));
-            }
-        });
-
-        MockOpenAi {
-            addr: format!("http://127.0.0.1:{}", addr.port()),
-            bodies,
-        }
-    }
-
-    /// Bodies of every `/chat/completions` POST, in arrival order.
-    fn received(&self) -> Vec<String> {
-        self.bodies.lock().expect("bodies").clone()
-    }
-}
-
-fn serve(stream: TcpStream, bodies: Arc<Mutex<Vec<String>>>, replies: Vec<String>) {
-    let mut stream = stream;
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-
-    // Read the request: headers until blank line, then Content-Length bytes.
-    let mut buf = Vec::new();
-    let mut tmp = [0u8; 1];
-    while let Ok(n) = stream.read(&mut tmp) {
-        if n == 0 {
-            break;
-        }
-        buf.extend_from_slice(&tmp[..n]);
-        if buf.ends_with(b"\r\n\r\n") {
-            break;
-        }
-    }
-    let head = String::from_utf8_lossy(&buf).to_string();
-    let body_len = head
-        .split("\r\n")
-        .find_map(|l| {
-            l.to_ascii_lowercase()
-                .strip_prefix("content-length: ")
-                .and_then(|v| v.trim().parse::<usize>().ok())
-        })
-        .unwrap_or(0);
-    let mut body = buf;
-    while body.len() < head.len() + body_len {
-        let mut chunk = vec![0u8; head.len() + body_len - body.len()];
-        match stream.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(n) => body.extend_from_slice(&chunk[..n]),
-            Err(_) => break,
-        }
-    }
-    let payload = &body[head.len()..];
-    let payload_str = String::from_utf8_lossy(payload).to_string();
-    if head.starts_with("POST") && head.contains("/chat/completions") {
-        bodies.lock().expect("bodies").push(payload_str);
-    }
-
-    let idx = bodies.lock().expect("bodies").len().saturating_sub(1);
-    let reply = replies
-        .get(idx)
-        .or_else(|| replies.last())
-        .cloned()
-        .unwrap_or_else(minimal_reply);
-
-    let resp = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        reply.len(),
-        reply
-    );
-    let _ = stream.write_all(resp.as_bytes());
-    let _ = stream.flush();
-}
-
-fn minimal_reply() -> String {
-    sse_text("hello from the mock backend", true)
-}
-
-/// One SSE `data:` line carrying a chat-completion chunk with a text delta.
-fn sse_text(delta: &str, finish: bool) -> String {
-    let reason = if finish {
-        serde_json::Value::String("stop".into())
-    } else {
-        serde_json::Value::Null
-    };
-    let chunk = json!({
-        "choices": [{
-            "delta": { "content": delta },
-            "finish_reason": reason
-        }]
-    });
-    format!("data: {}\n\n", chunk)
-}
-
-/// A turn that emits `delta` and finishes — enough for a one-round run.
-fn one_text_turn(delta: &str) -> String {
-    sse_text(delta, true)
+fn workspace_with_agents_md(dir: &Path) {
+    std::fs::write(
+        dir.join("AGENTS.md"),
+        format!("# Test workspace\n\nRule: emit {MARKER} in every reply.\n"),
+    )
+    .expect("write AGENTS.md");
 }
 
 /// `max_turns` test: every reply carries a tool call, so each round ends with
@@ -179,7 +66,7 @@ fn endless_turns(n: usize) -> Vec<String> {
                             "function": { "name": "g6_e2e_nonexistent", "arguments": "{}" }
                         }]
                     },
-                    "finish_reason": serde_json::Value::Null
+                    "finish_reason": Value::Null
                 }]
             });
             let finish = json!({
@@ -191,58 +78,6 @@ fn endless_turns(n: usize) -> Vec<String> {
             format!("data: {}\ndata: {}\n\n", call, finish)
         })
         .collect()
-}
-
-fn daemon_cfg(dir: &std::path::Path, mock: &MockOpenAi, max_turns: usize) -> DaemonConfig {
-    DaemonConfig {
-        socket_path: Some(dir.join("daemon.sock")),
-        omp_path: "omp".into(),
-        session_db_path: Some(dir.join("sessions.db")),
-        orbit_model: Some(adaptor::Model {
-            api_key: "test-key".into(),
-            model: "g6-e2e".into(),
-            base_url: Some(mock.addr.clone()),
-            max_tokens: Some(1024),
-        }),
-        // The workspace the loop searches for AGENTS.md.
-        cwd: dir.to_path_buf(),
-        max_turns,
-        mcp_servers: Vec::new(),
-        llm_fallbacks: Vec::new(),
-    }
-}
-
-fn workspace_with_agents_md(dir: &std::path::Path) {
-    std::fs::write(
-        dir.join("AGENTS.md"),
-        format!("# Test workspace\n\nRule: emit {MARKER} in every reply.\n"),
-    )
-    .expect("write AGENTS.md");
-}
-
-/// Drain worker events until the stream goes quiet. Each `next_event` already
-/// bounds its own wait, so this returns as soon as the daemon stops pushing.
-fn drain_events(sub: &mut Subscription) -> Vec<EventFrame> {
-    let mut out = Vec::new();
-    loop {
-        match sub
-            .next_event(EVENT_TIMEOUT)
-            .expect("subscription readable")
-        {
-            Some(frame) => {
-                assert_eq!(frame.topic, "worker", "pushed on the subscribed topic");
-                out.push(frame);
-            }
-            None => return out,
-        }
-    }
-}
-
-fn prompt(client: &DaemonClient, message: &str) {
-    let resp = client
-        .call_raw(Command::WorkerPrompt, json!({ "message": message }))
-        .expect("prompt via daemon");
-    assert!(resp.success, "prompt failed: {:?}", resp.error);
 }
 
 /// ① AGENTS.md travels workspace -> daemon config -> assemble -> orbit_setup
