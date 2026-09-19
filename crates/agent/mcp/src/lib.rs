@@ -68,6 +68,30 @@ pub enum McpError {
     Aborted,
 }
 
+impl McpError {
+    /// Prefix the message with the config entry the error came from.
+    ///
+    /// The *variant* is preserved on purpose: callers match on it to tell a
+    /// spawn failure from a handshake failure, so re-wrapping in `Protocol`
+    /// just to attach a name would erase that distinction.
+    fn named(self, server: &str) -> McpError {
+        match self {
+            McpError::Spawn(m) => McpError::Spawn(format!("server `{server}`: {m}")),
+            McpError::Transport(m) => McpError::Transport(format!("server `{server}`: {m}")),
+            McpError::Protocol(m) => McpError::Protocol(format!("server `{server}`: {m}")),
+            McpError::Server { code, message } => McpError::Server {
+                code,
+                message: format!("server `{server}`: {message}"),
+            },
+            McpError::Tool(m) => McpError::Tool(format!("server `{server}`: {m}")),
+            // Unit variants carry no message to prefix; adding a "which
+            // server" field to them is a public-API change of its own.
+            McpError::Timeout => McpError::Timeout,
+            McpError::Aborted => McpError::Aborted,
+        }
+    }
+}
+
 impl std::fmt::Display for McpError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -585,7 +609,10 @@ pub fn external_tools_from_mcp(
                 // Name the config entry that failed: callers surface this
                 // error verbatim (e.g. daemon bring-up), and a bare command
                 // string does not tell the user which server row to fix.
-                let e = McpError::Protocol(format!("server `{}`: {e}", cfg.name));
+                // `named` keeps the variant — `startup_policy` matches on
+                // `Spawn` vs `Transport` to tell "cannot start the child"
+                // from "started but not an MCP server".
+                let e = e.named(&cfg.name);
                 if cfg.fail_on_startup_error == Some(true) {
                     return Err(e);
                 }

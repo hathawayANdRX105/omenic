@@ -32,14 +32,27 @@ fn load_with_mcp_server(toml_entry: &str) -> Result<config::Config, config::Conf
         Ok(res) => res,
         Err(panic) => std::panic::resume_unwind(panic),
     };
-    // Assert before dropping the tempdir so paths stay alive on failure.
+    // `Config::load` also reads `../.oi/config.toml`, so a neighbouring
+    // test's tempdir can contribute an entry. Do **not** assert on the
+    // count here: this helper's job is only to write one entry and load it
+    // from that cwd. Asserting `len() == 1` made the whole file depend on
+    // cwd discipline that cargo's parallel runner does not provide.
     let config = loaded?;
-    assert_eq!(
-        config.mcp_servers.len(),
-        1,
-        "the [[mcp.servers]] entry must survive the load"
-    );
     Ok(config)
+}
+
+/// The entry this helper wrote, picked by name so a neighbouring tempdir's
+/// entry (see the note above) cannot shift the index.
+fn loaded_server<'a>(cfg: &'a config::Config, name: &str) -> &'a config::McpServerConfig {
+    cfg.mcp_servers
+        .iter()
+        .find(|s| s.name == name)
+        .unwrap_or_else(|| {
+            panic!(
+                "server `{name}` did not survive the load; loaded: {:?}",
+                cfg.mcp_servers.iter().map(|s| &s.name).collect::<Vec<_>>()
+            )
+        })
 }
 
 /// A server with both `url` and `command` loads fine: `validate` only warns
@@ -51,12 +64,9 @@ fn both_url_and_command_still_loads() {
         "name = \"both\"\ncommand = \"npx\"\nurl = \"http://127.0.0.1:9100/mcp\"\n",
     )
     .expect("both-set config must load");
-    assert_eq!(cfg.mcp_servers[0].name, "both");
-    assert_eq!(cfg.mcp_servers[0].command.as_deref(), Some("npx"));
-    assert_eq!(
-        cfg.mcp_servers[0].url.as_deref(),
-        Some("http://127.0.0.1:9100/mcp")
-    );
+    let s = loaded_server(&cfg, "both");
+    assert_eq!(s.command.as_deref(), Some("npx"));
+    assert_eq!(s.url.as_deref(), Some("http://127.0.0.1:9100/mcp"));
 }
 
 /// A `url` that does not start with `http(s)://` still loads.
@@ -64,9 +74,8 @@ fn both_url_and_command_still_loads() {
 fn bad_url_scheme_still_loads() {
     let cfg = load_with_mcp_server("name = \"bad-scheme\"\nurl = \"127.0.0.1:9100/mcp\"\n")
         .expect("bad-scheme url config must load");
-    assert_eq!(cfg.mcp_servers[0].name, "bad-scheme");
     assert_eq!(
-        cfg.mcp_servers[0].url.as_deref(),
+        loaded_server(&cfg, "bad-scheme").url.as_deref(),
         Some("127.0.0.1:9100/mcp")
     );
 }
@@ -80,10 +89,9 @@ fn bad_url_scheme_still_loads() {
 fn padded_transport_fields_are_trimmed() {
     let cfg = load_with_mcp_server("name = \" padded \"\ncommand = \" npx \"\n")
         .expect("padded command config must load");
-    assert_eq!(cfg.mcp_servers[0].name, "padded", "name is trimmed");
     assert_eq!(
-        cfg.mcp_servers[0].command.as_deref(),
+        loaded_server(&cfg, "padded").command.as_deref(),
         Some("npx"),
-        "command is trimmed at the merge boundary"
+        "name and command are trimmed at the merge boundary"
     );
 }
