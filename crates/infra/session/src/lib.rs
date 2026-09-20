@@ -552,6 +552,39 @@ impl SessionDb {
         self.ensure_session_with_parent(id, title, parent_id)
     }
 
+    /// Rename an existing session: UPDATE `title` + `updated_at` only, and
+    /// read the row back so the returned summary is exactly what is on disk.
+    ///
+    /// This is an UPDATE, not an upsert: a row that does not exist (or a
+    /// blank id, which matches no row) yields
+    /// [`SessionError::DatabaseMissing`] and nothing is inserted — callers
+    /// use this to persist a derived title for a session they know exists,
+    /// and silently creating the row would hide their bug.
+    ///
+    /// An empty `title` is accepted (the deterministic placeholder the web
+    /// UI sends is a legitimate title, same as [`Self::ensure_session`]).
+    /// `created_at`, `parent_id`, and the turn log are never touched.
+    pub fn update_title(&self, id: &str, title: &str) -> Result<SessionSummary, SessionError> {
+        let id_owned = id.to_string();
+        let title_owned = title.to_string();
+
+        let guard = self.inner.conn.lock();
+        // ponytail: scope the guard so the lock is released the instant the
+        // async block returns — same shape as ensure_session_with_parent.
+        self.inner.runtime.block_on(async move {
+            let conn = &*guard;
+            let now = now_ms();
+            conn.execute(
+                "UPDATE sessions SET title = ?1, updated_at = ?2 WHERE id = ?3",
+                libsql::params![title_owned.as_str(), now, id_owned.as_str()],
+            )
+            .await?;
+            load_session_row(conn, id_owned.as_str())
+                .await
+                .ok_or_else(|| SessionError::DatabaseMissing(PathBuf::from(id_owned)))
+        })
+    }
+
     /// Delete a session and all of its messages (via `ON DELETE CASCADE`).
     /// Returns true if a row was removed.
     pub fn delete_session(&self, id: &str) -> Result<bool, SessionError> {

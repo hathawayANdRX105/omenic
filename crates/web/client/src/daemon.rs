@@ -115,6 +115,18 @@ impl WebDaemon {
         Ok(())
     }
 
+    /// 重命名既存会话（`session.update_title`，UPDATE-only：会话不存在是
+    /// `database_missing` 错误，daemon 不会代建行）。返回值仍是 `()`——
+    /// 调用方（page-workspace）拿内存里的 id 直接改列表，标题以本地派生
+    /// 值为准，不需要 daemon 回执的 summary。
+    pub fn update_session_title(&self, sid: &str, title: &str) -> Result<(), ClientError> {
+        self.client.call_raw(
+            Command::SessionUpdateTitle,
+            serde_json::json!({ "session_id": sid, "title": title }),
+        )?;
+        Ok(())
+    }
+
     /// 删除会话（连带消息）；会话不存在同样返回 Ok。
     pub fn delete_session(&self, sid: &str) -> Result<(), ClientError> {
         self.client.session_delete(sid)?;
