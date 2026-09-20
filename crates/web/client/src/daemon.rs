@@ -120,7 +120,10 @@ impl WebDaemon {
     /// 调用方（page-workspace）拿内存里的 id 直接改列表，标题以本地派生
     /// 值为准，不需要 daemon 回执的 summary。
     pub fn update_session_title(&self, sid: &str, title: &str) -> Result<(), ClientError> {
-        self.client.call_raw(
+        // `call` (not `call_raw`) so a `success: false` reply — the documented
+        // `database_missing` for a session that does not exist, or a protocol
+        // error for a blank id — surfaces as Err instead of Ok(()).
+        let _: Value = self.client.call(
             Command::SessionUpdateTitle,
             serde_json::json!({ "session_id": sid, "title": title }),
         )?;

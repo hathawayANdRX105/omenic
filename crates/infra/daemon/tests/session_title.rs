@@ -228,3 +228,34 @@ fn update_title_does_not_touch_other_columns() {
     drop(client);
     daemon.shutdown();
 }
+
+/// A blank `session_id` is an invalid id, not a missing row.
+///
+/// Red when: the up-front `invalid_id_if_blank` guard is dropped and the
+/// blank id falls through to the UPDATE-0-rows path — the client then gets
+/// `database_missing` ("database file `` does not exist"), claiming the
+/// database file is absent for what is really a client-side protocol error.
+#[test]
+fn update_title_blank_id_is_protocol_error() {
+    let dir = tempdir().expect("temp dir");
+    let (mut daemon, client) = start_daemon(dir.path());
+
+    let blank = call(
+        &client,
+        Command::SessionUpdateTitle,
+        json!({ "session_id": "", "title": "whatever" }),
+    );
+    assert!(
+        !blank.success,
+        "a blank session id must fail, got {:?}",
+        blank.data
+    );
+    assert_eq!(
+        blank.error.as_ref().map(|e| e.code.as_str()),
+        Some("invalid_session_id"),
+        "a blank id must be reported as an invalid id, never as database_missing"
+    );
+
+    drop(client);
+    daemon.shutdown();
+}
