@@ -149,7 +149,9 @@
 
 两条 reviewer 报的 Critical 经实证**驳回**：① `trim_start_matches` 被误判为「单次匹配」——rustc 实证 `"> - 标题"` → `"标题"`，复合前缀剥刺正确（残留：该用例无测试钉住）；② 「Goal 状态机缺终态约束」为虚构需求——任务书对 Goal 只要求 `new`/`link`/`unlink`，终态封闭是 Todo 的契约（已实现），Goal.status 为 pub 字段与执行模型 `Task.status` 同模式。
 
-**真实遗留（转 PROGRESS 的 F1–F3）**：① `store.rs` 数据完整性路径（损坏行 trim / CorruptLine）零测试覆盖；② 侧栏新建会话标题刷新回退（用户裁定加 `session.update_title` 增量 RPC——属「protocol 只能加命令」允许的增量）；③ todo/goal 写方（agent 工具）未接。
+**真实遗留（转 PROGRESS 的 F1–F4 + F3 全链路，2026-09-21 全部闭环）**：① `store.rs` 数据完整性路径（损坏行 trim / CorruptLine）零测试覆盖 → #397 补 6 用例，调查中当场发现并披露 trim 无结尾换行 bug → #400 修复（ocr + 独立 reviewer 双审 0 发现）；② 侧栏新建会话标题刷新回退 → #399 加 `session.update_title` 增量 RPC，合并后 ocr 补审 5 条发现（1 medium：web client 用 `call_raw` 吞 daemon 错误回复致降级分支成死代码）→ #403 修 4 条、2 条记录 known-issue；③ todo/goal 写方未接 → F3 三切片落地（#401 五把模型工具 agent 域路线 / #402 daemon 装配 + `todo.list`·`goal.list` 读 RPC / #405 看板接真数据 + `board_version` 双触发刷新），看板至此覆盖「CLI 手写任务 + 模型自维护 todo/goal + run 记录」三类真实来源。
+
+**F3 链路的关键设计**（稳定，勿翻案）：工具走 **agent 域 `tools::Tool`**（jobs/terminal 先例，`task` crate 零新依赖）而非 harness 域 `ToolCatalog`（C6 两 trait 分离是有意设计，走 catalog 要新增 2 个依赖）；title-as-id 复用 Store latest-wins（同 id 追加即更新，与 CLI 一致，不引入 uuid）；Todo/Goal 投影进既有 `TaskItem`/`TaskPanel`（Cancelled/Abandoned → blocked，不加 chip 词汇、不动组件与 UI 契约 yaml）；看板刷新双触发（ToolResult 命中五工具名 + TurnEnd——WireTranslator 会丢未配对 tool end，单挂 ToolResult 会漏刷新）。
 
 ### 审查实际拦下的真实缺陷（三批合计）
 
@@ -165,6 +167,14 @@ CI 与 ocr/code-reviewer 在合并前拦下的，不是测试瑕疵：
 8. **`write_full_config` 抹段与 fallback 收尾（#383，`6661a70` + `ae618a0`）**：整文件重写丢 `[[mcp.servers]]` 导致首次保存丢整张表；fallback 成功后仍以 `TurnEnd{Error}` 结束且 `tool_calls` 被丢弃，改用终态 + `leaked_content` 判据。
 9. **daemon seam e2e 的 mock 截断请求体（#385，`1197399`）**：从只含 header 的 buffer 算 body 偏移 → 塌成 0，9401 字节请求只记录 8538，模型从未拿到完整工具表 → 无 `tool_calls` → 循环直接 `agent_end`。既有测试缺陷，非新代码引入。
 10. **config cwd 竞态（#385，`6e722f0`）**：`Config::load` 与 `set_current_dir` 都是进程级，三用例在 cargo 并行线程下互抢；加 `cwd_lock()` 串行化（poison 容忍）。
+
+### P0 及 F 批次追加（合并前 + 合并后 ocr 双层）
+
+11. **trim 无结尾换行吃掉完整记录（#400，审查调查中发现）**：`append_line` 分两次 `write_all`（记录字节、`\n`），崩溃落在两次之间正是 trim 的触发形态，而旧截断点（第二个换行）在该形态下多退一格，**每次崩溃恢复静默丢一条完整记录**（tasks/todos/goals 三路径共用）。修法与 `crates/infra/memory` 既有正确实现对齐。
+12. **web client 吞 daemon 错误回复（#403，合并后 ocr）**：`WebDaemon::update_session_title` 用 `call_raw`——它只解传输错误、不检查 `resp.success`，daemon 的 `database_missing` / protocol 错误全部变成 `Ok(())`，调用方的降级日志分支成死代码，标题更新失败与成功不可区分。换 `call` 对齐 `session_delete`/`session_append`。
+13. **blank id 误报 database_missing（#403）**：`update_title` 缺 `invalid_id_if_blank`，空 session_id 落 UPDATE-0-行 → `DatabaseMissing("")`，客户端收到「database file `` does not exist」——把 id 非法诊断成数据库文件缺失。
+14. **doc 虚假契约声明（#403）**：两处注释称 blank title「same as ensure_session / like session.create allows」——create 实际拒绝 blank title。只改描述不改行为（update 故意比 insert 宽松是设计）。
+15. **测试 vacuous guard（#405）**：`"\t> # 全部"` 用例的行首 tab 被 `body.trim()` 提前消耗，断言无法区分闭包里删掉 `'\t'`——注释声称钉的行为根本没钉。换成标记字符后的 tab（`">\t标题"`）真正钉住剥刺字符集。
 
 ## 边界决定（稳定，勿翻案）
 
