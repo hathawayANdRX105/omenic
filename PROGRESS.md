@@ -49,7 +49,7 @@ P0 批次合并后按 code-reviewer 两阶段审查（CRG + 双 reviewer + 实�
 |---|---|---|
 | F1 | `test(task): store corrupt-line paths`——`load_records`/`corrupt_or_trim`/`trim_trailing_line` 是三个 jsonl 共用的数据完整性路径，重构后零测试覆盖 | ✅ 已交付（[PR #397](https://github.com/hathawayANdRX105/omenic/pull/397)：6 个 store 用例 + 1 个复合前缀用例，CI 全绿） |
 | F2 | `feat(daemon): session.update_title`——增量 RPC（不动既有语义），修侧栏新建会话刷新后标题回退 | ✅ 已交付（[PR #399](https://github.com/hathawayANdRX105/omenic/pull/399)：UPDATE 非 upsert、缺行报错不插行、只改 title+updated_at；web 仅首条消息+既存会话触发；3 e2e 全绿） |
-| F3 | todo/goal 写方（agent 工具注册进 orbit）——看板目前只能显示 CLI 手写任务 | 排队 |
+| F3 | todo/goal 写方（agent 工具注册进 orbit）——看板目前只能显示 CLI 手写任务 | 🚧 slice1 已交付（[PR #401](https://github.com/hathawayANdRX105/omenic/pull/401)：agent 域 5 把工具 todo_add/todo_update/todo_list/goal_add/goal_link + session_tools 装配，8 工具测试；slice2 daemon 装配 + todo.list/goal.list 读 RPC 并行中） |
 | F4 | `fix(task): trim_trailing_line` 无结尾换行时吃掉最后一个完整行——#397 审查披露的 src 边缘 bug（append 两次 write 之间崩溃的真实形态），每次崩溃静默丢一条完整记录 | 🚧 修复中 |
 
 ### 已完成批次的余量（不阻塞，可随时捡）
