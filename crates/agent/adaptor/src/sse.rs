@@ -60,10 +60,18 @@ impl SseParser {
                         .unwrap_or_else(|| format!("call_{idx}")),
                     ..ToolCallBuf::default()
                 });
-                if let Some(id) = tc["id"].as_str() {
+                // 续帧守卫：newapi 类网关把 tool_call 续帧的 id/name 重复为
+                // 空串（只带 arguments 分片）。无条件覆盖会把首帧的真实值冲
+                // 成 ""——模型所有工具调用以 `tool "" not found` 告终。空串
+                // 视为「本帧无此字段」，仅非空才覆盖。
+                if let Some(id) = tc["id"].as_str()
+                    && !id.is_empty()
+                {
                     entry.id = id.to_string();
                 }
-                if let Some(name) = tc["function"]["name"].as_str() {
+                if let Some(name) = tc["function"]["name"].as_str()
+                    && !name.is_empty()
+                {
                     entry.name = name.to_string();
                 }
                 if let Some(args) = tc["function"]["arguments"].as_str() {
