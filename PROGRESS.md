@@ -11,39 +11,40 @@ main `756c8fe`。**G1–G8 全部已过**；dsh 对照三批 B1（#381）/ B2（
 - **C7（tag omenic-harness-v0.1.0 + ferrite 接线）**：前置条件全满足，**等用户拍板时机**，不占批次。
 - **C8（interaction + token-meter）**：已裁定不做。
 
-**没有排队中的整合点。** G1–G8 + B1–B3 全部交付，daemon/web/CLI 三入口均可构建运行（CI 证实）。剩下的缺口按「**阻塞日常使用吗**」而非「dsh 有没有」重排——见下。当前判定：**web + harness 已可边用边优化**，无硬阻塞项。
+**没有排队中的整合点。** G1–G8 + B1–B3 全部交付，daemon/web/CLI 三入口均可构建运行（CI 证实）。剩下的缺口按「**使用时哪里不爽**」排——不是「dsh 有什么」，是「自己用起来卡在哪」。
 
-## 缺口优先级（2026-09-20 重排，scout 实测 dsh 源码）
+## 缺口优先级（2026-09-20 二次重排，纯使用视角）
 
-> 旧表按「dsh 有什么 omenic 没有」排优先级，导致把几个 dsh 强依赖但 omenic 场景下不痛的项排高了。2026-09-20 派 scout 用 codegraph + 源码核实重排，判据改为：**omenic 自己用起来卡在哪**。结论与直觉一致——原四项里只有附件链路真正影响使用，而原划范围外的声明式装配反而更值得先做。
+> 一次重排仍带着 dsh 对照的惯性（把附件排成 P1 是错的——文字会话本身还没到「用着顺」的程度，排图像输入是本末倒置）。本次判据只有一条：**打开 web 用的时候，哪一项缺失会直接让你觉得难用**。结论：体验增强集中在元工具与治理那片（原划范围外），存储/可观测/附件类全部是底层锦上添花。
 
-### P0 — 阻塞日常使用（先做这两项，边用边优化就能转起来）
+### P0 — 使用体验的直接卡点
 
-| 项 | 为什么是 P0 | dsh 强依赖? | 成本 | omenic 现状 |
-|---|---|---|---|---|
-| **session-title**（会话自动标题） | 侧栏现在全是手填/时间戳，会话一多完全没法找。dsh 确定性 fallback 就是首条用户消息截词，**不需要 LLM 也能用** | 否（log-only 投影，可选注册） | ~2 天 | `sessions.title` 列已存在，只在创建时写一次；grep `session-title` = 0 |
-| **boot/bundle 声明式装配**（原范围外上提） | 换模型/换渠道/换插件集现在要改 TOML + 重启；声明式 profile 是「多场景切换」的地基，也是 ferrite 复用 harness 的前置 | **是**（boot/app-boot 是启动入口；bundle/base 是每个 profile 第一层） | ~3–4 天 | `composition::assemble()` 硬编码两个核心插件；无 profile schema、无声明式加载 |
-
-### P1 — 有感增强（不阻塞，但做了体验明显变好）
-
-| 项 | 为什么 | dsh 强依赖? | 成本 | omenic 现状 |
-|---|---|---|---|---|
-| **LLM 路由余量**：DeepSeek/PiAi 官方 adapter | 现全走 OpenAI 兼容端点，reasoner 等模型特性吃不到 | 是（LlmRuntime 注册 adapter） | ~2 天/adapter | `orbit::WaterfallLlm` 已有 fallback + retry，只缺 provider 适配 |
-| **元工具核心子集**：todo / goal（范围外上提） | 边用边优化时期最值钱的是**任务追踪本身**——omp 的 todo 模型已在用；dsh 的 goal/todo 是模型运行时的自我编排，方向与 omenic 的 `crates/agent/task`（RPC 任务模型）相反，**不复刻 dsh 形态，扩自己的 task crate** | 部分（dsh workflow-worker-thread 强依赖；goal/todo/schedule/skill/lsp 纯可选） | ~3–5 天（仅 todo/goal 两件） | `crates/agent/task` 有 runner/graph/store/template，无 todo/goal 概念 |
-| **附件全链路** | 三段全缺，但**只有需要图像输入时才痛**；文本编程场景零影响 | 是（`llm-deepseek/src/index.ts:440` adapter 注入） | ~4–6 天 | grep `attachment`/`image` = 0 |
-
-### P2 — 低优先（无生产需求，明确延后）
-
-| 项 | 为什么延后 | dsh 强依赖? | 成本 |
+| 项 | 为什么是 P0 | 成本 | omenic 现状 |
 |---|---|---|---|
-| **credentials / authorization / identity** | dsh 里它是 agent-loop 经 llm/credentials 注入密钥的强依赖，但 omenic 现有 TOML `[openai]` + `[[llm.fallbacks]]` 已覆盖单机多渠道；等真的要多用户/多 key 轮换再排 | 是（dsh 侧） | ~5–7 天 |
-| **session telemetry / OTel** | dsh 自己都可禁用（`feedback/command-feedback:49`），纯可选投影 | 否 | ~2–3 天 |
-| **token-meter** | C8 已裁定不做；5.7 token 卡「无真数据则隐藏」已兜底。真要做也只是 projection-only | 否（optional fiber） | ~1 天 |
+| **元工具：todo + goal** | 真正用起来时，**任务追踪是核心体验**——开几个会话并行干活、记住每条线推进到哪、阻塞了什么。omp 的 todo 模型你已经在用；omenic 现在一个 todo 都没有，全靠脑子记。**扩 omenic 自己的 `crates/agent/task`（RPC 任务模型），不复刻 dsh 的模型运行时自写编排**（方向相反） | ~3–5 天 | `crates/agent/task` 有 runner/graph/store/template，无 todo/goal 概念；web 无任务面板数据源 |
+| **session-title**（会话自动标题） | 侧栏现在全是手填/时间戳，会话一多完全没法找、没法切。dsh 确定性 fallback 就是首条用户消息截词，**不需要 LLM 也能用** | ~2 天 | `sessions.title` 列已存在，只在创建时写一次；grep `session-title` = 0 |
+
+### P1 — 体验明显变好（不阻塞，但做了能感受到）
+
+| 项 | 为什么 | 成本 | omenic 现状 |
+|---|---|---|---|
+| **元工具：plan-mode / guard / skill** | plan-mode = 动手前先出计划让你确认（长任务敢放手）；guard = 重复提醒/超时止损（防 token 白烧）；skill = 复用成套指令。三件都是「用得越多越值」 | ~5–8 天（三件分开排，可单件落地） | 全无；dsh 有 guard（loop 卫生）+ skill-filesystem，均为可选增强 |
+| **boot/bundle 声明式装配** | 换模型/换渠道/换插件集现在要改 TOML + 重启；声明式 profile 是「多场景切换」的地基，也是 ferrite 复用 harness 的前置 | ~3–4 天 | `composition::assemble()` 硬编码两个核心插件；无 profile schema |
+| **LLM 路由余量**：DeepSeek/PiAi 官方 adapter | 现全走 OpenAI 兼容端点，reasoner 等模型特性吃不到 | ~2 天/adapter | `orbit::WaterfallLlm` 已有 fallback + retry，只缺 provider 适配 |
+
+### P2 — 明确延后（文字体验没稳住之前不排）
+
+| 项 | 为什么延后 | 成本 |
+|---|---|---|
+| **附件全链路** | **图像输入是文字会话体验稳了之后的事**。三段全缺（composer 上传 + 内容寻址存储 + 上下文投影），但纯文本编程场景零影响——属于「有了更好，没有不耽误用」 | ~4–6 天 |
+| **credentials / authorization / identity** | omenic 现有 TOML `[openai]` + `[[llm.fallbacks]]` 已覆盖单机多渠道；等真的要多用户/多 key 轮换再排 | ~5–7 天 |
+| **session telemetry / OTel** | dsh 自己都可禁用，纯可选投影，无生产需求 | ~2–3 天 |
+| **token-meter** | C8 已裁定不做；5.7 token 卡「无真数据则隐藏」已兜底 | ~1 天 |
 
 ### 已完成批次的余量（不阻塞，可随时捡）
 
-- **MCP**（#381 / #383）：dsh `mcp-client` 其余可选项（tool-level filter、server-level env 注入）未对齐。
-- **session resume**（#382 B2a）：checkpoint flush 策略（dsh `session-checkpoint-policy`）；回放跳过 `System`/`Tool` 行。
+- **MCP**（#381 / #383）：tool-level filter、server-level env 注入未对齐。
+- **session resume**（#382 B2a）：checkpoint flush 策略；回放跳过 `System`/`Tool` 行。
 - **LLM 路由**（#382 B2b）：全败 Error 不聚合各 provider 原始错误文本；statusline fallback 切换 `model` 显示口径保持 `config.model` 不变。
 - **jobs / terminal**（#385）：`onJobDone` 生命周期回调、pwsh 后端、dsh jobs 其余 4 个工具（`jobs_output` 等）。
 - **subagent**（#387）：`send_message`/`report`、continuable/background run、session-seeding、SIGTERM 中间层、permission option kind 过滤、Codex / Claude Code / SDK 三个进程外后端。
@@ -52,7 +53,7 @@ main `756c8fe`。**G1–G8 全部已过**；dsh 对照三批 B1（#381）/ B2（
 
 | 项 | 原因 |
 |---|---|
-| dsh 元工具整片（goal/todo/plan-mode/schedule/skill/lsp/hooks/guard/feedback/workflow，约 60 子包） | 只剩 goal/todo 有感且方向与 omenic task 模型相反（见 P1），其余纯可选增强；dsh workflow 强依赖部分不复刻 |
+| 元工具重子集：lsp / schedule / hooks / workflow | 体验增益小或与 omenic 模型方向相反（dsh workflow 是模型运行时自写编排，omenic 的 task 是 RPC 任务模型）。轻子集 todo/goal/plan-mode/guard/skill 已按使用价值上提至 P0/P1 |
 | core scope + agent-tool-presentation | dsh 作用域隔离与工具结果呈现策略，不与主线耦合 |
 | acp 协议 | 协议层已随 #387 落地；只剩 Codex/Claude Code/SDK 三个进程外后端（见余量） |
 | C7（tag omenic-harness-v0.1.0 + ferrite 接线） | 前置全满足，等用户拍板时机 |
