@@ -514,6 +514,72 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
             }
         }
 
+        // ---------------- Todo ----------------
+        Command::TodoList => {
+            // Same contract as `task.list`: `limit` optional, a stale
+            // client's missing / non-number value falls back to the
+            // default page rather than failing.
+            let limit = req
+                .params
+                .get("limit")
+                .and_then(Value::as_u64)
+                .map(|n| n.min(u32::MAX as u64) as u32)
+                .unwrap_or(TASK_LIST_DEFAULT_LIMIT);
+            let store = task::store::Store::new(&ctx.task_data_dir);
+            let mut todos = match store.load_todos() {
+                Ok(t) => t,
+                Err(e) => {
+                    return Response::err(
+                        id,
+                        ResponseError::new("internal", format!("todo store: {e}")),
+                    );
+                }
+            };
+            // ISO-8601 UTC at second precision: lexical order *is*
+            // chronological, and `sort_by` is stable, so same-second
+            // todos keep the store's id order.
+            todos.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            todos.truncate(limit as usize);
+            match serde_json::to_value(&todos) {
+                Ok(v) => Response::ok(id, v),
+                Err(e) => Response::err(
+                    id,
+                    ResponseError::new("internal", format!("serialize: {e}")),
+                ),
+            }
+        }
+
+        // ---------------- Goal ----------------
+        Command::GoalList => {
+            // Same contract as `task.list` / `todo.list` (shared page
+            // size constant — todos, goals and tasks page alike).
+            let limit = req
+                .params
+                .get("limit")
+                .and_then(Value::as_u64)
+                .map(|n| n.min(u32::MAX as u64) as u32)
+                .unwrap_or(TASK_LIST_DEFAULT_LIMIT);
+            let store = task::store::Store::new(&ctx.task_data_dir);
+            let mut goals = match store.load_goals() {
+                Ok(g) => g,
+                Err(e) => {
+                    return Response::err(
+                        id,
+                        ResponseError::new("internal", format!("goal store: {e}")),
+                    );
+                }
+            };
+            goals.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            goals.truncate(limit as usize);
+            match serde_json::to_value(&goals) {
+                Ok(v) => Response::ok(id, v),
+                Err(e) => Response::err(
+                    id,
+                    ResponseError::new("internal", format!("serialize: {e}")),
+                ),
+            }
+        }
+
         // ---------------- Stats (G5) ----------------
         Command::StatsSummary => {
             // `range` is optional: absent / unknown falls back to "24h"

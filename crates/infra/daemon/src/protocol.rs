@@ -116,6 +116,22 @@ pub enum Command {
     #[serde(rename = "task.list")]
     TaskList,
 
+    /// `todo.list` — `{ limit?: u32 }` → `[task::todo::Todo]`.  Reads
+    /// the CLI's `todos.jsonl` (latest-wins, update-by-append — todos
+    /// have no tombstones), ordered by `updated_at` descending.
+    /// `limit` defaults to 50, `0` yields `[]`.
+    #[serde(rename = "todo.list")]
+    TodoList,
+
+    /// `goal.list` — `{ limit?: u32 }` → `[task::goal::Goal]`.  Reads
+    /// the CLI's `goals.jsonl` (latest-wins, update-by-append), ordered
+    /// by `updated_at` descending.  `limit` defaults to 50, `0` yields
+    /// `[]`.  `todo_ids` is serialized as stored: a dangling id stays
+    /// (the link is one-directional), filtering is a presentation
+    /// concern.
+    #[serde(rename = "goal.list")]
+    GoalList,
+
     /// `stats.summary` — `{ range?: "1h"|"24h"|"7d"|"30d"|"90d"|"All" }` →
     /// [`crate::state::StatsSummary`].  Aggregated purely from the run
     /// ledger; metrics with no persisted source (tokens, cost, cache) are
