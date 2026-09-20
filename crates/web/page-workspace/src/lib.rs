@@ -17,6 +17,7 @@ use omenic_web_components::ui::Modal;
 use omenic_web_page_config::SettingsModal;
 use omenic_web_page_stats::StatsView;
 use omenic_web_state::convert::{WireTranslator, infer_session_status};
+use omenic_web_state::title_from_first_message;
 use omenic_web_state::types::{
     ChatMessage, Session, SessionStatus, StatusLine, TaskItem, WorkspaceSpace,
 };
@@ -68,6 +69,8 @@ fn daemon_space(data_dir: &str) -> WorkspaceSpace {
 /// 新建会话（内存版；Daemon 模式下调用方再追加 daemon 持久化）。
 /// 独立成自由函数：Signal 是 Copy，任意闭包都可以直接调用，避免处理器
 /// 闭包被多处 move。返回 (会话 id, 标题) 供 daemon 侧 create 使用。
+/// 标题是 `会话 <ts>` 时间戳占位——侧栏新建瞬间先占位，首条用户消息
+/// 发出后由 `on_send` 换成 [`title_from_first_message`] 的截词标题。
 #[allow(clippy::too_many_arguments)]
 fn create_session_in(
     space_path: String,
@@ -805,6 +808,14 @@ pub fn Workspace(
         }
         let sid = active_session_id();
 
+        // 首条用户消息：标题从时间戳占位换成消息内容截词（确定性
+        // fallback，不调 LLM）。以「内存消息列表此前为空」判定，而非
+        // 匹配占位文案——`会话 <ts>` 占位没有稳定字面量可匹配。
+        let is_first_message = session_messages
+            .read()
+            .get(&sid)
+            .is_some_and(|msgs| msgs.is_empty());
+
         // Daemon 模式：真运行。用户消息持久化（线程内，刚自建的会话在同
         // 一线程先 create 再 append 保证顺序）；assistant 事件全走订阅
         // 管线（见上方 effect），prompt 返回值（worker 原始 rpc 响应）
@@ -830,8 +841,12 @@ pub fn Workspace(
             let (fail_tx, fail_rx) = tokio::sync::oneshot::channel::<()>();
             let run_id_prompt = run_id.clone();
             std::thread::spawn(move || {
-                if let Some((id, title)) = created {
-                    let _ = d.create_session(&id, &title);
+                if let Some((id, _placeholder)) = created {
+                    // 首条消息即标题来源：自建会话直接落库截词标题（走既有
+                    // create_session，无新增 RPC）。侧栏按钮新建的会话已用
+                    // 占位标题落库，协议冻结没有 update 接口 → 刷新后以
+                    // daemon 持久化行为准，见任务书 §3 与回执。
+                    let _ = d.create_session(&id, &title_from_first_message(&text_daemon));
                 }
                 let _ = d.append_message(&sid_daemon, true, &text_daemon);
                 if let Err(e) =
@@ -890,6 +905,9 @@ pub fn Workspace(
                     s.status = SessionStatus::Active;
                     s.last_active = "刚刚".into();
                     s.last_active_epoch = now;
+                    if is_first_message {
+                        s.title = title_from_first_message(&text);
+                    }
                 }
             }
         }
