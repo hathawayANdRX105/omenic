@@ -50,6 +50,11 @@ pub struct DaemonConfig {
     /// `LoopConfig::instruction_cwd` 注入——G6 第一次让指令注入在生产路径
     /// 生效。
     pub cwd: PathBuf,
+    /// `.oi` data dir — where the CLI's `task add` / `task done`
+    /// append `tasks.jsonl`.  `task.list` reads the store from here
+    /// instead of deriving a path of its own, so the board and the
+    /// CLI can never disagree about where tasks live.
+    pub data_dir: PathBuf,
     /// 每 run 的 LLM 往返上限（`.oi/config.toml` 的 `[daemon] max_turns`）。
     /// 写入装配文档，由 daemon 从 `harness.loop` 服务解析回读。
     pub max_turns: usize,
@@ -104,6 +109,7 @@ impl DaemonConfig {
             session_db_path,
             orbit_model,
             cwd: cfg.cwd.clone(),
+            data_dir: cfg.data_dir.clone(),
             max_turns: cfg.max_turns.unwrap_or(orbit::DEFAULT_MAX_TURNS),
             mcp_servers: cfg.mcp_servers.clone(),
             llm_fallbacks: cfg.llm_fallbacks.clone(),
@@ -125,6 +131,7 @@ impl Default for DaemonConfig {
             session_db_path: None,
             orbit_model: None,
             cwd: PathBuf::new(),
+            data_dir: PathBuf::new(),
             max_turns: 0,
             mcp_servers: Vec::new(),
             llm_fallbacks: Vec::new(),
@@ -139,6 +146,8 @@ pub struct Daemon {
     pub(crate) _lock: InstanceLock,
     pub(crate) session_state: SessionState,
     pub(crate) run_ledger: RunLedger,
+    /// `.oi` data dir; `task.list` reads `tasks.jsonl` from here.
+    pub(crate) task_data_dir: PathBuf,
     pub(crate) worker: Arc<Mutex<WorkerHandle>>,
     pub(crate) shutdown: Arc<AtomicBool>,
     pub(crate) started_at_ms: i64,
@@ -217,30 +226,37 @@ impl Daemon {
         let started_at_ms = now_ms();
         let events = EventBus::new();
 
-        let accept_thread = spawn_accept_loop(AcceptLoopCtx {
-            listener,
-            worker: Arc::clone(&worker),
-            sessions: session_state.clone(),
-            runs: run_ledger.clone(),
-            shutdown: Arc::clone(&shutdown),
-            started_at_ms,
-            events: events.clone(),
-            next_conn: Arc::new(AtomicU64::new(1)),
-        })?;
-
-        Ok(Daemon {
+        // Build the daemon first so the accept loop is spawned *from* it —
+        // `task_data_dir` is carried on the daemon and read here, rather
+        // than living in a parallel local the struct then copies.
+        let mut daemon = Daemon {
             socket: SocketAddr::new(socket_path),
             _lock: lock,
             session_state,
             run_ledger,
+            task_data_dir: cfg.data_dir.clone(),
             worker,
             shutdown,
             started_at_ms,
-            accept_thread: Some(accept_thread),
+            accept_thread: None,
             events,
             fiber,
             plugins,
-        })
+        };
+        let accept_thread = spawn_accept_loop(AcceptLoopCtx {
+            listener,
+            worker: Arc::clone(&daemon.worker),
+            sessions: daemon.session_state.clone(),
+            runs: daemon.run_ledger.clone(),
+            shutdown: Arc::clone(&daemon.shutdown),
+            started_at_ms,
+            events: daemon.events.clone(),
+            next_conn: Arc::new(AtomicU64::new(1)),
+            task_data_dir: daemon.task_data_dir.clone(),
+        })?;
+        daemon.accept_thread = Some(accept_thread);
+
+        Ok(daemon)
     }
 
     /// Resolve the orbit engine's setup out of the assembled container: the
@@ -625,6 +641,7 @@ struct AcceptLoopCtx {
     started_at_ms: i64,
     events: EventBus,
     next_conn: Arc<AtomicU64>,
+    task_data_dir: PathBuf,
 }
 
 fn spawn_accept_loop(ctx: AcceptLoopCtx) -> Result<thread::JoinHandle<()>, DaemonError> {
@@ -641,6 +658,7 @@ fn spawn_accept_loop(ctx: AcceptLoopCtx) -> Result<thread::JoinHandle<()>, Daemo
                 started_at_ms,
                 events,
                 next_conn,
+                task_data_dir,
             } = ctx;
             // We poll the shutdown flag between accepts and use a short
             // accept timeout so we don't block forever once shutdown is
@@ -657,6 +675,7 @@ fn spawn_accept_loop(ctx: AcceptLoopCtx) -> Result<thread::JoinHandle<()>, Daemo
                 let shutdown = Arc::clone(&shutdown);
                 let events = events.clone();
                 let conn_id = next_conn.fetch_add(1, Ordering::Relaxed);
+                let task_data_dir = task_data_dir.clone();
                 thread::spawn(move || {
                     if let Err(e) = handle_connection(
                         conn,
@@ -667,6 +686,7 @@ fn spawn_accept_loop(ctx: AcceptLoopCtx) -> Result<thread::JoinHandle<()>, Daemo
                         started_at_ms,
                         events,
                         conn_id,
+                        task_data_dir,
                     ) {
                         eprintln!("daemon: connection error: {e}");
                     }
@@ -677,6 +697,7 @@ fn spawn_accept_loop(ctx: AcceptLoopCtx) -> Result<thread::JoinHandle<()>, Daemo
     Ok(handle)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_connection(
     conn: Connection,
     worker: &Arc<Mutex<WorkerHandle>>,
@@ -686,6 +707,7 @@ fn handle_connection(
     started_at_ms: i64,
     events: EventBus,
     conn_id: u64,
+    task_data_dir: PathBuf,
 ) -> Result<(), DaemonError> {
     // R2 3.3: responses and pushed events share one write channel drained by
     // a dedicated writer thread, so a subscribed connection can receive
@@ -708,6 +730,7 @@ fn handle_connection(
         started_at_ms,
         &events,
         conn_id,
+        &task_data_dir,
         &out,
     );
     // Teardown: stop pushes, wake the writer thread, let queued frames flush.
@@ -727,6 +750,7 @@ fn connection_read_loop(
     started_at_ms: i64,
     events: &EventBus,
     conn_id: u64,
+    task_data_dir: &std::path::Path,
     out: &std::sync::mpsc::Sender<String>,
 ) -> Result<(), DaemonError> {
     loop {
@@ -765,6 +789,7 @@ fn connection_read_loop(
             events: events.clone(),
             conn_id,
             out: out.clone(),
+            task_data_dir: task_data_dir.to_path_buf(),
         };
         let resp = crate::dispatch::dispatch(&mut ctx, req);
         let payload = serde_json::to_string(&resp)?;

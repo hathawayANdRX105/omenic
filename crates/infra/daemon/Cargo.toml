@@ -18,6 +18,7 @@ session = { path = "../session" }
 config = { path = "../config" }
 mcp = { path = "../../agent/mcp" }
 tools = { path = "../../agent/tools" }
+task = { path = "../../agent/task" }
 omenic-composition = { path = "../../composition" }
 omenic-harness-tools = { path = "../../harness/tools" }
 omenic-harness-jobs = { path = "../../harness/jobs" }
