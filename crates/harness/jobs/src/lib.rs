@@ -206,7 +206,7 @@ pub enum JobError {
 /// Every method takes `&self`: the registry synchronises internally so one
 /// `Arc<dyn JobRegistry>` can be shared by the daemon, the worker and every
 /// tool clone. `&mut self` would make that impossible, which is why this
-/// deviates from the async-shaped sketch in `todo/dsh-backlog-detail.md` (that
+/// deviates from the async-shaped sketch in `todo/archive/dsh-backlog-detail.md` (that
 /// sketch also assumed a tokio runtime this workspace does not have).
 pub trait JobRegistry: Send + Sync {
     /// Register `task` under `label` and return its id immediately.
