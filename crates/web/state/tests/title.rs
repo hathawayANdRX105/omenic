@@ -45,6 +45,15 @@ fn strips_markdown_prefix() {
 }
 
 #[test]
+fn strips_compound_markdown_prefix() {
+    // bug 场景：`trim_start_matches` 被换成单次剥刺（只吃掉一个标记字符），
+    // 侧栏标题就带着 `> - ` / `## ` 前缀显示；或忘了 `\t` 也算行首空白。
+    assert_eq!(title_from_first_message("> - 标题"), "标题");
+    assert_eq!(title_from_first_message("## > - **粗**"), "粗**");
+    assert_eq!(title_from_first_message("\t> # 全部"), "全部");
+}
+
+#[test]
 fn emoji_counts_as_chars() {
     // bug 场景：按 byte 数截断 → emoji（多字节）被切成半个替换字符。
     let emojis: String = "🎉".repeat(50);
