@@ -13,3 +13,4 @@ memory = { path = "../../infra/memory" }
 tools = { path = "../../agent/tools" }
 adaptor = { path = "../../agent/adaptor" }
 orbit = { path = "../../agent/orbit" }
+task = { path = "../../agent/task" }
