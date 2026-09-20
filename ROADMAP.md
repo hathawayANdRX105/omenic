@@ -200,4 +200,4 @@ CI 与 ocr/code-reviewer 在合并前拦下的，不是测试瑕疵：
 
 ## 历史锚点
 
-起点 `53419ec` / `906ea2e` / `1b405f0`；设计蓝图 `todo/dsh/README.md`；冻结签名锚点 `todo/dsh/BACKGROUND.md`；三路交叉校验记录 `todo/roadmap-verify-2026-09-15.md`。
+起点 `53419ec` / `906ea2e` / `1b405f0`；设计蓝图 `todo/dsh/README.md`；冻结签名锚点 `todo/archive/dsh/BACKGROUND.md`（已归档，S1–S4 全部交付后的历史锚点）；三路交叉校验记录 `todo/roadmap-verify-2026-09-15.md`。
