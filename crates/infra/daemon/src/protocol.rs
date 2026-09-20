@@ -102,6 +102,13 @@ pub enum Command {
     #[serde(rename = "run.list")]
     RunList,
 
+    /// `task.list` — `{ limit?: u32 }` → `[Task]` (see
+    /// `task::Task`).  Reads the CLI's `tasks.jsonl` (latest-wins,
+    /// tombstones already filtered by the store), ordered by
+    /// `updated_at` descending.  `limit` defaults to 50, `0` yields `[]`.
+    #[serde(rename = "task.list")]
+    TaskList,
+
     /// `stats.summary` — `{ range?: "1h"|"24h"|"7d"|"30d"|"90d"|"All" }` →
     /// [`crate::state::StatsSummary`].  Aggregated purely from the run
     /// ledger; metrics with no persisted source (tokens, cost, cache) are
