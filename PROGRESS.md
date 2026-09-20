@@ -6,29 +6,45 @@
 
 ## 当前位置（2026-09-20）
 
-main `3978817`。**G1–G8 全部已过**；dsh 对照三批 B1（#381）/ B2（#382）/ B3（#385 + #387）已全部合入 main，交付内容、审查拦下的真实缺陷与验收证据见 ROADMAP 的「已交付的 dsh 对照批次 B1–B3」节。
+main `756c8fe`。**G1–G8 全部已过**；dsh 对照三批 B1（#381）/ B2（#382）/ B3（#385 + #387）已全部合入 main，交付内容、审查拦下的真实缺陷与验收证据见 ROADMAP 的「已交付的 dsh 对照批次 B1–B3」节。
 
 - **C7（tag omenic-harness-v0.1.0 + ferrite 接线）**：前置条件全满足，**等用户拍板时机**，不占批次。
 - **C8（interaction + token-meter）**：已裁定不做。
 
-**没有排队中的整合点。** 剩下的全是下文未排期缺口——其中只有「附件全链路」是三段全缺的中等缺口，其余为低优先或范围外。
+**没有排队中的整合点。** G1–G8 + B1–B3 全部交付，daemon/web/CLI 三入口均可构建运行（CI 证实）。剩下的缺口按「**阻塞日常使用吗**」而非「dsh 有没有」重排——见下。当前判定：**web + harness 已可边用边优化**，无硬阻塞项。
 
-## 未排期缺口
+## 缺口优先级（2026-09-20 重排，scout 实测 dsh 源码）
 
-> 2026-09-18 划分的三批已全部完成（记录在 ROADMAP）。以下三项当时裁定不排批次，是 dsh 对照里仅剩的开放域。
+> 旧表按「dsh 有什么 omenic 没有」排优先级，导致把几个 dsh 强依赖但 omenic 场景下不痛的项排高了。2026-09-20 派 scout 用 codegraph + 源码核实重排，判据改为：**omenic 自己用起来卡在哪**。结论与直觉一致——原四项里只有附件链路真正影响使用，而原划范围外的声明式装配反而更值得先做。
 
-| 域 | dsh 现状 | omenic 现状 | 缺口 |
+### P0 — 阻塞日常使用（先做这两项，边用边优化就能转起来）
+
+| 项 | 为什么是 P0 | dsh 强依赖? | 成本 | omenic 现状 |
+|---|---|---|---|---|
+| **session-title**（会话自动标题） | 侧栏现在全是手填/时间戳，会话一多完全没法找。dsh 确定性 fallback 就是首条用户消息截词，**不需要 LLM 也能用** | 否（log-only 投影，可选注册） | ~2 天 | `sessions.title` 列已存在，只在创建时写一次；grep `session-title` = 0 |
+| **boot/bundle 声明式装配**（原范围外上提） | 换模型/换渠道/换插件集现在要改 TOML + 重启；声明式 profile 是「多场景切换」的地基，也是 ferrite 复用 harness 的前置 | **是**（boot/app-boot 是启动入口；bundle/base 是每个 profile 第一层） | ~3–4 天 | `composition::assemble()` 硬编码两个核心插件；无 profile schema、无声明式加载 |
+
+### P1 — 有感增强（不阻塞，但做了体验明显变好）
+
+| 项 | 为什么 | dsh 强依赖? | 成本 | omenic 现状 |
+|---|---|---|---|---|
+| **LLM 路由余量**：DeepSeek/PiAi 官方 adapter | 现全走 OpenAI 兼容端点，reasoner 等模型特性吃不到 | 是（LlmRuntime 注册 adapter） | ~2 天/adapter | `orbit::WaterfallLlm` 已有 fallback + retry，只缺 provider 适配 |
+| **元工具核心子集**：todo / goal（范围外上提） | 边用边优化时期最值钱的是**任务追踪本身**——omp 的 todo 模型已在用；dsh 的 goal/todo 是模型运行时的自我编排，方向与 omenic 的 `crates/agent/task`（RPC 任务模型）相反，**不复刻 dsh 形态，扩自己的 task crate** | 部分（dsh workflow-worker-thread 强依赖；goal/todo/schedule/skill/lsp 纯可选） | ~3–5 天（仅 todo/goal 两件） | `crates/agent/task` 有 runner/graph/store/template，无 todo/goal 概念 |
+| **附件全链路** | 三段全缺，但**只有需要图像输入时才痛**；文本编程场景零影响 | 是（`llm-deepseek/src/index.ts:440` adapter 注入） | ~4–6 天 | grep `attachment`/`image` = 0 |
+
+### P2 — 低优先（无生产需求，明确延后）
+
+| 项 | 为什么延后 | dsh 强依赖? | 成本 |
 |---|---|---|---|
-| **附件全链路** | `AttachmentStore` 抽象（`validateImage`/`saveImage`/`readImage`/`readImageRequest`）+ `LocalAttachmentStore` 内容寻址 + `ui-attachment` 前端 + adapter `resolveAttachments` 注入（`attachment/attachment*/src/index.ts`） | 全仓 grep `attachment`/`image` = 0 命中（仅 `ETXTBSY` 误匹配） | 前端 composer 上传入口 + 内容寻址存储 + 上下文投影三段全缺；web 前端与后端耦合重，单做后端无意义，需整体排期 |
-| **session telemetry / OTel** | `SessionTelemetryBackend` 抽象 + OTel SDK 导出（`session/session-telemetry*/src/index.ts`） | grep `session_telemetry`/`opentelemetry` = 0 | 无生产需求，低优先 |
-| **session-title / title-llm** | `SessionTitleService`（确定性 fallback + LLM 生成）（`session/session-title*/src/index.ts`） | grep `session-title`/`title-llm` = 0 | 同上 |
-| **credentials / authorization / identity** | `CredentialProvider` 抽象（分层 env 解析 + YAML 持久化 + 跨进程锁）+ `AuthorizationService` + `AnonymousUserId`（`credentials/*/src/index.ts`、`identity/*/src/index.ts`） | grep `credentials`/`identity`/`anonymous-user-id` = 0 | 低优先；现有配置走 TOML 文件够用 |
+| **credentials / authorization / identity** | dsh 里它是 agent-loop 经 llm/credentials 注入密钥的强依赖，但 omenic 现有 TOML `[openai]` + `[[llm.fallbacks]]` 已覆盖单机多渠道；等真的要多用户/多 key 轮换再排 | 是（dsh 侧） | ~5–7 天 |
+| **session telemetry / OTel** | dsh 自己都可禁用（`feedback/command-feedback:49`），纯可选投影 | 否 | ~2–3 天 |
+| **token-meter** | C8 已裁定不做；5.7 token 卡「无真数据则隐藏」已兜底。真要做也只是 projection-only | 否（optional fiber） | ~1 天 |
 
 ### 已完成批次的余量（不阻塞，可随时捡）
 
 - **MCP**（#381 / #383）：dsh `mcp-client` 其余可选项（tool-level filter、server-level env 注入）未对齐。
 - **session resume**（#382 B2a）：checkpoint flush 策略（dsh `session-checkpoint-policy`）；回放跳过 `System`/`Tool` 行。
-- **LLM 路由**（#382 B2b）：全败 Error 不聚合各 provider 原始错误文本；statusline fallback 切换 `model` 显示口径保持 `config.model` 不变；DeepSeek/PiAi 官方 adapter 未接（现走 OpenAI 兼容端点）。
+- **LLM 路由**（#382 B2b）：全败 Error 不聚合各 provider 原始错误文本；statusline fallback 切换 `model` 显示口径保持 `config.model` 不变。
 - **jobs / terminal**（#385）：`onJobDone` 生命周期回调、pwsh 后端、dsh jobs 其余 4 个工具（`jobs_output` 等）。
 - **subagent**（#387）：`send_message`/`report`、continuable/background run、session-seeding、SIGTERM 中间层、permission option kind 过滤、Codex / Claude Code / SDK 三个进程外后端。
 
@@ -36,11 +52,11 @@ main `3978817`。**G1–G8 全部已过**；dsh 对照三批 B1（#381）/ B2（
 
 | 项 | 原因 |
 |---|---|
-| 元工具与治理整片（goal/todo/plan-mode/schedule/skill/lsp/hooks/guard/feedback/workflow，约 60 子包） | 复刻差距最大的功能域，不与 C1–C8 主线耦合，独立规划 |
+| dsh 元工具整片（goal/todo/plan-mode/schedule/skill/lsp/hooks/guard/feedback/workflow，约 60 子包） | 只剩 goal/todo 有感且方向与 omenic task 模型相反（见 P1），其余纯可选增强；dsh workflow 强依赖部分不复刻 |
 | core scope + agent-tool-presentation | dsh 作用域隔离与工具结果呈现策略，不与主线耦合 |
-| acp 协议 + boot/bundle 声明式装配 | omenic `composition` 已对齐 cordis 运行时；声明式层（profile/bundle）留给 C7 或独立路线 |
+| acp 协议 | 协议层已随 #387 落地；只剩 Codex/Claude Code/SDK 三个进程外后端（见余量） |
 | C7（tag omenic-harness-v0.1.0 + ferrite 接线） | 前置全满足，等用户拍板时机 |
-| C8 interaction + token-meter | 已裁定不做 |
+| C8 interaction + token-meter | 已裁定不做；token-meter 降级 P2（projection-only 可选） |
 
 ## 工作约定
 
