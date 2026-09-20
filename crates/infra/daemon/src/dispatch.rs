@@ -385,6 +385,30 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
             }
         }
 
+        Command::SessionUpdateTitle => {
+            let sid = match require_str(&req.params, "session_id") {
+                Ok(s) => s,
+                Err(m) => return Response::err(id, ResponseError::new("protocol", m)),
+            };
+            let title = match require_str(&req.params, "title") {
+                Ok(s) => s,
+                Err(m) => return Response::err(id, ResponseError::new("protocol", m)),
+            };
+            // UPDATE-only rename: a missing session is a `database_missing`
+            // error response (never an insert), same translation as
+            // `session.create`'s store errors.
+            match ctx.sessions.update_title(sid, title) {
+                Ok(row) => match serde_json::to_value(&row) {
+                    Ok(v) => Response::ok(id, v),
+                    Err(e) => Response::err(
+                        id,
+                        ResponseError::new("internal", format!("serialize: {e}")),
+                    ),
+                },
+                Err(e) => session_error_response(id, "session.update_title", e),
+            }
+        }
+
         Command::SessionGet => {
             let sid = match require_str(&req.params, "session_id") {
                 Ok(s) => s,
