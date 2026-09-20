@@ -133,6 +133,24 @@
 
 > **B1/B2 的审查时序**：合并时只走了 CRG + code-reviewer，ocr 层缺失；由 #383 在合并后补齐。B3 起严格执行合并前 CRG + ocr 双层。
 
+## 已交付：使用体验 P0 批次（2026-09-20）
+
+判据从「dsh 有什么」翻转为「打开 web 用时哪里卡」后的第一批。5 个 PR 全部 squash 合入，CI 全绿 + CRG + 双 reviewer 两阶段审查（先 spec 合规后代码质量）+ 实证验证。
+
+| PR | squash | 交付 | 遗留 |
+|---|---|---|---|
+| **#392** session-title | `964973b` | `title_from_first_message` 确定性截词（40 字符预算、markdown 前缀剥刺、emoji 按 chars() 安全、空串占位）；page-workspace `on_send` 首条消息触发标题替换；5 测试 | 侧栏按钮新建会话刷新后标题回退（缺 update RPC，见 F2） |
+| **#393** todo+goal 模型 | `3919d29` | `todo.rs`（终态封闭状态机：Done→Cancelled 拒绝、Cancelled 封闭、Done→Open 重开）+ `goal.rs`（单向 link、幂等）；`store.rs` 泛化成三文件共用读路径（`load_records<T>`/`append_line`/`read_locked`/`corrupt_or_trim`，行为保持）；12 测试 | 损坏行/trim 路径零测试覆盖（见 F1） |
+| **#394** daemon task.list | `bbe90f0` | `Command::TaskList`（limit 缺省 50 / 0→[] / 脏数据回退不报错）+ `DaemonConfig.data_dir` 全链透传 + `WebDaemon::task_list`；3 个 e2e（排序/limit/空态） | — |
+| **#395** web 看板接线 | `92c04ef` | `TaskItem::from_task`（4 态词汇表映射、kind 穷尽 snake_case、priority 直通）+ WP-C effect 第二次 RPC + staleness 守卫覆盖双 signal；3 映射测试 | smoke 只到 oi-web 起服层（无 daemon 二进制构建授权） |
+| **#396** 文档同步 | `b262147` | PROGRESS.md | — |
+
+### P0 批次合并后审查结论（PASS_WITH_NITS，无 Critical）
+
+两条 reviewer 报的 Critical 经实证**驳回**：① `trim_start_matches` 被误判为「单次匹配」——rustc 实证 `"> - 标题"` → `"标题"`，复合前缀剥刺正确（残留：该用例无测试钉住）；② 「Goal 状态机缺终态约束」为虚构需求——任务书对 Goal 只要求 `new`/`link`/`unlink`，终态封闭是 Todo 的契约（已实现），Goal.status 为 pub 字段与执行模型 `Task.status` 同模式。
+
+**真实遗留（转 PROGRESS 的 F1–F3）**：① `store.rs` 数据完整性路径（损坏行 trim / CorruptLine）零测试覆盖；② 侧栏新建会话标题刷新回退（用户裁定加 `session.update_title` 增量 RPC——属「protocol 只能加命令」允许的增量）；③ todo/goal 写方（agent 工具）未接。
+
 ### 审查实际拦下的真实缺陷（三批合计）
 
 CI 与 ocr/code-reviewer 在合并前拦下的，不是测试瑕疵：
