@@ -354,6 +354,12 @@ pub fn Workspace(
     // daemon 记进 run ledger）。列表状态推断用它区分「正在跑」与「半开孤儿」；
     // TurnEnd / 中断时清空。空串 = 无在飞 run。
     let mut live_run_id = use_signal(String::new);
+    // WP-C：看板数据版本号。todo/goal 的唯一写入口是模型工具（看板无编辑
+    // RPC），刷新靠事件驱动：ToolResult 命中五个 todo/goal 工具名、以及
+    // TurnEnd 收尾各 bump 一次。双触发是因为 WireTranslator 的 LIFO 配对
+    // 会丢未配对 end（见 `convert.rs` 的 inflight 处理），只挂 ToolResult
+    // 会漏刷新。WP-C 看板 effect 的依赖表读它即重查。
+    let mut board_version = use_signal(|| 0u64);
     // WP-C：会话列表状态推断缓存——daemon 的 SessionSummary 无状态字段，
     // 列表侧的 Idle/Active/Aborted 改由 run.list 的 run 记录组装。为避免
     // 每次渲染都重复请求，run 记录只在会话列表数据变化（加载/新建/删除）
@@ -373,7 +379,9 @@ pub fn Workspace(
                 if sid.is_empty() {
                     continue;
                 }
-                match ev {
+                //  scrutinee 取引用：新增的 ToolResult 臂只按名 bump，不
+                //  移出字段，后续 `ui.apply(&ev)` 仍可整体借用
+                match &ev {
                     AgentEvent::TurnStart => {
                         // 会话进入运行态（孤儿会话不写回）
                         if session_exists_in(space_sessions, &sid) {
@@ -454,6 +462,37 @@ pub fn Workspace(
                         // run 收尾，在飞 run id 清空（WP-C：之后列表状态
                         // 以 run_status_cache 的持久记录为准）
                         live_run_id.set(String::new());
+                        // 看板刷新兜底：ToolResult 臂已按工具名 bump，这里
+                        // 对每个 turn 收尾再 bump 一次——WireTranslator 的
+                        // LIFO 配对会丢未配对 end（convert.rs），只挂
+                        // ToolResult 会漏刷新，双触发防漏
+                        board_version.set(board_version() + 1);
+                    }
+                    AgentEvent::ToolResult { name, .. } => {
+                        // 看板刷新：todo/goal 的唯一写入口是模型工具（看板
+                        // 无编辑 RPC），命中这五个工具名即 todos.jsonl /
+                        // goals.jsonl 可能已变 → bump 版本号，WP-C 看板
+                        // effect 依赖表读它即重查。未命中的工具名不 bump，
+                        // 无关工具每跑一次都重查看板只是空耗 UDS 往返。
+                        if matches!(
+                            name.as_str(),
+                            "todo_add" | "todo_update" | "todo_list" | "goal_add" | "goal_link"
+                        ) {
+                            board_version.set(board_version() + 1);
+                        }
+                        // 工具结果仍要落进聊天记录。Rust match 无
+                        // fallthrough，这段与 `_` 臂的写回路径相同（去掉
+                        // 了那里对 AssistantText 的计数——ToolResult 不可
+                        // 能是 AssistantText）；改一处记得改另一处。
+                        if !session_exists_in(space_sessions, &sid) {
+                            continue;
+                        }
+                        let mut map = session_messages.write();
+                        let mut ui = UiState {
+                            messages: map.get(&sid).cloned().unwrap_or_default(),
+                        };
+                        ui.apply(&ev);
+                        map.insert(sid.clone(), ui.messages);
                     }
                     _ => {
                         if matches!(ev, AgentEvent::AssistantText { .. }) {
@@ -512,22 +551,27 @@ pub fn Workspace(
         });
     });
 
-    // WP-C：任务看板数据源 = 当前会话的真实 run 记录 + CLI 任务存储
-    // （tasks.jsonl）。run 记录是当前会话的瞬时执行，task 存储是跨会话
-    // 的持久编排，两者都是看板的诚实内容；`oi task add/done/...` 写入的
-    // 任务此前 web 完全看不到，这里通过 `task.list` 补上。「任务系统」
-    // 视图本身属于 C8（酒馆触发，已暂缓），不新造任务子系统，只把两份
-    // 真实记录投影成任务卡（`TaskItem::from_run` / `TaskItem::from_task`）。
-    // 刷新时机：面板打开、切会话、run 起止（live_run_id 变化）——都不在
-    // 渲染路径同步阻塞，RPC 放 spawn 里。无 daemon（Disconnected）
-    // → 看板恒空。
+    // WP-C：任务看板数据源 = 当前会话的真实 run 记录 + 三份持久存储：
+    // CLI 任务（tasks.jsonl）、模型工具写入的 todo（todos.jsonl）与 goal
+    // （goals.jsonl）。run 记录是当前会话的瞬时执行，三份存储是跨会话的
+    // 持久记录，都是看板的诚实内容；`oi task add/done/...` 与 slice1 的
+    // 模型工具写入的数据此前 web 完全看不到，这里通过 `task.list` /
+    // `todo.list` / `goal.list` 补上。「任务系统」视图本身属于 C8（酒馆
+    // 触发，已暂缓），不新造任务子系统，只把四份真实记录投影成任务卡
+    // （`TaskItem::from_run` / `from_task` / `from_todo` / `from_goal`）。
+    // 刷新时机：面板打开、切会话、run 起止（live_run_id 变化）、
+    // todo/goal 工具写盘（board_version bump）——都不在渲染路径同步阻塞，
+    // RPC 放 spawn 里。无 daemon（Disconnected）→ 看板恒空。
     let mut run_tasks: Signal<Vec<TaskItem>> = use_signal(Vec::new);
     let mut store_tasks: Signal<Vec<TaskItem>> = use_signal(Vec::new);
     use_effect(move || {
-        // 依赖登记：面板关闭时不查（省一次 UDS 往返），run 起止触发重查
+        // 依赖登记：面板关闭时不查（省一次 UDS 往返）；run 起止、todo/goal
+        // 工具结果（board_version bump，见事件消费处）触发重查。值本身不
+        // 参与查询参数，仅登记依赖。
         let open = show_tasks();
         let sid = active_session_id();
         let live = live_run_id();
+        let _board_version = board_version();
         let DataBackend::Daemon(d) = backend() else {
             run_tasks.set(Vec::new());
             store_tasks.set(Vec::new());
@@ -556,6 +600,23 @@ pub fn Workspace(
                     Vec::new()
                 }
             };
+            // todo / goal 存储（slice1 模型工具的唯一落盘点）：与 task 存储
+            // 同型——limit 可选、降级同形态（eprintln! 留痕 + 空列表）。
+            // 文件不存在时 daemon 返 `[]`（slice2 契约），不是错误。
+            let todos = match d.todo_list(TASK_BOARD_LIMIT) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("[web] todo_list failed: {e}");
+                    Vec::new()
+                }
+            };
+            let goals = match d.goal_list(TASK_BOARD_LIMIT) {
+                Ok(g) => g,
+                Err(e) => {
+                    eprintln!("[web] goal_list failed: {e}");
+                    Vec::new()
+                }
+            };
             // 落后于用户操作的结果丢弃：查询期间切了会话、或起了/结束了 run，
             // 先返回的那次 RPC 会拿旧会话的记录覆盖当前看板。effect 每次依赖
             // 变化都重发一次新查询，丢掉陈旧结果只损失一次已无用的往返。
@@ -575,7 +636,13 @@ pub fn Workspace(
                     })
                     .collect(),
             );
-            store_tasks.set(tasks.iter().map(TaskItem::from_task).collect());
+            // 合并顺序 tasks → todos → goals：每份列表内部保持 daemon 返回
+            // 序（各自按 updated_at 降序），跨列表不再重排——三种来源混在
+            // 一个看板里，统一重排会假造新旧关系。
+            let mut board: Vec<TaskItem> = tasks.iter().map(TaskItem::from_task).collect();
+            board.extend(todos.iter().map(TaskItem::from_todo));
+            board.extend(goals.iter().map(TaskItem::from_goal));
+            store_tasks.set(board);
         });
     });
 

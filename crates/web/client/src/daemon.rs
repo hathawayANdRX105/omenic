@@ -14,7 +14,7 @@ use omenic_web_state::convert::{message_to_chat, summary_to_session};
 use omenic_web_state::types::{ChatMessage, Session};
 use serde_json::Value;
 use session::SessionRole;
-use task::Task;
+use task::{Task, goal::Goal, todo::Todo};
 
 /// daemon 侧的统计 DTO 原样转出，供 page-stats 直接消费——统计页没有
 /// 需要额外映射的展示形状（KPI 文案在页面里现算），再抄一层 UI DTO 只会
@@ -244,6 +244,28 @@ impl WebDaemon {
     pub fn task_list(&self, limit: u32) -> Result<Vec<Task>, ClientError> {
         self.client
             .call(Command::TaskList, serde_json::json!({ "limit": limit }))
+    }
+
+    /// `todo.list` → 最近更新的 todo（看板的 checklist 数据源）。
+    /// 落盘的 `todos.jsonl` 由 slice1 的模型工具写入，daemon 按
+    /// `updated_at` 降序返回；`limit` 缺省 50，`0` → `[]`。空列表合法
+    /// （data_dir 从没写过 todo）。
+    ///
+    /// 阻塞式，调用方放进 `std::thread`（同本文件其它 RPC 方法）。
+    pub fn todo_list(&self, limit: u32) -> Result<Vec<Todo>, ClientError> {
+        self.client
+            .call(Command::TodoList, serde_json::json!({ "limit": limit }))
+    }
+
+    /// `goal.list` → 最近更新的 goal（看板的 outcome 数据源）。落盘的
+    /// `goals.jsonl` 由 slice1 的模型工具写入，daemon 按 `updated_at`
+    /// 降序返回；`limit` 缺省 50，`0` → `[]`。空列表合法（data_dir
+    /// 从没写过 goal）。
+    ///
+    /// 阻塞式，调用方放进 `std::thread`（同本文件其它 RPC 方法）。
+    pub fn goal_list(&self, limit: u32) -> Result<Vec<Goal>, ClientError> {
+        self.client
+            .call(Command::GoalList, serde_json::json!({ "limit": limit }))
     }
 
     /// `stats.summary`（C5.7）：统计页的唯一数据源。`range` 取

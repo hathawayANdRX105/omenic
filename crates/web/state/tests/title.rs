@@ -50,7 +50,10 @@ fn strips_compound_markdown_prefix() {
     // 侧栏标题就带着 `> - ` / `## ` 前缀显示；或忘了 `\t` 也算行首空白。
     assert_eq!(title_from_first_message("> - 标题"), "标题");
     assert_eq!(title_from_first_message("## > - **粗**"), "粗**");
-    assert_eq!(title_from_first_message("\t> # 全部"), "全部");
+    // 钉 `'\t'` 在标记字符集合里：tab 出现在 `>` 之后（不是行首），
+    // `body.trim()` 吃不到它，只有剥刺闭包认它才能落成 "标题"。会红：闭包里
+    // 删掉 `'\t'`（标记字符后的 tab 不再被剥，标题变成 "\t标题"）。
+    assert_eq!(title_from_first_message(">\t标题"), "标题");
 }
 
 #[test]
