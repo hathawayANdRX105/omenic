@@ -226,8 +226,34 @@ impl TaskItem {
             acceptance: String::new(),
         }
     }
-}
 
+    /// CLI 任务存储（`tasks.jsonl`，由 `oi task add/done/...` 写入）的一条
+    /// 任务 → 任务卡（任务看板的持久编排数据源，与 [`Self::from_run`] 的
+    /// 瞬时执行记录并列）。
+    ///
+    /// 字段来源（任务存储本身就有这些列，全部真实，没有需要编造的字段）：
+    /// - `id` = `task.id`（CLI 用它当 slug）；
+    /// - `title` = `task.title`；
+    /// - `status` = 由 `task.status` 映射（真实，见
+    ///   [`task_status_to_panel`]）；
+    /// - `kind` = `task.kind` 的 snake_case 串（[`TaskKind`] 本身 serde 即
+    ///   snake_case，这里手写 match 直观可穷尽，避免 `to_value` 的 `Result`
+    ///   噪音）；
+    /// - `priority` = `task.priority`（真实 u8，P0/P1/其余三档照原样渲染）；
+    /// - `description` = `task.description`（可空，TaskPanel 空串不渲染）；
+    /// - `acceptance` = `task.acceptance`（可空）。
+    pub fn from_task(task: &task::Task) -> TaskItem {
+        TaskItem {
+            id: task.id.clone(),
+            title: task.title.clone(),
+            status: task_status_to_panel(&task.status).to_string(),
+            kind: task_kind_snake(&task.kind).to_string(),
+            priority: task.priority,
+            description: task.description.clone(),
+            acceptance: task.acceptance.clone(),
+        }
+    }
+}
 /// run 记录 → 任务卡状态串（TaskPanel 的过滤/chip 词汇表）。
 ///
 /// daemon 侧只写三种终态（`dispatch.rs`：`"ok"` / `"failed"` /
@@ -240,6 +266,39 @@ pub fn run_task_status(finished_at_ms: Option<i64>, status: Option<&str>) -> &'s
         (None, _) => "in_progress",
         (Some(_), Some("ok")) => "done",
         (Some(_), _) => "blocked",
+    }
+}
+
+/// 任务存储 → 任务卡状态串（TaskPanel 的过滤/chip 词汇表）。
+///
+/// [`task::TaskStatus`] 四态映到面板仅有的四个词：
+/// - `Open` → `"open"`；
+/// - `InProgress` → `"in_progress"`；
+/// - `Done` → `"done"`；
+/// - `Failed` → `"blocked"`（danger chip：失败态语义上就是需要人工介入的
+///   阻塞，和 `run_task_status` 把失败 run 归 blocked 同一理由）。
+pub fn task_status_to_panel(status: &task::TaskStatus) -> &'static str {
+    match status {
+        task::TaskStatus::Open => "open",
+        task::TaskStatus::InProgress => "in_progress",
+        task::TaskStatus::Done => "done",
+        task::TaskStatus::Failed => "blocked",
+    }
+}
+
+/// `TaskKind` → snake_case 串（与 `TaskKind` 的 serde 序列化一一对应）。
+/// 手写 match 而非 `serde_json::to_value`：取一个字符串不必处理 `Result`，
+/// 且新增变体时编译器强制补全分支。
+fn task_kind_snake(kind: &task::TaskKind) -> &'static str {
+    match kind {
+        task::TaskKind::Milestone => "milestone",
+        task::TaskKind::Feature => "feature",
+        task::TaskKind::Bug => "bug",
+        task::TaskKind::Task => "task",
+        task::TaskKind::Chore => "chore",
+        task::TaskKind::Spike => "spike",
+        task::TaskKind::Decision => "decision",
+        task::TaskKind::Unknown => "unknown",
     }
 }
 
