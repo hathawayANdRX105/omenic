@@ -33,6 +33,10 @@ enum View {
 /// run ledger 是追加日志，取最近若干条足够铺满看板）。
 const RUN_TASK_LIMIT: u32 = 50;
 
+/// 任务看板拉取的任务存储条数上限（daemon `task.list` 的缺省值一致：
+/// 按 `updated_at` 降序取最近若干条，跨会话的持久编排全在此列）。
+const TASK_BOARD_LIMIT: u32 = 50;
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -508,13 +512,17 @@ pub fn Workspace(
         });
     });
 
-    // WP-C：任务看板数据源 = 当前会话的真实 run 记录（方案 a）。
-    // 「任务系统」视图本身属于 C8（酒馆触发，已暂缓），这里不新造任务
-    // 子系统，只把 daemon run ledger 已有的记录投影成任务卡
-    // （`TaskItem::from_run`）。刷新时机：面板打开、切会话、run 起止
-    // （live_run_id 变化）——都不在渲染路径同步阻塞，RPC 放 spawn 里。
-    // 无 daemon（Disconnected）→ 看板恒空。
+    // WP-C：任务看板数据源 = 当前会话的真实 run 记录 + CLI 任务存储
+    // （tasks.jsonl）。run 记录是当前会话的瞬时执行，task 存储是跨会话
+    // 的持久编排，两者都是看板的诚实内容；`oi task add/done/...` 写入的
+    // 任务此前 web 完全看不到，这里通过 `task.list` 补上。「任务系统」
+    // 视图本身属于 C8（酒馆触发，已暂缓），不新造任务子系统，只把两份
+    // 真实记录投影成任务卡（`TaskItem::from_run` / `TaskItem::from_task`）。
+    // 刷新时机：面板打开、切会话、run 起止（live_run_id 变化）——都不在
+    // 渲染路径同步阻塞，RPC 放 spawn 里。无 daemon（Disconnected）
+    // → 看板恒空。
     let mut run_tasks: Signal<Vec<TaskItem>> = use_signal(Vec::new);
+    let mut store_tasks: Signal<Vec<TaskItem>> = use_signal(Vec::new);
     use_effect(move || {
         // 依赖登记：面板关闭时不查（省一次 UDS 往返），run 起止触发重查
         let open = show_tasks();
@@ -522,6 +530,7 @@ pub fn Workspace(
         let live = live_run_id();
         let DataBackend::Daemon(d) = backend() else {
             run_tasks.set(Vec::new());
+            store_tasks.set(Vec::new());
             return;
         };
         if !open || sid.is_empty() {
@@ -538,10 +547,19 @@ pub fn Workspace(
                     Vec::new()
                 }
             };
+            // 任务存储是跨会话的持久编排，不按会话过滤：取最近更新的若干条。
+            // 降级形态与 runs 分支一致（eprintln! 留痕 + 空列表），不静默吞。
+            let tasks = match d.task_list(TASK_BOARD_LIMIT) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("[web] task_list failed: {e}");
+                    Vec::new()
+                }
+            };
             // 落后于用户操作的结果丢弃：查询期间切了会话、或起了/结束了 run，
             // 先返回的那次 RPC 会拿旧会话的记录覆盖当前看板。effect 每次依赖
             // 变化都重发一次新查询，丢掉陈旧结果只损失一次已无用的往返。
-            // 不校验 open：面板关闭时 run_tasks 本就不渲染，写进去也无害。
+            // 不校验 open：面板关闭时看板本就不渲染，写进去也无害。
             if active_session_id() != sid || live_run_id() != live {
                 return;
             }
@@ -557,6 +575,7 @@ pub fn Workspace(
                     })
                     .collect(),
             );
+            store_tasks.set(tasks.iter().map(TaskItem::from_task).collect());
         });
     });
 
@@ -1017,7 +1036,16 @@ pub fn Workspace(
                             on_abort: on_abort,
                             on_toggle_tasks: move |_| show_tasks.set(!show_tasks()),
                             dock: show_tasks().then(|| rsx! {
-                                TaskPanel { tasks: run_tasks(), on_close: move |_| show_tasks.set(false) }
+                                TaskPanel {
+                                    // 持久编排（tasks.jsonl）在前，瞬时执行（run 记录）随后；
+                                    // 合并只在渲染处做，不引入第三个 signal 缓存中间结果
+                                    tasks: {
+                                        let mut board = store_tasks();
+                                        board.extend(run_tasks());
+                                        board
+                                    },
+                                    on_close: move |_| show_tasks.set(false),
+                                }
                             }),
                         }
                     },
