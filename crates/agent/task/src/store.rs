@@ -265,12 +265,12 @@ impl Store {
         file.read_to_end(&mut buf)?;
         let content = String::from_utf8_lossy(&buf);
 
-        // Keep everything up to and including the second-to-last newline,
-        // which drops the final (corrupt) line regardless of trailing `\n`.
-        let pos = content
-            .rfind('\n')
-            .map(|last| content[..last].rfind('\n').map(|p| p + 1).unwrap_or(0))
-            .unwrap_or(0);
+        // Drop the final line whatever its shape. Strip a trailing newline
+        // first so "ends with \n" and a mid-write crash (record bytes landed,
+        // the `\n` did not — `append_line` writes them in two `write_all`
+        // calls) share one cut point: the start of the last line.
+        let body = content.strip_suffix('\n').unwrap_or(&content);
+        let pos = body.rfind('\n').map(|p| p + 1).unwrap_or(0);
         file.set_len(pos as u64)?;
         file.sync_all()?;
         Ok(())

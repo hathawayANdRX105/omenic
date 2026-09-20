@@ -54,6 +54,18 @@ fn corrupt_line(dir: &Path, file: &str, line: &str) {
     writeln!(f, "{line}").expect("write raw line");
 }
 
+/// Write exact bytes (no newline appended) to simulate a crash between
+/// `append_line`'s two `write_all` calls: the record bytes landed, the
+/// `\n` never did.
+fn write_raw(dir: &Path, file: &str, text: &str) {
+    let mut f = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join(file))
+        .expect("open store file for raw append");
+    f.write_all(text.as_bytes()).expect("write raw bytes");
+}
+
 fn line_count(dir: &Path, file: &str) -> usize {
     std::fs::read_to_string(dir.join(file))
         .expect("read store file")
@@ -225,4 +237,77 @@ fn empty_and_missing_files_yield_empty() {
             .is_empty()
     );
     assert!(store.load_all().unwrap().is_empty());
+}
+
+#[test]
+fn trailing_corrupt_without_final_newline_keeps_last_complete_line() {
+    // Bug it catches: `append_line` writes the record and its `\n` in two
+    // separate `write_all` calls, so a crash (or power loss) between them
+    // leaves the file with *no* trailing newline. A trim point computed by
+    // walking back to the second-to-last newline then eats the last
+    // *complete* record together with the torn one — every unclean shutdown
+    // silently loses one good task.
+    let (dir, store) = tmp_store();
+    store.append(&task("task-a")).unwrap();
+    store.append(&task("task-b")).unwrap();
+    let before = std::fs::read_to_string(dir.path().join("tasks.jsonl")).unwrap();
+    write_raw(dir.path(), "tasks.jsonl", r#"{"id":"task-c","title":"half"#);
+
+    assert_eq!(ids(&store.load_all().unwrap()), vec!["task-a", "task-b"]);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("tasks.jsonl")).unwrap(),
+        before,
+        "the trim must cut at the start of the torn line, not one line earlier"
+    );
+}
+
+#[test]
+fn trim_single_line_file_yields_empty() {
+    // Bug it catches: when the store's only line is torn the trim must
+    // truncate to zero bytes. Searching for a newline *before* the trailing
+    // one has nothing to find, and a wrong fallback leaves a partial line
+    // behind (or errors out), so a first-run crash leaves an unreadable
+    // store instead of an empty one.
+    let torn = r#"{"id":"task-a","title":"half"#;
+    for shape in [torn.to_string(), format!("{torn}\n")] {
+        let (dir, store) = tmp_store();
+        write_raw(dir.path(), "tasks.jsonl", &shape);
+
+        assert!(
+            store.load_all().unwrap().is_empty(),
+            "shape {shape:?} must trim to an empty board"
+        );
+        assert!(
+            std::fs::read_to_string(dir.path().join("tasks.jsonl"))
+                .unwrap()
+                .is_empty(),
+            "shape {shape:?} must leave a zero-byte file"
+        );
+    }
+}
+
+#[test]
+fn trim_then_load_is_stable() {
+    // Bug it catches: a cut that lands mid-record (or one record short)
+    // leaves the file still ending in a corrupt line, so every subsequent
+    // load re-trims and can eat another record — the store never converges.
+    let (dir, store) = tmp_store();
+    store.append(&task("task-a")).unwrap();
+    store.append(&task("task-b")).unwrap();
+    write_raw(dir.path(), "tasks.jsonl", r#"{"id":"task-c","title":"half"#);
+
+    let first = ids(&store.load_all().unwrap());
+    assert_eq!(first, vec!["task-a", "task-b"]);
+    for _ in 0..3 {
+        assert_eq!(
+            ids(&store.load_all().unwrap()),
+            first,
+            "reloading a trimmed store must be a no-op"
+        );
+    }
+    assert_eq!(
+        line_count(dir.path(), "tasks.jsonl"),
+        2,
+        "repeated loads must not keep trimming"
+    );
 }
