@@ -253,6 +253,59 @@ impl TaskItem {
             acceptance: task.acceptance.clone(),
         }
     }
+
+    /// 模型工具写入的 todo（`todos.jsonl`）→ 任务卡（看板的 checklist
+    /// 数据源，与 [`Self::from_task`] 的编排任务、[`Self::from_run`] 的
+    /// 瞬时执行并列）。
+    ///
+    /// 字段来源：
+    /// - `id` = `todo.id`（真实，slice1 约定 id = trim 后的标题）；
+    /// - `title` = `todo.title`（真实）；
+    /// - `status` = 由 `todo.status` 映射（真实，见
+    ///   [`todo_status_to_panel`]）；
+    /// - `kind` 固定 `"todo"`（真实：这条记录就是一条 checklist 项）；
+    /// - `priority` = [`RUN_TASK_PRIORITY`]（Todo 模型没有优先级字段，
+    ///   此处无真实来源，取中性值 2，不编造其它数值）；
+    /// - `description` = `todo.note`（可空，None → 空串，TaskPanel 空串
+    ///   不渲染）；
+    /// - `acceptance` 留空——Todo 模型没有验收标准这一概念，不编造。
+    pub fn from_todo(t: &task::todo::Todo) -> TaskItem {
+        TaskItem {
+            id: t.id.clone(),
+            title: t.title.clone(),
+            status: todo_status_to_panel(&t.status).to_string(),
+            kind: "todo".into(),
+            priority: RUN_TASK_PRIORITY,
+            description: t.note.clone().unwrap_or_default(),
+            acceptance: String::new(),
+        }
+    }
+
+    /// 模型工具写入的 goal（`goals.jsonl`）→ 任务卡（看板的 outcome
+    /// 数据源，与 [`Self::from_todo`] 的 checklist 项并列）。
+    ///
+    /// 字段来源：
+    /// - `id` = `goal.id`（真实，slice1 约定 id = trim 后的标题）；
+    /// - `title` = `goal.title`（真实）；
+    /// - `status` = 由 `goal.status` 映射（真实，见
+    ///   [`goal_status_to_panel`]）；
+    /// - `kind` 固定 `"goal"`（真实：这条记录就是一个 outcome 分组）；
+    /// - `priority` = [`RUN_TASK_PRIORITY`]（Goal 模型没有优先级字段，
+    ///   此处无真实来源，取中性值 2，不编造其它数值）；
+    /// - `description` = `format!("{} 个关联 todo", goal.todo_ids.len())`
+    ///   （真实计数；悬空 id 不过滤，展示层只报数）；
+    /// - `acceptance` 留空——Goal 模型没有验收标准这一概念，不编造。
+    pub fn from_goal(g: &task::goal::Goal) -> TaskItem {
+        TaskItem {
+            id: g.id.clone(),
+            title: g.title.clone(),
+            status: goal_status_to_panel(&g.status).to_string(),
+            kind: "goal".into(),
+            priority: RUN_TASK_PRIORITY,
+            description: format!("{} 个关联 todo", g.todo_ids.len()),
+            acceptance: String::new(),
+        }
+    }
 }
 /// run 记录 → 任务卡状态串（TaskPanel 的过滤/chip 词汇表）。
 ///
@@ -283,6 +336,39 @@ pub fn task_status_to_panel(status: &task::TaskStatus) -> &'static str {
         task::TaskStatus::InProgress => "in_progress",
         task::TaskStatus::Done => "done",
         task::TaskStatus::Failed => "blocked",
+    }
+}
+
+/// todo 存储 → 任务卡状态串（TaskPanel 的过滤/chip 词汇表）。
+///
+/// [`task::todo::TodoStatus`] 四态映到面板仅有的四个词：
+/// - `Open` → `"open"`；
+/// - `InProgress` → `"in_progress"`；
+/// - `Done` → `"done"`；
+/// - `Cancelled` → `"blocked"`（danger chip：取消即不再推进，语义上就是
+///   需要人工知晓的阻塞；四词表里没有更接近的词，**这是映射不是等价**，
+///   不为它加新 chip 词汇）。
+pub fn todo_status_to_panel(status: &task::todo::TodoStatus) -> &'static str {
+    match status {
+        task::todo::TodoStatus::Open => "open",
+        task::todo::TodoStatus::InProgress => "in_progress",
+        task::todo::TodoStatus::Done => "done",
+        task::todo::TodoStatus::Cancelled => "blocked",
+    }
+}
+
+/// goal 存储 → 任务卡状态串（TaskPanel 的过滤/chip 词汇表）。
+///
+/// [`task::goal::GoalStatus`] 三态映到面板仅有的四个词：
+/// - `Active` → `"in_progress"`（目标在推进中，不是待办）；
+/// - `Achieved` → `"done"`；
+/// - `Abandoned` → `"blocked"`（放弃即不再推进，同
+///   [`todo_status_to_panel`] 对 `Cancelled` 的理由，**映射非等价**）。
+pub fn goal_status_to_panel(status: &task::goal::GoalStatus) -> &'static str {
+    match status {
+        task::goal::GoalStatus::Active => "in_progress",
+        task::goal::GoalStatus::Achieved => "done",
+        task::goal::GoalStatus::Abandoned => "blocked",
     }
 }
 
