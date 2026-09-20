@@ -438,7 +438,7 @@ impl Daemon {
         // infra/daemon may bridge them, the catalog must not be polluted.
         let signal = std::sync::atomic::AtomicBool::new(false);
         let mcp_tools = Self::mcp_tools(cfg, &signal)?;
-        let session_tools = Self::session_tools();
+        let session_tools = Self::session_tools(&cfg.data_dir);
         Ok(rpc::worker::OrbitSetup {
             model: model.clone(),
             backend,
@@ -473,7 +473,7 @@ impl Daemon {
         ))
     }
 
-    /// Build the job/terminal tool family on fresh registries.
+    /// Build the job/terminal + todo/goal tool families on fresh state.
     ///
     /// One registry of each kind is created here and captured by the tools for
     /// the daemon's lifetime — that is what makes a job listable in a later
@@ -483,12 +483,22 @@ impl Daemon {
     ///
     /// No cwd is threaded through: the tools default to the process cwd when a
     /// caller omits one, which for the daemon is the configured session root.
-    fn session_tools() -> std::sync::Arc<Vec<std::sync::Arc<dyn tools::Tool>>> {
+    ///
+    /// F3: the todo/goal tools share the CLI's `data_dir` — the same
+    /// `todos.jsonl` / `goals.jsonl` the CLI appends — so the model and the
+    /// CLI can never disagree about where todos live. `Store` is a stateless
+    /// `PathBuf` wrapper (every `todo.list` / `goal.list` request builds its
+    /// own), so one per daemon start is enough; no shared handle is needed.
+    fn session_tools(
+        data_dir: &std::path::Path,
+    ) -> std::sync::Arc<Vec<std::sync::Arc<dyn tools::Tool>>> {
         let jobs = std::sync::Arc::new(omenic_harness_jobs::LocalJobRegistry::new());
         let terminals = std::sync::Arc::new(omenic_harness_terminal::TerminalRegistry::new());
-        std::sync::Arc::new(omenic_harness_tools::jobs_terminal::session_tools(
-            jobs, terminals,
-        ))
+        let mut session_tools = omenic_harness_tools::jobs_terminal::session_tools(jobs, terminals);
+        session_tools.extend(task::tools::session_tools(std::sync::Arc::new(
+            task::store::Store::new(data_dir),
+        )));
+        std::sync::Arc::new(session_tools)
     }
 
     /// Append synthetic `TurnEnd { aborted }` records for every run a prior
