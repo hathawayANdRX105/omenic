@@ -1,9 +1,11 @@
 //! Task model, store, dependency graph, run flow.
 
+pub mod goal;
 pub mod graph;
 pub mod runner;
 pub mod store;
 pub mod template;
+pub mod todo;
 
 use serde::{Deserialize, Serialize};
 

@@ -21,8 +21,8 @@ main `756c8fe`。**G1–G8 全部已过**；dsh 对照三批 B1（#381）/ B2（
 
 | 项 | 为什么是 P0 | 成本 | omenic 现状 |
 |---|---|---|---|
-| **元工具：todo + goal** | 真正用起来时，**任务追踪是核心体验**——开几个会话并行干活、记住每条线推进到哪、阻塞了什么。omp 的 todo 模型你已经在用；omenic 现在一个 todo 都没有，全靠脑子记。**扩 omenic 自己的 `crates/agent/task`（RPC 任务模型），不复刻 dsh 的模型运行时自写编排**（方向相反） | ~3–5 天 | `crates/agent/task` 有 runner/graph/store/template，无 todo/goal 概念；web 无任务面板数据源 |
-| **session-title**（会话自动标题） | 侧栏现在全是手填/时间戳，会话一多完全没法找、没法切。dsh 确定性 fallback 就是首条用户消息截词，**不需要 LLM 也能用** | ~2 天 | **PR #391 已完成确定性 fallback**：`title_from_first_message` 首条消息截词（40 字符上限，中文/emoji 按字符计），新建仍用时间戳占位、首条消息发送后替换。LLM 生成标题仍排 title-llm（P1） |
+| **元工具：todo + goal** 🚧 进行中（[PR #393](https://github.com/hathawayANdRX105/omenic/pull/393)） | 真正用起来时，**任务追踪是核心体验**——开几个会话并行干活、记住每条线推进到哪、阻塞了什么。omp 的 todo 模型你已经在用；omenic 现在一个 todo 都没有，全靠脑子记。**扩 omenic 自己的 `crates/agent/task`（RPC 任务模型），不复刻 dsh 的模型运行时自写编排**（方向相反） | ~3–5 天 | 模型 + jsonl 存储已交付（PR #393：`todo.rs` / `goal.rs` + `Store::{append,load}_{todo,goal}`，终态封闭 + 幂等 link）；**未完成**：web 任务面板 + 工具注册（PR3，依赖 #393 的 API） |
+| **session-title**（会话自动标题） | 侧栏现在全是手填/时间戳，会话一多完全没法找、没法切。dsh 确定性 fallback 就是首条用户消息截词，**不需要 LLM 也能用** | ~2 天 | `sessions.title` 列已存在，只在创建时写一次；grep `session-title` = 0 |
 
 ### P1 — 体验明显变好（不阻塞，但做了能感受到）
 
