@@ -80,7 +80,8 @@ pub enum Command {
     /// UPDATE-only rename of an existing session: only `title` and
     /// `updated_at` change, a missing row is a `database_missing` error
     /// (never an insert — this is not an upsert), and an empty `title` is
-    /// accepted like `session.create` allows.
+    /// accepted (deliberately looser than `session.create`, which rejects a
+    /// blank title on insert — the web UI's placeholder is a real title).
     #[serde(rename = "session.update_title")]
     SessionUpdateTitle,
     /// `session.list` — `{ query, limit }` → `[SessionSummary]`.

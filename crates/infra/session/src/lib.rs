@@ -555,16 +555,26 @@ impl SessionDb {
     /// Rename an existing session: UPDATE `title` + `updated_at` only, and
     /// read the row back so the returned summary is exactly what is on disk.
     ///
-    /// This is an UPDATE, not an upsert: a row that does not exist (or a
-    /// blank id, which matches no row) yields
+    /// This is an UPDATE, not an upsert: a row that does not exist yields
     /// [`SessionError::DatabaseMissing`] and nothing is inserted — callers
     /// use this to persist a derived title for a session they know exists,
-    /// and silently creating the row would hide their bug.
+    /// and silently creating the row would hide their bug. A blank id is
+    /// rejected up front with [`SessionError::InvalidSessionId`] (like every
+    /// other mutator here): letting it reach the UPDATE would report a
+    /// missing *database file* for what is really an invalid id.
     ///
-    /// An empty `title` is accepted (the deterministic placeholder the web
-    /// UI sends is a legitimate title, same as [`Self::ensure_session`]).
+    /// An empty `title` is accepted: the deterministic placeholder the web
+    /// UI sends is a legitimate title. This is deliberately looser than
+    /// [`Self::ensure_session`], which rejects a blank title on insert.
     /// `created_at`, `parent_id`, and the turn log are never touched.
+    ///
+    /// Known imprecision (reviewed, kept): the read-back `None` is the
+    /// missing-row signal, and `load_session_row` maps *every* failure to
+    /// `None`, so a committed UPDATE whose SELECT fails is also reported as
+    /// `DatabaseMissing`. Splitting that case out would need a new
+    /// `SessionError` variant for a window this rare.
     pub fn update_title(&self, id: &str, title: &str) -> Result<SessionSummary, SessionError> {
+        SessionError::invalid_id_if_blank(id)?;
         let id_owned = id.to_string();
         let title_owned = title.to_string();
 

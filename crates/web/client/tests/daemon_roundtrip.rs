@@ -2,8 +2,10 @@
 //!
 //! 起一个真 daemon（临时目录 socket + 临时库，后台 accept 线程由
 //! `Daemon::start` 自带，Drop 收尾），然后走 create → append → list →
-//! load → search → delete 全链路；每步失败即 panic。
+//! load → search → delete 全链路；每步失败即 panic。另钉住
+//! `update_session_title` 不吞 daemon 错误回复的契约。
 
+use daemon::ClientError;
 use daemon::{Daemon, DaemonConfig};
 use omenic_web_client::daemon::WebDaemon;
 use omenic_web_state::types::SessionStatus;
@@ -62,6 +64,47 @@ fn daemon_roundtrip() {
         sessions.is_empty(),
         "删除后 list 应为空，实际: {sessions:?}"
     );
+
+    drop(server); // 停 accept 线程 + 清理 socket/lock 文件
+}
+
+/// `update_session_title` 必须把 daemon 的错误回复透传成 `Err`。
+///
+/// Red when: 封装退回 `call_raw`——它只解传输错误、不看 `success`，
+/// 不存在会话的 `database_missing` 回复会变成 `Ok(())`，调用方
+/// （page-workspace）的失败日志对这种情况成为死代码：标题更新失败
+/// 与成功不可区分。
+#[test]
+fn update_session_title_surfaces_daemon_error() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let socket = dir.path().join("daemon.sock");
+    let db_path = dir.path().join("sessions.db");
+
+    let server = Daemon::start(DaemonConfig {
+        socket_path: Some(socket.clone()),
+        omp_path: "omp".into(),
+        session_db_path: Some(db_path),
+        orbit_model: None,
+        cwd: dir.path().to_path_buf(),
+        max_turns: 64,
+        ..Default::default()
+    })
+    .expect("启动 daemon");
+
+    let wd = WebDaemon::connect_to(&socket);
+    wd.create_session("rt-title", "占位标题")
+        .expect("create_session");
+
+    let err = wd
+        .update_session_title("no-such-session", "新标题")
+        .expect_err("重命名不存在的会话必须是 Err，而不是 Ok(())");
+    match err {
+        ClientError::Server { code, .. } => assert_eq!(
+            code, "database_missing",
+            "存储侧的 missing-row 错误必须透传到调用方"
+        ),
+        other => panic!("期望 Server 错误，实际: {other:?}"),
+    }
 
     drop(server); // 停 accept 线程 + 清理 socket/lock 文件
 }

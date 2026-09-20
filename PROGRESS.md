@@ -48,7 +48,7 @@ P0 批次合并后按 code-reviewer 两阶段审查（CRG + 双 reviewer + 实�
 | # | 内容 | 状态 |
 |---|---|---|
 | F1 | `test(task): store corrupt-line paths`——`load_records`/`corrupt_or_trim`/`trim_trailing_line` 是三个 jsonl 共用的数据完整性路径，重构后零测试覆盖 | ✅ 已交付（[PR #397](https://github.com/hathawayANdRX105/omenic/pull/397)：6 个 store 用例 + 1 个复合前缀用例，CI 全绿） |
-| F2 | `feat(daemon): session.update_title`——增量 RPC（不动既有语义），修侧栏新建会话刷新后标题回退 | ✅ 已交付（[PR #399](https://github.com/hathawayANdRX105/omenic/pull/399)：UPDATE 非 upsert、缺行报错不插行、只改 title+updated_at；web 仅首条消息+既存会话触发；3 e2e 全绿） |
+| F2 | `feat(daemon): session.update_title`——增量 RPC（不动既有语义），修侧栏新建会话刷新后标题回退 | ✅ 已交付（[PR #399](https://github.com/hathawayANdRX105/omenic/pull/399)：UPDATE 非 upsert、缺行报错不插行、只改 title+updated_at；web 仅首条消息+既存会话触发；3 e2e 全绿）；合并后审查修复 [PR #403](https://github.com/hathawayANdRX105/omenic/pull/403)：web client 不再吞 daemon 错误回复、blank id 改报 invalid_session_id、2 处 doc 错误声明更正 + 2 e2e（5 条发现修 4 条，台账见 PR Notes）；known-issue：首条消息更新失败无重试（`is_first_message` 门控一次性，占位 `会话 <ts>` 无稳定字面量，需先给占位加可识别前缀） |
 | F3-a | todo/goal 模型写方工具（agent 域 5 工具 + task::tools::session_tools 装配） | ✅ 已交付（[PR #401](https://github.com/hathawayANdRX105/omenic/pull/401)，squash `69296c8`：todo_add/todo_update/todo_list/goal_add/goal_link，8 工具测试 CI 绿） |
 | F3-b | todo/goal daemon 装配 + `todo.list`/`goal.list` 读 RPC | 🚧 已交付待合（[PR #402](https://github.com/hathawayANdRX105/omenic/pull/402)：session_tools 按 data_dir 装配 + 两个读 RPC，4 e2e；rebase 到含 slice1 的 main 后 CI 重跑） |
 | F4 | `fix(task): trim_trailing_line` 无结尾换行时吃掉最后一个完整行——#397 审查披露的 src 边缘 bug（append 两次 write 之间崩溃的真实形态），每次崩溃静默丢一条完整记录 | 🚧 修复中 |
