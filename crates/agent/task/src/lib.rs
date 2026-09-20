@@ -6,6 +6,7 @@ pub mod runner;
 pub mod store;
 pub mod template;
 pub mod todo;
+pub mod tools;
 
 use serde::{Deserialize, Serialize};
 
