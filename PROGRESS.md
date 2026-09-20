@@ -4,9 +4,9 @@
 >
 > 编号体系沿用 ROADMAP：`C1–C8` / `R1–R7` / `G1–G8`。
 
-## 当前位置（2026-09-20）
+## 当前位置（2026-09-21）
 
-main `b262147`。**G1–G8 全部已过**；dsh 对照三批 B1（#381）/ B2（#382）/ B3（#385 + #387）已全部合入 main，交付内容、审查拦下的真实缺陷与验收证据见 ROADMAP 的「已交付的 dsh 对照批次 B1–B3」节。**使用体验 P0 批次**（#392–#396）已合入，交付与合并后审查记录见 ROADMAP「已交付：使用体验 P0 批次」节。
+main `325ea98`。**G1–G8 全部已过**；dsh 对照三批 B1（#381）/ B2（#382）/ B3（#385 + #387）已全部合入 main，交付内容、审查拦下的真实缺陷与验收证据见 ROADMAP 的「已交付的 dsh 对照批次 B1–B3」节。**使用体验 P0 批次**（#392–#396）已合入，交付与合并后审查记录见 ROADMAP「已交付：使用体验 P0 批次」节；**P0 审查遗留 F1–F4 与 F3 全链路**（#397/#399/#400/#401/#402/#403/#405）亦已全部合入，逐条状态见下方「合并后审查后续」表。
 
 - **C7（tag omenic-harness-v0.1.0 + ferrite 接线）**：前置条件全满足，**等用户拍板时机**，不占批次。
 - **C8（interaction + token-meter）**：已裁定不做。
@@ -21,7 +21,7 @@ main `b262147`。**G1–G8 全部已过**；dsh 对照三批 B1（#381）/ B2（
 
 | 项 | 为什么是 P0 | 成本 | omenic 现状 |
 |---|---|---|---|
-| **元工具：todo + goal** 🚧 读链+看板已交付（#393/#394/#395），写方未接 | 真正用起来时，**任务追踪是核心体验**——开几个会话并行干活、记住每条线推进到哪、阻塞了什么。omp 的 todo 模型你已经在用；omenic 现在一个 todo 都没有，全靠脑子记。**扩 omenic 自己的 `crates/agent/task`（RPC 任务模型），不复刻 dsh 的模型运行时自写编排**（方向相反） | ~3–5 天 | 模型 + jsonl 存储已交付（PR #393：`todo.rs` / `goal.rs` + `Store::{append,load}_{todo,goal}`，终态封闭 + 幂等 link）；**后端读链已交付**（[PR #394](https://github.com/hathawayANdRX105/omenic/pull/394)：daemon `task.list` RPC + `WebDaemon::task_list`，读 `tasks.jsonl`，按 `updated_at` 降序）；**web 任务看板 UI 已接 task.list 真数据**（[PR #395](https://github.com/hathawayANdRX105/omenic/pull/395)：`TaskItem::from_task` + WP-C effect 内第二次 RPC，`tasks.jsonl` 持久任务与 run 记录同板展示）；**未完成**：todo/goal 写方（agent 工具注册，F3） |
+| **元工具：todo + goal** ✅ 全链路已交付（#393/#394/#395 + F3 #401/#402/#405） | 真正用起来时，**任务追踪是核心体验**——开几个会话并行干活、记住每条线推进到哪、阻塞了什么。omp 的 todo 模型你已经在用；omenic 现在一个 todo 都没有，全靠脑子记。**扩 omenic 自己的 `crates/agent/task`（RPC 任务模型），不复刻 dsh 的模型运行时自写编排**（方向相反） | ~3–5 天 | 模型 + jsonl 存储已交付（PR #393：`todo.rs` / `goal.rs` + `Store::{append,load}_{todo,goal}`，终态封闭 + 幂等 link）；daemon 读链与看板已交付（#394 `task.list` RPC + #395 `TaskItem::from_task` + WP-C 合并）；**写方已交付**（F3：PR #401 五把模型工具 `todo_add`/`todo_update`/`todo_list`/`goal_add`/`goal_link` 经 `task::tools::session_tools` 装配进 orbit；PR #402 daemon 装配 + `todo.list`/`goal.list` 读 RPC；PR #405 看板接 todo/goal 真数据 + `board_version` 双触发刷新）。CLI 任务的看板可见性也随 #394/#395 一并生效 |
 | **session-title**（会话自动标题） | 侧栏现在全是手填/时间戳，会话一多完全没法找、没法切。dsh 确定性 fallback 就是首条用户消息截词，**不需要 LLM 也能用** | ~2 天 | ✅ 已交付（[PR #392](https://github.com/hathawayANdRX105/omenic/pull/392)：`title_from_first_message` 首条消息截词，40 字符预算 + markdown 前缀剥刺 + emoji 安全）；标题刷新回退已修复（[PR #399](https://github.com/hathawayANdRX105/omenic/pull/399)：`session.update_title` 增量 RPC，UPDATE 非 upsert，web 仅首条消息+既存会话触发） |
 
 ### P1 — 体验明显变好（不阻塞，但做了能感受到）
@@ -50,9 +50,9 @@ P0 批次合并后按 code-reviewer 两阶段审查（CRG + 双 reviewer + 实�
 | F1 | `test(task): store corrupt-line paths`——`load_records`/`corrupt_or_trim`/`trim_trailing_line` 是三个 jsonl 共用的数据完整性路径，重构后零测试覆盖 | ✅ 已交付（[PR #397](https://github.com/hathawayANdRX105/omenic/pull/397)：6 个 store 用例 + 1 个复合前缀用例，CI 全绿）；ocr 发现的 vacuous guard 已修（[PR #405](https://github.com/hathawayANdRX105/omenic/pull/405)：`>\t标题` 替换 `\t> # 全部`——后者行首 tab 被 `body.trim()` 提前吃掉、断言无法区分闭包删掉 `'\t'`，换成标记字符后的 tab 真正钉住剥刺字符集） |
 | F2 | `feat(daemon): session.update_title`——增量 RPC（不动既有语义），修侧栏新建会话刷新后标题回退 | ✅ 已交付（[PR #399](https://github.com/hathawayANdRX105/omenic/pull/399)：UPDATE 非 upsert、缺行报错不插行、只改 title+updated_at；web 仅首条消息+既存会话触发；3 e2e 全绿）；合并后审查修复 [PR #403](https://github.com/hathawayANdRX105/omenic/pull/403)：web client 不再吞 daemon 错误回复、blank id 改报 invalid_session_id、2 处 doc 错误声明更正 + 2 e2e（5 条发现修 4 条，台账见 PR Notes）；known-issue：首条消息更新失败无重试（`is_first_message` 门控一次性，占位 `会话 <ts>` 无稳定字面量，需先给占位加可识别前缀） |
 | F3-a | todo/goal 模型写方工具（agent 域 5 工具 + task::tools::session_tools 装配） | ✅ 已交付（[PR #401](https://github.com/hathawayANdRX105/omenic/pull/401)，squash `69296c8`：todo_add/todo_update/todo_list/goal_add/goal_link，8 工具测试 CI 绿） |
-| F3-b | todo/goal daemon 装配 + `todo.list`/`goal.list` 读 RPC | 🚧 已交付待合（[PR #402](https://github.com/hathawayANdRX105/omenic/pull/402)：session_tools 按 data_dir 装配 + 两个读 RPC，4 e2e；rebase 到含 slice1 的 main 后 CI 重跑） |
-| F3-c | web 看板接 todo/goal 真数据（`from_todo`/`from_goal` 映射 + `todo.list`/`goal.list` 客户端 + WP-C 合并 + `board_version` 双触发刷新） | 🚧 已交付待合（[PR #405](https://github.com/hathawayANdRX105/omenic/pull/405)：Todo/Goal 投影进既有 TaskPanel（不加 chip 词汇），4 映射测试 CI 绿） |
-| F4 | `fix(task): trim_trailing_line` 无结尾换行时吃掉最后一个完整行——#397 审查披露的 src 边缘 bug（append 两次 write 之间崩溃的真实形态），每次崩溃静默丢一条完整记录 | 🚧 修复中 |
+| F3-b | todo/goal daemon 装配 + `todo.list`/`goal.list` 读 RPC | ✅ 已交付（[PR #402](https://github.com/hathawayANdRX105/omenic/pull/402)，squash `6cd4a34`：`session_tools(data_dir)` 按 data_dir 装配五工具（agent 域路线，jobs/terminal 同例，零新依赖）+ 两个读 RPC 逐字对齐 task.list 契约；4 e2e CI 绿） |
+| F3-c | web 看板接 todo/goal 真数据（`from_todo`/`from_goal` 映射 + `todo.list`/`goal.list` 客户端 + WP-C 合并 + `board_version` 双触发刷新） | ✅ 已交付（[PR #405](https://github.com/hathawayANdRX105/omenic/pull/405)，squash `325ea98`：Todo/Goal 投影进既有 TaskPanel（Cancelled/Abandoned→blocked，不加 chip 词汇、不动组件与 UI 契约）；刷新双触发（ToolResult 五工具名 + TurnEnd，防 WireTranslator 丢未配对 end）；4 映射测试 CI 绿） |
+| F4 | `fix(task): trim_trailing_line` 无结尾换行时吃掉最后一个完整行——#397 审查披露的 src 边缘 bug（append 两次 write 之间崩溃的真实形态），每次崩溃静默丢一条完整记录 | ✅ 已交付（[PR #400](https://github.com/hathawayANdRX105/omenic/pull/400)，squash `eaaa74e`：截断点改「剥尾换行后取最后一个 `\n`+1」，与 `crates/infra/memory` 既有正确实现同语义；3 个新用例（崩溃形态/单行/幂等收敛），ocr + 独立 reviewer 双审 0 发现；遗留测试空白：CRLF 形态与并发 append 竞态未钉，均为既有行为非本次引入） |
 
 ### 已完成批次的余量（不阻塞，可随时捡）
 
