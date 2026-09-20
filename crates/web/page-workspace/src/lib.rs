@@ -834,6 +834,11 @@ pub fn Workspace(
             .read()
             .get(&sid)
             .is_some_and(|msgs| msgs.is_empty());
+        // 侧栏按钮新建的会话（created == None）落库时只有占位标题，首条
+        // 消息后要把内存里已换成的截词标题补一次 `session.update_title`，
+        // 否则刷新后回退占位。自建会话（created == Some）下方线程内已用
+        // 派生标题 create，不需要重复 update。
+        let needs_title_update = created.is_none() && is_first_message;
 
         // Daemon 模式：真运行。用户消息持久化（线程内，刚自建的会话在同
         // 一线程先 create 再 append 保证顺序）；assistant 事件全走订阅
@@ -862,12 +867,20 @@ pub fn Workspace(
             std::thread::spawn(move || {
                 if let Some((id, _placeholder)) = created {
                     // 首条消息即标题来源：自建会话直接落库截词标题（走既有
-                    // create_session，无新增 RPC）。侧栏按钮新建的会话已用
-                    // 占位标题落库，协议冻结没有 update 接口 → 刷新后以
-                    // daemon 持久化行为准，见任务书 §3 与回执。
+                    // create_session，无新增 RPC）。
                     let _ = d.create_session(&id, &title_from_first_message(&text_daemon));
                 }
                 let _ = d.append_message(&sid_daemon, true, &text_daemon);
+                if needs_title_update {
+                    // 侧栏按钮新建的会话：占位标题已落库，首条消息后补一次
+                    // 真 UPDATE 让刷新后的标题与内存一致。失败只降级不阻断
+                    // 发送——标题回退占位好过消息发不出去。
+                    if let Err(e) =
+                        d.update_session_title(&sid_daemon, &title_from_first_message(&text_daemon))
+                    {
+                        eprintln!("[web] session title update failed: {e}");
+                    }
+                }
                 if let Err(e) =
                     d_prompt.worker_prompt_run(&sid_daemon, &run_id_prompt, &text_daemon)
                 {

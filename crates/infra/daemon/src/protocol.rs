@@ -76,6 +76,13 @@ pub enum Command {
     /// used by 5.3/5.5 grouping.
     #[serde(rename = "session.create")]
     SessionCreate,
+    /// `session.update_title` — `{ session_id, title }` → `SessionSummary`.
+    /// UPDATE-only rename of an existing session: only `title` and
+    /// `updated_at` change, a missing row is a `database_missing` error
+    /// (never an insert — this is not an upsert), and an empty `title` is
+    /// accepted like `session.create` allows.
+    #[serde(rename = "session.update_title")]
+    SessionUpdateTitle,
     /// `session.list` — `{ query, limit }` → `[SessionSummary]`.
     #[serde(rename = "session.list")]
     SessionList,

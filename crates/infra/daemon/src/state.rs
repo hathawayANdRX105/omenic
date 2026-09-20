@@ -647,6 +647,13 @@ impl SessionState {
         self.inner.ensure_session_with_parent(id, title, parent_id)
     }
 
+    /// Rename an existing session. UPDATE-only: a missing row is
+    /// [`SessionError::DatabaseMissing`], never inserted. Backs the
+    /// `session.update_title` command.
+    pub fn update_title(&self, id: &str, title: &str) -> Result<SessionSummary, SessionError> {
+        self.inner.update_title(id, title)
+    }
+
     pub fn delete_session(&self, id: &str) -> Result<bool, SessionError> {
         self.inner.delete_session(id)
     }

@@ -6,7 +6,7 @@
 
 ## 当前位置（2026-09-20）
 
-main `756c8fe`。**G1–G8 全部已过**；dsh 对照三批 B1（#381）/ B2（#382）/ B3（#385 + #387）已全部合入 main，交付内容、审查拦下的真实缺陷与验收证据见 ROADMAP 的「已交付的 dsh 对照批次 B1–B3」节。
+main `b262147`。**G1–G8 全部已过**；dsh 对照三批 B1（#381）/ B2（#382）/ B3（#385 + #387）已全部合入 main，交付内容、审查拦下的真实缺陷与验收证据见 ROADMAP 的「已交付的 dsh 对照批次 B1–B3」节。**使用体验 P0 批次**（#392–#396）已合入，交付与合并后审查记录见 ROADMAP「已交付：使用体验 P0 批次」节。
 
 - **C7（tag omenic-harness-v0.1.0 + ferrite 接线）**：前置条件全满足，**等用户拍板时机**，不占批次。
 - **C8（interaction + token-meter）**：已裁定不做。
@@ -21,8 +21,8 @@ main `756c8fe`。**G1–G8 全部已过**；dsh 对照三批 B1（#381）/ B2（
 
 | 项 | 为什么是 P0 | 成本 | omenic 现状 |
 |---|---|---|---|
-| **元工具：todo + goal** 🚧 进行中（[PR #393](https://github.com/hathawayANdRX105/omenic/pull/393)） | 真正用起来时，**任务追踪是核心体验**——开几个会话并行干活、记住每条线推进到哪、阻塞了什么。omp 的 todo 模型你已经在用；omenic 现在一个 todo 都没有，全靠脑子记。**扩 omenic 自己的 `crates/agent/task`（RPC 任务模型），不复刻 dsh 的模型运行时自写编排**（方向相反） | ~3–5 天 | 模型 + jsonl 存储已交付（PR #393：`todo.rs` / `goal.rs` + `Store::{append,load}_{todo,goal}`，终态封闭 + 幂等 link）；**后端读链已交付**（[PR #394](https://github.com/hathawayANdRX105/omenic/pull/394)：daemon `task.list` RPC + `WebDaemon::task_list`，读 `tasks.jsonl`，按 `updated_at` 降序）；**web 任务看板 UI 已接 task.list 真数据**（[PR #395](https://github.com/hathawayANdRX105/omenic/pull/395)：`TaskItem::from_task` + WP-C effect 内第二次 RPC，`tasks.jsonl` 持久任务与 run 记录同板展示）；**未完成**：任务工具注册（写方，另一 PR）；**store 数据完整性路径已补测试覆盖**（[PR #397](https://github.com/hathawayANdRX105/omenic/pull/397)：`load_records`/`corrupt_or_trim`/`trim_trailing_line` 的末行 trim、中段 `CorruptLine` 行号、无 id 行、tombstone 删除、todos/goals 与 tasks 共用分支、空/缺文件返回空）；**trim 无结尾换行 bug 已修**（[PR #400](https://github.com/hathawayANdRX105/omenic/pull/400)：崩溃写在 `append_line` 两次 `write_all` 之间时文件无结尾 `\n`，旧 pos 计算会连带吃掉最后一个完整记录；截断点改为「剥尾换行后取最后一个 `\n` + 1」，补 3 个无换线形态用例） |
-| **session-title**（会话自动标题） | 侧栏现在全是手填/时间戳，会话一多完全没法找、没法切。dsh 确定性 fallback 就是首条用户消息截词，**不需要 LLM 也能用** | ~2 天 | `sessions.title` 列已存在，只在创建时写一次；grep `session-title` = 0 |
+| **元工具：todo + goal** 🚧 读链+看板已交付（#393/#394/#395），写方未接 | 真正用起来时，**任务追踪是核心体验**——开几个会话并行干活、记住每条线推进到哪、阻塞了什么。omp 的 todo 模型你已经在用；omenic 现在一个 todo 都没有，全靠脑子记。**扩 omenic 自己的 `crates/agent/task`（RPC 任务模型），不复刻 dsh 的模型运行时自写编排**（方向相反） | ~3–5 天 | 模型 + jsonl 存储已交付（PR #393：`todo.rs` / `goal.rs` + `Store::{append,load}_{todo,goal}`，终态封闭 + 幂等 link）；**后端读链已交付**（[PR #394](https://github.com/hathawayANdRX105/omenic/pull/394)：daemon `task.list` RPC + `WebDaemon::task_list`，读 `tasks.jsonl`，按 `updated_at` 降序）；**web 任务看板 UI 已接 task.list 真数据**（[PR #395](https://github.com/hathawayANdRX105/omenic/pull/395)：`TaskItem::from_task` + WP-C effect 内第二次 RPC，`tasks.jsonl` 持久任务与 run 记录同板展示）；**未完成**：todo/goal 写方（agent 工具注册，F3） |
+| **session-title**（会话自动标题） | 侧栏现在全是手填/时间戳，会话一多完全没法找、没法切。dsh 确定性 fallback 就是首条用户消息截词，**不需要 LLM 也能用** | ~2 天 | ✅ 已交付（[PR #392](https://github.com/hathawayANdRX105/omenic/pull/392)：`title_from_first_message` 首条消息截词，40 字符预算 + markdown 前缀剥刺 + emoji 安全）；标题刷新回退已修复（[PR #399](https://github.com/hathawayANdRX105/omenic/pull/399)：`session.update_title` 增量 RPC，UPDATE 非 upsert，web 仅首条消息+既存会话触发） |
 
 ### P1 — 体验明显变好（不阻塞，但做了能感受到）
 
@@ -40,6 +40,17 @@ main `756c8fe`。**G1–G8 全部已过**；dsh 对照三批 B1（#381）/ B2（
 | **credentials / authorization / identity** | omenic 现有 TOML `[openai]` + `[[llm.fallbacks]]` 已覆盖单机多渠道；等真的要多用户/多 key 轮换再排 | ~5–7 天 |
 | **session telemetry / OTel** | dsh 自己都可禁用，纯可选投影，无生产需求 | ~2–3 天 |
 | **token-meter** | C8 已裁定不做；5.7 token 卡「无真数据则隐藏」已兜底 | ~1 天 |
+
+### 合并后审查后续（2026-09-20，F1–F4）
+
+P0 批次合并后按 code-reviewer 两阶段审查（CRG + 双 reviewer + 实证），结论 **PASS_WITH_NITS**，无 Critical；两条误报 Critical 已实证驳回（`trim_start_matches` 复合前缀行为正确、Goal 无状态机是 spec 本无要求）。遗留：
+
+| # | 内容 | 状态 |
+|---|---|---|
+| F1 | `test(task): store corrupt-line paths`——`load_records`/`corrupt_or_trim`/`trim_trailing_line` 是三个 jsonl 共用的数据完整性路径，重构后零测试覆盖 | ✅ 已交付（[PR #397](https://github.com/hathawayANdRX105/omenic/pull/397)：6 个 store 用例 + 1 个复合前缀用例，CI 全绿） |
+| F2 | `feat(daemon): session.update_title`——增量 RPC（不动既有语义），修侧栏新建会话刷新后标题回退 | ✅ 已交付（[PR #399](https://github.com/hathawayANdRX105/omenic/pull/399)：UPDATE 非 upsert、缺行报错不插行、只改 title+updated_at；web 仅首条消息+既存会话触发；3 e2e 全绿） |
+| F3 | todo/goal 写方（agent 工具注册进 orbit）——看板目前只能显示 CLI 手写任务 | 排队 |
+| F4 | `fix(task): trim_trailing_line` 无结尾换行时吃掉最后一个完整行——#397 审查披露的 src 边缘 bug（append 两次 write 之间崩溃的真实形态），每次崩溃静默丢一条完整记录 | 🚧 修复中 |
 
 ### 已完成批次的余量（不阻塞，可随时捡）
 
