@@ -32,6 +32,11 @@ pub const WORKER_TOPIC: &str = "worker";
 /// respawned engine to swallow an unbounded body.
 const RESUME_CONTEXT_LIMIT: u32 = 50;
 
+/// Default `task.list` page size when the client sends no `limit`.  The
+/// kanban board renders one screen; anything past the 50 most recently
+/// touched tasks is stale backlog the UI can page in later.
+const TASK_LIST_DEFAULT_LIMIT: u32 = 50;
+
 /// Shared worker handle.  The dispatch layer takes `&mut` so concurrent
 /// connections are serialized by the server's mutex.
 pub struct WorkerHandle {
@@ -319,6 +324,10 @@ pub struct DispatchCtx<'a> {
     pub conn_id: u64,
     /// This connection's write channel; subscriptions clone it.
     pub out: Sender<String>,
+    /// Where the CLI writes `tasks.jsonl` (the `.oi` data dir).
+    /// `task.list` builds a `task::Store` here per request — the store
+    /// is a stateless `PathBuf` wrapper, so there is nothing to cache.
+    pub task_data_dir: std::path::PathBuf,
 }
 
 /// Dispatch a single request.  Always returns a `Response`; the caller just
@@ -436,6 +445,43 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
             let keep_from = runs.len().saturating_sub(limit as usize);
             runs.drain(..keep_from);
             match serde_json::to_value(&runs) {
+                Ok(v) => Response::ok(id, v),
+                Err(e) => Response::err(
+                    id,
+                    ResponseError::new("internal", format!("serialize: {e}")),
+                ),
+            }
+        }
+
+        // ---------------- Task ----------------
+        Command::TaskList => {
+            // `limit` is optional (run.list's is required): the board
+            // sends a page size only once it paginates, a bare `{}` is
+            // the default page.  A missing / non-number falls back too
+            // — a stale client must not break a newer daemon.
+            let limit = req
+                .params
+                .get("limit")
+                .and_then(Value::as_u64)
+                .map(|n| n.min(u32::MAX as u64) as u32)
+                .unwrap_or(TASK_LIST_DEFAULT_LIMIT);
+            let store = task::store::Store::new(&ctx.task_data_dir);
+            let mut tasks = match store.load_all() {
+                Ok(t) => t,
+                Err(e) => {
+                    return Response::err(
+                        id,
+                        ResponseError::new("internal", format!("task store: {e}")),
+                    );
+                }
+            };
+            // `updated_at` is ISO-8601 UTC at second precision, so
+            // lexical order *is* chronological.  `sort_by` is stable,
+            // so same-second tasks keep `load_all`'s id order instead
+            // of reshuffling between requests.
+            tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            tasks.truncate(limit as usize);
+            match serde_json::to_value(&tasks) {
                 Ok(v) => Response::ok(id, v),
                 Err(e) => Response::err(
                     id,
