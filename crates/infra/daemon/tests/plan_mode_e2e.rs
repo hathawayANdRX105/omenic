@@ -21,6 +21,11 @@ use daemon::{Daemon, DaemonClient};
 use serde_json::{Value, json};
 use tempfile::tempdir;
 
+/// Marker text of the default `plan:policy` section — its presence in a
+/// request body is the observable form of "plan mode was active for this
+/// turn".
+const PLAN_SECTION_MARKER: &str = "You are in plan mode";
+
 /// Poll `user.question.pending` until the plan-review question shows up.
 /// The engine's run thread blocks inside `exit_plan_mode` until the broker
 /// resolves it, so the question appears asynchronously relative to the
@@ -52,6 +57,9 @@ fn plan_mode_review_round_trip_through_the_daemon() {
         ),
         // Turn 2 (after approval): the run wraps up.
         one_text_turn("done"),
+        // Turn 3 (a fresh prompt after approval): must run without the
+        // plan:policy section — the approved exit landed at the boundary.
+        one_text_turn("wrapped"),
     ]);
     let mut daemon = Daemon::start(daemon_cfg(dir.path(), &mock, 4)).expect("daemon start");
     let client = DaemonClient::connect_to(daemon.socket_addr().path());
@@ -86,11 +94,12 @@ fn plan_mode_review_round_trip_through_the_daemon() {
     assert_eq!(answered["answered"], json!(true));
     drain_events(&mut sub);
 
-    // 4. End state: plan mode reads back off (a bare `/plan` reports false).
-    let off: Value = client
-        .call(Command::WorkerPrompt, json!({ "message": "/plan" }))
-        .expect("plan off ack");
-    assert_eq!(off["plan_mode"], json!(false));
+    // 4. End state: the approved exit lands at the next prompt's boundary —
+    // that turn's request no longer carries the plan:policy section, and
+    // the question stays cleared. (A bare `/plan` would *enter* plan mode,
+    // so the section on the wire is the observable contract here.)
+    prompt(&client, "wrap up");
+    drain_events(&mut sub);
     let still_pending: Vec<Value> = client
         .call(Command::UserQuestionPending, json!({}))
         .expect("pending query");
@@ -102,7 +111,7 @@ fn plan_mode_review_round_trip_through_the_daemon() {
     // 5. The tool result reached the follow-up request the loop sent.
     let bodies = mock.received();
     assert!(
-        bodies.len() >= 2,
+        bodies.len() >= 3,
         "expected a follow-up request after exit_plan_mode; got {}",
         bodies.len()
     );
@@ -110,6 +119,14 @@ fn plan_mode_review_round_trip_through_the_daemon() {
         bodies[1].contains("Plan approved"),
         "the approval result never reached the model: {}",
         bodies[1]
+    );
+    assert!(
+        bodies[0].contains(PLAN_SECTION_MARKER),
+        "the plan-mode turn must carry the plan:policy section"
+    );
+    assert!(
+        !bodies[2].contains(PLAN_SECTION_MARKER),
+        "the post-approval turn must not carry the plan:policy section"
     );
 
     drop(client);
