@@ -9,6 +9,7 @@ mod timeout_policy;
 
 pub mod glob;
 
+pub use glob::glob_match;
 pub use repeat_tool_reminder::{
     AgentChainSnapshot, ConfigError as RepeatConfigError, RepeatConfig, RepeatToolReminder,
 };
