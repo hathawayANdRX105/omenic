@@ -127,7 +127,9 @@ impl WaterfallLlm {
             signal,
             &mut |ev| {
                 match ev {
-                    StreamEvent::TextDelta(_) | StreamEvent::ToolCall(_) => {
+                    StreamEvent::TextDelta(_)
+                    | StreamEvent::ToolCall(_)
+                    | StreamEvent::ReasoningDelta(_) => {
                         leaked_content = true;
                     }
                     StreamEvent::Done { .. } => {

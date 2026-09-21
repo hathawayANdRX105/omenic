@@ -59,6 +59,7 @@ fn event_kind(event: &WorkerEvent) -> &'static str {
     match event {
         WorkerEvent::AgentStart => "agent_start",
         WorkerEvent::Message { .. } => "message",
+        WorkerEvent::Reasoning { .. } => "reasoning",
         WorkerEvent::ToolExecutionStart { .. } => "tool_execution_start",
         WorkerEvent::ToolExecutionEnd { .. } => "tool_execution_end",
         WorkerEvent::AgentEnd { .. } => "agent_end",

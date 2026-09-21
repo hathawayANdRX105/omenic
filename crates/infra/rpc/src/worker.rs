@@ -71,6 +71,9 @@ pub enum WorkerEvent {
     AgentStart,
     /// A streamed text message (`message_start` / `message_update`).
     Message { text: String },
+    /// A streamed chain-of-thought delta (`reasoning`). Display-only; never
+    /// replayed into the context as a user/assistant message.
+    Reasoning { delta: String },
     /// Tool dispatch begins (`tool_execution` / `tool_execution_start`).
     ToolExecutionStart { name: String, input: Value },
     /// Tool dispatch completes (`tool_execution_end`).
@@ -363,6 +366,9 @@ struct OrbitEngine {
     compaction: std::sync::Arc<omenic_harness_compaction::CharBudgetPolicy>,
     /// plan:policy 段提供者（plan mode）；每轮 prompt 前调用。
     plan_policy_section: Option<std::sync::Arc<dyn Fn() -> String + Send + Sync>>,
+    /// Steering queue for inter-turn user instructions. Drained by the
+    /// loop's `get_steering` pull at the top of every round.
+    steering_queue: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<adaptor::Message>>>,
 }
 
 impl OrbitEngine {
@@ -407,6 +413,9 @@ impl OrbitEngine {
             max_turns,
             compaction,
             plan_policy_section,
+            steering_queue: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::VecDeque::new(),
+            )),
         };
         // 专用 run 线程：串行消费 prompt，LLM 调用不占 dispatch 锁，
         // abort 标志（Arc）随时可从别的连接置位
@@ -420,6 +429,7 @@ impl OrbitEngine {
         let run_max_turns = engine.max_turns;
         let run_compaction = std::sync::Arc::clone(&engine.compaction);
         let run_plan_section = engine.plan_policy_section.clone();
+        let run_steering = std::sync::Arc::clone(&engine.steering_queue);
         std::thread::Builder::new()
             .name("omenic-orbit-worker".into())
             .spawn(move || {
@@ -465,7 +475,11 @@ impl OrbitEngine {
                                 context_log: None,
                                 max_turns: run_max_turns,
                                 maintain: Some(&maintain),
-                                get_steering: None,
+                                get_steering: Some(&|| {
+                                    let mut q =
+                                        run_steering.lock().unwrap_or_else(|e| e.into_inner());
+                                    q.drain(..).collect::<Vec<_>>()
+                                }),
                                 get_follow_up: None,
                                 instruction_cwd: run_cwd.as_deref(),
                             },
@@ -474,6 +488,9 @@ impl OrbitEngine {
                                     orbit::AgentEvent::TurnStart => WorkerEvent::AgentStart,
                                     orbit::AgentEvent::AssistantText { delta } => {
                                         WorkerEvent::Message { text: delta }
+                                    }
+                                    orbit::AgentEvent::AssistantReasoning { delta } => {
+                                        WorkerEvent::Reasoning { delta }
                                     }
                                     orbit::AgentEvent::ToolCall(spec) => {
                                         WorkerEvent::ToolExecutionStart {
@@ -752,10 +769,15 @@ impl Worker {
 
     /// Steer the running agent with an instruction.
     pub fn steer(&mut self, message: &str) -> Result<Value, crate::client::RpcError> {
-        if self.orbit.is_some() {
-            return Err(crate::client::RpcError::Protocol(
-                "steer not supported in orbit worker mode yet".into(),
-            ));
+        if let Some(orbit) = self.orbit.as_ref() {
+            // Push to orbit steering queue as a user message; the loop's
+            // get_steering pull drains it into the context next round.
+            orbit
+                .steering_queue
+                .lock()
+                .unwrap()
+                .push_back(adaptor::Message::user_text(message));
+            return Ok(serde_json::json!({ "steered": true }));
         }
         let req = crate::client::Request::new("steer")
             .with_field("message", message)

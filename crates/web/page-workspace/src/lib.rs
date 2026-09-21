@@ -1097,6 +1097,7 @@ pub fn Workspace(
             id: format!("{}-user-{}", sid, now),
             role: "user".into(),
             content: text.clone(),
+            reasoning: String::new(),
             tool_calls: vec![],
             parts: vec![],
             timestamp: "刚刚".into(),

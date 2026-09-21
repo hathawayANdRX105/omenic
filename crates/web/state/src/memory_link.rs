@@ -140,7 +140,9 @@ pub fn extract_and_remember(
         match ev {
             adaptor::StreamEvent::TextDelta(delta) => raw.push_str(&delta),
             adaptor::StreamEvent::Done { .. } => break,
-            adaptor::StreamEvent::ToolCall(_) | adaptor::StreamEvent::Error(_) => {}
+            adaptor::StreamEvent::ToolCall(_)
+            | adaptor::StreamEvent::Error(_)
+            | adaptor::StreamEvent::ReasoningDelta(_) => {}
         }
     }
 

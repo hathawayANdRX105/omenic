@@ -87,6 +87,9 @@ pub enum AgentEvent {
     AssistantText {
         delta: String,
     },
+    AssistantReasoning {
+        delta: String,
+    },
     /// Tool call parsed from the stream (not yet executed).
     ToolCall(ToolCallSpec),
     /// Tool dispatch begins (OMP `tool_execution_start`).
@@ -419,6 +422,11 @@ pub fn run_agent_streaming(
                 // chunk is the price — a Cow<'a, str> would thread a
                 // lifetime through every AgentEvent consumer.
                 emit(AgentEvent::AssistantText {
+                    delta: delta.clone(),
+                });
+            }
+            StreamEvent::ReasoningDelta(delta) => {
+                emit(AgentEvent::AssistantReasoning {
                     delta: delta.clone(),
                 });
             }

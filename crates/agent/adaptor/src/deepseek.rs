@@ -6,11 +6,13 @@
 //!   OpenAI SSE parser does not model.
 //!
 //! This wrapper fixes the first (defaulting `max_tokens`) and delegates the
-//! rest to the OpenAI adapter. Follow-up (not in this batch): surface
-//! `reasoning_content` as a `StreamEvent::ReasoningDelta` variant — that needs
-//! new arms in `orbit::lib.rs`, `orbit::fallback.rs`, and
-//! `web/state/memory_link.rs`, which currently match `StreamEvent`
-//! exhaustively.
+//! rest to the OpenAI adapter. The second is handled by the shared SSE
+//! parser: `reasoning_content` surfaces as `StreamEvent::ReasoningDelta`,
+//! wired through `orbit::AgentEvent::AssistantReasoning`,
+//! `WorkerEvent::Reasoning`, and a collapsed web display.
+//! Follow-up (not done): accumulate the deltas into a `Block::Reasoning`
+//! assistant message and write `reasoning_content` back on tool-call
+//! continuation rounds (ref dsh `llm/adapters/openai.rs:121-204`).
 
 use std::sync::atomic::AtomicBool;
 
