@@ -3,6 +3,7 @@
 //! Shared types and registration. Each tool lives in its own file and
 //! registers itself via `register()`.
 
+pub mod apply_patch;
 pub mod bash;
 pub mod delete;
 pub mod edit;
@@ -10,8 +11,8 @@ pub mod glob;
 pub mod grep;
 pub mod memory_tool;
 pub mod read;
+pub mod str_replace_editor;
 pub mod write;
-
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -278,7 +279,8 @@ fn subject_key(tool: &str) -> (&'static str, &'static str) {
         "run_bash" => ("command", ""),
         // grep and glob take an optional path; rg searches the cwd without it
         "grep" | "glob" => ("path", "."),
-        "read_file" | "write_file" | "edit" | "delete_file" => ("path", ""),
+        "read_file" | "write_file" | "edit" | "delete_file" | "apply_patch"
+        | "str_replace_editor" => ("path", ""),
         _ => ("", ""),
     }
 }
@@ -343,7 +345,12 @@ pub fn builtin_tools_with_policy(policy: Policy) -> Vec<Box<dyn Tool>> {
         Box::new(Guarded::new(bash::RunBash, policy.clone())),
         Box::new(Guarded::new(grep::Grep, policy.clone())),
         Box::new(Guarded::new(glob::Glob, policy.clone())),
-        Box::new(Guarded::new(delete::DeleteFile, policy)),
+        Box::new(Guarded::new(delete::DeleteFile, policy.clone())),
+        Box::new(Guarded::new(apply_patch::ApplyPatch, policy.clone())),
+        Box::new(Guarded::new(
+            str_replace_editor::StrReplaceEditor,
+            policy.clone(),
+        )),
         // Memory tools skip the policy layer on purpose: they run no
         // commands, and memory_append only writes the local memory JSONL.
         // Their gate is the default-off env switch resolved once per call
@@ -353,7 +360,6 @@ pub fn builtin_tools_with_policy(policy: Policy) -> Vec<Box<dyn Tool>> {
         Box::new(memory_tool::MemoryListTool),
     ]
 }
-
 /// Conservative headless policy for daemon worker.
 ///
 /// Denies all tools by default and permits only read-only operations.

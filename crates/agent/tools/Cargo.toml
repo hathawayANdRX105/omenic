@@ -10,6 +10,7 @@ publish = false
 adaptor = { path = "../adaptor" }
 memory = { path = "../../infra/memory" }
 serde_json = { workspace = true }
+diffy = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
