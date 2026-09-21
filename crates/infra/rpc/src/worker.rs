@@ -413,6 +413,9 @@ impl OrbitEngine {
             max_turns,
             compaction,
             plan_policy_section,
+            steering_queue: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::VecDeque::new(),
+            )),
         };
         // 专用 run 线程：串行消费 prompt，LLM 调用不占 dispatch 锁，
         // abort 标志（Arc）随时可从别的连接置位
@@ -426,6 +429,7 @@ impl OrbitEngine {
         let run_max_turns = engine.max_turns;
         let run_compaction = std::sync::Arc::clone(&engine.compaction);
         let run_plan_section = engine.plan_policy_section.clone();
+        let run_steering = std::sync::Arc::clone(&engine.steering_queue);
         std::thread::Builder::new()
             .name("omenic-orbit-worker".into())
             .spawn(move || {
@@ -472,7 +476,8 @@ impl OrbitEngine {
                                 max_turns: run_max_turns,
                                 maintain: Some(&maintain),
                                 get_steering: Some(&|| {
-                                    let mut q = orbit.steering_queue.lock().unwrap();
+                                    let mut q =
+                                        run_steering.lock().unwrap_or_else(|e| e.into_inner());
                                     q.drain(..).collect::<Vec<_>>()
                                 }),
                                 get_follow_up: None,
