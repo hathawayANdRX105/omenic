@@ -82,7 +82,14 @@ impl SkillRuntime {
                     continue; // first root wins
                 }
 
-                let content = match self.read_bounded(&path) {
+                // Directory form: the skill lives in <dir>/SKILL.md, not in
+                // the directory entry itself (reading a dir would fail).
+                let file_path = if path.is_dir() {
+                    path.join("SKILL.md")
+                } else {
+                    path.clone()
+                };
+                let content = match self.read_bounded(&file_path) {
                     Ok(c) => c,
                     Err(_) => continue,
                 };
@@ -182,7 +189,7 @@ impl SkillRuntime {
             let dir_path = root.join(name);
             if dir_path.is_dir() {
                 let md_path = dir_path.join("SKILL.md");
-                if md_path.is_file() {
+                if md_path.is_file() && !self.is_symlink(&md_path) {
                     if let Ok(content) = self.read_bounded(&md_path) {
                         if let Some(parsed) = parse_skill_file(&content) {
                             if parsed.name == name {
@@ -198,7 +205,7 @@ impl SkillRuntime {
 
             // Try flat .md
             let flat_path = root.join(format!("{}.md", name));
-            if flat_path.is_file() {
+            if flat_path.is_file() && !self.is_symlink(&flat_path) {
                 if let Ok(content) = self.read_bounded(&flat_path) {
                     if let Some(parsed) = parse_skill_file(&content) {
                         if parsed.name == name {
@@ -213,6 +220,14 @@ impl SkillRuntime {
         }
 
         Err(SkillLoadError::Unknown)
+    }
+
+    /// A symlinked skill file is rejected (discovery skips them; load must
+    /// too, or a link would smuggle in content from outside the roots).
+    fn is_symlink(&self, path: &Path) -> bool {
+        fs::symlink_metadata(path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(true)
     }
 
     fn render_skill(&self, parsed: &ParsedSkill, resource_base: &Path) -> String {

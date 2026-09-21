@@ -49,23 +49,25 @@ impl PlanModeCommand {
     /// Returns `Some(Err(...))` if the command exceeds size limits.
     #[must_use]
     pub fn parse(input: &str) -> Option<Result<Self, PlanModeError>> {
-        let input = input.trim_start();
-        if !input.starts_with("/plan") {
+        // Mirrors the reference parser (deepseek-harness-rs plan_mode):
+        // trim the whole input, strip the `/plan` prefix, require the suffix
+        // to be empty or whitespace-led (so `/planner` is not a command),
+        // then trim the suffix — `off` exits, empty enters bare, anything
+        // else enters with the trimmed message.
+        let trimmed = input.trim_matches(char::is_whitespace);
+        let suffix = trimmed.strip_prefix("/plan")?;
+        if !suffix.is_empty() && !suffix.starts_with(char::is_whitespace) {
             return None;
         }
-        let rest = &input[5..];
-        if rest.is_empty() {
-            return Some(Ok(Self::Enter { message: None }));
-        }
-        let rest = rest.trim_start();
-        if rest == "off" {
+        let argument = suffix.trim_matches(char::is_whitespace);
+        if argument == "off" {
             return Some(Ok(Self::Off));
         }
-        if rest.len() > MAX_PLAN_COMMAND_MESSAGE_BYTES {
+        if argument.len() > MAX_PLAN_COMMAND_MESSAGE_BYTES {
             return Some(Err(PlanModeError::MessageTooLarge));
         }
         Some(Ok(Self::Enter {
-            message: Some(rest.to_owned()),
+            message: (!argument.is_empty()).then(|| argument.to_owned()),
         }))
     }
 }
@@ -218,7 +220,9 @@ impl PlanModeRuntime {
 
 /// A prepared plan mode mutation that must be committed to take effect.
 ///
-/// Dropping without `commit()` rolls back the pending change.
+/// Preparing never mutates the runtime — dropping an uncommitted mutation
+/// is a no-op (there is no pending state to roll back); only `commit()`
+/// applies the change.
 #[derive(Debug)]
 pub struct PreparedPlanModeMutation {
     runtime: PlanModeRuntime,

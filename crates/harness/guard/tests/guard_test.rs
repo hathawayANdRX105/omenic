@@ -77,11 +77,10 @@ mod repeat_tests {
         // (only later thresholds carry the detailed template).
         assert!(r3.unwrap().contains("repeating the exact same tool call"));
 
-        // Call 8: third threshold
-        let r3 = reminder.observe("agent1", "tool1", &json!({"b": 2}));
-        assert!(r3.is_some());
-        let msg3 = r3.unwrap();
-        assert!(msg3.contains("consecutive_calls: 8"));
+        // Fourth call of the fresh chain: count 4 crosses nothing in
+        // [3,5,8].
+        let r4 = reminder.observe("agent1", "tool1", &json!({"b": 2}));
+        assert!(r4.is_none());
     }
 
     #[test]

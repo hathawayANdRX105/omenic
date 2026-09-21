@@ -80,14 +80,25 @@ fn prepare_set_is_idempotent_and_commit_applies() {
 
 #[test]
 fn pending_change_makes_further_prepare_set_stale() {
-    let rt = PlanModeRuntime::new(false);
-    let held = rt.prepare_set(true).unwrap().unwrap();
+    let rt = PlanModeRuntime::new(true);
+    // An approved exit parks pending=false while active stays true (the
+    // boundary hook lands it later).
+    rt.prepare_approved_exit().unwrap().commit().unwrap();
+    assert!(
+        rt.active().unwrap(),
+        "parked exit leaves active until the boundary"
+    );
+    // Further prepares are stale while a change is parked.
     assert!(
         matches!(rt.prepare_set(false), Err(PlanModeError::Stale)),
         "a pending change makes further prepares stale"
     );
-    drop(held);
-    assert!(!rt.active().unwrap(), "dropped mutation rolls back");
+    // The boundary lands the parked exit.
+    let boundary = rt.prepare_boundary().unwrap().unwrap();
+    assert!(!boundary.change().active());
+    boundary.commit().unwrap();
+    assert!(!rt.active().unwrap());
+    assert!(rt.prepare_boundary().unwrap().is_none());
 }
 
 #[test]

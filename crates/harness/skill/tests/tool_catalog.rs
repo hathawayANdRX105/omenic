@@ -12,9 +12,11 @@ fn workspace_with_skill(name: &str, frontmatter: &str, body: &str) -> TempDir {
     let tmp = TempDir::new().unwrap();
     let dsh = tmp.path().join(".dsh/skills");
     fs::create_dir_all(&dsh).unwrap();
+    // Front-matter needs its closing `---` (the parser requires it, same as
+    // the reference).
     fs::write(
         dsh.join(format!("{name}.md")),
-        format!("{frontmatter}\n{body}"),
+        format!("{frontmatter}\n---\n{body}"),
     )
     .unwrap();
     tmp
