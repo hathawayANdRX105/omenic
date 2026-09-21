@@ -969,7 +969,7 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
         }
 
         Command::UserAnswer => {
-            let qid = match require_str(&req.params, "id") {
+            let qid = match require_str(&req.params, "question_id") {
                 Ok(s) => s,
                 Err(m) => return Response::err(id, ResponseError::new("protocol", m)),
             };

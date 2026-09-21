@@ -54,7 +54,10 @@ mod repeat_tests {
         assert!(msg2.contains("tool: tool1"));
         assert!(msg2.contains("consecutive_calls: 5"));
 
-        // Different arguments resets chain
+        // Different arguments reset the chain: counts restart at 1, so the
+        // first two calls of the new chain stay silent and the third
+        // crosses threshold 3 again — exact-threshold semantics, same as
+        // the reference (`if !THRESHOLDS.contains(&count) → None`).
         assert!(
             reminder
                 .observe("agent1", "tool1", &json!({"b": 2}))
@@ -65,21 +68,12 @@ mod repeat_tests {
                 .observe("agent1", "tool1", &json!({"b": 2}))
                 .is_none()
         );
+        let r3 = reminder.observe("agent1", "tool1", &json!({"b": 2}));
         assert!(
-            reminder
-                .observe("agent1", "tool1", &json!({"b": 2}))
-                .is_none()
+            r3.is_some(),
+            "a fresh chain crossing threshold 3 reminds again"
         );
-        assert!(
-            reminder
-                .observe("agent1", "tool1", &json!({"b": 2}))
-                .is_none()
-        );
-        assert!(
-            reminder
-                .observe("agent1", "tool1", &json!({"b": 2}))
-                .is_none()
-        );
+        assert!(r3.unwrap().contains("consecutive_calls: 3"));
 
         // Call 8: third threshold
         let r3 = reminder.observe("agent1", "tool1", &json!({"b": 2}));
@@ -162,7 +156,9 @@ mod repeat_tests {
     #[test]
     fn test_argument_preview_truncation() {
         let config = RepeatConfig {
-            thresholds: vec![2],
+            // [2,3]: count 2 gets the gentle message, count 3 the detailed
+            // template — only the detailed one carries the args preview.
+            thresholds: vec![2, 3],
             include: vec![],
             exclude: vec![],
             arguments_preview_chars: 10,
@@ -170,6 +166,7 @@ mod repeat_tests {
         let reminder = RepeatToolReminder::new(config).unwrap();
 
         let long_args = json!({"big": "a".repeat(100)});
+        let _ = reminder.observe("agent1", "tool", &long_args);
         let _ = reminder.observe("agent1", "tool", &long_args);
         let r = reminder.observe("agent1", "tool", &long_args);
         assert!(r.is_some());

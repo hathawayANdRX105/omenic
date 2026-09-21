@@ -80,7 +80,7 @@ fn plan_mode_review_round_trip_through_the_daemon() {
     let answered: Value = client
         .call(
             Command::UserAnswer,
-            json!({ "id": question["id"], "answer": { "kind": "select", "index": 0 } }),
+            json!({ "question_id": question["id"], "answer": { "kind": "select", "index": 0 } }),
         )
         .expect("approve");
     assert_eq!(answered["answered"], json!(true));

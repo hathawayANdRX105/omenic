@@ -18,7 +18,9 @@ fn prefix_and_suffix_patterns() {
 #[test]
 fn middle_star_and_exact() {
     assert!(glob_match("web_*_tool", "web_fetch_tool"));
-    assert!(!glob_match("web_*_tool", "web_fetch_search_tool"));
+    // `*` spans any run (only `/` is special in the reference dialect, and
+    // tool names never contain `/`), so a two-segment middle also matches.
+    assert!(glob_match("web_*_tool", "web_fetch_search_tool"));
     assert!(glob_match("todo_write", "todo_write"));
     assert!(!glob_match("todo_write", "todo_wrote"));
 }

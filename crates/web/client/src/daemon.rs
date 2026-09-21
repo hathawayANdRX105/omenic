@@ -261,7 +261,7 @@ impl WebDaemon {
     ) -> Result<(), ClientError> {
         let _: Value = self.client.call(
             Command::UserAnswer,
-            serde_json::json!({ "id": id, "answer": answer }),
+            serde_json::json!({ "question_id": id, "answer": answer }),
         )?;
         Ok(())
     }
