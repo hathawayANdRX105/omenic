@@ -20,14 +20,29 @@ fn plugin_name_is_stable() {
 }
 
 #[test]
-fn config_validation_rejects_missing_or_blank_section() {
+fn config_validation_checks_the_plan_slice() {
     let p = plugin();
-    assert!(p.validate_config(&json!({})).is_err());
-    assert!(p.validate_config(&json!({ "section": "" })).is_err());
-    assert!(p.validate_config(&json!({ "section": "   " })).is_err());
-    assert!(p.validate_config(&json!({ "section": 42 })).is_err());
+    // Named-slice convention (same as guard's config["guard"]): an absent
+    // slice keeps the constructor config (the daemon registers through
+    // `registry.register`, which passes Value::Null), a present slice must
+    // carry a non-empty string section.
+    assert!(p.validate_config(&json!({})).is_ok());
+    assert!(p.validate_config(&serde_json::Value::Null).is_ok());
+    assert!(p.validate_config(&json!({ "plan": {} })).is_err());
     assert!(
-        p.validate_config(&json!({ "section": "plan guidance" }))
+        p.validate_config(&json!({ "plan": { "section": "" } }))
+            .is_err()
+    );
+    assert!(
+        p.validate_config(&json!({ "plan": { "section": "   " } }))
+            .is_err()
+    );
+    assert!(
+        p.validate_config(&json!({ "plan": { "section": 42 } }))
+            .is_err()
+    );
+    assert!(
+        p.validate_config(&json!({ "plan": { "section": "plan guidance" } }))
             .is_ok()
     );
 }

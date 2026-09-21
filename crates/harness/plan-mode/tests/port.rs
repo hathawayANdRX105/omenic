@@ -9,10 +9,8 @@ fn auto_deny_review_always_rejects() {
     let port = AutoDenyReview;
     let result = port.review("any plan").unwrap_err();
     assert!(matches!(result, ReviewError::Transport(_)));
-    assert_eq!(
-        result.to_string(),
-        "review transport unavailable: review transport unavailable"
-    );
+    // Transport is a raw passthrough: Display is the message itself.
+    assert_eq!(result.to_string(), "review transport unavailable");
 }
 
 #[test]
@@ -36,10 +34,7 @@ fn review_outcome_variants() {
 #[test]
 fn review_error_transport() {
     let err = ReviewError::Transport("connection failed".to_string());
-    assert_eq!(
-        err.to_string(),
-        "review transport unavailable: connection failed"
-    );
+    assert_eq!(err.to_string(), "connection failed");
 }
 
 #[test]

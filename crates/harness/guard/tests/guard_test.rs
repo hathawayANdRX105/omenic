@@ -73,7 +73,9 @@ mod repeat_tests {
             r3.is_some(),
             "a fresh chain crossing threshold 3 reminds again"
         );
-        assert!(r3.unwrap().contains("consecutive_calls: 3"));
+        // count 3 == THRESHOLDS[0] → the gentle first-threshold message
+        // (only later thresholds carry the detailed template).
+        assert!(r3.unwrap().contains("repeating the exact same tool call"));
 
         // Call 8: third threshold
         let r3 = reminder.observe("agent1", "tool1", &json!({"b": 2}));
