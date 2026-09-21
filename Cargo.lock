@@ -2189,6 +2189,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tools",
+ "ureq",
 ]
 
 [[package]]
