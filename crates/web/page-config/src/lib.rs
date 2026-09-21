@@ -818,7 +818,7 @@ fn AboutPane() -> Element {
                 "agent harness 的 Rust 复刻（参考 DeepSeek Harness）：agent 循环、会话持久化、事件流与插件面。web UI 为 Dioxus LiveView，设计语言复刻 dsh web。"
             }
             div { class: "flex flex-col gap-1.5 text-[13px] leading-5 text-label-3",
-                span { "路线与进度见仓库根 ROADMAP.md（C1–C8 / R1–R7 / G1–G6）。" }
+                span { "路线与进度见仓库根 PROGRESS.md；技术教训见 LESSONS.md。" }
                 span { "web 数据来自 daemon 实时数据源（会话、事件流与统计均走真实 RPC）。" }
             }
         }
