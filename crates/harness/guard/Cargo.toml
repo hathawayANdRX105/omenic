@@ -12,6 +12,7 @@ omenic-harness-plugin = { path = "../plugin" }
 omenic-harness-tools = { path = "../tools" }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+parking_lot = "0.12"
 
 [dev-dependencies]
 tempfile = { workspace = true }
