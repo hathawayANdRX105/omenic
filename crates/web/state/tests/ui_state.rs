@@ -40,6 +40,7 @@ fn streamed_sequence_builds_chronological_parts() {
         id: "m1".into(),
         role: "user".into(),
         content: "跑一下测试".into(),
+        reasoning: String::new(),
         tool_calls: vec![],
         parts: vec![],
         timestamp: "刚刚".into(),

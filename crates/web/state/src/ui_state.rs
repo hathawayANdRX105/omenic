@@ -122,6 +122,7 @@ impl UiState {
                 id: format!("asst-{now_ms}"),
                 role: "assistant".into(),
                 content: String::new(),
+                reasoning: String::new(),
                 tool_calls: vec![],
                 parts: vec![],
                 timestamp: "刚刚".into(),

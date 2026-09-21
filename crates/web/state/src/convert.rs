@@ -86,6 +86,7 @@ pub fn message_to_chat(m: &SessionMessage) -> ChatMessage {
         id: format!("{}-{}", m.session_id, m.seq),
         role: role.into(),
         content: m.text.clone(),
+        reasoning: String::new(),
         tool_calls: vec![],
         parts: vec![],
         timestamp: format_relative_time(ts),
