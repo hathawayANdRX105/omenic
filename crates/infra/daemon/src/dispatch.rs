@@ -328,6 +328,10 @@ pub struct DispatchCtx<'a> {
     /// `task.list` builds a `task::Store` here per request — the store
     /// is a stateless `PathBuf` wrapper, so there is nothing to cache.
     pub task_data_dir: std::path::PathBuf,
+    /// Pending user questions (plan-mode review and friends).
+    pub questions: std::sync::Arc<crate::questions::QuestionBroker>,
+    /// Plan-mode state: `/plan` commands flip it between turns.
+    pub plan_mode: omenic_harness_plan_mode::PlanModeRuntime,
 }
 
 /// Dispatch a single request.  Always returns a `Response`; the caller just
@@ -700,9 +704,71 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
 
         Command::WorkerPrompt => {
             let msg = match require_str(&req.params, "message") {
-                Ok(s) => s,
+                Ok(s) => s.to_string(),
                 Err(m) => return Response::err(id, ResponseError::new("protocol", m)),
             };
+            // Turn boundary: land a change parked by an approved exit
+            // (`prepare_approved_exit` commits pending=false without
+            // touching active). The next prompt is that boundary — without
+            // this the exit never applies and plan mode stays active
+            // forever. Best-effort: a poisoned mutex cannot be fixed here.
+            if let Ok(Some(mutation)) = ctx.plan_mode.prepare_boundary() {
+                let _ = mutation.commit();
+            }
+            // `/plan` family: flip plan-mode state between turns instead of
+            // prompting. A message argument enters plan mode first and then
+            // falls through, so the text still reaches the model.
+            let mut prompt_text: Option<String> = None;
+            if let Some(parsed) = ctx.plan_mode.parse_command(&msg) {
+                let command = match parsed {
+                    Ok(c) => c,
+                    Err(e) => {
+                        return Response::err(
+                            id,
+                            ResponseError::new("plan_command_invalid", e.to_string()),
+                        );
+                    }
+                };
+                let target = match command {
+                    omenic_harness_plan_mode::PlanModeCommand::Enter { .. } => true,
+                    omenic_harness_plan_mode::PlanModeCommand::Off => false,
+                };
+                match command {
+                    omenic_harness_plan_mode::PlanModeCommand::Enter {
+                        message: Some(text),
+                    } => prompt_text = Some(text),
+                    _ => {}
+                }
+                match ctx.plan_mode.prepare_set(target) {
+                    Ok(Some(mutation)) => {
+                        if let Err(e) = mutation.commit() {
+                            return Response::err(
+                                id,
+                                ResponseError::new("plan_command_failed", e.to_string()),
+                            );
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        // A pending change exists (mid-turn selection); the
+                        // boundary hook lands it later. Report, don't queue.
+                        return Response::err(
+                            id,
+                            ResponseError::new("plan_command_pending", e.to_string()),
+                        );
+                    }
+                }
+                if prompt_text.is_none() {
+                    return Response::ok(
+                        id,
+                        json!({
+                            "plan_mode": ctx.plan_mode.active().unwrap_or(false),
+                            "prompted": false,
+                        }),
+                    );
+                }
+            }
+            let msg = prompt_text.as_deref().unwrap_or(&msg);
             // Optional session_id + run_id: when provided, we record a
             // run in the ledger so the client can correlate across
             // reconnects.
@@ -900,6 +966,41 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                     ResponseError::new("worker_read_event_failed", e.to_string()),
                 ),
             }
+        }
+
+        Command::UserAnswer => {
+            let qid = match require_str(&req.params, "question_id") {
+                Ok(s) => s,
+                Err(m) => return Response::err(id, ResponseError::new("protocol", m)),
+            };
+            if qid.len() > crate::questions::MAX_QUESTION_ID_BYTES {
+                return Response::err(id, ResponseError::new("protocol", "question id too long"));
+            }
+            let answer: crate::questions::QuestionAnswer = match req.params.get("answer") {
+                Some(value) => match serde_json::from_value(value.clone()) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        return Response::err(
+                            id,
+                            ResponseError::new("protocol", format!("malformed answer: {e}")),
+                        );
+                    }
+                },
+                None => {
+                    return Response::err(id, ResponseError::new("protocol", "answer is required"));
+                }
+            };
+            match ctx.questions.answer(qid, answer) {
+                Ok(()) => Response::ok(id, json!({ "answered": true })),
+                Err(e) => Response::err(id, e.into()),
+            }
+        }
+        Command::UserQuestionPending => {
+            let pending = ctx.questions.pending();
+            Response::ok(
+                id,
+                serde_json::to_value(pending).unwrap_or_else(|_| json!([])),
+            )
         }
 
         // ---------------- Events (R2 3.3) ----------------

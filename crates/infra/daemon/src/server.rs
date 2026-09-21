@@ -73,6 +73,9 @@ pub struct DaemonConfig {
     /// delegate runs to. Wired in by [`DaemonConfig::from_config`]; empty =
     /// no out-of-process provider is registered (only the built-in `fork`).
     pub subagent_providers: Vec<config::SubagentProviderConfig>,
+    /// `plan:policy` guidance text injected while plan mode is active.
+    /// `None` uses [`DEFAULT_PLAN_POLICY_SECTION`].
+    pub plan_policy_section: Option<String>,
 }
 
 impl DaemonConfig {
@@ -114,6 +117,7 @@ impl DaemonConfig {
             mcp_servers: cfg.mcp_servers.clone(),
             llm_fallbacks: cfg.llm_fallbacks.clone(),
             subagent_providers: cfg.subagent_providers.clone(),
+            plan_policy_section: None,
         })
     }
 }
@@ -136,9 +140,18 @@ impl Default for DaemonConfig {
             mcp_servers: Vec::new(),
             llm_fallbacks: Vec::new(),
             subagent_providers: Vec::new(),
+            plan_policy_section: None,
         }
     }
 }
+
+/// Topic carrying [`crate::protocol::EventFrame`]s for submitted user
+/// questions (plan-mode review and friends).
+pub const USER_QUESTION_TOPIC: &str = "user.question";
+
+/// Default plan-mode guidance rendered as the `plan:policy` prompt section
+/// while plan mode is active (official `packages/plan/plan-mode` wording).
+pub const DEFAULT_PLAN_POLICY_SECTION: &str = "You are in plan mode. Explore and design before presenting the complete plan through exit_plan_mode.";
 
 /// Long-lived daemon.  Owned by the caller; dropping it cleans up.
 pub struct Daemon {
@@ -187,7 +200,23 @@ impl Daemon {
         // nothing outside the fiber, so a duplicate plugin name fails before
         // we take the instance lock or bind the socket — no half-started
         // daemon and no stale lock/socket files to clean up.
-        let (fiber, plugins) = Self::assemble_plugins(&cfg)?;
+        //
+        // Plan mode is registered by the daemon (not the composition root):
+        // its review transport only exists here, and the plugin needs the
+        // broker's port at register time.
+        let questions = std::sync::Arc::new(crate::questions::QuestionBroker::new());
+        let plan_section = cfg
+            .plan_policy_section
+            .clone()
+            .unwrap_or_else(|| DEFAULT_PLAN_POLICY_SECTION.to_string());
+        let plan_plugin = omenic_harness_plan_mode::PlanModePlugin::new(
+            omenic_harness_plan_mode::PlanModeConfig {
+                section: Some(plan_section.clone()),
+                review_port: Some(questions.review_port()),
+            },
+        );
+        let plan_mode = plan_plugin.runtime().clone();
+        let (fiber, plugins) = Self::assemble_plugins(&cfg, plan_plugin)?;
 
         let lock = InstanceLock::acquire(&socket_path)?;
         let session_db = session::SessionDb::open(&session_db_path)?;
@@ -214,7 +243,7 @@ impl Daemon {
         // tools don't exist for the daemon worker; omp peers have their own
         // external-tool registration path (task CLI).
         let orbit_setup = match cfg.orbit_model.as_ref() {
-            Some(model) => Some(Self::orbit_setup(&fiber, model, &cfg)?),
+            Some(model) => Some(Self::orbit_setup(&fiber, model, &cfg, &plan_mode)?),
             None => None,
         };
 
@@ -225,6 +254,21 @@ impl Daemon {
         let shutdown = Arc::new(AtomicBool::new(false));
         let started_at_ms = now_ms();
         let events = EventBus::new();
+
+        // Push every submitted question to `user.question` subscribers (the
+        // web UI renders them; CLI/smoke can poll `user.question.pending`).
+        {
+            let bus = events.clone();
+            questions.set_on_submit(move |item| {
+                let frame = crate::protocol::EventFrame::new(
+                    USER_QUESTION_TOPIC,
+                    serde_json::to_value(item).unwrap_or(serde_json::Value::Null),
+                );
+                if let Ok(line) = serde_json::to_string(&frame) {
+                    bus.broadcast(USER_QUESTION_TOPIC, &line);
+                }
+            });
+        }
 
         // Build the daemon first so the accept loop is spawned *from* it —
         // `task_data_dir` is carried on the daemon and read here, rather
@@ -253,6 +297,8 @@ impl Daemon {
             events: daemon.events.clone(),
             next_conn: Arc::new(AtomicU64::new(1)),
             task_data_dir: daemon.task_data_dir.clone(),
+            questions: Arc::clone(&questions),
+            plan_mode: plan_mode.clone(),
         })?;
         daemon.accept_thread = Some(accept_thread);
 
@@ -275,6 +321,7 @@ impl Daemon {
         fiber: &omenic_composition::Fiber,
         model: &adaptor::Model,
         cfg: &DaemonConfig,
+        plan_mode: &omenic_harness_plan_mode::PlanModeRuntime,
     ) -> Result<rpc::worker::OrbitSetup, DaemonError> {
         let catalog = fiber
             .resolve::<omenic_harness_tools::ToolCatalog>("harness.tools")
@@ -439,6 +486,19 @@ impl Daemon {
         let signal = std::sync::atomic::AtomicBool::new(false);
         let mcp_tools = Self::mcp_tools(cfg, &signal)?;
         let session_tools = Self::session_tools(&cfg.data_dir);
+        // plan:policy provider: the engine recomputes the system prompt per
+        // turn, so flipping plan mode mid-session takes effect on the next
+        // prompt. The closure returns "" while plan mode is off — the engine
+        // then falls back to its own default prompt build (see worker.rs).
+        let plan_section = cfg
+            .plan_policy_section
+            .clone()
+            .unwrap_or_else(|| DEFAULT_PLAN_POLICY_SECTION.to_string());
+        let plan_runtime = plan_mode.clone();
+        let plan_policy_section: Option<std::sync::Arc<dyn Fn() -> String + Send + Sync>> =
+            Some(std::sync::Arc::new(move || {
+                plan_runtime.plan_policy_section(&plan_section)
+            }));
         Ok(rpc::worker::OrbitSetup {
             model: model.clone(),
             backend,
@@ -449,6 +509,7 @@ impl Daemon {
                 catalog,
                 mcp_tools,
                 session_tools,
+                plan_policy_section,
             },
         })
     }
@@ -541,6 +602,7 @@ impl Daemon {
     /// engine rather than being short-circuited.
     fn assemble_plugins(
         cfg: &DaemonConfig,
+        plan_plugin: omenic_harness_plan_mode::PlanModePlugin,
     ) -> Result<
         (
             omenic_composition::Fiber,
@@ -560,9 +622,23 @@ impl Daemon {
             "max_turns".into(),
             serde_json::Value::from(cfg.max_turns as u64),
         );
+        // plan-mode config slice (same named-slice convention as guard):
+        // the plugin reads config["plan"]["section"] at register time.
+        let plan_section = cfg
+            .plan_policy_section
+            .clone()
+            .unwrap_or_else(|| DEFAULT_PLAN_POLICY_SECTION.to_string());
+        doc.insert(
+            "plan".into(),
+            serde_json::json!({ "section": plan_section }),
+        );
+        // Plan mode rides the daemon-owned broker (see `start`), so the
+        // composition root stays unaware of the review transport.
+        let plugins: Vec<std::sync::Arc<dyn omenic_composition::DshPlugin>> =
+            vec![std::sync::Arc::new(plan_plugin)];
         Ok(omenic_composition::assemble(
             serde_json::Value::Object(doc),
-            Vec::new(),
+            plugins,
         )?)
     }
 
@@ -652,6 +728,8 @@ struct AcceptLoopCtx {
     events: EventBus,
     next_conn: Arc<AtomicU64>,
     task_data_dir: PathBuf,
+    questions: Arc<crate::questions::QuestionBroker>,
+    plan_mode: omenic_harness_plan_mode::PlanModeRuntime,
 }
 
 fn spawn_accept_loop(ctx: AcceptLoopCtx) -> Result<thread::JoinHandle<()>, DaemonError> {
@@ -669,6 +747,8 @@ fn spawn_accept_loop(ctx: AcceptLoopCtx) -> Result<thread::JoinHandle<()>, Daemo
                 events,
                 next_conn,
                 task_data_dir,
+                questions,
+                plan_mode,
             } = ctx;
             // We poll the shutdown flag between accepts and use a short
             // accept timeout so we don't block forever once shutdown is
@@ -686,6 +766,8 @@ fn spawn_accept_loop(ctx: AcceptLoopCtx) -> Result<thread::JoinHandle<()>, Daemo
                 let events = events.clone();
                 let conn_id = next_conn.fetch_add(1, Ordering::Relaxed);
                 let task_data_dir = task_data_dir.clone();
+                let questions = Arc::clone(&questions);
+                let plan_mode = plan_mode.clone();
                 thread::spawn(move || {
                     if let Err(e) = handle_connection(
                         conn,
@@ -697,6 +779,8 @@ fn spawn_accept_loop(ctx: AcceptLoopCtx) -> Result<thread::JoinHandle<()>, Daemo
                         events,
                         conn_id,
                         task_data_dir,
+                        &questions,
+                        &plan_mode,
                     ) {
                         eprintln!("daemon: connection error: {e}");
                     }
@@ -713,11 +797,13 @@ fn handle_connection(
     worker: &Arc<Mutex<WorkerHandle>>,
     sessions: &SessionState,
     runs: &RunLedger,
-    shutdown: &AtomicBool,
+    shutdown: &Arc<AtomicBool>,
     started_at_ms: i64,
     events: EventBus,
     conn_id: u64,
     task_data_dir: PathBuf,
+    questions: &Arc<crate::questions::QuestionBroker>,
+    plan_mode: &omenic_harness_plan_mode::PlanModeRuntime,
 ) -> Result<(), DaemonError> {
     // R2 3.3: responses and pushed events share one write channel drained by
     // a dedicated writer thread, so a subscribed connection can receive
@@ -742,6 +828,8 @@ fn handle_connection(
         conn_id,
         &task_data_dir,
         &out,
+        questions,
+        plan_mode,
     );
     // Teardown: stop pushes, wake the writer thread, let queued frames flush.
     events.remove_conn(conn_id);
@@ -756,12 +844,14 @@ fn connection_read_loop(
     worker: &Arc<Mutex<WorkerHandle>>,
     sessions: &SessionState,
     runs: &RunLedger,
-    shutdown: &AtomicBool,
+    shutdown: &Arc<AtomicBool>,
     started_at_ms: i64,
     events: &EventBus,
     conn_id: u64,
     task_data_dir: &std::path::Path,
     out: &std::sync::mpsc::Sender<String>,
+    questions: &Arc<crate::questions::QuestionBroker>,
+    plan_mode: &omenic_harness_plan_mode::PlanModeRuntime,
 ) -> Result<(), DaemonError> {
     loop {
         let line = match reader.read_frame()? {
@@ -800,6 +890,8 @@ fn connection_read_loop(
             conn_id,
             out: out.clone(),
             task_data_dir: task_data_dir.to_path_buf(),
+            questions: Arc::clone(questions),
+            plan_mode: plan_mode.clone(),
         };
         let resp = crate::dispatch::dispatch(&mut ctx, req);
         let payload = serde_json::to_string(&resp)?;

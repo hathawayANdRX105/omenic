@@ -1,0 +1,18 @@
+# boot profile —— 最小可跑：一个 orbit worker + 本地 daemon。
+# 用法：oi profile apply boot（.oi/config.toml 已存在时拒绝覆盖，不动你的配置）。
+# 之后把 [llm] 三件套填上即可开聊。
+omp_path = "omp"
+data_dir = "./.oi"
+model = "default"
+
+[llm]
+# base_url 不带 /v1 后缀（调用方自行拼接口径）。api_key 也可留空走环境变量。
+base_url = ""
+api_key = ""
+model = ""
+
+[daemon]
+# AGENTS.md 发现根；缺省取 daemon 启动目录。
+cwd = "."
+# 每轮 LLM 往返上限；缺省 orbit 自己的默认值。
+max_turns = 64

@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use daemon::{ClientError, Command, DaemonClient, Subscription};
+use daemon::{Command, DaemonClient, Subscription};
 use omenic_web_state::convert::{message_to_chat, summary_to_session};
 use omenic_web_state::types::{ChatMessage, Session};
 use serde_json::Value;
@@ -20,6 +20,14 @@ use task::{Task, goal::Goal, todo::Todo};
 /// 需要额外映射的展示形状（KPI 文案在页面里现算），再抄一层 UI DTO 只会
 /// 制造两处需要同步的定义。
 pub use daemon::state::{STATS_UNAVAILABLE, StatsBucket, StatsRecentRun, StatsSummary};
+
+/// 用户问题（plan-mode review 等）线上类型转出：`lib.rs` 根路径被本地
+/// `daemon` 模块遮蔽，只能经这里引用外部 `daemon` crate。
+pub use daemon::{QuestionAnswer, QuestionItem, QuestionOption};
+
+/// 客户端错误转出：回答路径要匹配终局错误码（question_not_found /
+/// question_already_answered）。
+pub use daemon::ClientError;
 
 /// 阻塞式 daemon 客户端。Clone 便宜（内部只有 socket 路径）。
 #[derive(Debug, Clone)]
@@ -234,10 +242,41 @@ impl WebDaemon {
         Ok(runs.into_iter().filter(|r| r.session_id == sid).collect())
     }
 
+    /// 订阅 `user.question` 推送帧（plan-mode review 等问题卡片的数据源）。
+    /// 与 [`Self::subscribe_worker`] 同语义：一个订阅一条连接，帧经
+    /// `Subscription::next_event` 阻塞读出，`event` 字段是序列化的
+    /// [`daemon::QuestionItem`]。web 侧另配 [`Self::pending_questions`]
+    /// 快照兜底（订阅建立前已提交的问题不漏）。
+    pub fn subscribe_user_questions(&self) -> Result<Subscription, ClientError> {
+        self.client.subscribe("user.question")
+    }
+
+    /// `user.answer` → 回答一个待决问题（plan-mode review 的
+    /// Approve/Reject/Dismiss，或用户输入的 custom 文本）。已回答 /
+    /// 不存在 / 载荷非法都是 `Err`；调用方据此决定是否保留卡片。
+    pub fn answer_question(
+        &self,
+        id: &str,
+        answer: &daemon::QuestionAnswer,
+    ) -> Result<(), ClientError> {
+        let _: Value = self.client.call(
+            Command::UserAnswer,
+            serde_json::json!({ "question_id": id, "answer": answer }),
+        )?;
+        Ok(())
+    }
+
+    /// `user.question.pending` → 当前全部待决问题快照。订阅建立前的
+    /// 历史问题只有这条路径看得到（推送不补发）。
+    pub fn pending_questions(&self) -> Result<Vec<daemon::QuestionItem>, ClientError> {
+        self.client
+            .call(Command::UserQuestionPending, serde_json::json!({}))
+    }
+
     /// `task.list` → 最近更新的任务（任务看板的数据源，PR3a 后端读链）。
     /// 落盘的 `tasks.jsonl` 由 `oi task add/done/...` 写入，daemon 按
     /// `updated_at` 降序返回；`limit` 缺省 50，`0` → `[]`。空列表合法
-    ///（data_dir 从没写过任务）。返回的 [`Task`] 字段名与落盘 JSON 一致，
+    /// （data_dir 从没写过任务）。返回的 [`Task`] 字段名与落盘 JSON 一致，
     /// 看板直接渲染，不做 DTO 二次映射。
     ///
     /// 阻塞式，调用方放进 `std::thread`（同本文件其它 RPC 方法）。

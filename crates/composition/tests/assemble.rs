@@ -18,10 +18,12 @@ use tempfile::TempDir;
 
 use omenic_composition::{DshPlugin, PluginError, assemble};
 use omenic_harness_compaction::CharBudgetPolicy;
+use omenic_harness_guard::{GUARD_SERVICE, GuardService};
 use omenic_harness_instruction::InstructionFragments;
 use omenic_harness_plugin::PluginContext;
 use omenic_harness_prompt::PromptTemplate;
 use omenic_harness_runtime::LoopEngine;
+use omenic_harness_skill::{SKILL_SERVICE, SkillService};
 use omenic_harness_tools::ToolCatalog;
 
 /// Empty directory with no `AGENTS.md` anywhere it would be discovered.
@@ -85,7 +87,9 @@ fn core_plugins_register_in_dependency_order() {
             "tool-subagent",
             "tool-subagent-control",
             "harness-compaction",
-            "harness-instruction"
+            "harness-instruction",
+            "guard",
+            "harness-skill"
         ]
     );
 }
@@ -121,6 +125,15 @@ fn every_harness_service_resolves_from_the_assembled_fiber() {
         ctx.resolve::<InstructionFragments>("harness.instruction")
             .is_some(),
         "InstructionPlugin must provide harness.instruction"
+    );
+    // Guard and skill services must also be provided.
+    assert!(
+        ctx.resolve::<GuardService>(GUARD_SERVICE).is_some(),
+        "GuardPlugin must provide GUARD_SERVICE"
+    );
+    assert!(
+        ctx.resolve::<SkillService>(SKILL_SERVICE).is_some(),
+        "SkillPlugin must provide SKILL_SERVICE"
     );
 }
 
@@ -191,9 +204,90 @@ fn host_plugins_register_after_the_core_ones() {
             "tool-subagent-control",
             "harness-compaction",
             "harness-instruction",
+            "guard",
+            "harness-skill",
             "host-extra",
         ],
         "host plugins go last so they may provide over core services"
     );
     assert_eq!(ran.load(Ordering::SeqCst), 1);
+}
+#[test]
+fn guard_config_repeat_thresholds_affects_reminder() {
+    let cwd = EmptyCwd::new("guard-thresholds");
+    let (mut fiber, _registry) = assemble(
+        json!({
+            "cwd": cwd.as_str(),
+            "guard": {
+                "repeat": { "thresholds": [2, 3] }
+            }
+        }),
+        Vec::new(),
+    )
+    .expect("assemble with custom guard thresholds");
+
+    let ctx = fiber.context();
+    let guard_service = ctx
+        .resolve::<GuardService>(GUARD_SERVICE)
+        .expect("GUARD_SERVICE must be provided");
+
+    // First call should not trigger reminder (count=1 < threshold=2)
+    let first = guard_service.check_repeat("agent1", "some_tool", &json!({}));
+    assert!(first.is_none(), "first call should not trigger reminder");
+
+    // Second call should trigger reminder (count=2 >= threshold=2)
+    let second = guard_service.check_repeat("agent1", "some_tool", &json!({}));
+    assert!(second.is_some(), "second call should trigger reminder");
+    assert!(
+        second
+            .unwrap()
+            .contains("repeating the exact same tool call")
+    );
+
+    // Third call should trigger later threshold template (count=3)
+    let third = guard_service.check_repeat("agent1", "some_tool", &json!({}));
+    assert!(third.is_some(), "third call should trigger reminder");
+    assert!(third.unwrap().contains("consecutive_calls"));
+}
+
+#[test]
+fn host_plugin_reusing_guard_name_is_rejected() {
+    let cwd = EmptyCwd::new("dup-guard");
+    let ran = Arc::new(AtomicUsize::new(0));
+    let clash = Arc::new(SpyPlugin {
+        name: "guard".into(),
+        ran: Arc::clone(&ran),
+    });
+
+    match assemble(json!({ "cwd": cwd.as_str() }), vec![clash]) {
+        Ok(_) => panic!("a duplicate guard plugin name must abort assembly"),
+        Err(PluginError::Duplicate(name)) => assert_eq!(name, "guard"),
+        Err(PluginError::InvalidConfig(msg)) => panic!("unexpected config error: {msg}"),
+    }
+    assert_eq!(
+        ran.load(Ordering::SeqCst),
+        0,
+        "rejected plugin must not have registered"
+    );
+}
+
+#[test]
+fn host_plugin_reusing_harness_skill_name_is_rejected() {
+    let cwd = EmptyCwd::new("dup-skill");
+    let ran = Arc::new(AtomicUsize::new(0));
+    let clash = Arc::new(SpyPlugin {
+        name: "harness-skill".into(),
+        ran: Arc::clone(&ran),
+    });
+
+    match assemble(json!({ "cwd": cwd.as_str() }), vec![clash]) {
+        Ok(_) => panic!("a duplicate harness-skill plugin name must abort assembly"),
+        Err(PluginError::Duplicate(name)) => assert_eq!(name, "harness-skill"),
+        Err(PluginError::InvalidConfig(msg)) => panic!("unexpected config error: {msg}"),
+    }
+    assert_eq!(
+        ran.load(Ordering::SeqCst),
+        0,
+        "rejected plugin must not have registered"
+    );
 }

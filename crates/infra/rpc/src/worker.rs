@@ -170,6 +170,12 @@ pub struct OrbitConfig {
     /// engine instance. Empty leaves the tool list exactly as it was before
     /// this family existed.
     pub session_tools: std::sync::Arc<Vec<std::sync::Arc<dyn tools::Tool>>>,
+    /// Per-turn `plan:policy` section provider (plan mode). The engine
+    /// calls it before every prompt: a non-empty result replaces the
+    /// default system prompt with `base + section`, so flipping plan mode
+    /// mid-session lands on the next turn. `None` = always default build
+    /// (pre-plan-mode behavior).
+    pub plan_policy_section: Option<std::sync::Arc<dyn Fn() -> String + Send + Sync>>,
 }
 
 /// orbit-mode construction bundle: the model, the streaming backend, and the
@@ -355,6 +361,8 @@ struct OrbitEngine {
     max_turns: usize,
     /// 压缩策略（`harness.compaction`），由 maintain 钩子消费。
     compaction: std::sync::Arc<omenic_harness_compaction::CharBudgetPolicy>,
+    /// plan:policy 段提供者（plan mode）；每轮 prompt 前调用。
+    plan_policy_section: Option<std::sync::Arc<dyn Fn() -> String + Send + Sync>>,
 }
 
 impl OrbitEngine {
@@ -371,6 +379,7 @@ impl OrbitEngine {
                     catalog,
                     mcp_tools,
                     session_tools,
+                    plan_policy_section,
                 },
         } = setup;
         let (pull_push, pull_queue) = std::sync::mpsc::channel();
@@ -397,6 +406,7 @@ impl OrbitEngine {
             cwd,
             max_turns,
             compaction,
+            plan_policy_section,
         };
         // 专用 run 线程：串行消费 prompt，LLM 调用不占 dispatch 锁，
         // abort 标志（Arc）随时可从别的连接置位
@@ -409,6 +419,7 @@ impl OrbitEngine {
         let run_cwd = engine.cwd.clone();
         let run_max_turns = engine.max_turns;
         let run_compaction = std::sync::Arc::clone(&engine.compaction);
+        let run_plan_section = engine.plan_policy_section.clone();
         std::thread::Builder::new()
             .name("omenic-orbit-worker".into())
             .spawn(move || {
@@ -419,6 +430,21 @@ impl OrbitEngine {
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let mut ctx = run_ctx.lock().unwrap_or_else(|e| e.into_inner());
                         ctx.messages.push(adaptor::Message::user_text(&message));
+                        // plan mode: recompute the system prompt per turn so a
+                        // `/plan` flip lands on the next prompt. Empty section
+                        // (plan mode off, or no provider) leaves `None` and
+                        // orbit builds its own default.
+                        ctx.system_prompt = run_plan_section.as_ref().and_then(|provider| {
+                            let section = provider();
+                            if section.is_empty() {
+                                None
+                            } else {
+                                Some(format!(
+                                    "{}\n\n{section}",
+                                    orbit::build_system_prompt(run_cwd.as_deref())
+                                ))
+                            }
+                        });
                         // 压缩钩子：容器解析出的 policy 供预算/最近窗口，
                         // 摘要流走 loop 自己的后端（orbit 接缝，G6 缺口 A）。
                         let compaction = std::sync::Arc::clone(&run_compaction);

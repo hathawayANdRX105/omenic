@@ -132,6 +132,7 @@ fn setup(doc: serde_json::Value, backend: Arc<Shared>) -> OrbitSetup {
             // Likewise no job/terminal tools: empty list = the engine's tool
             // list is exactly what it was before that family existed.
             session_tools: std::sync::Arc::new(Vec::new()),
+            plan_policy_section: None,
         },
     }
 }

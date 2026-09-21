@@ -15,7 +15,9 @@ omenic-harness-subagent = { path = "../harness/subagent" }
 omenic-harness-tools = { path = "../harness/tools" }
 omenic-harness-runtime = { path = "../harness/runtime" }
 omenic-harness-compaction = { path = "../harness/compaction" }
+omenic-harness-guard = { path = "../harness/guard" }
 omenic-harness-instruction = { path = "../harness/instruction" }
+omenic-harness-skill = { path = "../harness/skill" }
 
 [dev-dependencies]
 tempfile = { workspace = true }

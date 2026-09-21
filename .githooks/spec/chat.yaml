@@ -75,6 +75,10 @@ anchors:
     find: 'id: "minimap"'
     expect: '左侧 minimap 锚点列（每条用户 prompt 一条横杠，客户端 JS 聚光梯度）。'
     source: 'omenic: crates/web/components/src/chat.rs:128 + bin/web/src/app.rs setupMinimap'
+  - key: question-card
+    find: 'question-card rounded-[14px] border border-b1 bg-layer-1 shadow-lv2'
+    expect: '用户问题卡（plan-mode review）：composer 上方、dock 之下，r14 卡片 + 品牌蓝「计划评审」标签 + 选项钮 h28 r8；无问题时整卡不渲染。'
+    source: 'omenic: crates/web/components/src/chat.rs（P1 plan-mode 批次新增；dsh 无对应组件，官方 packages/plan/plan-mode 的 review 卡为参考形态）'
   - key: empty-state
     find: '开始一个新的任务'
     expect: '空会话态：26px semibold 标题 + 420px 限宽副文案 + 品牌光斑。'

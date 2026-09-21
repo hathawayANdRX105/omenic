@@ -140,6 +140,31 @@ pub fn sse_text(delta: &str, finish: bool) -> String {
     format!("data: {}\n\n", chunk)
 }
 
+/// One SSE `data:` line carrying a chat-completion chunk whose delta is a
+/// single tool call — the shape the loop needs to actually invoke a tool
+/// (e.g. plan mode's `exit_plan_mode`).
+pub fn sse_tool_call(name: &str, arguments: &str, finish: bool) -> String {
+    let reason = if finish {
+        Value::String("tool_calls".into())
+    } else {
+        Value::Null
+    };
+    let chunk = json!({
+        "choices": [{
+            "delta": {
+                "tool_calls": [{
+                    "index": 0,
+                    "id": "call_smoke_1",
+                    "type": "function",
+                    "function": { "name": name, "arguments": arguments }
+                }]
+            },
+            "finish_reason": reason
+        }]
+    });
+    format!("data: {}\n\n", chunk)
+}
+
 /// A turn that emits `delta` and finishes — enough for a one-round run.
 pub fn one_text_turn(delta: &str) -> String {
     sse_text(delta, true)

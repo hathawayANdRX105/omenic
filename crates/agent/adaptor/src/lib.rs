@@ -1,12 +1,16 @@
 //! LLM stream adaptor: OpenAI-compatible SSE → unified events.
 //!
-//! Types live here as the crate root. SSE parsing in `sse`, HTTP call in `openai`.
+//! Types live here as the crate root. SSE parsing in `sse`, HTTP call in `openai`,
+//! DeepSeek dialect wrapper in `deepseek` (max_tokens default + reasoning_content
+//! drop — see its module docs).
 
+pub mod deepseek;
 pub mod openai;
 pub mod sse;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::atomic::AtomicBool;
 
 /// Model configuration.
 #[derive(Debug, Clone, Deserialize)]
@@ -155,4 +159,23 @@ pub enum StreamEvent {
     ToolCall(ToolCallSpec),
     Done { stop_reason: StopReason },
     Error(String),
+}
+
+/// Dispatcher: routes to the DeepSeek or OpenAI dialect.
+///
+/// DeepSeek when [`deepseek::is_deepseek_model`] says so (model id prefix or
+/// base URL mention); otherwise `openai::stream_cb` verbatim — zero behavior
+/// change for OpenAI configs.
+pub fn stream_cb(
+    model: &Model,
+    context: &Context,
+    tools: &[ToolDef],
+    signal: &AtomicBool,
+    emit: &mut dyn FnMut(&StreamEvent),
+) {
+    if deepseek::is_deepseek_model(model) {
+        deepseek::stream_cb(model, context, tools, signal, emit);
+    } else {
+        openai::stream_cb(model, context, tools, signal, emit);
+    }
 }

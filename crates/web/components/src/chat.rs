@@ -2,6 +2,7 @@
 //! assistant 全宽 16/28、工作过程折叠行、浮动 composer（r22 胶囊卡）。
 
 use dioxus::prelude::*;
+use omenic_web_client::{QuestionAnswer, QuestionItem};
 use omenic_web_state::types::{ChatMessage, MessagePart, StatusLine, ToolCall};
 use pulldown_cmark::{Options as MarkdownOptions, Parser, html};
 
@@ -60,6 +61,10 @@ pub fn Chat(
     is_streaming: bool,
     /// 浮在 composer 上方的 dock 卡片（任务看板等），由页面层传入
     dock: Option<Element>,
+    /// 待决用户问题（plan-mode review 等）；None = 无卡片
+    question: Option<QuestionItem>,
+    /// 回答问题：(question_id, answer)。回答失败由页面层决定保留卡片
+    on_answer: EventHandler<(String, QuestionAnswer)>,
     on_send: EventHandler<String>,
     on_model_change: EventHandler<String>,
     on_toggle_thinking: EventHandler<()>,
@@ -101,6 +106,29 @@ pub fn Chat(
     } else {
         format!(" · {elapsed}")
     };
+
+    // 问题卡预提取 owned 数据：rsx 闭包要 'static，不能借 prop 的局部。
+    // 按钮按 (qid 副本, index, label) 三元组迭代——每个闭包捕获自己那份
+    let question_view = question.as_ref().map(|q| {
+        (
+            q.id.clone(),
+            q.summary.clone(),
+            q.options
+                .iter()
+                .map(|o| o.label.clone())
+                .collect::<Vec<_>>(),
+        )
+    });
+    let question_buttons: Vec<(String, usize, String)> = question_view
+        .as_ref()
+        .map(|(qid, _, labels)| {
+            labels
+                .iter()
+                .enumerate()
+                .map(|(i, l)| (qid.clone(), i, l.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
 
     rsx! {
         div { class: "relative flex-1 min-h-0 overflow-hidden",
@@ -171,6 +199,33 @@ pub fn Chat(
                     }
                     // dock 卡片（任务看板）
                     {dock}
+                    // 用户问题卡（plan-mode review）：composer 上方、dock 之下。
+                    // 选项即答案：Select { index } 直发，无中间态
+                    if let Some((_, qsummary, _)) = &question_view {
+                        div { class: "pointer-events-auto w-full question-card rounded-[14px] border border-b1 bg-layer-1 shadow-lv2 px-4 py-3 flex flex-col gap-2.5",
+                            div { class: "flex items-baseline gap-2",
+                                span { class: "text-[12px] leading-4 font-medium text-brand-300 shrink-0", "计划评审" }
+                                span { class: "text-[13px] leading-5 text-label-2", "{qsummary}" }
+                            }
+                            div { class: "flex items-center gap-2 flex-wrap",
+                                for (qid_btn, i, label) in question_buttons.clone() {
+                                    {
+                                        let qid_click = qid_btn;
+                                        rsx! {
+                                            button {
+                                                key: "{i}",
+                                                class: "h-7 px-3 rounded-lg bg-selector hover:bg-iactive text-[12px] leading-4 text-label transition-colors",
+                                                onclick: move |_| {
+                                                    on_answer.call((qid_click.clone(), QuestionAnswer::Select { index: i }));
+                                                },
+                                                "{label}"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     // 输入卡：r22 胶囊
                     // 不加 overflow-hidden：模型/思考菜单从工具行向上弹出，
                     // 裁剪会切掉卡片外的部分；圆角由卡片自身的 bg + radius 呈现
