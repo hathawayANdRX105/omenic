@@ -175,14 +175,6 @@ impl Tool for WebFetchTool {
 
     fn execute(&self, args: &Value, _abort: &AbortSignal) -> Result<ToolResult, ToolError> {
         let url = parse_url(args)?;
-        if url
-            .chars()
-            .any(|c| c.is_control() || ('\u{007f}'..='\u{009f}').contains(&c))
-        {
-            return Err(ToolError::Execute(
-                "web_fetch.url contains an unsafe control character".to_string(),
-            ));
-        }
         ensure_public_url(&url).map_err(|e| ToolError::Execute(format!("web_fetch: {e}")))?;
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(10))
@@ -246,6 +238,14 @@ pub fn parse_url(args: &Value) -> Result<String, ToolError> {
     if url.trim().is_empty() || url.len() > MAX_URL_BYTES {
         return Err(ToolError::Execute(
             "web_fetch.url must be a non-empty string within 2048 bytes".to_string(),
+        ));
+    }
+    if url
+        .chars()
+        .any(|c| c.is_control() || ('\u{007f}'..='\u{009f}').contains(&c))
+    {
+        return Err(ToolError::Execute(
+            "web_fetch.url contains an unsafe control character".to_string(),
         ));
     }
     Ok(url.to_string())
