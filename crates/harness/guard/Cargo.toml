@@ -10,9 +10,10 @@ publish = false
 omenic-harness-core = { path = "../core" }
 omenic-harness-plugin = { path = "../plugin" }
 omenic-harness-tools = { path = "../tools" }
+parking_lot = "0.12"
+serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-parking_lot = "0.12"
 
 [dev-dependencies]
 tempfile = { workspace = true }

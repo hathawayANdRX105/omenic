@@ -34,8 +34,8 @@ impl DshPlugin for SkillPlugin {
 
     fn register(&self, ctx: &mut PluginContext<'_>) {
         let service = SkillService::with_cwd(&self.cwd);
-        let arc_service = Arc::new(service);
-        ctx.provide(SKILL_SERVICE, arc_service.clone());
+        let arc_service = Arc::new(service.clone());
+        ctx.provide(SKILL_SERVICE, service);
 
         // Register the skill tool via harness.tools (matches instruction plugin pattern)
         if let Some(catalog) = ctx.resolve::<ToolCatalog>("harness.tools") {

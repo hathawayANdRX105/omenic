@@ -156,6 +156,16 @@ pub enum Command {
     #[serde(rename = "worker.read_event")]
     WorkerReadEvent,
 
+    /// `user.answer` — `{ id, answer }` → `{ answered: true }`.  Resolves a
+    /// pending question (e.g. a plan-mode review) parked by the
+    /// [`crate::questions::QuestionBroker`].
+    #[serde(rename = "user.answer")]
+    UserAnswer,
+    /// `user.question.pending` — `{}` → `[QuestionItem]`.  Lists open
+    /// questions; the CLI/smoke path for answering without the web UI.
+    #[serde(rename = "user.question.pending")]
+    UserQuestionPending,
+
     /// `event.subscribe` — `{ topic }` → `{ subscription_id }`.  The
     /// connection then receives [`EventFrame`] pushes for that topic.
     #[serde(rename = "event.subscribe")]

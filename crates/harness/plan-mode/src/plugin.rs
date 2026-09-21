@@ -55,6 +55,13 @@ impl PlanModePlugin {
         let runtime = PlanModeRuntime::new(active);
         Self { runtime, config }
     }
+
+    /// Shared handle to the plugin's plan-mode state. The host (daemon) keeps
+    /// one to parse `/plan` commands between turns without re-registering.
+    #[must_use]
+    pub fn runtime(&self) -> &PlanModeRuntime {
+        &self.runtime
+    }
 }
 
 impl DshPlugin for PlanModePlugin {

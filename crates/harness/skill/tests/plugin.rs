@@ -33,7 +33,7 @@ fn register_provides_service_and_tool() {
     let mut ctx = PluginContext::new(&mut registry, &mut bus, &config);
     plugin.register(&mut ctx);
 
-    let service: Option<Arc<SkillService>> = ctx.resolve(SKILL_SERVICE);
+    let service: Option<Arc<SkillService>> = ctx.resolve::<SkillService>(SKILL_SERVICE);
     let service = service.expect("skill service provided");
     let entries = service.entries().unwrap();
     assert_eq!(entries.len(), 1);
@@ -56,6 +56,6 @@ fn register_tolerates_missing_tools_service() {
 
     // No harness.tools provided: registration must still land the service.
     plugin.register(&mut ctx);
-    let service: Option<Arc<SkillService>> = ctx.resolve(SKILL_SERVICE);
+    let service: Option<Arc<SkillService>> = ctx.resolve::<SkillService>(SKILL_SERVICE);
     assert!(service.is_some());
 }

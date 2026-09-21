@@ -17,6 +17,7 @@ pub use timeout_policy::{ConfigError as TimeoutConfigError, TimeoutConfig, Timeo
 
 use omenic_harness_plugin::{DshPlugin, PluginContext, PluginError};
 use parking_lot::RwLock;
+use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -62,12 +63,11 @@ pub struct GuardPlugin {
     config: GuardConfig,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct GuardConfig {
     pub repeat: RepeatConfig,
     pub timeout: TimeoutConfig,
-    /// Plan policy section text (for integration with plan-mode).
-    pub section: String,
 }
 
 impl Default for GuardConfig {
@@ -75,7 +75,6 @@ impl Default for GuardConfig {
         Self {
             repeat: RepeatConfig::default(),
             timeout: TimeoutConfig::default(),
-            section: "Plan policy: Follow the policies outlined in the plan section. If a plan is present, reference it and keep working towards completion. Review and adjust as needed. If the plan is incomplete or missing, create one. If the task is complete, finish the interaction gracefully.".to_string(),
         }
     }
 }

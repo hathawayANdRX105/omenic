@@ -3,10 +3,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 
+use serde::Deserialize;
+
 use crate::glob::glob_match;
 
 /// Configuration for TimeoutPolicy
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct TimeoutConfig {
     /// Tool name glob -> timeout in seconds
     pub rules: HashMap<String, u64>,

@@ -26,7 +26,9 @@ omenic-harness-terminal = { path = "../../harness/terminal" }
 omenic-harness-compaction = { path = "../../harness/compaction" }
 omenic-harness-runtime = { path = "../../harness/runtime" }
 omenic-harness-subagent = { path = "../../harness/subagent" }
+omenic-harness-plan-mode = { path = "../../harness/plan-mode" }
 parking_lot = "0.12"
+uuid = { version = "1", features = ["v4", "serde"] }
 ctrlc = { workspace = true, features = ["termination"] }
 
 [dev-dependencies]

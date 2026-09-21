@@ -1,6 +1,7 @@
 //! Repeat Tool Reminder: advisory loop-breaker, pure logic, no I/O
 
 use parking_lot::Mutex;
+use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -9,7 +10,8 @@ use thiserror::Error;
 use crate::glob::glob_match;
 
 /// Configuration for RepeatToolReminder
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct RepeatConfig {
     /// Consecutive call counts that trigger reminders (ascending, >=2, no duplicates)
     pub thresholds: Vec<usize>,
