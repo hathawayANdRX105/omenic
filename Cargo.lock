@@ -2061,6 +2061,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "omenic-harness-guard"
+version = "0.1.0"
+dependencies = [
+ "omenic-harness-core",
+ "omenic-harness-plugin",
+ "omenic-harness-tools",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tempfile",
+]
+
+[[package]]
 name = "omenic-harness-instruction"
 version = "0.1.0"
 dependencies = [
@@ -2077,6 +2089,19 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "omenic-harness-plan-mode"
+version = "0.1.0"
+dependencies = [
+ "omenic-harness-core",
+ "omenic-harness-plugin",
+ "omenic-harness-prompt",
+ "omenic-harness-tools",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tempfile",
 ]
 
 [[package]]
@@ -2106,6 +2131,19 @@ dependencies = [
  "omenic-harness-tools",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "omenic-harness-skill"
+version = "0.1.0"
+dependencies = [
+ "omenic-harness-core",
+ "omenic-harness-plugin",
+ "omenic-harness-prompt",
+ "omenic-harness-tools",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tempfile",
 ]
 
 [[package]]

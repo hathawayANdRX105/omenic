@@ -15,6 +15,7 @@ members = [
   "crates/harness/subagent",
   "crates/harness/jobs",
   "crates/harness/terminal",
+  "crates/harness/plan-mode", "crates/harness/guard", "crates/harness/skill",
 ]
 resolver = "2"
 

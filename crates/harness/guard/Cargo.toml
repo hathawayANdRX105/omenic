@@ -1,0 +1,17 @@
+[package]
+name = "omenic-harness-guard"
+version = "0.1.0"
+edition = "2024"
+description = "Loop-hygiene guards: repeat-tool-reminder and timeout-policy"
+license = "MIT"
+publish = false
+
+[dependencies]
+omenic-harness-core = { path = "../core" }
+omenic-harness-plugin = { path = "../plugin" }
+omenic-harness-tools = { path = "../tools" }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
