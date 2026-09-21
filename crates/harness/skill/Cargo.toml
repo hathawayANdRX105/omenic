@@ -15,4 +15,6 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+omenic-harness-plugin = { path = "../plugin" }
+omenic-harness-tools = { path = "../tools" }
 tempfile = { workspace = true }
