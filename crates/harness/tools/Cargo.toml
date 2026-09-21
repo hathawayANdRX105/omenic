@@ -11,3 +11,6 @@ omenic-harness-core = { path = "../core" }
 omenic-harness-jobs = { path = "../jobs" }
 omenic-harness-terminal = { path = "../terminal" }
 tools = { path = "../../agent/tools" }
+
+# HTTP client dependency
+ureq = { workspace = true }

@@ -8,6 +8,7 @@
 //! `omenic-harness-core`.
 
 pub mod jobs_terminal;
+pub mod web;
 
 use omenic_harness_core::{AbortSignal, ToolError, ToolResult, ToolSpec};
 use serde_json::Value;
@@ -144,6 +145,11 @@ pub fn default_catalog() -> ToolCatalog {
     for tool in tools::builtin_tools() {
         catalog.register(Arc::new(Builtin(tool)));
     }
+    // Internet tools live here (not in agent/tools::builtin_tools) because
+    // they are harness-side capabilities with their own SSRF/bounds policy;
+    // ref: deepseek-harness-rs/src/tools/web_{fetch,search}.rs.
+    catalog.register(Arc::new(web::WebFetchTool));
+    catalog.register(Arc::new(web::WebSearchTool));
     catalog
 }
 
