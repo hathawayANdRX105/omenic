@@ -38,8 +38,9 @@ fn register_provides_service_and_tool() {
     registry.provide("harness.tools", ToolCatalog::default());
 
     let p = plugin();
+    let config = json!({});
     let mut bus = omenic_harness_plugin::EventBus::new();
-    let mut ctx = PluginContext::new(&mut registry, &mut bus, &json!({}));
+    let mut ctx = PluginContext::new(&mut registry, &mut bus, &config);
     p.register(&mut ctx);
 
     let service: Option<Arc<PlanModeService>> = ctx.resolve(PLAN_MODE_SERVICE);
@@ -64,8 +65,9 @@ fn register_uses_configured_section_when_active() {
     );
     let mut registry = ServiceRegistry::default();
     registry.provide("harness.tools", ToolCatalog::default());
+    let config = json!({});
     let mut bus = omenic_harness_plugin::EventBus::new();
-    let mut ctx = PluginContext::new(&mut registry, &mut bus, &json!({}));
+    let mut ctx = PluginContext::new(&mut registry, &mut bus, &config);
     p.register(&mut ctx);
 
     let service: Arc<PlanModeService> = ctx.resolve(PLAN_MODE_SERVICE).unwrap();

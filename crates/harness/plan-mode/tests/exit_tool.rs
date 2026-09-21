@@ -2,10 +2,11 @@
 
 use std::sync::Arc;
 
-use omenic_harness_core::{AbortSignal, Tool};
+use omenic_harness_core::AbortSignal;
 use omenic_harness_plan_mode::{
     AutoDenyReview, ExitPlanModeTool, PlanModeRuntime, PlanReviewPort, ReviewError, ReviewOutcome,
 };
+use omenic_harness_tools::Tool;
 use serde_json::json;
 
 struct ApproveAll;

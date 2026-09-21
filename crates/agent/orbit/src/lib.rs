@@ -67,7 +67,7 @@ impl LlmBackend for HttpLlm {
         signal: &AtomicBool,
         emit: &mut dyn FnMut(&StreamEvent),
     ) {
-        adaptor::openai::stream_cb(model, context, tools, signal, emit)
+        adaptor::stream_cb(model, context, tools, signal, emit)
     }
 }
 
