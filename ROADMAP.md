@@ -175,6 +175,7 @@ CI 与 ocr/code-reviewer 在合并前拦下的，不是测试瑕疵：
 13. **blank id 误报 database_missing（#403）**：`update_title` 缺 `invalid_id_if_blank`，空 session_id 落 UPDATE-0-行 → `DatabaseMissing("")`，客户端收到「database file `` does not exist」——把 id 非法诊断成数据库文件缺失。
 14. **doc 虚假契约声明（#403）**：两处注释称 blank title「same as ensure_session / like session.create allows」——create 实际拒绝 blank title。只改描述不改行为（update 故意比 insert 宽松是设计）。
 15. **测试 vacuous guard（#405）**：`"\t> # 全部"` 用例的行首 tab 被 `body.trim()` 提前消耗，断言无法区分闭包里删掉 `'\t'`——注释声称钉的行为根本没钉。换成标记字符后的 tab（`">\t标题"`）真正钉住剥刺字符集。
+16. **SSE tool_call 空串续帧冲掉工具名（#407，开 web 真机实测发现，非审查发现）**：本地网关（3100，newapi 类代理）的 tool_call 续帧把 `id` / `function.name` 原样重复为**空串**、只带 `arguments` 分片；`SseParser::handle_data` 无条件覆盖 → 首帧真名被冲成 `""` → 模型每次工具调用 `tool "" not found`、turn 以 `stop_reason: error` 结束，**经该网关的全部工具链静默失效**（文件读写/命令/todo-goal 五工具）。CI mock 遵循严格 OpenAI 语义（name 只在首帧）故从未暴露。修为非空守卫；合并后补审（CRG 0.30 + reviewer + code-reviewer skill 全清单）0 findings。教训：**协议层「字段存在但为空」与「字段缺失」是两种形态，`as_str()` 命中空串即覆盖的写法对二者不做区分**——新协议层测试必须用真网关帧形，不能只造理想帧。
 
 ## 边界决定（稳定，勿翻案）
 
