@@ -404,6 +404,15 @@ fn event_record(event: &WorkerEvent) -> serde_json::Value {
             }
             serde_json::json!({ "event": "message", "text": truncate_utf8(text, EVENT_FIELD_MAX_BYTES) })
         }
+        WorkerEvent::Reasoning { delta } => {
+            if delta.len() > EVENT_FIELD_MAX_BYTES {
+                truncated = true;
+            }
+            serde_json::json!({
+                "event": "reasoning",
+                "delta": truncate_utf8(delta, EVENT_FIELD_MAX_BYTES),
+            })
+        }
         WorkerEvent::ToolExecutionStart { name, input } => serde_json::json!({
             "event": "tool_execution_start",
             "name": name,

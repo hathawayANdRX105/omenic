@@ -139,6 +139,14 @@ impl WireTranslator {
                     delta: text.to_string(),
                 })
             }
+            "reasoning" => {
+                let delta = event
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                (!delta.is_empty()).then(|| AgentEvent::Reasoning { delta })
+            }
             "tool_execution" | "tool_execution_start" => {
                 let name = tool_name(event)?;
                 let args = event.get("input").cloned().unwrap_or(Value::Null);

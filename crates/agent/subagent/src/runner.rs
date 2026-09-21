@@ -104,6 +104,7 @@ pub fn run_subagent(
         AgentEvent::AssistantText { delta } => {
             text.push_str(&delta);
         }
+        AgentEvent::AssistantReasoning { .. } => {}
         AgentEvent::ToolCall(tc) => {
             if let Some(tx) = event_tx {
                 let _ = tx.send(SubagentEvent::ToolCall {

@@ -32,6 +32,9 @@ pub struct ChatMessage {
     pub id: String,
     pub role: String,
     pub content: String,
+    /// 思考模型链式思维增量（仅展示，不回放上下文）。
+    #[serde(default)]
+    pub reasoning: String,
     #[serde(default)]
     pub tool_calls: Vec<ToolCall>,
     /// 真实发生顺序的有序片段；为空时回退到 content + tool_calls 渲染。

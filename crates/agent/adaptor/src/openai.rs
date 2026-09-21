@@ -371,6 +371,9 @@ fn stream_round_trip(
             *emitted_text = true;
             emit(&StreamEvent::TextDelta(delta));
         }
+        if let Some(reasoning) = out.reasoning_delta {
+            emit(&StreamEvent::ReasoningDelta(reasoning));
+        }
         if let Some(reason) = out.stop_reason {
             stop_reason = reason;
         }

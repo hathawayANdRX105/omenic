@@ -85,7 +85,11 @@ pub fn Chat(
     let display_messages: Vec<ChatMessage> = messages
         .iter()
         .filter(|m| {
-            !m.content.is_empty() || !m.tool_calls.is_empty() || !m.parts.is_empty() || is_streaming
+            !m.content.is_empty()
+                || !m.tool_calls.is_empty()
+                || !m.parts.is_empty()
+                || !m.reasoning.is_empty()
+                || is_streaming
         })
         .cloned()
         .collect();
@@ -367,6 +371,20 @@ fn MessageItem(message: ChatMessage, streaming_tail: bool, id: Option<String>) -
         rsx! {
             div { class: "flex flex-col gap-2 w-full group",
                 id: "{dom_id}",
+                // 思考过程（reasoning 增量）：details 原生折叠；流式中展开，
+                // 无图标、无 emoji——纯文本 label
+                if !message.reasoning.is_empty() {
+                    details {
+                        class: "select-none",
+                        open: streaming_tail,
+                        summary { class: "inline-flex items-center text-[12px] leading-5 text-label-3 cursor-pointer hover:text-label-2 transition-colors",
+                            "思考过程"
+                        }
+                        div { class: "mt-1 text-[13px] leading-6 text-label-2 whitespace-pre-wrap break-words border-l border-b1 pl-3",
+                            "{message.reasoning}"
+                        }
+                    }
+                }
                 if waiting {
                     // dsh turn 状态行：26px 高 shimmer
                     div { class: "h-[26px] flex items-center",

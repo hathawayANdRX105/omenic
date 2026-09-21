@@ -33,3 +33,31 @@ fn empty_name_id_continuation_deltas_do_not_clobber() {
         "跨帧 arguments 分片必须完整拼接"
     );
 }
+
+/// `reasoning_content`（deepseek-reasoner 思考链）逐帧透传为
+/// `reasoning_delta`。空串是**存在的字段**而不是缺失字段——若解析器不守
+/// `!reasoning.is_empty()` 门，普通文本帧会把上一帧的思考增量冲掉，web 端
+/// 「思考过程」块出现空跳变。与 tool_call 续帧同一类网关帧形回归，钉在一处。
+#[test]
+fn reasoning_content_delta_passthrough_ignores_empty() {
+    let mut p = SseParser::new();
+    // 纯思考帧。
+    let out = p.handle_data(
+        r#"{"choices":[{"delta":{"role":"assistant","reasoning_content":"让我想想"}}]}"#,
+    );
+    assert_eq!(out.reasoning_delta.as_deref(), Some("让我想想"));
+
+    // 普通文本帧：reasoning_content 缺失 → None，不得携带上一帧残留。
+    let out = p.handle_data(r#"{"choices":[{"delta":{"content":"答案"}}]}"#);
+    assert_eq!(out.reasoning_delta, None);
+
+    // 空串 reasoning_content 是存在的字段：必须被忽略而不是变成 Some("")。
+    let out = p.handle_data(r#"{"choices":[{"delta":{"reasoning_content":""}}]}"#);
+    assert_eq!(out.reasoning_delta, None);
+
+    // 同帧文本 + 思考：两条通道各自独立。
+    let out =
+        p.handle_data(r#"{"choices":[{"delta":{"content":"好","reasoning_content":"继续想"}}]}"#);
+    assert_eq!(out.reasoning_delta.as_deref(), Some("继续想"));
+    assert_eq!(out.text_delta.as_deref(), Some("好"));
+}

@@ -24,6 +24,7 @@ pub struct SseParser {
 pub struct SseLineOut {
     pub text_delta: Option<String>,
     pub stop_reason: Option<StopReason>,
+    pub reasoning_delta: Option<String>,
 }
 
 impl SseParser {
@@ -47,6 +48,13 @@ impl SseParser {
             && !text.is_empty()
         {
             out.text_delta = Some(text.to_string());
+        }
+
+        // DeepSeek reasoning_content deltas
+        if let Some(reasoning) = choice["delta"]["reasoning_content"].as_str()
+            && !reasoning.is_empty()
+        {
+            out.reasoning_delta = Some(reasoning.to_string());
         }
 
         // tool_call deltas: accumulate name + partial-JSON arguments by index.
