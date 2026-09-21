@@ -6,7 +6,7 @@
 
 ## 当前位置（2026-09-21）
 
-main `325ea98`。**G1–G8 全部已过**；dsh 对照三批 B1（#381）/ B2（#382）/ B3（#385 + #387）已全部合入 main，交付内容、审查拦下的真实缺陷与验收证据见 ROADMAP 的「已交付的 dsh 对照批次 B1–B3」节。**使用体验 P0 批次**（#392–#396）已合入，交付与合并后审查记录见 ROADMAP「已交付：使用体验 P0 批次」节；**P0 审查遗留 F1–F4 与 F3 全链路**（#397/#399/#400/#401/#402/#403/#405）亦已全部合入，逐条状态见下方「合并后审查后续」表。
+main `07d4a0b`。**G1–G8 全部已过**；dsh 对照三批 B1（#381）/ B2（#382）/ B3（#385 + #387）已全部合入 main，交付内容、审查拦下的真实缺陷与验收证据见 ROADMAP 的「已交付的 dsh 对照批次 B1–B3」节。**使用体验 P0 批次**（#392–#396）已合入，交付与合并后审查记录见 ROADMAP「已交付：使用体验 P0 批次」节；**P0 审查遗留 F1–F4 与 F3 全链路**（#397/#399/#400/#401/#402/#403/#405）亦已全部合入，逐条状态见下方「合并后审查后续」表；**#406**（最终文档同步）与 **#407**（SSE 工具名守卫——开 web 真机实测发现并修复，合并后补审 0 findings）见下方「2026-09-21 开 web 实测后续」节。
 
 - **C7（tag omenic-harness-v0.1.0 + ferrite 接线）**：前置条件全满足，**等用户拍板时机**，不占批次。
 - **C8（interaction + token-meter）**：已裁定不做。
@@ -53,6 +53,13 @@ P0 批次合并后按 code-reviewer 两阶段审查（CRG + 双 reviewer + 实�
 | F3-b | todo/goal daemon 装配 + `todo.list`/`goal.list` 读 RPC | ✅ 已交付（[PR #402](https://github.com/hathawayANdRX105/omenic/pull/402)，squash `6cd4a34`：`session_tools(data_dir)` 按 data_dir 装配五工具（agent 域路线，jobs/terminal 同例，零新依赖）+ 两个读 RPC 逐字对齐 task.list 契约；4 e2e CI 绿） |
 | F3-c | web 看板接 todo/goal 真数据（`from_todo`/`from_goal` 映射 + `todo.list`/`goal.list` 客户端 + WP-C 合并 + `board_version` 双触发刷新） | ✅ 已交付（[PR #405](https://github.com/hathawayANdRX105/omenic/pull/405)，squash `325ea98`：Todo/Goal 投影进既有 TaskPanel（Cancelled/Abandoned→blocked，不加 chip 词汇、不动组件与 UI 契约）；刷新双触发（ToolResult 五工具名 + TurnEnd，防 WireTranslator 丢未配对 end）；4 映射测试 CI 绿） |
 | F4 | `fix(task): trim_trailing_line` 无结尾换行时吃掉最后一个完整行——#397 审查披露的 src 边缘 bug（append 两次 write 之间崩溃的真实形态），每次崩溃静默丢一条完整记录 | ✅ 已交付（[PR #400](https://github.com/hathawayANdRX105/omenic/pull/400)，squash `eaaa74e`：截断点改「剥尾换行后取最后一个 `\n`+1」，与 `crates/infra/memory` 既有正确实现同语义；3 个新用例（崩溃形态/单行/幂等收敛），ocr + 独立 reviewer 双审 0 发现；遗留测试空白：CRLF 形态与并发 append 竞态未钉，均为既有行为非本次引入） |
+
+### 2026-09-21 开 web 实测后续（#406 / #407）
+
+- **#406**（squash `18cb0a7`）：F1–F4 与 F3 全链路收尾的最终文档同步（本文 SHA 行 + ROADMAP 缺陷台账 + F3 关键设计「稳定，勿翻案」段）。
+- **#407**（squash `07d4a0b`）：开 web 真机使用时发现**经本地网关的全部工具调用静默失效**——3100 网关（newapi 类）SSE 续帧把 `id` / `function.name` 原样重复为空串、只带 `arguments` 分片，`SseParser::handle_data` 无条件覆盖 → 首帧真名被冲成 `""` → 模型每次工具调用 `tool "" not found`、turn 以 `stop_reason: error` 结束（文件读写/命令/todo-goal 五工具全灭）。修为非空守卫 + `tests/` 回归（按网关实测 4 帧序列钉住）；修复后真机复验：模型 5 步工具循环按名执行，`todos.jsonl` / `goals.jsonl` 正常落盘。合并后补审（CRG risk 0.30 + reviewer 子代理 + code-reviewer skill 全清单）**0 findings**。完整台账与教训见 ROADMAP 缺陷清单第 16 条。
+- **web 本地运行态**（复起方法）：`.oi/config.toml` 的 `[llm]` 已对齐 omp 的 wildtoken 网关（`http://127.0.0.1:3100/v1` + step-5-preview + max_tokens 32768，key 实测 200）；oi-web 起 `8026`、daemon 为 `./target/debug/daemon`（**cwd 必须是仓库根**以读 `.oi/config.toml`；daemon 重启后首条消息会踩下面的 known-issue，先发预热消息）。
+- **未修 known-issue（新，F 表外）**：冷启动 daemon 的**首个 prompt 静默丢 run**——worker 懒拉起与首 prompt 竞态，32ms 空 turn（`↑0 ↓0`）、UI 无错误提示，第二条起正常。规避：重启后先发一条预热。根因在 daemon worker 懒拉起路径，待排。
 
 ### 已完成批次的余量（不阻塞，可随时捡）
 
