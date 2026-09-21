@@ -5,6 +5,8 @@
 > **本文档记录已落地的项目背景。** 接下来要开发什么、进度如何，见 [PROGRESS.md](PROGRESS.md)——两份文档状态不同，本文是**已完成**的沉淀，PROGRESS 是**未完成**的规划。
 >
 > 编号体系（全仓稳定，源码注释与 UI 文本按编号引用，勿改）：`C1–C8` 能力域 / `R1–R7` 并发路线 / `G1–G6` 整合门。
+>
+> **2026-09-21 全量回验**（3 个只读 scout 子代理 + 主控，cg 图 + grep + git/gh 逐条对回代码，未跑任何测试）：C/R/G 档 43 TRUE / 8 STALE / 1 FALSE，B 批次与缺陷台账 34 条 33 TRUE / 1 STALE，dsh 对照与缺失性主张语义全部成立；PR 号与 squash 哈希 25 个经 `gh pr list` 逐枚核实。STALE/FALSE 条目已按回验结果修正（测试计数漂移、C2.2 ToolExecutionError 变体不存在、C6.7 inject 门控未复刻、B2b 非 per-provider RetryPolicy、dsh subagent 路径引用等）；「当时实际跑过」类历史主张（CI run 号、smoke 计数、用户浏览器实测）保留原记录未重放，标注见各节。
 
 ## 已交付的能力域 C1–C8
 
@@ -14,9 +16,9 @@
 
 | 小功能 | omenic 文件 | dsh 参考 |
 |---|---|---|
-| 1.1 循环 + 5 不变式（工具成对/截断不执行/中止不孤儿/压缩失败保原文/max_turns） | `crates/agent/orbit/src/lib.rs`（`run_agent_streaming`，23 集成测试） | `packages/core/agent-loop/src/{agent.ts,tool-calls.ts,invariant.ts}` |
+| 1.1 循环 + 5 不变式（工具成对/截断不执行/中止不孤儿/压缩失败保原文/max_turns） | `crates/agent/orbit/src/lib.rs`（`run_agent_streaming`，`tests/loop.rs` 20 集成测试） | `packages/core/agent-loop/src/{agent.ts,tool-calls.ts,invariant.ts}` |
 | 1.2 流式 LLM（OpenAI 兼容 + SSE） | `crates/agent/adaptor/src/{openai.rs,sse.rs}` | `packages/llm/llm-pi-ai/src/` |
-| 1.3 10 内置工具 + `Guarded` 策略包装 | `crates/agent/tools/src/`（10 文件 + `builtin_tools`） | `packages/core/tools/src/` + `packages/fs/` |
+| 1.3 10 内置工具 + `Guarded` 策略包装 | `crates/agent/tools/src/`（9 文件——`memory_tool.rs` 内含 3 把——+ `builtin_tools`，共 10 把） | `packages/core/tools/src/` + `packages/fs/` |
 | 1.4 内嵌压缩（120k 字符策略，已被 C4 抽成插件） | `crates/agent/orbit/src/compaction_bridge.rs` | — |
 
 ### C2 会话持久化 + crash-repair ✅
@@ -24,7 +26,7 @@
 | 小功能 | omenic 文件 | dsh 参考 |
 |---|---|---|
 | 2.1 会话 CRUD + libSQL 持久化 | `crates/infra/session/src/lib.rs`（`SessionDb`） | `packages/core/session/src/index.ts` |
-| 2.2 事件词汇表（`WorkerEvent` 拆出 ToolExecutionStart/End/Error 专属变体，Unknown 只留未识别帧） | `crates/infra/rpc/src/worker.rs` | `packages/core/session/src/{known-event-types.ts,types.ts}` |
+| 2.2 事件词汇表（`WorkerEvent` 拆出 ToolExecutionStart/ToolExecutionEnd 两个工具专属变体——工具失败经 `ToolExecutionEnd.result` 或通用 `Error` 变体承载，无 ToolExecutionError 变体；Unknown 只留未识别帧） | `crates/infra/rpc/src/worker.rs` | `packages/core/session/src/{known-event-types.ts,types.ts}` |
 | 2.3 ✅ turn codec 已接生产（G6，#373）：`turn_log` 列 + 幂等迁移 + `append_turn_log`/`load_turn_log`；dispatch 在 TurnStart/TurnEnd 边界 best-effort 记录；`encode/decode_turn_log` 有了生产读写路径 | `crates/infra/session/src/lib.rs` | `packages/core/session/src/{chunk-rows.ts,json.ts}` |
 | 2.4 ✅ repair 已接线（G6，#373）：`Daemon::start` 在 open SessionDb 之后、bind 之前调 `repair_interrupted_runs` → `interrupted_run_closers`，半开 run 落库标 `ABORTED`；幂等（`daemon/tests/repair.rs` 3 测试 + `g6_e2e.rs` 1 测试） | `crates/infra/daemon/src/server.rs` | `packages/core/session/src/{repair.ts,request-header.ts}` |
 
@@ -58,17 +60,17 @@
 
 | 小功能 | omenic 文件 | dsh 参考 |
 |---|---|---|
-| 5.1 `AgentEvent` DTO + 转译层（纯函数可单测，15 测试） | `crates/web/state/`（含 `memory_link`） | `packages/core/session/src/surface.ts` |
+| 5.1 `AgentEvent` DTO + 转译层（纯函数可单测：`convert.rs` 5 例 + `wire_translate.rs` 8 例 + `state/tests` 8 文件合计 56 例） | `crates/web/state/`（含 `memory_link`） | `packages/core/session/src/surface.ts` |
 | 5.2a daemon RPC 读客户端（封装 `session.*`/`run.list` + DTO 转换，#341） | `crates/web/client/`（`daemon.rs`；`llm.rs` 保留） | `packages/client/runtime/src/client/sessions/{manager.ts,remotes.ts}` |
 | 5.2b 订阅接收端（`WireTranslator` 双形状兼容 + 工具同名 LIFO 配对；断线退避重连 1s→5s；error 帧→TurnEnd 兜底） | `crates/web/client/`、`page-workspace/` | `packages/client/runtime/src/client/sessions/{notifier.ts,service.ts}` |
 | 5.3 真数据已接 + 状态三态（#356，`run.list` 推断 Idle/Active/Aborted）；谱系分组（#376，G7）：`sessions.parent_id` 列 + 幂等迁移，侧栏按树缩进 | `crates/web/page-workspace/` | `packages/client/runtime/src/client/sessions/{session.ts,lineage.ts}` |
 | 5.4 聊天流式：delta 追加 + tool 折叠卡（由订阅管线承载） | `crates/web/components/`（chat.rs） | `client/conversation/{event-registry.ts,view-registry.ts}` + `sessions/tool-call-tree.ts` |
 | 5.5 sidebar 真会话已接；谱系分组（#376，G7）：`group_sessions` 扁平转树（孤儿当根 / visited 防环 / 深度封顶）+ 行内新建子会话钮 | `crates/web/components/`（sidebar.rs） | `packages/client/runtime/src/client/sessions/lineage.ts` |
-| 5.6 statusline 计时（#365）：`run_started_at_ms`/`elapsed_ms` + 起表/结算，13 个计时测试 | `crates/web/state/tests/statusline_timing.rs`（状态行内联在 `components/chat.rs`） | `packages/client/runtime/src/client/sessions/assistant-timing.ts` |
+| 5.6 statusline 计时（#365）：`run_started_at_ms`/`elapsed_ms` + 起表/结算，17 个计时测试 | `crates/web/state/tests/statusline_timing.rs`（状态行内联在 `components/chat.rs`） | `packages/client/runtime/src/client/sessions/assistant-timing.ts` |
 | 5.7 stats 走 `stats.summary` 真实 ledger（#364）；token 用量卡**无真数据则隐藏**（完整需 C8.3，已裁定不做） | `crates/web/page-stats/` | `packages/llm/token-meter/src/{usage-projection.ts,projection.ts}` |
 | 5.8 配置页 TOML 往返（#364 测试：`client/tests/config_roundtrip.rs`）；`load_from_system`/`save_to_file`/`test_connection` 已接线 | `crates/web/page-config/` | `packages/settings/settings-file/src/index.ts` |
 | 5.9 mock 真删（#366）：`crates/web/mock/` 从成员表、`Cargo.lock`、目录三处删除 | — （crate 已不存在） | — |
-| 5.10 ui-validate 契约层（#344）：`.githooks/spec/` 下 7 份 UI 契约 yaml / 71 锚点 + 3 契约测试 | `bin/web/tests/` + `.githooks/spec/` | — |
+| 5.10 ui-validate 契约层（#344）：`.githooks/spec/` 下 7 份 UI 契约 yaml / 79 锚点 + 3 契约测试 | `bin/web/tests/` + `.githooks/spec/` | — |
 
 ### C6 插件面四件套 ✅（#339）
 
@@ -80,7 +82,7 @@
 | 6.4 插件注册表 + 重名拒绝 | 同上（`registry.rs`） | `vendor/cordis/src/registry.ts` |
 | 6.5 装配根（#363）：`assemble()` 由 `Daemon::start` 在 bind 之前调用，注册 Compaction / Instruction 两个核心插件；`tests/assemble.rs` 5 测试 | `crates/composition/src/lib.rs` + `crates/infra/daemon/src/server.rs` | `packages/bundle/base/src/index.ts` |
 | 6.6 orbit `run_agent` 服务化接线（daemon orbit worker 模式，#349/#350） | `crates/infra/rpc/src/worker.rs`（`OrbitEngine`） | `packages/core/agent-loop/src/index.ts` |
-| 6.7 per-plugin Config schema + inject 依赖门控（#379） | `crates/harness/plugin/src/{registry.rs,context.rs,fiber.rs}` | `vendor/cordis/src/{registry.ts,fiber.ts}`（`resolveConfig` / `Fiber.start` inject check） |
+| 6.7 per-plugin Config schema（#379，**已落地**：`validate_config`/`register_with_config`/`PluginError::InvalidConfig`，非法配置注册前拒绝）；**inject 依赖门控未复刻**（dsh `Fiber.start` 的依赖声明/加载门控 omenic 无对应物，`DshPlugin` 仅 name/register/validate_config 三方法） | `crates/harness/plugin/src/{registry.rs,context.rs,fiber.rs}` | `vendor/cordis/src/{registry.ts,fiber.ts}`（`resolveConfig` 已复刻；`Fiber.start` inject check 未复刻） |
 | 6.8 单插件卸载（#379） | `crates/harness/plugin/src/{registry.rs,fiber.rs}` + `tests/plugin_test.rs` | `vendor/cordis/src/{registry.ts,fiber.ts}`（`RegistryService.delete` / `Fiber.dispose`） |
 
 > **G6 装配消费（#373）**：`Fiber::resolve` 有了生产调用者——`Daemon::orbit_setup` 从容器解析 `harness.tools` / `harness.compaction` / `harness.loop`（缺失回退各自家族默认）；`assemble_plugins` 把 cwd/max_turns 写进文档；fiber 字段不再带下划线，`Fiber::resolve`/`Fiber::config` 是它的读路径。
@@ -97,7 +99,7 @@
 
 | 路线 | 覆盖 | 独占文件 | 完成 |
 |---|---|---|---|
-| **R1 插件面** ✅ | C6（6.1–6.6） | `crates/harness/plugin/`、`crates/composition/`；orbit ≤30 行 | #339 |
+| **R1 插件面** ✅ | C6（6.1–6.6） | `crates/harness/plugin/`、`crates/composition/`；orbit 侧仅压缩接缝（`mod` + `pub use` 两语句/4 物理行） | #339 |
 | **R2 事件流+修复** ✅ | C2（2.2–2.4）+ C3（3.1–3.4） | `crates/infra/{daemon,session,rpc}/`；orbit 只读 | #343 |
 | **R3 核心插件** ✅ | C4（4.1–4.8） | `crates/harness/{compaction,instruction}/` | #346（验收②③ 由 #354/#355 补齐） |
 | **R4 web** ✅ | C5（5.1–5.10） | `crates/web/{client,state,components,page-workspace,page-stats,page-config}/`；壳在 `bin/web/` | #340–#352 + #356/#357 |
@@ -109,9 +111,9 @@
 
 | 门 | 验证内容（当时实际跑过的） |
 |---|---|
-| **G1 契约冻结** ✅ | 6.1 插件面 trait + 3.1 `AgentEvent` serde 冻结；`cargo test -p omenic-harness-plugin` 4 测试绿 + serde 往返 3 测试绿 |
-| **G2 C6 收编** ✅ | orbit 23 测试全量回归不改断言 + `oi task add` → 流式 run → 事件流 → 持久化全链路通 |
-| **G3 插件回归闸** ✅ | ① orbit 23 测试绿；② >120k 字符长会话压缩不炸（`compaction_e2e.rs` 4 测试）；③ AGENTS.md 注入（`instruction_prompt.rs` 4 测试）；④ web 页真实 run 压缩不中断流式（用户浏览器实测 2026-09-15） |
+| **G1 契约冻结** ✅ | 6.1 插件面 trait + 3.1 `AgentEvent` serde 冻结；`cargo test -p omenic-harness-plugin`（`plugin_test.rs` 现 10 测试，当时 4 绿）+ serde 往返 3 测试绿 |
+| **G2 C6 收编** ✅ | orbit `tests/loop.rs`（当时 23，现 20）全量回归不改断言 + `oi task add` → 流式 run → 事件流 → 持久化全链路通 |
+| **G3 插件回归闸** ✅ | ① orbit `tests/loop.rs`（当时 23，现 20）绿；② >120k 字符长会话压缩不炸（`compaction_e2e.rs` 4 测试）；③ AGENTS.md 注入（`instruction_prompt.rs` 4 测试）；④ web 页真实 run 压缩不中断流式（用户浏览器实测 2026-09-15） |
 | **G4 事件流汇合** ✅ | ① 3.4 e2e 绿（`event_push.rs`）；② web 聊天页流式 delta 逐字追加（**用户浏览器实测 2026-09-15**）；③ 断线重连不白屏（`reconnect.rs` 3 测试）；④ 半开 run 标 aborted（`run_status.rs` 8 测试）；⑤ web 全仓零 `read_event` 调用 |
 | **G5 总装** ✅ | ① C1–C6 全绿（C6.5 由 #363 接通）；② main CI `cargo test --locked --all-targets` 在 `e6039d6` 上 SUCCESS；③ `oi-web` 起在 8026，页面内联 40KB 真实 Tailwind，`grep -ci mock` = 0 |
 | **G6 总装消费** ✅（#373/#374，2026-09-16） | ① daemon worker 从装配容器取 cwd/compaction/max_turns，AGENTS.md 注入首次在生产路径生效；② crash-repair 接线，`Daemon::start` 修复半开 run；③ orbit 压缩接缝 56→3 行；④ 真链路 e2e（`g6_e2e.rs` 3 测试）：起真实 daemon + 本地 OpenAI mock server，断言**真实 HTTP 请求体字节**含 AGENTS.md 标记、max_turns 卡住真实多轮 run、孤儿 run 重启修复 |
@@ -124,9 +126,9 @@
 
 | 批次 | PR | squash | 交付 | 余量 |
 |---|---|---|---|---|
-| **B1** MCP 多传输 + 重连 | #381 | — | stdio + Streamable HTTP 双传输、重连监督（指数退避 + 重试上限熔断 unregister）、per-server timeout/cwd、`fail_on_startup_error`、daemon `orbit_setup` 注入；page-config 表单 + `settings.yaml` 契约锚点 | tool-level filter、server-level env 注入 |
-| **B2a** session resume | #382 | — | daemon 重启后 worker 按 `session_id` 回放最近 50 条 user/assistant 历史进 `ctx.messages`（dedupe + 切换清旧 ctx） | checkpoint flush 策略；回放跳过 System/Tool 行 |
-| **B2b** LLM 路由 | #382 | — | `orbit::WaterfallLlm`（`[[llm.fallbacks]]` 按序切换 + per-provider `RetryPolicy` 退避 + 已泄 delta/toolcall 不切 provider）+ web Fallback 表单 | token-meter 不做（C8）；DeepSeek/PiAi 官方 adapter 未接 |
+| **B1** MCP 多传输 + 重连 | #381 | `f514b91` | stdio + Streamable HTTP 双传输、重连监督（指数退避 + 重试上限熔断——失败服务器 bring-up 期跳过注册/零工具，无运行时反注册路径）、per-server timeout/cwd、`fail_on_startup_error`、daemon `orbit_setup` 注入；page-config 表单 + `settings.yaml` 契约锚点 | tool-level filter、server-level env 注入 |
+| **B2a** session resume | #382 | `334e5ab` | daemon 重启后 worker 按 `session_id` 回放最近 50 条 user/assistant 历史进 `ctx.messages`（dedupe + 切换清旧 ctx） | checkpoint flush 策略；回放跳过 System/Tool 行 |
+| **B2b** LLM 路由 | #382 | `334e5ab` | `orbit::WaterfallLlm`（`[[llm.fallbacks]]` 按序切换 + 共享默认 `RetryPolicy` 指数退避——**非** per-provider 独立策略、`LlmFallbackConfig` 无 retry 字段 + 已泄 delta/toolcall 不切 provider）+ web Fallback 表单 | token-meter 不做（C8）；DeepSeek/PiAi 官方 adapter 未接 |
 | **B3-PR1** jobs + terminal | #385 | `bc24a7e` | `crates/harness/jobs`（`JobRegistry` + `LocalJobRegistry`，`std::thread` + Condvar）+ `crates/harness/terminal`（portable-pty，每会话 reader 线程排空 master，`read` 是 drain 语义）；10 把模型工具经 `OrbitConfig.session_tools` 接入；web 词表 + `chat.yaml` 锚点 | `onJobDone` 回调、pwsh 后端、dsh jobs 其余工具 |
 | **B3-PR2** subagent Phase 4 | #387 | `a15171f` | ACP 协议层（JSON-RPC over NDJSON）+ `AcpProvider` 出进程后端（两阶梯 dispose：EOF→SIGKILL，幂等 + exit watcher）+ `RunDisposer` 外化销毁 + runtime run 表 + `subagent_control` 的 `interrupt` + `[[subagent.providers]]` 配置；`OrbitSetup.providers` seam **clean cutover 删除**（装配上移 daemon） | `send_message`/`report`、continuable/background、session-seeding、SIGTERM 中间层、permission option kind、Codex/Claude Code/SDK 三后端 |
 | **补审** B1/B2 合并后审查收尾 | #383 | `b20ebc0` | 补齐 ocr 层（36 文件 37 条）+ code-reviewer 逐文件复审 `c009f20..334e5ab` + ROADMAP 同步 | — |
@@ -152,6 +154,29 @@
 **真实遗留（转 PROGRESS 的 F1–F4 + F3 全链路，2026-09-21 全部闭环）**：① `store.rs` 数据完整性路径（损坏行 trim / CorruptLine）零测试覆盖 → #397 补 6 用例，调查中当场发现并披露 trim 无结尾换行 bug → #400 修复（ocr + 独立 reviewer 双审 0 发现）；② 侧栏新建会话标题刷新回退 → #399 加 `session.update_title` 增量 RPC，合并后 ocr 补审 5 条发现（1 medium：web client 用 `call_raw` 吞 daemon 错误回复致降级分支成死代码）→ #403 修 4 条、2 条记录 known-issue；③ todo/goal 写方未接 → F3 三切片落地（#401 五把模型工具 agent 域路线 / #402 daemon 装配 + `todo.list`·`goal.list` 读 RPC / #405 看板接真数据 + `board_version` 双触发刷新），看板至此覆盖「CLI 手写任务 + 模型自维护 todo/goal + run 记录」三类真实来源。
 
 **F3 链路的关键设计**（稳定，勿翻案）：工具走 **agent 域 `tools::Tool`**（jobs/terminal 先例，`task` crate 零新依赖）而非 harness 域 `ToolCatalog`（C6 两 trait 分离是有意设计，走 catalog 要新增 2 个依赖）；title-as-id 复用 Store latest-wins（同 id 追加即更新，与 CLI 一致，不引入 uuid）；Todo/Goal 投影进既有 `TaskItem`/`TaskPanel`（Cancelled/Abandoned → blocked，不加 chip 词汇、不动组件与 UI 契约 yaml）；看板刷新双触发（ToolResult 命中五工具名 + TurnEnd——WireTranslator 会丢未配对 tool end，单挂 ToolResult 会漏刷新）。
+
+### P0 审查遗留交付记录（F1–F4 + F3 全链路，#397–#405 + 修复 #403）
+
+| # | 内容 | 交付 |
+|---|---|---|
+| F1 | store 数据完整性路径零测试覆盖 | #397（`0fddf79`）：6 store 用例 + 1 复合前缀用例；调查中披露 trim 无结尾换行 bug（→ F4/#400）；ocr 发现的 vacuous guard 由 #405 修正 |
+| F2 | 侧栏新建会话标题刷新回退 | #399（`bfe799d`）：`session.update_title` 增量 RPC（UPDATE 非 upsert、缺行报错、只改 title+updated_at）；合并后 ocr 补审 5 发现 → #403（`ab4dc7c`）修 4 条（medium：web client `call_raw` 吞 daemon 错误致降级分支成死代码）、2 条 known-issue |
+| F3-a | todo/goal 写方工具 | #401（`69296c8`）：todo_add/todo_update/todo_list/goal_add/goal_link 五工具，8 工具测试 |
+| F3-b | daemon 装配 + 读 RPC | #402（`6cd4a34`）：`session_tools(data_dir)` 按数据目录装配（agent 域路线，零新依赖）+ `todo.list`/`goal.list` 逐字对齐 task.list 契约，4 e2e |
+| F3-c | 看板接真数据 | #405（`325ea98`）：`from_todo`/`from_goal` 映射 + WP-C 合并 + `board_version` 双触发刷新，4 映射测试 |
+| F4 | trim 无结尾换行吃完整记录 | #400（`eaaa74e`）：截断点改「剥尾换行后最后一个 `\n`+1」，与 `crates/infra/memory` 同语义，3 新用例，双审 0 发现 |
+
+### 2026-09-21 开 web 实测交付（#406 / #407 / #408）
+
+| PR | squash | 交付 |
+|---|---|---|
+| #406 | `18cb0a7` | F1–F4 与 F3 收尾的最终文档同步 |
+| #407 | `07d4a0b` | SSE tool_call 空串续帧冲掉工具名修复（缺陷清单第 16 条）：非空守卫 + `tests/sse_tool_call_deltas.rs` 真网关 4 帧回归；修复后真机复验 5 步工具循环按名执行、jsonl 落盘；合并后补审（CRG 0.30 + reviewer + code-reviewer skill）0 findings |
+| #408 | `dc611e2` | 文档同步至 `07d4a0b`（web 运行态 + 冷启动 known-issue 入档） |
+
+**web 本地运行态**（复起方法）：`.oi/config.toml` 的 `[llm]` 对齐 omp 的 wildtoken 网关（`http://127.0.0.1:3100/v1` + step-5-preview + max_tokens 32768）；oi-web 起 `8026`、daemon 为 `./target/debug/daemon`（cwd 必须为仓库根以读 `.oi/config.toml`）。
+
+**未修 known-issue**（跟踪在 PROGRESS）：冷启动 daemon 首个 prompt 静默丢 run（worker 懒拉起竞态，32ms 空 turn 无错误提示；规避=重启后先发预热消息）；首条消息标题更新失败无重试。
 
 ### 审查实际拦下的真实缺陷（三批合计）
 
@@ -200,14 +225,14 @@ CI 与 ocr/code-reviewer 在合并前拦下的，不是测试瑕疵：
 
 | 域 | dsh 现状（参考文件） | omenic 现状 | 接线优先级 |
 |---|---|---|---|
-| **subagent 能力 seam** | `SubagentRuntime` 服务（provider registry + one-shot/continuable + 生命周期事件）+ 11 子包：spawn/fork 进程内 + ACP/Codex/Claude Code/SDK 四个进程外后端 + control/report 工具（`subagent/src/index.ts`） | **Phase 1 + Phase 4 起步已落地（#380 + #387，2026-09-19）**：crate `omenic-harness-subagent`（`SubagentProvider`/`SubagentRuntimeService`/`ForkProvider`）；model-facing `subagent`（输出带 `run_id`）+ `subagent_control`（list + interrupt）；daemon `orbit_setup` 注册 fork 与全部配置的 ACP provider；ACP 协议层（JSON-RPC over NDJSON）+ `AcpProvider`（两阶梯 dispose：EOF→grace→SIGKILL，幂等 + exit watcher）+ `RunDisposer` 外化销毁 + runtime run 表（`start_run`/`interrupt`/`finish_run`/`active_runs`）；`[[subagent.providers]]` 配置。**`OrbitSetup.providers` seam 已删除**（装配上移 daemon，clean cutover）。仍缺：continuable/background run、`send_message`/`report`、session-seeding、SIGTERM 中间层、permission option kind、Codex/Claude Code/SDK 三个后端 | **中** — 余量缩小为：三个未接后端 + send_message/report/continuable/session-seeding + SIGTERM 层 |
+| **subagent 能力 seam** | `SubagentRuntime` 服务（provider registry + one-shot/continuable + 生命周期事件）+ 11 子包：spawn/fork 进程内 + ACP/Codex/Claude Code/SDK 四个进程外后端 + control/report 工具（`packages/subagent/` 下 11 个 package：subagent / spawn / fork / in-process-driver / acp / codex / claude-code / dsh-sdk / tool-subagent / tool-subagent-control / tool-subagent-report，已数 package.json 核实） | **Phase 1 + Phase 4 起步已落地（#380 + #387，2026-09-19）**：crate `omenic-harness-subagent`（`SubagentProvider`/`SubagentRuntimeService`/`ForkProvider`）；model-facing `subagent`（输出带 `run_id`）+ `subagent_control`（list + interrupt）；daemon `orbit_setup` 注册 fork 与全部配置的 ACP provider；ACP 协议层（JSON-RPC over NDJSON）+ `AcpProvider`（两阶梯 dispose：EOF→grace→SIGKILL，幂等 + exit watcher）+ `RunDisposer` 外化销毁 + runtime run 表（`start_run`/`interrupt`/`finish_run`/`active_runs`）；`[[subagent.providers]]` 配置。**`OrbitSetup.providers` seam 已删除**（装配上移 daemon，clean cutover）。仍缺：continuable/background run、`send_message`/`report`、session-seeding、SIGTERM 中间层、permission option kind、Codex/Claude Code/SDK 三个后端 | **中** — 余量缩小为：三个未接后端 + send_message/report/continuable/session-seeding + SIGTERM 层 |
 | **MCP 多传输 + 重连** | `mcp-client` Cordis 插件：stdio + Streamable HTTP 双传输，`RECONNECT_DEFAULTS` 重连，`failOnStartupError` 熔断，per-tool timeout，`cwd` 每服务（`mcp-client/src/{index,transport,connection}.ts`） | **已落地（#381，2026-09-18）**：stdio + Streamable HTTP 双传输、重连监督（指数退避+熔断语义的重试上限）、per-server timeout/cwd、fail_on_startup_error、daemon orbit_setup 注入 | 余量：tool-level filter、server-level env 注入等 dsh 可选项未对齐 |
 | **session resume 生产路径** | `SessionPersistence` 抽象（`prepare`/`load`/`inspect`/`readFrom`）+ JSONL/SQLite 双后端 + `session-checkpoint-policy` 在 llm/tools/pre-step 前 flush（`session/session-persistence*/src/index.ts`） | **已落地（#382 B2a，2026-09-18）**：daemon 重启后 worker 按 session 回放最近 50 条 user/assistant 历史（dedupe + 切换清 ctx） | 余量：checkpoint flush 策略；回放跳过 System/Tool 行 |
 | **附件全链路** | `AttachmentStore` 抽象 + `LocalAttachmentStore` 内容寻址 + `ui-attachment` 前端 + adapter `resolveAttachments` 注入（`attachment/attachment*/src/index.ts`） | omenic 全仓 grep `attachment`/`image` = 0（仅 `ETXTBSY` 误匹配） | **中** — 前端 UI + 后端存储 + 上下文投影三段全缺 |
 | **LLM provider 注册表/路由 + retry + token-meter** | `LlmRuntime` 服务（`registerAdapter`/`stream` waterfall）+ DeepSeek/PiAi 双 adapter + `llm-retry` 插件 + `TokenMeter`（`llm/llm*/src/index.ts`） | **waterfall 已落地（#382 B2b，2026-09-18）**：orbit::WaterfallLlm（[[llm.fallbacks]] 按序切换 + per-provider RetryPolicy 退避 + 中间 Error 吞噬）+ web settings Fallback 表单 | token-meter 不做（C8 裁定维持）；DeepSeek/PiAi 官方 adapter 未接（现走 OpenAI 兼容端点） |
 | **jobs 后台作业 + terminal 持久 PTY** | `JobRegistry` 抽象 + `LocalJobRegistry` + `terminal` PTY 后端（bash/pwsh）+ 6 个模型工具（`jobs/jobs*/src/index.ts`、`terminal/terminal*/src/index.ts`） | **已落地（#385，2026-09-19）**：`crates/harness/jobs`（`JobRegistry` + `LocalJobRegistry`，`std::thread` + Condvar）+ `crates/harness/terminal`（portable-pty，drain 语义 read）；10 把模型工具经 `OrbitConfig.session_tools` 接入 daemon；web 工具词表归一化 | 余量：`onJobDone` 回调、pwsh 后端、dsh jobs 其余工具（`jobs_output` 等） |
 | **session telemetry/otel + title-llm** | `SessionTelemetryBackend` 抽象 + OTel SDK 导出 + `SessionTitleService`（确定性 fallback + LLM 生成）（`session/session-telemetry*/src/index.ts`、`session/session-title*/src/index.ts`） | omenic 全仓 grep `session_telemetry`/`opentelemetry`/`session-title`/`title-llm` = 0 | **低** — 无 OTel 可观测性管道，无自动 session 标题 |
-| **credentials/authorization + identity** | `CredentialProvider` 抽象（分层 env 解析 + YAML 持久化 + 跨进程锁）+ `AuthorizationService` + `AnonymousUserId`（`credentials/*/src/index.ts`、`identity/*/src/index.ts`） | omenic 全仓 grep `credentials`/`identity`/`anonymous-user-id` = 0 | **低** — 无托管凭据存储、无 OAuth 授权流、无稳定匿名身份 |
+| **credentials/authorization + identity** | `CredentialProvider` 抽象（分层 env 解析 + YAML 持久化 + 跨进程锁）+ `AuthorizationService` + `AnonymousUserId`（`credentials/*/src/index.ts`、`identity/*/src/index.ts`） | omenic 无凭据存储/授权/身份抽象（全仓 `credentials` 命中仅注释、`identity` 命中仅 memory crate 去重 helper 与注释，`anonymous-user-id` = 0） | **低** — 无托管凭据存储、无 OAuth 授权流、无稳定匿名身份 |
 
 ### 已复刻但仍有功能性偏差（G8 已修生产路径缺陷）
 
