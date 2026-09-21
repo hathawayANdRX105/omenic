@@ -9,3 +9,6 @@ pub mod llm;
 /// 根的同名模块会遮蔽外部 `daemon` crate（uniform path），不能直接
 /// `pub use daemon::`。
 pub use crate::daemon::{QuestionAnswer, QuestionItem, QuestionOption};
+
+/// daemon 客户端错误：回答路径要区分终局错误（问题已消失）与传输错误。
+pub use crate::daemon::ClientError;

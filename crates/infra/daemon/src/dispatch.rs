@@ -707,6 +707,14 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                 Ok(s) => s.to_string(),
                 Err(m) => return Response::err(id, ResponseError::new("protocol", m)),
             };
+            // Turn boundary: land a change parked by an approved exit
+            // (`prepare_approved_exit` commits pending=false without
+            // touching active). The next prompt is that boundary — without
+            // this the exit never applies and plan mode stays active
+            // forever. Best-effort: a poisoned mutex cannot be fixed here.
+            if let Ok(Some(mutation)) = ctx.plan_mode.prepare_boundary() {
+                let _ = mutation.commit();
+            }
             // `/plan` family: flip plan-mode state between turns instead of
             // prompting. A message argument enters plan mode first and then
             // falls through, so the text still reaches the model.

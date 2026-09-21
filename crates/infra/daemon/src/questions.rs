@@ -170,6 +170,8 @@ pub enum AnswerError {
     UnknownQuestion(String),
     #[error("question already answered: {0}")]
     AlreadyAnswered(String),
+    #[error("question timed out without an answer: {0}")]
+    TimedOut(String),
     #[error("option index out of bounds")]
     IndexOutOfBounds,
     #[error("custom answer too long")]
@@ -183,6 +185,7 @@ impl From<AnswerError> for crate::protocol::ResponseError {
         let code = match &e {
             AnswerError::UnknownQuestion(_) => "question_not_found",
             AnswerError::AlreadyAnswered(_) => "question_already_answered",
+            AnswerError::TimedOut(_) => "question_timeout",
             AnswerError::IndexOutOfBounds => "invalid_option_index",
             AnswerError::CustomAnswerTooLong => "answer_too_long",
             AnswerError::EmptyCustomAnswer => "empty_answer",
@@ -203,12 +206,14 @@ impl QuestionTicket {
         &self.id
     }
 
-    /// Block until answered or `timeout` elapses.
+    /// Block until answered or `timeout` elapses. A timeout is reported as
+    /// [`AnswerError::TimedOut`] (distinct from an answer); the caller is
+    /// responsible for removing the question via
+    /// [`QuestionBroker::cancel`] — a dropped ticket alone would leak the
+    /// pending entry.
     pub fn wait_timeout(&self, timeout: Duration) -> Result<QuestionAnswer, AnswerError> {
         self.receiver.recv_timeout(timeout).map_err(|e| match e {
-            std::sync::mpsc::RecvTimeoutError::Timeout => {
-                AnswerError::AlreadyAnswered(self.id.clone())
-            }
+            std::sync::mpsc::RecvTimeoutError::Timeout => AnswerError::TimedOut(self.id.clone()),
             std::sync::mpsc::RecvTimeoutError::Disconnected => {
                 AnswerError::UnknownQuestion(self.id.clone())
             }
@@ -317,6 +322,14 @@ impl QuestionBroker {
             .map_err(|_| AnswerError::AlreadyAnswered(id.to_string()))
     }
 
+    /// Remove a pending question without answering it. Idempotent; used by
+    /// the review port after a wait failure (timeout) so an abandoned
+    /// question cannot linger in `pending` forever — an unanswerable entry
+    /// would keep surfacing to `user.question.pending` and the web card.
+    pub fn cancel(&self, id: &str) {
+        self.inner.lock().remove(id);
+    }
+
     /// All pending questions, oldest first (deterministic for clients).
     pub fn pending(&self) -> Vec<QuestionItem> {
         let mut items: Vec<QuestionItem> =
@@ -351,12 +364,18 @@ struct BrokerReviewPort {
 impl PlanReviewPort for BrokerReviewPort {
     fn review(&self, plan: &str) -> Result<ReviewOutcome, ReviewError> {
         let question = QuestionItem::plan_review(plan, None);
-        let ticket = self.broker.submit(question);
+        let ticket = self.broker.submit(question.clone());
         let answer = ticket
             .wait_timeout(self.broker.config.plan_review_timeout)
-            .map_err(|e| match e {
-                AnswerError::AlreadyAnswered(_) => ReviewError::Cancelled,
-                other => ReviewError::Transport(other.to_string()),
+            .map_err(|e| {
+                // The wait failed: drop the question so it cannot linger as
+                // an unanswerable pending entry (timeout, or the broker
+                // side went away).
+                self.broker.cancel(&question.id);
+                match e {
+                    AnswerError::TimedOut(_) => ReviewError::Cancelled,
+                    other => ReviewError::Transport(other.to_string()),
+                }
             })?;
 
         match answer {

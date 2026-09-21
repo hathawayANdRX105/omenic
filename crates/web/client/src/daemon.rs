@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use daemon::{ClientError, Command, DaemonClient, Subscription};
+use daemon::{Command, DaemonClient, Subscription};
 use omenic_web_state::convert::{message_to_chat, summary_to_session};
 use omenic_web_state::types::{ChatMessage, Session};
 use serde_json::Value;
@@ -24,6 +24,10 @@ pub use daemon::state::{STATS_UNAVAILABLE, StatsBucket, StatsRecentRun, StatsSum
 /// 用户问题（plan-mode review 等）线上类型转出：`lib.rs` 根路径被本地
 /// `daemon` 模块遮蔽，只能经这里引用外部 `daemon` crate。
 pub use daemon::{QuestionAnswer, QuestionItem, QuestionOption};
+
+/// 客户端错误转出：回答路径要匹配终局错误码（question_not_found /
+/// question_already_answered）。
+pub use daemon::ClientError;
 
 /// 阻塞式 daemon 客户端。Clone 便宜（内部只有 socket 路径）。
 #[derive(Debug, Clone)]

@@ -219,7 +219,7 @@ fn guard_config_repeat_thresholds_affects_reminder() {
         json!({
             "cwd": cwd.as_str(),
             "guard": {
-                "repeat": { "thresholds": [2] }
+                "repeat": { "thresholds": [2, 3] }
             }
         }),
         Vec::new(),

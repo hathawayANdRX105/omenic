@@ -8,6 +8,7 @@
 use std::collections::{HashMap, HashSet};
 
 use dioxus::prelude::*;
+use omenic_web_client::ClientError;
 use omenic_web_client::QuestionAnswer;
 use omenic_web_client::QuestionItem;
 use omenic_web_client::daemon::WebDaemon;
@@ -936,23 +937,37 @@ pub fn Workspace(
 
     // 回答问题（plan-mode review 卡片）：RPC 在线程里跑，结果经 channel 回
     // 消费侧清卡片（Signal 非 Send，不能进 std::thread——同 worker 管线）。
-    // 失败（unknown / 断线 / 载荷非法）保留卡片并留痕：用户可重试，不致
-    // 莫名丢失待决问题
+    // 终局错误（question_not_found / question_already_answered：问题已从
+    // broker 消失，重试永远失败）也清卡片；只有传输类错误保留等重试。
     let on_answer = {
         let backend_answer = backend;
         move |(qid, answer): (String, QuestionAnswer)| {
             if let DataBackend::Daemon(d) = backend_answer() {
-                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<bool>();
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Option<bool>>();
                 std::thread::spawn(move || {
-                    let ok = d.answer_question(&qid, &answer).is_ok();
-                    if !ok {
-                        eprintln!("[web] user.answer failed (question stays pending)");
-                    }
-                    let _ = tx.send(ok);
+                    let outcome = match d.answer_question(&qid, &answer) {
+                        Ok(()) => Some(true),
+                        Err(ClientError::Server { code, .. })
+                            if code == "question_not_found"
+                                || code == "question_already_answered" =>
+                        {
+                            // 问题已没了（别处答过 / 已清理）：卡片是 stale 的
+                            eprintln!("[web] question {qid} gone ({code}); dropping card");
+                            Some(false)
+                        }
+                        Err(e) => {
+                            // 传输类错误：保留卡片等重试
+                            eprintln!("[web] user.answer failed (question stays pending): {e}");
+                            None
+                        }
+                    };
+                    let _ = tx.send(outcome);
                 });
                 spawn(async move {
-                    if rx.recv().await == Some(true) {
-                        pending_question.set(None);
+                    match rx.recv().await {
+                        Some(Some(true)) => pending_question.set(None), // 答成功
+                        Some(Some(false)) => pending_question.set(None), // 问题已消失
+                        _ => {}                                         // 传输错误：保留
                     }
                 });
             }
