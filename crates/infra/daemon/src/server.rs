@@ -622,6 +622,16 @@ impl Daemon {
             "max_turns".into(),
             serde_json::Value::from(cfg.max_turns as u64),
         );
+        // plan-mode config slice (same named-slice convention as guard):
+        // the plugin reads config["plan"]["section"] at register time.
+        let plan_section = cfg
+            .plan_policy_section
+            .clone()
+            .unwrap_or_else(|| DEFAULT_PLAN_POLICY_SECTION.to_string());
+        doc.insert(
+            "plan".into(),
+            serde_json::json!({ "section": plan_section }),
+        );
         // Plan mode rides the daemon-owned broker (see `start`), so the
         // composition root stays unaware of the review transport.
         let plugins: Vec<std::sync::Arc<dyn omenic_composition::DshPlugin>> =

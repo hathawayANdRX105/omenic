@@ -70,26 +70,23 @@ impl DshPlugin for PlanModePlugin {
     }
 
     fn validate_config(&self, config: &Value) -> Result<(), omenic_harness_plugin::PluginError> {
-        // Validate config structure
-        if let Some(section) = config.get("section") {
-            if !section.is_string() {
-                return Err(omenic_harness_plugin::PluginError::InvalidConfig(
-                    "section must be a string".to_string(),
-                ));
+        // Config slice at config["plan"]; absent slice keeps the
+        // constructor config (the daemon always supplies a section), a
+        // present but invalid slice rejects — same shape as the guard
+        // plugin's config["guard"] handling.
+        match config.get("plan") {
+            None => Ok(()),
+            Some(value) if value.is_null() => Ok(()),
+            Some(value) => {
+                let section = value.get("section").and_then(Value::as_str);
+                match section {
+                    Some(section) if !section.trim().is_empty() => Ok(()),
+                    _ => Err(omenic_harness_plugin::PluginError::InvalidConfig(
+                        "plan.section must be a non-empty string".to_string(),
+                    )),
+                }
             }
-            let section = section.as_str().unwrap_or("");
-            if section.trim().is_empty() {
-                return Err(omenic_harness_plugin::PluginError::InvalidConfig(
-                    "section must be non-empty".to_string(),
-                ));
-            }
-        } else {
-            return Err(omenic_harness_plugin::PluginError::InvalidConfig(
-                "section is required".to_string(),
-            ));
         }
-        // Unknown keys are rejected by deny_unknown_fields in deserialization
-        Ok(())
     }
 
     fn register(&self, ctx: &mut PluginContext<'_>) {
@@ -100,10 +97,19 @@ impl DshPlugin for PlanModePlugin {
             .clone()
             .unwrap_or_else(|| Arc::new(AutoDenyReview));
 
-        // Get section from config
-        let section = self.config.section.clone().unwrap_or_else(|| {
-            "You are in plan mode. Explore and design before presenting the complete plan through exit_plan_mode.".to_string()
-        });
+        // Section: doc slice config["plan"]["section"] wins (same shape as
+        // the guard plugin's config["guard"]); the constructor config is
+        // the fallback — the daemon always supplies one.
+        let section = ctx
+            .config()
+            .get("plan")
+            .and_then(|plan| plan.get("section"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| self.config.section.clone())
+            .unwrap_or_else(|| {
+                "You are in plan mode. Explore and design before presenting the complete plan through exit_plan_mode.".to_string()
+            });
 
         // Create service
         let service =

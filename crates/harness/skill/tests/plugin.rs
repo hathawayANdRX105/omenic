@@ -1,5 +1,6 @@
 //! SkillPlugin registration: service + tool land in the assembled container.
 
+use std::fs;
 use std::sync::Arc;
 
 use omenic_harness_plugin::{DshPlugin, EventBus, PluginContext, ServiceRegistry};

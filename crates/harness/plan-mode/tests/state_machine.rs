@@ -82,7 +82,10 @@ fn prepare_set_is_idempotent_and_commit_applies() {
 fn pending_change_makes_further_prepare_set_stale() {
     let rt = PlanModeRuntime::new(false);
     let held = rt.prepare_set(true).unwrap().unwrap();
-    assert_eq!(rt.prepare_set(false), Err(PlanModeError::Stale));
+    assert!(
+        matches!(rt.prepare_set(false), Err(PlanModeError::Stale)),
+        "a pending change makes further prepares stale"
+    );
     drop(held);
     assert!(!rt.active().unwrap(), "dropped mutation rolls back");
 }
@@ -109,7 +112,10 @@ fn boundary_commits_pending_and_clears_it() {
 #[test]
 fn approved_exit_requires_active_state() {
     let rt = PlanModeRuntime::new(false);
-    assert_eq!(rt.prepare_approved_exit(), Err(PlanModeError::Inactive));
+    assert!(
+        matches!(rt.prepare_approved_exit(), Err(PlanModeError::Inactive)),
+        "approved exit requires active state"
+    );
 
     rt.prepare_set(true).unwrap().unwrap().commit().unwrap();
     assert!(rt.prepare_approved_exit().is_ok());
