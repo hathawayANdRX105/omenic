@@ -67,7 +67,9 @@ fn plan_mode_review_round_trip_through_the_daemon() {
     // 2. A real prompt under plan mode; the model calls exit_plan_mode.
     prompt(&client, "design the thing");
     let question = wait_for_plan_review(&client);
-    assert_eq!(question["type"], json!("plan_review"));
+    // QuestionIntent is internally tagged: the tag lives inside the
+    // `intent` object, not at the item's top level.
+    assert_eq!(question["intent"]["type"], json!("plan_review"));
     let options = question["options"].as_array().expect("options array");
     assert_eq!(options.len(), 3);
     assert_eq!(options[0]["label"], json!("Approve"));
