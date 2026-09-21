@@ -16,6 +16,10 @@ pub enum AgentEvent {
     AssistantText {
         delta: String,
     },
+    /// 思考模型链式思维增量（展示用，collapsed 渲染）。
+    Reasoning {
+        delta: String,
+    },
     ToolCall {
         id: String,
         name: String,
@@ -58,6 +62,10 @@ impl UiState {
                     Some(MessagePart::Text(existing)) => existing.push_str(delta),
                     _ => msg.parts.push(MessagePart::Text(delta.clone())),
                 }
+            }
+            AgentEvent::Reasoning { delta } => {
+                let msg = self.last_assistant_or_placeholder();
+                msg.reasoning.push_str(delta);
             }
             AgentEvent::ToolCall { id, name, args } => {
                 let tc = tool_call_from_rpc(id, name, args);
@@ -114,6 +122,7 @@ impl UiState {
                 id: format!("asst-{now_ms}"),
                 role: "assistant".into(),
                 content: String::new(),
+                reasoning: String::new(),
                 tool_calls: vec![],
                 parts: vec![],
                 timestamp: "刚刚".into(),

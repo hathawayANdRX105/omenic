@@ -24,7 +24,8 @@ pub struct Model {
     pub max_tokens: Option<u32>,
 }
 
-/// Content block: text, tool invocation (assistant), or tool result (user).
+/// Content block: text, tool invocation (assistant), tool result (user), or
+/// chain-of-thought reasoning (collapsed in UI).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Block {
@@ -39,6 +40,9 @@ pub enum Block {
     ToolResult {
         tool_use_id: String,
         content: String,
+    },
+    Reasoning {
+        text: String,
     },
 }
 
@@ -159,6 +163,7 @@ pub enum StreamEvent {
     ToolCall(ToolCallSpec),
     Done { stop_reason: StopReason },
     Error(String),
+    ReasoningDelta(String),
 }
 
 /// Dispatcher: routes to the DeepSeek or OpenAI dialect.

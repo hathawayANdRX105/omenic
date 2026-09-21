@@ -86,6 +86,7 @@ pub fn message_to_chat(m: &SessionMessage) -> ChatMessage {
         id: format!("{}-{}", m.session_id, m.seq),
         role: role.into(),
         content: m.text.clone(),
+        reasoning: String::new(),
         tool_calls: vec![],
         parts: vec![],
         timestamp: format_relative_time(ts),
@@ -138,6 +139,14 @@ impl WireTranslator {
                 (!text.is_empty()).then(|| AgentEvent::AssistantText {
                     delta: text.to_string(),
                 })
+            }
+            "reasoning" => {
+                let delta = event
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                (!delta.is_empty()).then(|| AgentEvent::Reasoning { delta })
             }
             "tool_execution" | "tool_execution_start" => {
                 let name = tool_name(event)?;
