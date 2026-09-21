@@ -2100,6 +2100,7 @@ dependencies = [
  "omenic-harness-plugin",
  "omenic-harness-prompt",
  "omenic-harness-tools",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",

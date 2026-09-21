@@ -1,13 +1,11 @@
 //! Public API for plan mode.
 
-use std::sync::Arc;
-
 use omenic_harness_core::{AbortSignal, ToolError, ToolResult, ToolSpec};
 use omenic_harness_tools::Tool;
 use serde_json::Value;
 
 use crate::port::{DynPlanReviewPort, ReviewError, ReviewOutcome};
-use crate::state::{PlanModeRuntime, PreparedPlanExit};
+use crate::state::PlanModeRuntime;
 
 /// Constant service name for plan mode.
 pub const PLAN_MODE_SERVICE: &str = "harness.plan-mode";

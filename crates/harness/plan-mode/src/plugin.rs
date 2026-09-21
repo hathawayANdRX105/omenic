@@ -12,7 +12,7 @@ use crate::state::PlanModeRuntime;
 use crate::tools::exit_plan_mode_tool;
 
 /// Configuration for the plan mode plugin.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct PlanModeConfig {
     /// The plan policy section text (required, non-empty).
     pub section: Option<String>,

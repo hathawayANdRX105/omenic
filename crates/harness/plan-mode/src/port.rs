@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use serde_json::Value;
 use thiserror::Error;
 
 /// Outcome of a plan review.
