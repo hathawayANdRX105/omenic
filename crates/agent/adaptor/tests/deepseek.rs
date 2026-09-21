@@ -1,155 +1,59 @@
-//! Tests for DeepSeek adapter dialect detection and max_tokens defaulting.
+//! DeepSeek dialect: detection heuristic and max_tokens defaulting.
 //!
-//! Tests the dispatcher in adaptor::stream_cb and deepseek::stream_cb.
-//! Uses simple assertion-based tests (no full HTTP mock to stay minimal).
+//! Pure-function tests — no network, no stub server.
 
-use adaptor::{Model, StreamEvent, deepseek};
-use std::sync::atomic::AtomicBool;
+use adaptor::{Model, deepseek};
+
+fn model(name: &str, base_url: Option<&str>) -> Model {
+    Model {
+        api_key: "sk-test".to_string(),
+        model: name.to_string(),
+        base_url: base_url.map(str::to_string),
+        max_tokens: None,
+    }
+}
 
 #[test]
-fn test_deepseek_dialect_detection_model_name() {
-    let signal = AtomicBool::new(false);
-    let mut events: Vec<StreamEvent> = vec![];
-    let mut emit = |e: &StreamEvent| events.push(e.clone());
+fn deepseek_model_names_take_the_dialect() {
+    assert!(deepseek::is_deepseek_model(&model("deepseek-chat", None)));
+    assert!(deepseek::is_deepseek_model(&model(
+        "deepseek-reasoner",
+        Some("https://example.com/v1")
+    )));
+}
 
-    let model = Model {
-        api_key: "sk-test".to_string(),
-        model: "deepseek-chat".to_string(),
-        base_url: None,
-        max_tokens: None,
-    };
+#[test]
+fn deepseek_base_url_takes_the_dialect() {
+    assert!(deepseek::is_deepseek_model(&model(
+        "some-other-model",
+        Some("https://api.deepseek.com")
+    )));
+    assert!(deepseek::is_deepseek_model(&model(
+        "some-other-model",
+        Some("https://proxy.internal/deepseek/v1")
+    )));
+}
 
-    let context = adaptor::Context::default();
-    let tools = vec![];
+#[test]
+fn plain_openai_models_stay_on_the_openai_dialect() {
+    assert!(!deepseek::is_deepseek_model(&model(
+        "gpt-4o",
+        Some("https://api.openai.com/v1")
+    )));
+    assert!(!deepseek::is_deepseek_model(&model("gpt-4o", None)));
+}
 
-    // Should route to deepseek dialect which sets max_tokens
-    deepseek::stream_cb(&model, &context, &tools, &signal, &mut emit);
-    assert!(
-        !events.is_empty(),
-        "stream_cb must emit at least a terminal event"
+#[test]
+fn max_tokens_defaults_when_absent() {
+    assert_eq!(
+        deepseek::effective_max_tokens(&model("deepseek-chat", None)),
+        deepseek::DEEPSEEK_DEFAULT_MAX_TOKENS
     );
 }
 
 #[test]
-fn test_deepseek_dialect_detection_url() {
-    let signal = AtomicBool::new(false);
-    let mut events: Vec<StreamEvent> = vec![];
-    let mut emit = |e: &StreamEvent| events.push(e.clone());
-
-    let model = Model {
-        api_key: "sk-test".to_string(),
-        model: "gpt-4o".to_string(),
-        base_url: Some("https://api.deepseek.com".to_string()),
-        max_tokens: None,
-    };
-
-    let context = adaptor::Context::default();
-    let tools = vec![];
-
-    deepseek::stream_cb(&model, &context, &tools, &signal, &mut emit);
-    assert!(!events.is_empty());
-}
-
-#[test]
-fn test_deepseek_max_tokens_default() {
-    let model = Model {
-        api_key: "sk-test".to_string(),
-        model: "deepseek-reasoner".to_string(),
-        base_url: None,
-        max_tokens: None,
-    };
-
-    // The adapter clones and defaults max_tokens to 8192
-    // We can't easily assert internal without exposing, but the call succeeds
-    let signal = AtomicBool::new(false);
-    let mut events = vec![];
-    let mut emit = |e: &StreamEvent| events.push(e.clone());
-    let context = adaptor::Context::default();
-
-    deepseek::stream_cb(&model, &context, &[], &signal, &mut emit);
-    assert_eq!(model.max_tokens, None, "original model unchanged");
-}
-
-#[test]
-fn test_non_deepseek_dialect_detection() {
-    let signal = AtomicBool::new(false);
-    let mut events = vec![];
-    let mut emit = |e: &StreamEvent| events.push(e.clone());
-
-    let model = Model {
-        api_key: "sk-test".to_string(),
-        model: "gpt-4o".to_string(),
-        base_url: Some("https://api.openai.com/v1".to_string()),
-        max_tokens: None,
-    };
-
-    let context = adaptor::Context::default();
-    adaptor::stream_cb(&model, &context, &[], &signal, &mut emit);
-    assert!(!events.is_empty());
-}
-
-#[test]
-fn test_openai_url_detection() {
-    let signal = AtomicBool::new(false);
-    let mut events = vec![];
-    let mut emit = |e: &StreamEvent| events.push(e.clone());
-
-    let model = Model {
-        api_key: "sk-test".to_string(),
-        model: "claude-3".to_string(),
-        base_url: Some("https://api.anthropic.com".to_string()),
-        max_tokens: None,
-    };
-
-    let context = adaptor::Context::default();
-    adaptor::stream_cb(&model, &context, &[], &signal, &mut emit);
-    assert!(!events.is_empty());
-}
-
-#[test]
-fn test_deepseek_max_tokens_preserved() {
-    let model = Model {
-        api_key: "sk-test".to_string(),
-        model: "deepseek-chat".to_string(),
-        base_url: None,
-        max_tokens: Some(4096),
-    };
-
-    let signal = AtomicBool::new(false);
-    let mut events = vec![];
-    let mut emit = |e: &StreamEvent| events.push(e.clone());
-    let context = adaptor::Context::default();
-
-    deepseek::stream_cb(&model, &context, &[], &signal, &mut emit);
-    assert_eq!(model.max_tokens, Some(4096));
-}
-
-#[test]
-fn test_dialect_detection_edge_cases() {
-    let signal = AtomicBool::new(false);
-    let mut events = vec![];
-    let mut emit = |e: &StreamEvent| events.push(e.clone());
-    let context = adaptor::Context::default();
-
-    // Case: model name with "deepseek" substring but not prefix
-    let model1 = Model {
-        api_key: "sk-test".to_string(),
-        model: "my-deepseek-model".to_string(),
-        base_url: None,
-        max_tokens: None,
-    };
-    adaptor::stream_cb(&model1, &context, &[], &signal, &mut emit);
-    assert!(!events.is_empty());
-
-    events.clear();
-
-    // Case: base_url with deepseek in path
-    let model2 = Model {
-        api_key: "sk-test".to_string(),
-        model: "gpt-4".to_string(),
-        base_url: Some("https://example.com/deepseek/v1".to_string()),
-        max_tokens: None,
-    };
-    adaptor::stream_cb(&model2, &context, &[], &signal, &mut emit);
-    assert!(!events.is_empty());
+fn max_tokens_default_does_not_override_caller_value() {
+    let mut m = model("deepseek-chat", None);
+    m.max_tokens = Some(2048);
+    assert_eq!(deepseek::effective_max_tokens(&m), 2048);
 }

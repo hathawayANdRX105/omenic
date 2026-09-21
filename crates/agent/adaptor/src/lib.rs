@@ -161,10 +161,11 @@ pub enum StreamEvent {
     Error(String),
 }
 
-/// Dispatcher: routes to DeepSeek or OpenAI dialect based on model/base_url.
+/// Dispatcher: routes to the DeepSeek or OpenAI dialect.
 ///
-/// - DeepSeek if `model.model` starts with "deepseek" or `base_url` contains "deepseek"
-/// - Otherwise delegates to `openai::stream_cb` (zero behavior change for OpenAI)
+/// DeepSeek when [`deepseek::is_deepseek_model`] says so (model id prefix or
+/// base URL mention); otherwise `openai::stream_cb` verbatim — zero behavior
+/// change for OpenAI configs.
 pub fn stream_cb(
     model: &Model,
     context: &Context,
@@ -172,12 +173,7 @@ pub fn stream_cb(
     signal: &AtomicBool,
     emit: &mut dyn FnMut(&StreamEvent),
 ) {
-    if model.model.starts_with("deepseek")
-        || model
-            .base_url
-            .as_ref()
-            .map_or(false, |url| url.contains("deepseek"))
-    {
+    if deepseek::is_deepseek_model(model) {
         deepseek::stream_cb(model, context, tools, signal, emit);
     } else {
         openai::stream_cb(model, context, tools, signal, emit);

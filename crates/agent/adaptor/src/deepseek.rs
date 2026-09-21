@@ -1,34 +1,45 @@
 //! DeepSeek dialect wrapper for OpenAI-compatible LLM streaming.
 //!
-//! This adapter handles DeepSeek-specific wire differences:
-//! - Max_tokens defaults to 8192 when not provided (DeepSeek API requires it)
-//! - Reasoning_content is discarded (currently) - stream events stay as TextDelta/ToolCall
-//! - All other OpenAI-compatible behavior is delegated to the openai adapter
+//! DeepSeek's chat-completions API is OpenAI-compatible except:
+//! - `max_tokens` is required — requests without it fail with HTTP 400.
+//! - `deepseek-reasoner` streams a `reasoning_content` delta that the shared
+//!   OpenAI SSE parser does not model.
 //!
-//! Dialect detection is performed by the dispatcher in `lib.rs`:
-//!   - Model name starts with "deepseek"
-//!   - OR base_url host contains "deepseek"
-//!
-//! Follow-up items:
-//! - Expose max_tokens as configurable instead of hard-coded default (ponytail: global lock, per-account locks if throughput matters)
-//! - Add StreamEvent::ReasoningDelta variant and update orbit/fallback.rs, web/state/memory_link.rs
-//!   to handle streaming reasoning content (currently dropped by shared SSE parser)
-//!
-use std::sync::atomic::{AtomicBool, Ordering};
+//! This wrapper fixes the first (defaulting `max_tokens`) and delegates the
+//! rest to the OpenAI adapter. Follow-up (not in this batch): surface
+//! `reasoning_content` as a `StreamEvent::ReasoningDelta` variant — that needs
+//! new arms in `orbit::lib.rs`, `orbit::fallback.rs`, and
+//! `web/state/memory_link.rs`, which currently match `StreamEvent`
+//! exhaustively.
 
-use serde_json::Value;
+use std::sync::atomic::AtomicBool;
 
-use crate::{Block, Context, Model, Role, StopReason, StreamEvent, ToolDef};
+use crate::{Context, Model, StreamEvent, ToolDef};
 
-/// DeepSeek-specific stream dispatcher.
+/// DeepSeek's documented default output cap when the caller sets none.
+pub const DEEPSEEK_DEFAULT_MAX_TOKENS: u32 = 8192;
+
+/// Whether `model` should take the DeepSeek dialect.
 ///
-/// The only differences from OpenAI are:
-/// 1. Ensure max_tokens is set (defaults to 8192).
-/// 2. Explicitly discard reasoning_content fields that the shared OpenAI SSE parser
-///    currently ignores anyway (per module doc comment).
-///
-/// All other streaming semantics (tool calls, text deltas, error handling) are
-/// identical to the OpenAI path and are delegated directly.
+/// Heuristic (ponytail: no new config field — `Model` is constructed in 10+
+/// places): the model id starts with `deepseek`, or the base URL mentions
+/// `deepseek`. Known limitation: a self-hosted DeepSeek-compatible endpoint
+/// whose URL does not contain "deepseek" and whose model is not named
+/// `deepseek-*` keeps the OpenAI dialect.
+pub fn is_deepseek_model(model: &Model) -> bool {
+    model.model.starts_with("deepseek")
+        || model
+            .base_url
+            .as_ref()
+            .is_some_and(|url| url.contains("deepseek"))
+}
+
+/// `max_tokens` to send: the caller's value, or the DeepSeek default.
+pub fn effective_max_tokens(model: &Model) -> u32 {
+    model.max_tokens.unwrap_or(DEEPSEEK_DEFAULT_MAX_TOKENS)
+}
+
+/// DeepSeek dialect entry point: defaults `max_tokens`, then delegates.
 pub fn stream_cb(
     model: &Model,
     context: &Context,
@@ -36,17 +47,7 @@ pub fn stream_cb(
     signal: &AtomicBool,
     emit: &mut dyn FnMut(&StreamEvent),
 ) {
-    // Ponytail comment: default max_tokens = 8192, a DeepSeek API requirement.
-    // The actual value is per-account configurable; keep a lock for performance.
-    let mut model_with_max_tokens = Model {
-        api_key: model.api_key.clone(),
-        model: model.model.clone(),
-        base_url: model.base_url.clone(),
-        max_tokens: model.max_tokens.or(Some(8192)),
-    };
-
-    // The shared sse parser discards reasoning_content by design.
-    // This is intentional: StreamEvent currently lacks a variant for reasoning.
-    // (See module docs for follow-up on ReasoningDelta variant.)
-    super::openai::stream_cb(&model_with_max_tokens, context, tools, signal, emit);
+    let mut effective = model.clone();
+    effective.max_tokens = Some(effective_max_tokens(model));
+    super::openai::stream_cb(&effective, context, tools, signal, emit);
 }
