@@ -48,12 +48,23 @@ impl TimeoutPolicy {
     /// Returns the deadline duration for a tool name, or None if no rule matches.
     /// Matches using simple glob pattern (supports `*` wildcard).
     pub fn deadline_for(&self, tool: &str) -> Option<Duration> {
+        // Most specific match wins — deterministic regardless of the
+        // HashMap's iteration order: fewer wildcards first, then more
+        // literal characters ("*.py" beats "*" for "script.py"; an exact
+        // name beats every pattern).
+        let mut best: Option<((usize, std::cmp::Reverse<usize>), u64)> = None;
         for (pattern, &seconds) in &self.config.rules {
-            if glob_match(pattern, tool) {
-                return Some(Duration::from_secs(seconds));
+            if !glob_match(pattern, tool) {
+                continue;
+            }
+            let wildcards = pattern.matches('*').count();
+            let literal = pattern.len() - wildcards;
+            let key = (wildcards, std::cmp::Reverse(literal));
+            if best.is_none_or(|(best_key, _)| key < best_key) {
+                best = Some((key, seconds));
             }
         }
-        None
+        best.map(|(_, seconds)| Duration::from_secs(seconds))
     }
 
     /// Returns all configured rules (for testing/daemon queries)
