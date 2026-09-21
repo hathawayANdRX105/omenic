@@ -15,11 +15,12 @@
 //!   OMENIC_WEB_SEARCH_API_KEY), one generic JSON contract; unconfigured
 //!   returns a structured error, never silent empty.
 
+use std::io::Read;
 use std::net::{IpAddr, ToSocketAddrs};
-use std::sync::Arc;
 use std::time::Duration;
 
-use omenic_harness_core::{AbortSignal, Tool, ToolError, ToolResult, ToolSpec};
+use crate::Tool;
+use omenic_harness_core::{AbortSignal, ToolError, ToolResult, ToolSpec};
 use serde_json::{Value, json};
 
 pub const WEB_FETCH_TOOL_NAME: &str = "web_fetch";
