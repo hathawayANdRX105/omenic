@@ -28,16 +28,17 @@ main `43534a6`。daemon / web / CLI 三入口均可构建运行（CI 证实）�
 | subagent | fork 进程内后端 + ACP 出进程后端（两阶梯 dispose）+ interrupt + `[[subagent.providers]]` |
 | todo + goal 全链路 | 5 把模型工具（todo_add/todo_update/todo_list/goal_add/goal_link）+ jsonl 存储 + `todo.list`/`goal.list` 读 RPC + web 看板投影（CLI 任务/模型 todo-goal/run 记录三类同板） |
 | session 自动标题 | 首条用户消息确定性截词（40 字符预算 + markdown 剥刺 + emoji 安全）+ `session.update_title` 增量 RPC |
+| plan-mode | `/plan` 家族在 turn 间切状态（daemon 拦截 worker.prompt）；`exit_plan_mode` 工具挂 review port，计划评审问题经 `user.question` 事件推送 + `user.answer`/`user.question.pending` RPC 回答；web 问题卡（composer 上方）；plan:policy 段按态注入 system prompt（orbit 引擎每轮重算） |
+| guard | repeat-tool-reminder + timeout-policy 两插件，`config["guard"]` 切片调参，缺省静默降级 |
+| skill | 有界发现 + catalog 服务 + skill 元工具（cwd 发现，注册进 harness.tools） |
+| DeepSeek adapter | agent/adaptor 内方言适配（OpenAI 兼容端点之外的模型特性入口） |
+| boot/bundle profiles | `profiles/boot.toml` + `profiles/bundle.toml` 内嵌于 CLI，`oi profile list\|apply` 写入 `.oi/config.toml`（不覆盖）；声明式起点，非热切换 |
 
 ## 没实现（队列，按「打开 web 用时哪里卡」排）
 
 ### P1 — 下一批候选（不阻塞，做了能感受到）
 
-| 项 | 为什么 | 成本 |
-|---|---|---|
-| plan-mode / guard / skill 元工具 | plan-mode=动手前出计划让你确认；guard=重复提醒/超时止损；skill=复用成套指令。三件可分开单件落地 | ~5–8 天 |
-| boot/bundle 声明式装配 | 换模型/渠道/插件集要改 TOML+重启；声明式 profile 是多场景切换地基，也是 ferrite 复用 harness 的前置 | ~3–4 天 |
-| DeepSeek/PiAi 官方 adapter | 现全走 OpenAI 兼容端点，reasoner 等模型特性吃不到 | ~2 天/adapter |
+（2026-09-21 P1 批次已清空：plan-mode/guard/skill 三件、boot/bundle profiles、DeepSeek adapter 全部落地，见上表。下一批候选待定。）
 
 ### P2 — 明确延后（文字体验没稳住之前不排）
 
