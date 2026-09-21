@@ -2067,9 +2067,10 @@ dependencies = [
  "omenic-harness-core",
  "omenic-harness-plugin",
  "omenic-harness-tools",
+ "parking_lot",
  "serde_json",
- "thiserror 2.0.20",
  "tempfile",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -2100,8 +2101,8 @@ dependencies = [
  "omenic-harness-prompt",
  "omenic-harness-tools",
  "serde_json",
- "thiserror 2.0.20",
  "tempfile",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -2142,8 +2143,8 @@ dependencies = [
  "omenic-harness-prompt",
  "omenic-harness-tools",
  "serde_json",
- "thiserror 2.0.20",
  "tempfile",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
