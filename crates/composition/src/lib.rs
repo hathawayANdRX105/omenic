@@ -5,15 +5,15 @@
 //! Worker + SessionDb wiring still lives in the daemon crate; this root
 //! covers the harness family plus the agent-domain thin layers.
 
-use std::sync::Arc;
-
-use serde_json::Value;
-
 use omenic_harness_compaction::CompactionPlugin;
+use omenic_harness_guard::{GuardConfig, GuardPlugin};
 use omenic_harness_instruction::InstructionPlugin;
 use omenic_harness_prompt::PromptTemplate;
 use omenic_harness_runtime::LoopEngine;
+use omenic_harness_skill::SkillPlugin;
 use omenic_harness_subagent::{SubagentRuntime, ToolSubagentControlPlugin, ToolSubagentPlugin};
+use serde_json::Value;
+use std::sync::Arc;
 
 // Re-export the container vocabulary: a host wiring `assemble` in speaks
 // only to this root, and never declares the plugin crate itself.
@@ -68,6 +68,37 @@ pub fn assemble(
             None => InstructionPlugin::default(),
         };
         registry.register(Arc::new(instruction), ctx)?;
+        // Guard plugin: repeat-tool-reminder + timeout-policy. Config slice at
+        // config["guard"]; absent config keeps defaults silently, a present
+        // but invalid slice degrades to defaults with a warning.
+        let guard_plugin = match ctx.config().get("guard") {
+            Some(value) if !value.is_null() => {
+                match serde_json::from_value::<GuardConfig>(value.clone()) {
+                    Ok(cfg) => GuardPlugin::new(cfg).unwrap_or_else(|e| {
+                        eprintln!("[guard] config invalid: {e}; using defaults");
+                        GuardPlugin::new(GuardConfig::default())
+                            .expect("default GuardConfig is always valid")
+                    }),
+                    Err(e) => {
+                        eprintln!("[guard] config deserialize failed: {e}; using defaults");
+                        GuardPlugin::new(GuardConfig::default())
+                            .expect("default GuardConfig is always valid")
+                    }
+                }
+            }
+            _ => GuardPlugin::new(GuardConfig::default())
+                .expect("default GuardConfig is always valid"),
+        };
+        registry.register(Arc::new(guard_plugin), ctx)?;
+
+        // Skill plugin: discovers skills at cwd (or config["cwd"] like InstructionPlugin).
+        let skill_cwd = ctx.config()["cwd"].as_str().map(std::path::PathBuf::from);
+        let skill_plugin = match skill_cwd {
+            Some(cwd) => SkillPlugin::new(cwd),
+            None => SkillPlugin::default(),
+        };
+        registry.register(Arc::new(skill_plugin), ctx)?;
+
         // 6. host plugins last: they may provide over anything above.
         for plugin in plugins {
             registry.register(plugin, ctx)?;

@@ -26,3 +26,25 @@ jobs:
         timeout-minutes: 25
       - name: Format check
         run: cargo fmt --all -- --check
+
+  # Batch smoke: the P1 plan-mode feature end-to-end through a real daemon
+  # socket (stub LLM calls exit_plan_mode, user.answer approves) plus the
+  # `oi profile` CLI against the real binary. Kept as its own job so a
+  # feature-level regression names itself instead of hiding in the suite.
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system deps (ripgrep for tools tests)
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Plan-mode daemon round trip
+        run: cargo test --locked -p daemon --test plan_mode_e2e -- --nocapture
+        timeout-minutes: 15
+      - name: Profile CLI
+        run: cargo test --locked -p cli --test profile_cli -- --nocapture
+        timeout-minutes: 15
+      - name: UI contract anchors
+        run: cargo test --locked -p web-cli --test ui_contract -- --nocapture
+        timeout-minutes: 10

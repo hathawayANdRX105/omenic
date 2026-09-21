@@ -29,6 +29,7 @@ pub mod client;
 mod dispatch;
 pub mod lock;
 pub mod protocol;
+mod questions;
 mod server;
 pub mod session_query;
 mod socket;
@@ -37,6 +38,10 @@ pub mod state;
 pub use client::{AppendOutcome, ClientError, DaemonClient, DaemonInfo, Subscription};
 pub use lock::InstanceLock;
 pub use protocol::{Command, EventFrame, Request, Response, ResponseError};
+pub use questions::{
+    AnswerError, QuestionAnswer, QuestionBroker, QuestionBrokerConfig, QuestionIntent,
+    QuestionItem, QuestionOption, QuestionTicket,
+};
 pub use server::{Daemon, DaemonConfig};
 pub use session_query::SESSION_QUERY_NAME;
 pub use socket::SocketAddr;

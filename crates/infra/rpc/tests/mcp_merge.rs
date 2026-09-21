@@ -208,6 +208,7 @@ fn orbit_setup_with_mcp_tools_stays_clone_and_shares_the_list() {
             catalog: Arc::new(ToolCatalog::new()),
             mcp_tools: Arc::clone(&mcp_tools),
             session_tools: Arc::new(Vec::new()),
+            plan_policy_section: None,
         },
     };
 

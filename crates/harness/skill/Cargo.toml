@@ -1,0 +1,20 @@
+[package]
+name = "omenic-harness-skill"
+version = "0.1.0"
+edition = "2024"
+description = "Project-local skill discovery, bounded catalog, and the skill meta-tool"
+license = "MIT"
+publish = false
+
+[dependencies]
+omenic-harness-core = { path = "../core" }
+omenic-harness-plugin = { path = "../plugin" }
+omenic-harness-prompt = { path = "../prompt" }
+omenic-harness-tools = { path = "../tools" }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+omenic-harness-plugin = { path = "../plugin" }
+omenic-harness-tools = { path = "../tools" }
+tempfile = { workspace = true }

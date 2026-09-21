@@ -1,0 +1,22 @@
+[package]
+name = "omenic-harness-plan-mode"
+version = "0.1.0"
+edition = "2024"
+description = "Plan mode: logged collaboration state, /plan command, reviewed exit_plan_mode tool, plan:policy section"
+license = "MIT"
+publish = false
+
+[dependencies]
+omenic-harness-core = { path = "../core" }
+omenic-harness-plugin = { path = "../plugin" }
+omenic-harness-prompt = { path = "../prompt" }
+omenic-harness-tools = { path = "../tools" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+omenic-harness-plugin = { path = "../plugin" }
+omenic-harness-tools = { path = "../tools" }
+serde_json = { workspace = true }
+tempfile = { workspace = true }

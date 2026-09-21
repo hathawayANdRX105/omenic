@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 omenic-web-state = { path = "../state" }
+omenic-web-client = { path = "../client" }
 dioxus = { version = "0.7" }
 pulldown-cmark = { workspace = true }
 ammonia = { workspace = true }

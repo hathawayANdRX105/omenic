@@ -94,6 +94,20 @@ enum Command {
         #[command(subcommand)]
         sub: DaemonCmd,
     },
+    /// Boot/bundle profiles: prewritten `.oi/config.toml` starting points.
+    Profile {
+        #[command(subcommand)]
+        sub: ProfileCmd,
+    },
+}
+
+/// Sub-views of `cli profile`.
+#[derive(Subcommand)]
+enum ProfileCmd {
+    /// List embedded profiles (boot / bundle).
+    List,
+    /// Write a profile's config into `.oi/config.toml` (never overwrites).
+    Apply { name: String },
 }
 
 #[derive(Subcommand)]
@@ -406,6 +420,13 @@ fn dispatch_sub(command: Command, json: bool) -> Result<u8, String> {
         Command::Blocked => blocked_cmd(json),
         Command::Compact => compact_cmd(json),
         Command::Init => init_cmd(json),
+        Command::Profile { sub } => match sub {
+            ProfileCmd::List => profile_list_cmd(json),
+            ProfileCmd::Apply { name } => {
+                let dir = std::env::current_dir().map_err(|e| format!("cwd error: {e}"))?;
+                profile_apply_cmd_at(&dir, &name, json)
+            }
+        },
         Command::Dep { sub } => {
             let config = Config::load().map_err(|e| format!("config error: {e}"))?;
             let store = Store::new(&config.data_dir);
@@ -1419,6 +1440,74 @@ fn init_cmd_at(dir: &std::path::Path, json: bool) -> Result<u8, String> {
     };
     if json {
         json_ok(msg);
+    } else {
+        println!("{msg}");
+    }
+    Ok(0)
+}
+
+/// Embedded boot/bundle profiles. Files live at the repo root `profiles/`;
+/// embedded (not read from disk) so the binary works from any cwd.
+const PROFILES: &[(&str, &str)] = &[
+    ("boot", include_str!("../../../profiles/boot.toml")),
+    ("bundle", include_str!("../../../profiles/bundle.toml")),
+];
+
+/// `profile list` -- 名字 + 文件首行描述。
+fn profile_list_cmd(json: bool) -> Result<u8, String> {
+    let rows: Vec<(&str, &str)> = PROFILES
+        .iter()
+        .map(|(name, body)| (*name, profile_blurb(body)))
+        .collect();
+    if json {
+        let value: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|(name, blurb)| serde_json::json!({ "name": name, "description": blurb }))
+            .collect();
+        print_json(&value);
+    } else {
+        for (name, blurb) in &rows {
+            println!("{name}\t{blurb}");
+        }
+    }
+    Ok(0)
+}
+
+/// 文件首条 `#` 注释即描述（ profiles 的约定：第一行写用途）。
+fn profile_blurb(body: &str) -> &str {
+    body.lines()
+        .find_map(|l| l.strip_prefix("# "))
+        .unwrap_or("")
+        .trim()
+}
+
+/// `profile apply <name>` -- 把 profile 写进 `<dir>/.oi/config.toml`。
+/// 与 `init` 同一语义：已存在则拒绝覆盖（返回非零），不动用户配置。
+fn profile_apply_cmd_at(dir: &std::path::Path, name: &str, json: bool) -> Result<u8, String> {
+    let Some((_, body)) = PROFILES.iter().find(|(n, _)| *n == name) else {
+        return Err(format!(
+            "unknown profile '{name}' (available: {})",
+            PROFILES
+                .iter()
+                .map(|(n, _)| *n)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    };
+    let oi_dir = dir.join(".oi");
+    let config_path = oi_dir.join("config.toml");
+    if config_path.exists() {
+        return Err(format!(
+            "{} already exists; refusing to overwrite",
+            config_path.display()
+        ));
+    }
+    std::fs::create_dir_all(&oi_dir).map_err(|e| format!("could not create .oi/: {e}"))?;
+    std::fs::write(&config_path, body)
+        .map_err(|e| format!("could not write .oi/config.toml: {e}"))?;
+    let msg = format!("applied profile '{name}': {}", config_path.display());
+    if json {
+        json_ok(&msg);
     } else {
         println!("{msg}");
     }
