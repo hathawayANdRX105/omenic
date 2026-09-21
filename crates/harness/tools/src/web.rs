@@ -174,7 +174,7 @@ impl Tool for WebFetchTool {
     }
 
     fn execute(&self, args: &Value, _abort: &AbortSignal) -> Result<ToolResult, ToolError> {
-        let url = parse_url(args).map_err(ToolError::Execute)?;
+        let url = parse_url(args)?;
         if url
             .chars()
             .any(|c| c.is_control() || ('\u{007f}'..='\u{009f}').contains(&c))
@@ -216,7 +216,7 @@ impl Tool for WebFetchTool {
             .map_err(|e| ToolError::Execute(format!("web_fetch: body read failed: {e}")))?;
         let is_html = content_type.contains("html") || looks_like_html(&body);
         let text = if is_html {
-            html_to_text(&body).unwrap_or_else(|| HTML_OMITTED.to_string())
+            html_to_text(&body).unwrap_or_else(|_| HTML_OMITTED.to_string())
         } else {
             body
         };
@@ -385,9 +385,7 @@ pub fn render_search(body: &Value) -> String {
         .and_then(Value::as_array)
         .or_else(|| body.as_array());
     let Some(rows) = rows else {
-        return format!(
-            "{TRUST_NOTICE}\n\n(No parsable results in endpoint response.)".to_string()
-        );
+        return format!("{TRUST_NOTICE}\n\n(No parsable results in endpoint response.)");
     };
     let mut out = format!("{TRUST_NOTICE}\n\n");
     let mut count = 0usize;
