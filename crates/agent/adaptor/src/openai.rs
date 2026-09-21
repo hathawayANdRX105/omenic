@@ -30,10 +30,14 @@ pub(crate) fn context_to_openai_messages(context: &Context) -> Vec<Value> {
                 // - tool_result → 独立的 role:"tool" 消息,必须排在 assistant tool_calls 之后
                 // 做法:先把 ToolUse/Text 收集为 pending assistant,碰到 ToolResult(或 blocks 末尾)就落盘。
                 let mut pending_text = String::new();
+                let mut pending_reasoning = String::new();
                 let mut pending_calls: Vec<Value> = Vec::new();
                 let flush_assistant =
-                    |text: &mut String, calls: &mut Vec<Value>, messages: &mut Vec<Value>| {
-                        if text.is_empty() && calls.is_empty() {
+                    |text: &mut String,
+                     reasoning: &mut String,
+                     calls: &mut Vec<Value>,
+                     messages: &mut Vec<Value>| {
+                        if text.is_empty() && calls.is_empty() && reasoning.is_empty() {
                             return;
                         }
                         let mut msg = json!({ "role": role });
@@ -42,6 +46,11 @@ pub(crate) fn context_to_openai_messages(context: &Context) -> Vec<Value> {
                         } else {
                             json!(std::mem::take(text))
                         };
+                        // deepseek-reasoner: 思考链回写为消息级 reasoning_content
+                        // （ref dsh llm/adapters/openai.rs:121-204）。
+                        if !reasoning.is_empty() {
+                            msg["reasoning_content"] = json!(std::mem::take(reasoning));
+                        }
                         if !calls.is_empty() {
                             msg["tool_calls"] = Value::Array(std::mem::take(calls));
                         }
@@ -54,6 +63,12 @@ pub(crate) fn context_to_openai_messages(context: &Context) -> Vec<Value> {
                                 pending_text.push('\n');
                             }
                             pending_text.push_str(text);
+                        }
+                        Block::Reasoning { text } => {
+                            if !pending_reasoning.is_empty() {
+                                pending_reasoning.push('\n');
+                            }
+                            pending_reasoning.push_str(text);
                         }
                         Block::ToolUse { id, name, input } => {
                             pending_calls.push(json!({
@@ -69,7 +84,12 @@ pub(crate) fn context_to_openai_messages(context: &Context) -> Vec<Value> {
                             tool_use_id,
                             content,
                         } => {
-                            flush_assistant(&mut pending_text, &mut pending_calls, &mut messages);
+                            flush_assistant(
+                                &mut pending_text,
+                                &mut pending_reasoning,
+                                &mut pending_calls,
+                                &mut messages,
+                            );
                             messages.push(json!({
                                 "role": "tool",
                                 "tool_call_id": tool_use_id,
@@ -78,7 +98,12 @@ pub(crate) fn context_to_openai_messages(context: &Context) -> Vec<Value> {
                         }
                     }
                 }
-                flush_assistant(&mut pending_text, &mut pending_calls, &mut messages);
+                flush_assistant(
+                    &mut pending_text,
+                    &mut pending_reasoning,
+                    &mut pending_calls,
+                    &mut messages,
+                );
             }
         }
     }

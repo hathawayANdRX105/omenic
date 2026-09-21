@@ -69,7 +69,7 @@ fn block_ids(m: &Message) -> Vec<(String, bool)> {
         .map(|b| match b {
             Block::ToolUse { id, .. } => (id.clone(), true),
             Block::ToolResult { tool_use_id, .. } => (tool_use_id.clone(), false),
-            Block::Text { .. } => (String::new(), false),
+            Block::Text { .. } | Block::Reasoning { .. } => (String::new(), false),
         })
         .filter(|(id, _)| !id.is_empty())
         .collect()
