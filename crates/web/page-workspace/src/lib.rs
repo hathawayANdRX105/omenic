@@ -8,6 +8,8 @@
 use std::collections::{HashMap, HashSet};
 
 use dioxus::prelude::*;
+use omenic_web_client::QuestionAnswer;
+use omenic_web_client::QuestionItem;
 use omenic_web_client::daemon::WebDaemon;
 use omenic_web_client::llm::LlmRuntimeConfig;
 use omenic_web_components::chat::Chat;
@@ -217,6 +219,48 @@ fn worker_event_loop(d: WebDaemon, tx: tokio::sync::mpsc::UnboundedSender<AgentE
     }
 }
 
+/// 订阅读线程：阻塞消费 `user.question` 推送帧，断线退避重连（策略同
+/// [`worker_event_loop`]）。帧的 `event` 字段是序列化的 [`QuestionItem`]；
+/// 解析失败的帧跳过并留痕（协议演进的前向兼容），不中断订阅。
+fn question_event_loop(d: WebDaemon, tx: tokio::sync::mpsc::UnboundedSender<QuestionItem>) {
+    use std::time::Duration;
+    const BACKOFF: [u64; 4] = [1, 2, 4, 5];
+    let mut attempt = 0usize;
+    loop {
+        if let Ok(mut sub) = d.subscribe_user_questions() {
+            attempt = 0;
+            loop {
+                match sub.next_event(Duration::from_secs(5)) {
+                    Ok(Some(frame)) => {
+                        match serde_json::from_value::<QuestionItem>(frame.event) {
+                            Ok(item) => {
+                                if tx.send(item).is_err() {
+                                    return; // 消费端已亡
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("[web] malformed user.question frame: {e}");
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        if tx.is_closed() {
+                            return; // 消费端已亡：keepalive tick 时感知
+                        }
+                    }
+                    Err(_) => break, // 断线 → 走重连
+                }
+            }
+        }
+        if tx.is_closed() {
+            return;
+        }
+        eprintln!("retry in {}s", BACKOFF[attempt.min(BACKOFF.len() - 1)]);
+        std::thread::sleep(Duration::from_secs(BACKOFF[attempt.min(BACKOFF.len() - 1)]));
+        attempt += 1;
+    }
+}
+
 #[component]
 pub fn Workspace(
     config: LlmRuntimeConfig,
@@ -365,6 +409,34 @@ pub fn Workspace(
     // 每次渲染都重复请求，run 记录只在会话列表数据变化（加载/新建/删除）
     // 时重查一次；无 daemon 时不接 run.list，缓存恒空，渲染侧归一为原状态。
     let mut run_status_cache: Signal<HashMap<String, SessionStatus>> = use_signal(HashMap::new);
+    // 用户问题卡（plan-mode review）：订阅 user.question 推送 + 启动快照
+    // 兜底（订阅建立前已提交的问题推送不补发，只有快照看得到）。与 worker
+    // 事件管线同构：读线程只拥有克隆与 channel，Signal 全在消费侧碰。
+    let mut pending_question = use_signal(|| None::<QuestionItem>);
+    use_effect(move || {
+        let DataBackend::Daemon(d) = backend() else {
+            return;
+        };
+        let (q_tx, mut q_rx) = tokio::sync::mpsc::unbounded_channel::<QuestionItem>();
+        // 快照兜底：订阅建立前已提交的问题推送不补发，只有这条路径看得到。
+        // 只挂第一个（plan review 一次一个；多个排队时回答掉当前的，剩下
+        // 的等下一帧推送或下次快照）
+        let d_snapshot = d.clone();
+        let q_snapshot_tx = q_tx.clone();
+        std::thread::spawn(move || {
+            if let Ok(list) = d_snapshot.pending_questions() {
+                if let Some(first) = list.into_iter().next() {
+                    let _ = q_snapshot_tx.send(first);
+                }
+            }
+        });
+        std::thread::spawn(move || question_event_loop(d, q_tx));
+        spawn(async move {
+            while let Some(item) = q_rx.recv().await {
+                pending_question.set(Some(item));
+            }
+        });
+    });
     use_effect(move || {
         let DataBackend::Daemon(d) = backend() else {
             return;
@@ -862,6 +934,31 @@ pub fn Workspace(
         }
     };
 
+    // 回答问题（plan-mode review 卡片）：RPC 在线程里跑，结果经 channel 回
+    // 消费侧清卡片（Signal 非 Send，不能进 std::thread——同 worker 管线）。
+    // 失败（unknown / 断线 / 载荷非法）保留卡片并留痕：用户可重试，不致
+    // 莫名丢失待决问题
+    let on_answer = {
+        let backend_answer = backend;
+        move |(qid, answer): (String, QuestionAnswer)| {
+            if let DataBackend::Daemon(d) = backend_answer() {
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<bool>();
+                std::thread::spawn(move || {
+                    let ok = d.answer_question(&qid, &answer).is_ok();
+                    if !ok {
+                        eprintln!("[web] user.answer failed (question stays pending)");
+                    }
+                    let _ = tx.send(ok);
+                });
+                spawn(async move {
+                    if rx.recv().await == Some(true) {
+                        pending_question.set(None);
+                    }
+                });
+            }
+        }
+    };
+
     let on_toggle_thinking = move |()| {
         let mut st = statusline();
         st.thinking = if st.thinking == "off" {
@@ -1114,6 +1211,8 @@ pub fn Workspace(
                             on_model_change: on_model_change,
                             on_toggle_thinking: on_toggle_thinking,
                             on_abort: on_abort,
+                            question: pending_question(),
+                            on_answer: on_answer,
                             on_toggle_tasks: move |_| show_tasks.set(!show_tasks()),
                             dock: show_tasks().then(|| rsx! {
                                 TaskPanel {

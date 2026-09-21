@@ -12,3 +12,4 @@ omenic-web-page-stats = { path = "../page-stats" }
 omenic-web-page-config = { path = "../page-config" }
 dioxus = { version = "0.7" }
 tokio = { version = "1", default-features = false, features = ["sync"] }
+serde_json = { workspace = true }

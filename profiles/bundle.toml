@@ -1,0 +1,40 @@
+# bundle profile —— 全家桶：orbit worker + 瀑布回退 + MCP 工具 + 子代理 + 持久记忆。
+# 用法：oi profile apply bundle（.oi/config.toml 已存在时拒绝覆盖）。
+# 每一节都可整段删掉：删了即回 boot 形态，注释掉的段是同一形状的模板。
+omp_path = "omp"
+data_dir = "./.oi"
+model = "default"
+
+[llm]
+base_url = ""
+api_key = ""
+model = ""
+max_tokens = 8192
+
+# 主 provider 吐出任何内容前失败 → 按序切 fallback（B2b1 瀑布）。
+# [[llm.fallbacks]]
+# base_url = ""
+# api_key = ""
+# model = ""
+
+[daemon]
+cwd = "."
+max_turns = 64
+
+[memory]
+# 本地持久记忆：默认关。开了才往 data_dir/memory 写盘。
+enabled = false
+
+# MCP 外部工具服务器：每个 spawn 一个子进程并握手，工具并入 orbit 引擎。
+# [[mcp.servers]]
+# name = "example"        # 工具名命名空间前缀
+# command = "npx"         # 或留空 + url 走 streamable-HTTP
+# args = ["-y", "@example/mcp"]
+# env = {}
+
+# 进程外子代理（ACP 子进程）：daemon 可把 run 委派给它。
+# [[subagent.providers]]
+# name = "example"        # 不得与内置 "fork" 撞名
+# command = "acp-agent"
+# args = []
+# env = {}

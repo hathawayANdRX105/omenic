@@ -367,6 +367,7 @@ dependencies = [
  "subagent",
  "task",
  "tempfile",
+ "toml",
  "tools",
 ]
 
@@ -2212,6 +2213,7 @@ version = "0.1.0"
 dependencies = [
  "ammonia",
  "dioxus",
+ "omenic-web-client",
  "omenic-web-state",
  "pulldown-cmark",
 ]
@@ -2243,6 +2245,7 @@ dependencies = [
  "omenic-web-page-config",
  "omenic-web-page-stats",
  "omenic-web-state",
+ "serde_json",
  "tokio",
 ]
 
