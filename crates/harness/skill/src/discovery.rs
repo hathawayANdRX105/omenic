@@ -12,7 +12,7 @@ use crate::parse::{
     SkillLoadError, parse_skill_file,
 };
 
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Error)]
 pub enum SkillRuntimeError {
     #[error("too many skills or I/O failure")]
     Unavailable,

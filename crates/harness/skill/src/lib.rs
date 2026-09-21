@@ -10,8 +10,8 @@ pub mod parse;
 pub mod plugin;
 pub mod tool;
 
-pub use catalog::{SKILL_SERVICE, SkillCatalogEntry, SkillService, SkillServiceError};
-pub use discovery::{SkillRuntime, SkillRuntimeError};
+pub use catalog::{SKILL_SERVICE, SkillService, SkillServiceError};
+pub use discovery::{SkillCatalogEntry, SkillRuntime, SkillRuntimeError};
 pub use parse::{SkillLoadError, parse_skill_file};
 pub use plugin::SkillPlugin;
 pub use tool::SkillTool;
