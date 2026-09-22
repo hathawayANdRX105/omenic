@@ -106,7 +106,7 @@
 
 ## 主题三：钩子调度（gate pre-commit / pre-push / merge）
 
-- `gate init` 部署：复制二进制到 `~/.local/bin/gate`（+ 同二进制为 `~/.local/bin/gh`）、设置 `core.hooksPath=.githooks/hooks`、写 hook 模板
+- Gate 正本在 Canon；`gate init --rules-dir <canon>/rules/gate` 安装到 `~/.local/bin/gate`（并安装 `gh` 包装入口）、设置 `core.hooksPath=.githooks/hooks`、写 hook 模板并补齐缺失规则
 - pre-commit：CM-01/CM-02/CM-03（commit 标题格式/CJK/与 PR type 一致）+ workspace（WS-*）+ code（CD-*）
 - pre-push：workspace + code（cargo 不传 target、ruff 排除 .githooks、file_placement 忽略 .githooks/）
 - merge（手动 `gate merge <owner/repo> <pr_number> [--dry-run]`）：PR + reviews + cleanup + RV-07（CRG + ocr）
@@ -216,6 +216,6 @@ l3 默认 hooks: [merge]，本地用 `gate check <l3-name> --sla l3` 触发。
 
 ## 更新与校验
 
-- 新增/修改规则：只改 `.githooks/spec/*.yaml` 参数 + 相应校验器逻辑，更新本文档
-- gate 改动后：`cargo build --release -p gate-bin` → `upx --best --lzma target/release/gate` → `gate init` 重部署 + `install` 复制为 `~/.local/bin/gh`
+- 新增或修改项目规则：改 `.githooks/spec/**/*.yaml`；通用规则包和 Gate 实现改 Canon 的 `rules/gate/`、`bin/gate/`
+- Gate 改动后：在 Canon 的 `bin/gate/` 运行 `cargo build --release`，再从目标项目运行该二进制的 `init --rules-dir <canon>/rules/gate`
 - 触发式按上表 lazy 执行，不全局扫描

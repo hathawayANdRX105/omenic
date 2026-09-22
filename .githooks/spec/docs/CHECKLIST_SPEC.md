@@ -277,14 +277,13 @@ timeout: 30
 - **harness 凭据**：claude / 9router 的 API key 走用户 shell 环境（`ANTHROPIC_API_KEY` / `9ROUTER_API_KEY`），gate 不存不传。
 - **finding 严重度不可降级**：harness 报 FAIL 永远阻断；yaml 只能声明"最差严重度"，不能把 harness 报 FAIL 降成 WARN。
 
-## 迁移路径
+## 实现位置
 
-1. 加 `crates/spec/src/tools/checklist.rs`（~120 行）
-2. `bin/gate/src/main.rs` 在 PreCommit/PrePush/Merge 路径里调 `run_all`
-3. `.githooks/spec/dispatch.yaml` 加 `checklist` topic
-4. `.githooks/spec/SPEC_OVERVIEW.md` 加「主题九：Checklist（CK-01）」章节
-5. demo yaml + mock harness 脚本（不需真调 LLM；echo mock JSON 即可）
-6. `ferrite` 加 `.githooks/` + `gate init` → 跑 `gate pre-push` 验证
+1. Gate 正本位于 Canon：`bin/gate/src/engine.rs`
+2. 项目侧只保留 `.githooks/spec/checklist_*.yaml`、hook 配置和 harness
+3. `gate` 递归扫描 `.githooks/spec/`，每条 checklist 用自身 `hooks:` 声明触发点
+4. demo yaml 与 mock harness 仅验证协议，不需要真实调用 LLM
+5. 新项目运行 `gate init --rules-dir <canon>/rules/gate` 后，用 `gate pre-push` 验证
 
 ## 不做的事（YAGNI）
 

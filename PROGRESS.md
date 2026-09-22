@@ -61,7 +61,18 @@ main `43534a6`。daemon / web / CLI 三入口均可构建运行（CI 证实）�
 | C7（tag omenic-harness-v0.1.0 + ferrite 接线） | 前置全满足，**等用户拍板时机**，不占批次 |
 | C8 interaction + token-meter | 已裁定不做 |
 
-**独有功能保护区**（omenic 独有、dsh 无对应物——只读/单向依赖，不当缺口塞）：`crates/infra/memory`、`crates/agent/task`、`crates/evidence/spec` + `bin/gate`。
+**独有功能保护区**（omenic 独有、dsh 无对应物，只读或单向依赖，不当缺口塞）：`crates/infra/memory`、`crates/agent/task`、`crates/evidence/spec` 的模板层。Gate 正本已迁至 Canon；omenic 只保留 `.githooks/spec/` 项目规则与 hook 接线，不再保留 Gate 源码或仓库内二进制。
+
+## 接下来可并发推进
+
+以下路线修改面独立，可分别在 `.wt/<branch>` 推进：
+
+1. **Web 稳定性**：修复 daemon 重启后首条消息空 turn，以及首条消息标题更新失败无重试。两项集中在 daemon/web 边界，优先消除当前使用阻塞。
+2. **Leptos 资源基线**：保持现有 Dioxus 路径不动，在独立应用中完成空载、单会话和流式消息场景的 CPU/内存对照。数据不足前不启动迁移。
+3. **代码结构治理**：扩展 `.githooks/spec/quality/` 的结构规则，优先覆盖超大文件、重复实现、模块聚合和无效包装。Gate 只消费规则，不重新承载项目策略。
+4. **Agent 能力缺口**：从现有队列中独立实现 MCP tool-level filter、session resume checkpoint flush，或 jobs/terminal 缺口。每条路线限制在一个能力域。
+
+整合顺序：先合 Web 稳定性；Leptos 只产出基准结论；结构治理和 Agent 能力可并行，避免同时修改共享 composition/daemon 入口。
 
 ## 未修 known-issues（实测确认，未排期）
 

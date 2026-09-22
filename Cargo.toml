@@ -1,6 +1,6 @@
 [workspace]
 members = [
-  "bin/cli", "bin/gate", "bin/web",
+  "bin/cli", "bin/web",
   "crates/agent/adaptor", "crates/agent/orbit", "crates/agent/tools", "crates/agent/mcp",
   "crates/agent/task", "crates/evidence/spec", "crates/infra/config",
   "crates/agent/subagent", "crates/infra/memory", "crates/infra/prompts",

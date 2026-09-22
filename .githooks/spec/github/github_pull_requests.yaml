@@ -24,6 +24,16 @@ forbidden_brackets_in_title:
   - "〈"
   - "〉"
 
+# conventional commit 标题类型 (PR-02)：标题不匹配这些类型时按 ci_check_mode 提示
+conventional_commit_types: ["feat", "fix", "chore", "docs", "style", "refactor", "test", "ci", "build", "perf", "revert"]
+
+# PR-07 done-when 段落：检查 checkbox 数量；缺 done_when_min_checkboxes 时该检查关闭
+done_when_headings: ["Construction plan", "Checklist"]
+done_when_min_checkboxes: 2
+
+# PR-04 中文正文段：这些段必须含中文（heading 本身仍须英文）
+chinese_prose_sections: ["What"]
+
 # review 相关 (指 review 评论, 不在本 yaml 范围, 详见 #103)
 # allowed_review_types_prefixes: ...
 
@@ -72,6 +82,7 @@ keyword_label_suggestions:
 # - check_content: Part of/Related #N 是纯文本，不产生 GitHub Development 关联 → INFO
 # - run: Fixes #N 目标是 parent issue (epic) 时提示 (epic 侧不显示 closing 关联, 应 Fixes sub-issue) → WARN
 linkage_check:
+  plain_text_link_keywords: ["Part of", "Related"]  # 触发纯文本提示的关键词
   plain_text_links_severity: "INFO"   # Part of/Related 提示级别
   fixes_epic_severity: "WARN"         # Fixes 目标是 parent issue 时提示级别
 
