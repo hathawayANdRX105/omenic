@@ -1237,15 +1237,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gate-bin"
-version = "0.1.0"
-dependencies = [
- "clap",
- "serde_json",
- "spec",
-]
-
-[[package]]
 name = "generational-box"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3026,14 +3017,6 @@ dependencies = [
 [[package]]
 name = "spec"
 version = "0.1.0"
-dependencies = [
- "anyhow",
- "regex",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
-]
 
 [[package]]
 name = "stable_deref_trait"

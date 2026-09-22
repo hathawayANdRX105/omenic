@@ -67,6 +67,16 @@ title_forbidden_prefixes:
   - "issue:"
   - "sub:"
   - "parent:"
+# IS-14: issue 必须带至少一个 type label (此集合内的任意一个)
+type_labels:
+  - "bug"
+  - "enhancement"
+  - "feature"
+  - "documentation"
+  - "chore"
+  - "refactor"
+  - "tests"
+  - "epic"
 
 # 正文禁 Labels 段 (label 用 gh label 操作，不写正文)
 labels_section_forbidden: true

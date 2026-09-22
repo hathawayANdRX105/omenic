@@ -1,13 +1,9 @@
-//! spec — GitHub artifact specification + compliance validation.
+//! spec — GitHub artifact specification tables.
 //!
-//! Two layers:
-//! - `template`: spec table generation, parsing, rendering, validation.
-//! - `shared` / `rules` / `tools`: GitHub artifact compliance checks.
+//! `template`: spec table generation, parsing, rendering, validation
+//! (issue / epic / pr / review markdown skeletons consumed by the CLI).
 
-pub mod rules;
-pub mod shared;
 pub mod template;
-pub mod tools;
 
 // Re-export core types for backward compat (cli uses `spec::Spec`).
 pub use template::{Spec, SpecField};
