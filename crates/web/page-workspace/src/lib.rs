@@ -6,6 +6,8 @@
 //! 读线程 → channel → 消费 task）。
 
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use dioxus::prelude::*;
 use omenic_web_client::ClientError;
@@ -26,14 +28,51 @@ use omenic_web_state::types::{
 };
 use omenic_web_state::ui_state::{AgentEvent, UiState};
 
+/// Worker subscription readiness gate (minimal stdlib primitive).
+///
+/// Supports ready notification (after subscribe_worker succeeds), disconnect reset,
+/// and bounded wait. Uses `Arc<(Mutex<bool>, Condvar)>` for stdlib-only shared state with
+/// bounded wait and reset on disconnect.
+#[derive(Clone)]
+pub struct ReadinessGate(Arc<(Mutex<bool>, Condvar)>);
+
+impl ReadinessGate {
+    pub fn new() -> Self {
+        Self(Arc::new((Mutex::new(false), Condvar::new())))
+    }
+
+    /// Mark ready after successful subscribe_worker.
+    pub fn mark_ready(&self) {
+        let (ready, cvar) = &*self.0;
+        let mut guard = ready.lock().unwrap();
+        *guard = true;
+        cvar.notify_all();
+    }
+
+    /// Reset on disconnect/exit.
+    pub fn mark_not_ready(&self) {
+        let (ready, _) = &*self.0;
+        let mut guard = ready.lock().unwrap();
+        *guard = false;
+    }
+
+    /// Bounded wait for readiness (used by prompt thread). Returns `Ok(())` if ready within timeout, else `Err(())`.
+    pub fn wait_ready(&self, timeout: Duration) -> Result<(), ()> {
+        let (ready, cvar) = &*self.0;
+        let mut guard = ready.lock().unwrap();
+        if *guard {
+            return Ok(());
+        }
+        let result = cvar.wait_timeout(guard, timeout).unwrap();
+        if *result.0 { Ok(()) } else { Err(()) }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum View {
     Chat,
     Stats,
 }
-
-/// 任务看板拉取的 run 记录条数上限（与会话状态推断的 100 同量级；
-/// run ledger 是追加日志，取最近若干条足够铺满看板）。
 const RUN_TASK_LIMIT: u32 = 50;
 
 /// 任务看板拉取的任务存储条数上限（daemon `task.list` 的缺省值一致：
@@ -176,18 +215,24 @@ fn session_exists_in(space_sessions: Signal<HashMap<String, Vec<Session>>>, sid:
         .flatten()
         .any(|s| s.id == sid)
 }
-
 /// 订阅读线程：阻塞消费 `event.subscribe` 推送帧，断线退避重连
 /// （1s/2s/4s/5s 封顶）。只拥有 `WebDaemon` 克隆、`Subscription`、
 /// `WireTranslator` 与 `tx`——不碰任何 Signal（use_signal 底层
 /// UnsyncStorage 非 Send，不能进 std::thread）。退出条件：`tx.send`
 /// 失败（消费端随组件卸载而亡）或 keepalive tick 感知 `tx.is_closed`。
-fn worker_event_loop(d: WebDaemon, tx: tokio::sync::mpsc::UnboundedSender<AgentEvent>) {
+/// 在成功 `subscribe_worker` 后标记就绪，断线/退出时复位。
+fn worker_event_loop(
+    d: WebDaemon,
+    tx: tokio::sync::mpsc::UnboundedSender<AgentEvent>,
+    ready: ReadinessGate,
+) {
     use std::time::Duration;
     const BACKOFF: [u64; 4] = [1, 2, 4, 5];
     let mut attempt = 0usize;
     loop {
         if let Ok(mut sub) = d.subscribe_worker() {
+            // 订阅成功：标记就绪，允许背景提示线程继续
+            ready.mark_ready();
             attempt = 0;
             let mut translator = WireTranslator::new();
             loop {
@@ -199,19 +244,28 @@ fn worker_event_loop(d: WebDaemon, tx: tokio::sync::mpsc::UnboundedSender<AgentE
                         if let Some(ev) = translator.translate(&frame.event)
                             && tx.send(ev).is_err()
                         {
-                            return; // 消费端已亡
+                            // 消费端已亡：复位就绪并退出
+                            ready.mark_not_ready();
+                            return;
                         }
                     }
                     Ok(None) => {
                         if tx.is_closed() {
-                            return; // 消费端已亡：keepalive tick 时感知
+                            // 消费端已亡：复位就绪并退出
+                            ready.mark_not_ready();
+                            return;
                         }
                     }
-                    Err(_) => break, // 断线 → 走重连
+                    Err(_) => {
+                        // 断线：复位就绪并走重连
+                        ready.mark_not_ready();
+                        break;
+                    }
                 }
             }
         }
         if tx.is_closed() {
+            ready.mark_not_ready();
             return;
         }
         eprintln!("retry in {}s", BACKOFF[attempt.min(BACKOFF.len() - 1)]);
@@ -284,6 +338,10 @@ pub fn Workspace(
             }
         }
     });
+
+    // Worker subscription readiness gate (shared between worker_event_loop
+    // and the background prompt thread).
+    let readiness = use_signal(|| ReadinessGate::new());
 
     let data_dir = config.data_dir.clone();
     let mut spaces = use_signal(move || match backend() {
@@ -444,7 +502,9 @@ pub fn Workspace(
         };
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
         let d_consumer = d.clone();
-        std::thread::spawn(move || worker_event_loop(d, tx));
+        let ready = readiness();
+        let ready_for_worker = ready.clone();
+        std::thread::spawn(move || worker_event_loop(d, tx, ready_for_worker));
         spawn(async move {
             let mut total_out: u64 = 0;
             while let Some(ev) = rx.recv().await {
@@ -1043,7 +1103,16 @@ pub fn Workspace(
             eprintln!("[web] send sid={} len={}", sid, text.len());
             let (fail_tx, fail_rx) = tokio::sync::oneshot::channel::<()>();
             let run_id_prompt = run_id.clone();
+            // Clone readiness gate for the background prompt thread
+            let ready = readiness();
             std::thread::spawn(move || {
+                // Wait for worker subscription to be ready (bounded wait).
+                // If timeout, signal failure and return — never block UI thread.
+                if ready.wait_ready(Duration::from_secs(5)).is_err() {
+                    eprintln!("[web] worker subscription not ready within timeout");
+                    let _ = fail_tx.send(());
+                    return;
+                }
                 if let Some((id, _placeholder)) = created {
                     // 首条消息即标题来源：自建会话直接落库截词标题（走既有
                     // create_session，无新增 RPC）。
