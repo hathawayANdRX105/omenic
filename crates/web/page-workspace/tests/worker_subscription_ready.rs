@@ -1,58 +1,63 @@
-//! Deterministic tests for the worker subscription readiness gate.
-//! Proves blocked-before-ready, release-after-ready, reset requires another
-//! notification, and timeout behavior.
+//! Worker 订阅就绪门回归测试。
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use omenic_web_page_workspace::ReadinessGate;
-use std::time::Duration; // from lib.rs
 
 #[test]
-fn blocked_before_ready() {
+fn action_runs_only_after_subscription_is_ready() {
     let gate = ReadinessGate::new();
-    // Should not be ready initially
-    let result = gate.wait_ready(Duration::from_millis(50));
-    assert!(result.is_err()); // blocked until timeout
+    let called = Arc::new(AtomicBool::new(false));
+    let called_in_thread = Arc::clone(&called);
+    let gate_in_thread = gate.clone();
+
+    let waiter = std::thread::spawn(move || {
+        gate_in_thread.run_when_ready(Duration::from_secs(1), || {
+            called_in_thread.store(true, Ordering::SeqCst);
+        })
+    });
+
+    std::thread::sleep(Duration::from_millis(20));
+    assert!(
+        !called.load(Ordering::SeqCst),
+        "prompt must not run before subscribe"
+    );
+
+    gate.mark_ready();
+    assert!(waiter.join().unwrap().is_ok());
+    assert!(called.load(Ordering::SeqCst), "prompt runs after subscribe");
 }
 
 #[test]
-fn release_after_ready() {
+fn disconnect_releases_an_existing_waiter_without_running_action() {
     let gate = ReadinessGate::new();
-    gate.mark_ready();
-    let result = gate.wait_ready(Duration::from_millis(50));
-    assert!(result.is_ok());
-}
+    let gate_in_thread = gate.clone();
+    let started = Instant::now();
 
-#[test]
-fn reset_requires_another_notification() {
-    let gate = ReadinessGate::new();
-    gate.mark_ready();
-    let result1 = gate.wait_ready(Duration::from_millis(10));
-    assert!(result1.is_ok());
+    let waiter = std::thread::spawn(move || {
+        gate_in_thread.run_when_ready(Duration::from_secs(2), || {
+            panic!("disconnected prompt must not run")
+        })
+    });
 
+    std::thread::sleep(Duration::from_millis(20));
     gate.mark_not_ready();
-    let result2 = gate.wait_ready(Duration::from_millis(10));
-    assert!(result2.is_err());
-
-    gate.mark_ready();
-    let result3 = gate.wait_ready(Duration::from_millis(10));
-    assert!(result3.is_ok());
+    assert!(waiter.join().unwrap().is_err());
+    assert!(started.elapsed() < Duration::from_secs(1));
 }
 
 #[test]
-fn timeout_false() {
+fn timeout_does_not_run_action() {
     let gate = ReadinessGate::new();
-    let result = gate.wait_ready(Duration::from_millis(5));
-    assert!(result.is_err());
-}
+    let called = AtomicBool::new(false);
 
-#[test]
-fn test_worker_subscription_ready_integration() {
-    // Integration test for full lifecycle
-    let gate = ReadinessGate::new();
-    // Simulate worker_event_loop ready
-    gate.mark_ready();
-    // Simulate prompt thread wait
-    assert!(gate.wait_ready(Duration::from_millis(100)).is_ok());
-    // Simulate disconnect
-    gate.mark_not_ready();
-    assert!(gate.wait_ready(Duration::from_millis(5)).is_err());
+    assert!(
+        gate.run_when_ready(Duration::from_millis(10), || {
+            called.store(true, Ordering::SeqCst);
+        })
+        .is_err()
+    );
+    assert!(!called.load(Ordering::SeqCst));
 }
