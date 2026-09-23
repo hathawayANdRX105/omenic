@@ -1,4 +1,4 @@
-<!-- canon: hathawayANdRX105/canon @ bcddc25 (synced 2026-09-23) -->
+<!-- canon: hathawayANdRX105/canon @ d0a4b2c (synced 2026-09-23) -->
 # 版本统计任务书（版本口径唯一正本）
 
 > **什么时候读**：要发版、统计版本号、或改版本口径的时候。**解决什么**：major/minor/patch
