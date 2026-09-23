@@ -1,4 +1,4 @@
-<!-- canon: hathawayANdRX105/canon @ 9bfcb58 (synced 2026-09-23) -->
+<!-- canon: hathawayANdRX105/canon @ 6a7370c (synced 2026-09-23) -->
 #!/usr/bin/env python3
 """jev-ask — 调 TypeSafe System One (jev) 做结构化判断。零依赖，stdlib only。
 

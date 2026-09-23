@@ -1,4 +1,4 @@
-<!-- canon: hathawayANdRX105/canon @ 9bfcb58 (synced 2026-09-23) -->
+<!-- canon: hathawayANdRX105/canon @ 6a7370c (synced 2026-09-23) -->
 ---
 name: scaffold-dsh
 description: "铺地基：对照参考实现（dsh）用 codegraph 找出 gap，在目标 crate 里写 todo!/unimplemented! 占位（带出处+类型约束+issue 号），让全仓 cargo check 绿。适用场景：把某个外部项目（deepseek-harness / oh-my-pi / jcode）的某个模块复刻进本仓库 crate；对已有 crate 补充功能时参考现有实现铺骨架。触发词：铺地基、scaffold、骨架、占位、对照、复刻、replicate、replica。"
