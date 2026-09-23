@@ -238,6 +238,41 @@ fn session_exists_in(space_sessions: Signal<HashMap<String, Vec<Session>>>, sid:
         .flatten()
         .any(|s| s.id == sid)
 }
+/// 标题更新最多尝试两次；仅 `database_missing` 可重试。
+pub fn retry_update<F>(mut update: F) -> Result<(), ClientError>
+where
+    F: FnMut() -> Result<(), ClientError>,
+{
+    for attempt in 0..2 {
+        match update() {
+            Ok(()) => return Ok(()),
+            Err(ClientError::Server { code, message: _ })
+                if code == "database_missing" && attempt == 0 =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!("two-attempt retry loop always returns")
+}
+
+/// 返回仍需落库的标题。首条消息使用本次派生标题；此前落库失败时，
+/// 只要本地标题仍是那次派生结果就继续重试。本地标题已变则不覆盖。
+pub fn title_to_persist(
+    pending_title: Option<&str>,
+    current_title: &str,
+    derived_title: &str,
+    is_first_message: bool,
+) -> Option<String> {
+    if is_first_message {
+        return Some(derived_title.to_string());
+    }
+    match pending_title {
+        Some(pending) if pending == current_title => Some(pending.to_string()),
+        _ => None,
+    }
+}
 /// 订阅读线程：阻塞消费 `event.subscribe` 推送帧，断线退避重连
 /// （1s/2s/4s/5s 封顶）。只拥有 `WebDaemon` 克隆、`Subscription`、
 /// `WireTranslator` 与 `tx`——不碰任何 Signal（use_signal 底层
@@ -404,6 +439,7 @@ pub fn Workspace(
             .unwrap_or_default()
     });
     let mut session_messages: Signal<HashMap<String, Vec<ChatMessage>>> = use_signal(HashMap::new);
+    let mut pending_titles: Signal<HashMap<String, String>> = use_signal(HashMap::new);
     // 选中会话 → 填充消息：Daemon 线程内 load_messages(100)（线程 + join，
     // 仿旧 db_load_sessions 模式）；已缓存的会话不重复拉取。无 daemon 时
     // 不可能有选中会话（会话列表本身是空的），空态直接返回
@@ -1070,37 +1106,50 @@ pub fn Workspace(
     // ── 发送：内存即时上屏 + mock 模拟流；Daemon 模式追加持久化 ───────────
 
     let on_send = move |text: String| {
-        // 无会话时先建一个
-        let mut created: Option<(String, String)> = None;
+        // 无会话时先建一个；发送线程会再次幂等确保 daemon 行存在。
         if active_session_id().is_empty()
             || !space_sessions
                 .read()
                 .values()
                 .any(|list| list.iter().any(|s| s.id == active_session_id()))
         {
-            created = Some(create_session_in(
+            create_session_in(
                 active_space_path(),
                 config_send.model.clone(),
                 space_sessions,
                 session_messages,
                 active_space_path,
                 active_session_id,
-            ));
+            );
         }
         let sid = active_session_id();
 
-        // 首条用户消息：标题从时间戳占位换成消息内容截词（确定性
-        // fallback，不调 LLM）。以「内存消息列表此前为空」判定，而非
-        // 匹配占位文案——`会话 <ts>` 占位没有稳定字面量可匹配。
-        let is_first_message = session_messages
+        // 首条消息把时间戳占位换成确定性截词标题。落库失败后，后续发送
+        // 继续重试同一标题；本地标题若已改变则不覆盖。
+        let is_first_message = session_messages.read().get(&sid).is_none_or(Vec::is_empty);
+        let derived_title = title_from_first_message(&text);
+        let session = space_sessions
             .read()
-            .get(&sid)
-            .is_some_and(|msgs| msgs.is_empty());
-        // 侧栏按钮新建的会话（created == None）落库时只有占位标题，首条
-        // 消息后要把内存里已换成的截词标题补一次 `session.update_title`，
-        // 否则刷新后回退占位。自建会话（created == Some）下方线程内已用
-        // 派生标题 create，不需要重复 update。
-        let needs_title_update = created.is_none() && is_first_message;
+            .values()
+            .flatten()
+            .find(|session| session.id == sid)
+            .cloned();
+        let persisted_title = session.as_ref().and_then(|session| {
+            title_to_persist(
+                pending_titles.read().get(&sid).map(String::as_str),
+                &session.title,
+                &derived_title,
+                is_first_message,
+            )
+        });
+        if persisted_title.is_some() {
+            pending_titles
+                .write()
+                .insert(sid.clone(), persisted_title.clone().unwrap_or_default());
+        } else {
+            pending_titles.write().remove(&sid);
+        }
+        let parent_id = session.and_then(|session| session.parent_id);
 
         // Daemon 模式：真运行。用户消息持久化（线程内，刚自建的会话在同
         // 一线程先 create 再 append 保证顺序）；assistant 事件全走订阅
@@ -1126,26 +1175,34 @@ pub fn Workspace(
             eprintln!("[web] send sid={} len={}", sid, text.len());
             let (fail_tx, fail_rx) = tokio::sync::oneshot::channel::<()>();
             let run_id_prompt = run_id.clone();
+            let title_for_daemon = persisted_title.clone();
+            let (title_tx, title_rx) = tokio::sync::oneshot::channel::<bool>();
             let ready = readiness();
             std::thread::spawn(move || {
                 if ready
                     .run_when_ready(Duration::from_secs(5), || {
-                        if let Some((id, _placeholder)) = created {
-                            // 首条消息即标题来源:自建会话直接落库截词标题(走既有
-                            // create_session,无新增 RPC)。
-                            let _ = d.create_session(&id, &title_from_first_message(&text_daemon));
+                        // 与侧栏创建线程并发时，在同一发送线程再次幂等确保会话存在。
+                        // 子会话必须携带 parent_id，避免竞态下退化为根会话。
+                        let ensured = if let Some(parent_id) = parent_id.as_deref() {
+                            d.create_session_with_parent(
+                                &sid_daemon,
+                                &derived_title,
+                                Some(parent_id),
+                            )
+                        } else {
+                            d.create_session(&sid_daemon, &derived_title)
+                        };
+                        if let Err(e) = ensured {
+                            eprintln!("[web] session ensure failed: {e}");
                         }
                         let _ = d.append_message(&sid_daemon, true, &text_daemon);
-                        if needs_title_update {
-                            // 侧栏按钮新建的会话:占位标题已落库,首条消息后补一次
-                            // 真 UPDATE 让刷新后的标题与内存一致。失败只降级不阻断
-                            // 发送——标题回退占位好过消息发不出去。
-                            if let Err(e) = d.update_session_title(
-                                &sid_daemon,
-                                &title_from_first_message(&text_daemon),
-                            ) {
-                                eprintln!("[web] session title update failed: {e}");
+                        if let Some(title) = title_for_daemon {
+                            let persisted =
+                                retry_update(|| d.update_session_title(&sid_daemon, &title));
+                            if let Err(e) = &persisted {
+                                eprintln!("[web] session title update failed after retries: {e}");
                             }
+                            let _ = title_tx.send(persisted.is_ok());
                         }
                         d_prompt.worker_prompt_run(&sid_daemon, &run_id_prompt, &text_daemon)
                     })
@@ -1154,6 +1211,12 @@ pub fn Workspace(
                 {
                     eprintln!("[web] worker subscription unavailable or prompt failed");
                     let _ = fail_tx.send(());
+                }
+            });
+            let sid_title = sid.clone();
+            spawn(async move {
+                if title_rx.await == Ok(true) {
+                    pending_titles.write().remove(&sid_title);
                 }
             });
             let sid_fail = sid.clone();
