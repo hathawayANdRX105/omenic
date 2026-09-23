@@ -133,7 +133,7 @@ jobs:
           test "$(grep -c . "$TMP/nosuch.all")" -eq 1
 
           # 3) the turn really landed in the session DB (two-sided proof)
-          sid=$(./target/debug/oi --json session list "" --limit 1 | python3 -c \
+          sid=$(./target/debug/oi --json session list "%" --limit 1 | python3 -c \
             'import json,sys; d=json.load(sys.stdin); rows = d if isinstance(d, list) else (d.get("sessions") or d.get("rows") or []); print(rows[0]["id"])')
           ./target/debug/oi session attach "$sid" | tee "$TMP/attach.out"
           grep -q "数到三" "$TMP/attach.out"
