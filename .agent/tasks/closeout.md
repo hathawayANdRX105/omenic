@@ -1,4 +1,4 @@
-<!-- canon: hathawayANdRX105/canon @ d0a4b2c (synced 2026-09-23) -->
+<!-- canon: hathawayANdRX105/canon @ 9bfcb58 (synced 2026-09-23) -->
 <!-- canon: tasks/closeout.md — 收尾任务书。来源: dotfiles deskctl snippets(tasks/closeout, closeout-pr, dev) + ferrite/omenic/kime/silverq 各仓 .agent 文档收录。 -->
 # 项目收尾任务书（closeout）
 
