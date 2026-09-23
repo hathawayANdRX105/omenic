@@ -22,6 +22,7 @@ subagent = { path = "../../crates/agent/subagent" }
 mcp = { path = "../../crates/agent/mcp" }
 daemon = { path = "../../crates/infra/daemon" }
 session = { path = "../../crates/infra/session" }
+tui = { path = "../../crates/tui", package = "omenic-tui" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 clap = { workspace = true }
