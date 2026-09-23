@@ -8,9 +8,10 @@
 //! 退出码 3 的单行断线错误（route §3 边界、§6 断线 smoke）。
 //!
 //! keepalive：[`RunFilteredSubscription::next_event`] 到点返回 `Ok(None)`
-//! （tick 语义）而不是永久挂读——泵借此周期检查接收端是否还在
-//! （[`std::sync::mpsc::Sender::is_closed`]），消解「对端不发帧也感知不到
-//! 死」的死角；`run()` 的接收等待复用同一个 [`KEEPALIVE`]，超时只 continue。
+//! （tick 语义）而不是永久挂读——tick 只维持泵活着不退出（route §3）。
+//! 接收端已死没有主动探测手段（std mpsc `Sender` 无 `is_closed`），由
+//! 下一次 `send` 的 `Err`、订阅断线（`Err(_) => break`）或进程退出收线；
+//! `run()` 的接收等待复用同一个 [`KEEPALIVE`]，超时只 continue。
 
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
@@ -47,12 +48,10 @@ fn pump_loop(mut sub: RunFilteredSubscription, tx: mpsc::Sender<AgentEvent>) {
                     break;
                 }
             }
-            // keepalive tick：接收端还在就继续等（route §3：tick 不退出）。
-            Ok(None) => {
-                if tx.is_closed() {
-                    break;
-                }
-            }
+            // keepalive tick：不退出（route §3）。接收端消失无主动探测
+            // （std mpsc Sender 没有 is_closed），下一次 send 的 Err 或
+            // 订阅断线即收线；进程退出时随进程收线。
+            Ok(None) => {}
             // 读错误 = 断线：关闭 channel 就是给 run() 的断线信号。
             Err(_) => break,
         }

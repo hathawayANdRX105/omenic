@@ -97,7 +97,7 @@ pub fn run(opts: TuiOptions) -> Result<(), TuiError> {
         // user 消息先落库（daemon 不自动落，page-workspace 同序）：resume
         // 上下文回放（dispatch 的 WorkerPrompt 臂）读的就是这张表。
         push_user_message(&daemon, &sid, &msg)?;
-        let run_id = format!("r-{now_epoch_ms()}");
+        let run_id = format!("r-{}", now_epoch_ms());
         // 先订阅后 prompt（route §3 边界）：prompt 返回即可能开跑，事件一帧
         // 都不能漏——语义见 daemon dispatch.rs 的 G7-B set_active_run 注释。
         let rx = pump::spawn(daemon.subscribe_worker_run(&run_id).map_err(client_error)?)?;
