@@ -1,4 +1,3 @@
-<!-- canon: hathawayANdRX105/canon @ d0a4b2c (synced 2026-09-23) -->
 ---
 name: ainotation-web
 description: 'Ainotation 视觉标注反馈闭环：启动 admin-web 开发环境 + 标注同步栈（service/bridge/grant），并用 MCP 读写用户在页面上的 UI 标注。凡是用户提到「启动前端标注」「看我的标注/反馈」「ainotation」「页面标的问题改一下」，或要在 PR smoke 之外理解用户对 UI 的视觉意见，都用本技能——即使用户没说「ainotation」这个词。'
