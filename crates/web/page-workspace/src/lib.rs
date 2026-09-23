@@ -6,6 +6,8 @@
 //! 读线程 → channel → 消费 task）。
 
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use dioxus::prelude::*;
 use omenic_web_client::ClientError;
@@ -26,14 +28,74 @@ use omenic_web_state::types::{
 };
 use omenic_web_state::ui_state::{AgentEvent, UiState};
 
+/// Worker 事件订阅就绪门。
+///
+/// `generation` 在断线时递增,使已经等待的发送立即失败；断线后才开始的
+/// 发送仍可等待下一次重连成功。
+#[derive(Clone)]
+pub struct ReadinessGate(Arc<(Mutex<ReadinessState>, Condvar)>);
+
+#[derive(Default)]
+struct ReadinessState {
+    ready: bool,
+    generation: u64,
+}
+
+impl ReadinessGate {
+    pub fn new() -> Self {
+        Self(Arc::new((
+            Mutex::new(ReadinessState::default()),
+            Condvar::new(),
+        )))
+    }
+
+    pub fn mark_ready(&self) {
+        let (state, cvar) = &*self.0;
+        let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
+        state.ready = true;
+        cvar.notify_all();
+    }
+
+    pub fn mark_not_ready(&self) {
+        let (state, cvar) = &*self.0;
+        let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
+        state.ready = false;
+        state.generation = state.generation.wrapping_add(1);
+        cvar.notify_all();
+    }
+
+    /// 等待订阅就绪后执行操作。超时或等待期间断线时不执行操作。
+    /// 就绪判断结束后释放锁，避免 prompt RPC 堵住断线复位。
+    pub fn run_when_ready<T>(
+        &self,
+        timeout: Duration,
+        action: impl FnOnce() -> T,
+    ) -> Result<T, ()> {
+        let ready = {
+            let (state, cvar) = &*self.0;
+            let state = state.lock().unwrap_or_else(|e| e.into_inner());
+            let generation = state.generation;
+            let (state, timed_out) = cvar
+                .wait_timeout_while(state, timeout, |state| {
+                    !state.ready && state.generation == generation
+                })
+                .unwrap_or_else(|e| e.into_inner());
+            if state.ready {
+                true
+            } else {
+                debug_assert!(timed_out.timed_out() || state.generation != generation);
+                false
+            }
+        };
+        if ready { Ok(action()) } else { Err(()) }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum View {
     Chat,
     Stats,
 }
-
-/// 任务看板拉取的 run 记录条数上限（与会话状态推断的 100 同量级；
-/// run ledger 是追加日志，取最近若干条足够铺满看板）。
 const RUN_TASK_LIMIT: u32 = 50;
 
 /// 任务看板拉取的任务存储条数上限（daemon `task.list` 的缺省值一致：
@@ -176,18 +238,24 @@ fn session_exists_in(space_sessions: Signal<HashMap<String, Vec<Session>>>, sid:
         .flatten()
         .any(|s| s.id == sid)
 }
-
 /// 订阅读线程：阻塞消费 `event.subscribe` 推送帧，断线退避重连
 /// （1s/2s/4s/5s 封顶）。只拥有 `WebDaemon` 克隆、`Subscription`、
 /// `WireTranslator` 与 `tx`——不碰任何 Signal（use_signal 底层
 /// UnsyncStorage 非 Send，不能进 std::thread）。退出条件：`tx.send`
 /// 失败（消费端随组件卸载而亡）或 keepalive tick 感知 `tx.is_closed`。
-fn worker_event_loop(d: WebDaemon, tx: tokio::sync::mpsc::UnboundedSender<AgentEvent>) {
+/// 在成功 `subscribe_worker` 后标记就绪，断线/退出时复位。
+fn worker_event_loop(
+    d: WebDaemon,
+    tx: tokio::sync::mpsc::UnboundedSender<AgentEvent>,
+    ready: ReadinessGate,
+) {
     use std::time::Duration;
     const BACKOFF: [u64; 4] = [1, 2, 4, 5];
     let mut attempt = 0usize;
     loop {
         if let Ok(mut sub) = d.subscribe_worker() {
+            // 订阅成功：标记就绪，允许背景提示线程继续
+            ready.mark_ready();
             attempt = 0;
             let mut translator = WireTranslator::new();
             loop {
@@ -199,19 +267,28 @@ fn worker_event_loop(d: WebDaemon, tx: tokio::sync::mpsc::UnboundedSender<AgentE
                         if let Some(ev) = translator.translate(&frame.event)
                             && tx.send(ev).is_err()
                         {
-                            return; // 消费端已亡
+                            // 消费端已亡：复位就绪并退出
+                            ready.mark_not_ready();
+                            return;
                         }
                     }
                     Ok(None) => {
                         if tx.is_closed() {
-                            return; // 消费端已亡：keepalive tick 时感知
+                            // 消费端已亡：复位就绪并退出
+                            ready.mark_not_ready();
+                            return;
                         }
                     }
-                    Err(_) => break, // 断线 → 走重连
+                    Err(_) => {
+                        // 断线：复位就绪并走重连
+                        ready.mark_not_ready();
+                        break;
+                    }
                 }
             }
         }
         if tx.is_closed() {
+            ready.mark_not_ready();
             return;
         }
         eprintln!("retry in {}s", BACKOFF[attempt.min(BACKOFF.len() - 1)]);
@@ -284,6 +361,10 @@ pub fn Workspace(
             }
         }
     });
+
+    // Worker subscription readiness gate (shared between worker_event_loop
+    // and the background prompt thread).
+    let readiness = use_signal(|| ReadinessGate::new());
 
     let data_dir = config.data_dir.clone();
     let mut spaces = use_signal(move || match backend() {
@@ -444,7 +525,9 @@ pub fn Workspace(
         };
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
         let d_consumer = d.clone();
-        std::thread::spawn(move || worker_event_loop(d, tx));
+        let ready = readiness();
+        let ready_for_worker = ready.clone();
+        std::thread::spawn(move || worker_event_loop(d, tx, ready_for_worker));
         spawn(async move {
             let mut total_out: u64 = 0;
             while let Some(ev) = rx.recv().await {
@@ -1043,34 +1126,38 @@ pub fn Workspace(
             eprintln!("[web] send sid={} len={}", sid, text.len());
             let (fail_tx, fail_rx) = tokio::sync::oneshot::channel::<()>();
             let run_id_prompt = run_id.clone();
+            let ready = readiness();
             std::thread::spawn(move || {
-                if let Some((id, _placeholder)) = created {
-                    // 首条消息即标题来源：自建会话直接落库截词标题（走既有
-                    // create_session，无新增 RPC）。
-                    let _ = d.create_session(&id, &title_from_first_message(&text_daemon));
-                }
-                let _ = d.append_message(&sid_daemon, true, &text_daemon);
-                if needs_title_update {
-                    // 侧栏按钮新建的会话：占位标题已落库，首条消息后补一次
-                    // 真 UPDATE 让刷新后的标题与内存一致。失败只降级不阻断
-                    // 发送——标题回退占位好过消息发不出去。
-                    if let Err(e) =
-                        d.update_session_title(&sid_daemon, &title_from_first_message(&text_daemon))
-                    {
-                        eprintln!("[web] session title update failed: {e}");
-                    }
-                }
-                if let Err(e) =
-                    d_prompt.worker_prompt_run(&sid_daemon, &run_id_prompt, &text_daemon)
+                if ready
+                    .run_when_ready(Duration::from_secs(5), || {
+                        if let Some((id, _placeholder)) = created {
+                            // 首条消息即标题来源:自建会话直接落库截词标题(走既有
+                            // create_session,无新增 RPC)。
+                            let _ = d.create_session(&id, &title_from_first_message(&text_daemon));
+                        }
+                        let _ = d.append_message(&sid_daemon, true, &text_daemon);
+                        if needs_title_update {
+                            // 侧栏按钮新建的会话:占位标题已落库,首条消息后补一次
+                            // 真 UPDATE 让刷新后的标题与内存一致。失败只降级不阻断
+                            // 发送——标题回退占位好过消息发不出去。
+                            if let Err(e) = d.update_session_title(
+                                &sid_daemon,
+                                &title_from_first_message(&text_daemon),
+                            ) {
+                                eprintln!("[web] session title update failed: {e}");
+                            }
+                        }
+                        d_prompt.worker_prompt_run(&sid_daemon, &run_id_prompt, &text_daemon)
+                    })
+                    .and_then(|result| result.map_err(|_| ()))
+                    .is_err()
                 {
-                    // 确定性的失败点（daemon 掉线 / worker 拉起失败）：
-                    // 事件路径不会有 TurnEnd 来复位。线程只发信号量，
-                    // Signal 写回留在任务里（UnsyncStorage 非 Send）
-                    eprintln!("[web] worker_prompt ERR: {e}");
+                    eprintln!("[web] worker subscription unavailable or prompt failed");
                     let _ = fail_tx.send(());
                 }
             });
             let sid_fail = sid.clone();
+            let run_id_fail = run_id.clone();
             spawn(async move {
                 if fail_rx.await.is_ok() {
                     {
@@ -1082,6 +1169,10 @@ pub fn Workspace(
                                 }
                             }
                         }
+                    }
+                    if live_run_id() == run_id_fail {
+                        live_run_id.set(String::new());
+                        run_target_sid.set(String::new());
                     }
                     // 计时结算（5.6）：prompt 直接失败时事件路径不会有
                     // TurnEnd，不结算耗时会一直按「在飞」实时增长
