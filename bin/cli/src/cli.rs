@@ -99,6 +99,25 @@ enum Command {
         #[command(subcommand)]
         sub: ProfileCmd,
     },
+    /// Terminal chat front-end (T1: linear minimal viable)
+    Tui(TuiCmd),
+}
+
+/// Arguments of `oi tui` (route §3 T1: `--tui auto|enhanced|linear`).
+#[derive(clap::Args)]
+struct TuiCmd {
+    /// Rendering mode; T1 always renders linear regardless of the gate
+    #[arg(long = "tui", value_enum, default_value = "auto")]
+    mode: tui::TuiMode,
+    /// Resume an existing session by id (missing → exit code 2)
+    #[arg(long)]
+    session: Option<String>,
+    /// Continue the most recently active session
+    #[arg(long)]
+    resume: bool,
+    /// Disable colors (same effect as NO_COLOR)
+    #[arg(long)]
+    no_color: bool,
 }
 
 /// Sub-views of `cli profile`.
@@ -345,12 +364,12 @@ pub fn run() -> ExitCode {
 fn dispatch(cli: Cli) -> Result<u8, String> {
     let json = cli.json;
     match cli.command {
-        // No subcommand: interactive TUI removed; print usage hint.
+        // No subcommand: point at the TUI first, then the main commands.
         None => {
             println!(
-                "omenic: no subcommand. Available: oi init / oi task add / oi web / oi daemon ..."
+                "omenic: no subcommand. Available: oi tui / oi init / oi task add / oi web / oi daemon ..."
             );
-            eprintln!("(interactive TUI removed; use subcommands or web UI)");
+            eprintln!("(run `oi tui` for the terminal UI, or `oi --help` for the full list)");
             Ok(0)
         }
         Some(command) => dispatch_sub(command, json),
@@ -468,6 +487,27 @@ fn dispatch_sub(command: Command, json: bool) -> Result<u8, String> {
         },
         Command::Session { sub } => session_cmd_dispatch(sub, json),
         Command::Daemon { sub } => daemon_cmd_dispatch(sub, json),
+        Command::Tui(args) => {
+            let opts = tui::TuiOptions {
+                mode: args.mode,
+                session: args.session,
+                resume: args.resume,
+                no_color: args.no_color,
+            };
+            match tui::run(opts) {
+                Ok(()) => Ok(0),
+                Err(err) => {
+                    // One line to stderr; the variant maps the exit code
+                    // (session 2 / daemon unreachable 3 / other 1, route §5).
+                    eprintln!("omenic tui: {err}");
+                    Ok(match err {
+                        tui::TuiError::SessionNotFound(_) => 2,
+                        tui::TuiError::DaemonUnreachable(_) => 3,
+                        _ => 1,
+                    })
+                }
+            }
+        }
     }
 }
 
@@ -2449,7 +2489,7 @@ fn daemon_cmd_dispatch(sub: DaemonCmd, json: bool) -> Result<u8, String> {
             };
             if !bin.is_file() {
                 return Err(format!(
-                    "daemon binary not found at {} (set OMENIC_DAEMON_PATH to override)",
+                    "daemon binary not found at {} (set OMENIC_DAEMON_PATH to override; or build it with `cargo build --bin daemon`)",
                     bin.display()
                 ));
             }

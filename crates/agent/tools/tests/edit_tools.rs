@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
-use serde_json::{Value, json};
+use serde_json::json;
 use tools::apply_patch::ApplyPatch;
 use tools::str_replace_editor::StrReplaceEditor;
 use tools::{Tool, ToolError};

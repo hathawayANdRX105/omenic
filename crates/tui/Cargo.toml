@@ -1,0 +1,20 @@
+[package]
+name = "omenic-tui"
+version = "0.1.0"
+edition = "2024"
+description = "oi tui - terminal chat front-end (T1: linear minimal viable)"
+license = "MIT"
+publish = false
+
+[dependencies]
+omenic-web-client = { path = "../web/client" }
+omenic-web-state = { path = "../web/state" }
+clap = { workspace = true }
+crossterm = { workspace = true }
+# T1 不 import（T2 全屏渲染用）：P1 已批的两行 workspace 依赖随本 crate
+# 入锁，T2 接线时直接可用，不再动根 Cargo.toml（route §9 所有权表）。
+ratatui = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
