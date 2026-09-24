@@ -1,18 +1,17 @@
-//! omenic-tui — `oi tui` 的终端前端（route §3 T1：linear 最小可用）。
+//! omenic-tui — `oi tui` 的终端前端（T1：linear 基线；T2：enhanced 全屏外壳）。
 //!
-//! T1 = 纯 daemon 客户端（route §2 铁律）：探针裁决模式（[`mode`] / [`probe`]），
-//! 经 `omenic-web-client` 的 [`WebDaemon`] 订阅 worker run，事件由独立泵线程
-//! 进 mpsc（[`pump`]）→ [`UiState::apply`] 投影 → [`render_linear_line`] 裸写
-//! stdout；stdin 读行喂 `worker_prompt_run`。全程不碰 raw mode / alternate
-//! screen / 光标寻址（route §8），输出恒零 ESC 字节（route §3）。
+//! 纯 daemon 客户端（route §2 铁律）：探针裁决模式（[`mode`] / [`probe`]），
+//! 经 `omenic-web-client` 的 [`WebDaemon`] 订阅 worker 事件，独立泵线程进
+//! mpsc（[`pump`]）→ [`UiState::apply`] 投影 → 两个渲染器共用同一投影：
+//! linear 裸写 stdout（零 ESC 字节），enhanced 走 ratatui 全屏
+//! （[`app::run_enhanced`]，termguard 进出 + theme 样式 + dock 按键）。
 //!
 //! 只依赖 `omenic-web-client` + `omenic-web-state`：路由面走 client 门面，
-//! 不 import daemon 协议层；wire 帧统一过 `WireTranslator`。enhanced 全屏
-//! 渲染（ratatui）与按键/ dock 属 T2。
+//! 不 import daemon 协议层；wire 帧统一过 `WireTranslator`。
 //!
 //! 错误出口（CLI dispatch 按变体映射退出码，route §5 smoke）：session 不存在
 //! → 2，daemon 不可达/断线 → 3，其余 → 1；一律单行 `omenic tui: {err}` 到
-//! stderr，不 panic、不留半还原终端（T1 没改过终端状态，本就无从残留）。
+//! stderr，不 panic、不留半还原终端（enhanced 的还原由 termguard 兜底）。
 
 mod linear;
 mod mode;
@@ -33,13 +32,14 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 
 use omenic_web_client::ClientError;
 use omenic_web_client::daemon::WebDaemon;
+use omenic_web_state::convert::WireTranslator;
 use omenic_web_state::types::now_epoch_ms;
 use omenic_web_state::ui_state::{AgentEvent, UiState};
 
 /// `oi tui` 运行选项（CLI 解析后传入；route §3 契约字段，不许改）。
 #[derive(Debug, Clone)]
 pub struct TuiOptions {
-    /// 请求档位（auto/enhanced/linear）；T1 一律按 linear 跑。
+    /// 请求档位（auto/enhanced/linear）；裁决见 [`resolve_mode`]。
     pub mode: TuiMode,
     /// 指定已有会话 id；不存在 → [`TuiError::SessionNotFound`]（退出码 2）。
     pub session: Option<String>,
@@ -47,6 +47,8 @@ pub struct TuiOptions {
     pub resume: bool,
     /// 禁用颜色（同 `NO_COLOR`）：探针 color 置 false 后再裁决。
     pub no_color: bool,
+    /// 抑制 enhanced 外壳的非必要动效（route §3 `--reduced-motion` 接线）。
+    pub reduced_motion: bool,
 }
 
 /// `oi tui` 运行期错误（thiserror 单行 Display；CLI 按变体映射退出码）。
@@ -66,25 +68,31 @@ pub enum TuiError {
     Io(#[from] std::io::Error),
 }
 
-/// 跑 `oi tui`（route §3 签名，不许改）：探针 → 裁决 → 解析会话 →
-/// 「读行 → 落库 → 订阅 → prompt → 投影到 TurnEnd」循环，EOF 干净退出 0。
+/// 跑 `oi tui`（route §3 签名，不许改）：探针 → 裁决 → 分派渲染器——
+/// enhanced 走 [`app::run_enhanced`] 全屏外壳，linear 走「解析会话 →
+/// 读行 → 落库 → 订阅 → prompt → 投影到 TurnEnd」循环，EOF 干净退出 0。
 pub fn run(opts: TuiOptions) -> Result<(), TuiError> {
     // 1) 探针：`--no-color` / `NO_COLOR` 都折进 color，resolve 只看快照。
     let mut probe = TermProbe::from_env();
     if opts.no_color {
         probe.color = false;
     }
-    // 2) 裁决（T1 恒 linear；T2 在此按档位分流渲染器 —— route §3）。
-    let _mode = resolve_mode(opts.mode, &probe);
+    // 2) 裁决：门全过 → enhanced 全屏，否则 linear（route §3）。
+    let mode = resolve_mode(opts.mode, &probe);
     // 3) daemon 门面：连 socket 都没有 = 没起 daemon → 退出码 3，不 panic。
     let daemon = WebDaemon::from_env_or_default().ok_or_else(|| {
         TuiError::DaemonUnreachable(
             "daemon unreachable: daemon socket not found (try `oi daemon start`)".to_string(),
         )
     })?;
-    // 4) 解析会话：--session（校验存在）→ --resume（最近活跃）→ 新建。
+    // 4) enhanced：一次会话级订阅喂全程（多次 prompt 的事件同流进，
+    //    断线 = 泵收线 = 退出码 3），分派全屏外壳。
+    if let TuiMode::Enhanced = mode {
+        let rx = spawn_worker_stream(&daemon)?;
+        return app::run_enhanced(opts, daemon, rx);
+    }
+    // 5) linear（T1 基线不动）：解析会话 → 交互循环。
     let sid = resolve_session(&daemon, &opts)?;
-    // 5) 交互循环：读行 → prompt → 投影本轮事件 → 回到读行。
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
     let mut line = String::new();
@@ -114,6 +122,35 @@ pub fn run(opts: TuiOptions) -> Result<(), TuiError> {
         render_until_turn_end(&mut state, &rx)?;
         persist_assistant(&daemon, &sid, &state)?;
     }
+}
+
+/// 起会话级 worker 事件泵（enhanced 用）：一条 `subscribe_worker` 长连接
+/// → 独立线程读帧过 [`WireTranslator`] → `mpsc<AgentEvent>`。与 [`pump`]
+/// 同一套 keepalive/断线语义；差别只在这条流不按 run 过滤——会话全程只有
+/// 一条，多次 prompt 的事件都从这里进，泵线程收线即调用方的断线信号。
+fn spawn_worker_stream(client: &WebDaemon) -> Result<Receiver<AgentEvent>, TuiError> {
+    let mut sub = client.subscribe_worker().map_err(client_error)?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("oi-tui-pump".into())
+        .spawn(move || {
+            let mut translator = WireTranslator::new();
+            loop {
+                match sub.next_event(pump::KEEPALIVE) {
+                    Ok(Some(frame)) => {
+                        if let Some(ev) = translator.translate(&frame.event)
+                            && tx.send(ev).is_err()
+                        {
+                            break; // 接收端已释放：收线，订阅随 Drop 断开
+                        }
+                    }
+                    Ok(None) => {}   // keepalive tick：不退出
+                    Err(_) => break, // 读错误 = 断线：关 channel 就是信号
+                }
+            }
+        })
+        .map_err(TuiError::Io)?;
+    Ok(rx)
 }
 
 /// 一条订阅投影到 `TurnEnd`：每事件 [`render_linear_line`] + flush；

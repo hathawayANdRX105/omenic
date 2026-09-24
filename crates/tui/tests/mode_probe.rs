@@ -1,9 +1,8 @@
 //! mode_probe — route §3 裁决契约：auto / linear / enhanced 的门判定。
 //!
-//! 不起 daemon、不进事件循环：构造 [`TermProbe`] 快照打纯谓词。T1 下门全
-//! 过也落 linear（enhanced 分支 T2 启用），所以断言分两层——门
-//! （`enhanced_eligible`）能红，裁决（`resolve_mode`）恒 linear 不会因
-//! T2 启用 enhanced 而误红。
+//! 不起 daemon、不进事件循环：构造 [`TermProbe`] 快照打纯谓词。断言分两
+//! 层——门（[`enhanced_eligible`]）与裁决（[`resolve_mode`]）：门全过才落
+//! enhanced；门不齐（mux / 小终端 / dumb / 无色 / 非 TTY）一律 linear。
 
 use omenic_tui::{MuxKind, TermProbe, TuiMode, enhanced_eligible, resolve_mode};
 
@@ -47,8 +46,11 @@ fn auto_mode_avoids_mux_and_small_terminal() {
         );
         assert_eq!(resolve_mode(TuiMode::Auto, &probe), TuiMode::Linear);
     }
-    // 基线：门全过时 T1 仍落 linear（enhanced 分支 T2 启用）。
-    assert_eq!(resolve_mode(TuiMode::Auto, &good_probe()), TuiMode::Linear);
+    // 基线：门全过时 auto 裁决 enhanced（T2 起启用）。
+    assert_eq!(
+        resolve_mode(TuiMode::Auto, &good_probe()),
+        TuiMode::Enhanced
+    );
 }
 
 /// bug：`NO_COLOR` / `--no-color` / `TERM=dumb` / 非 TTY 被忽略 →
@@ -89,9 +91,9 @@ fn dumb_or_no_color_forces_linear() {
         assert!(!enhanced_eligible(&probe));
         assert_eq!(resolve_mode(TuiMode::Auto, &probe), TuiMode::Linear);
     }
-    // `--tui enhanced` 在 T1 也落 linear（route §3：T1 的 enhanced 就是 linear）。
+    // `--tui enhanced` 显式请求 + 门全过 → enhanced（门不齐仍 linear，见上）。
     assert_eq!(
         resolve_mode(TuiMode::Enhanced, &good_probe()),
-        TuiMode::Linear
+        TuiMode::Enhanced
     );
 }

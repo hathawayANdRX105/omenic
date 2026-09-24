@@ -118,6 +118,9 @@ struct TuiCmd {
     /// Disable colors (same effect as NO_COLOR)
     #[arg(long)]
     no_color: bool,
+    /// Suppress non-essential animation in the enhanced shell
+    #[arg(long)]
+    reduced_motion: bool,
 }
 
 /// Sub-views of `cli profile`.
@@ -493,6 +496,7 @@ fn dispatch_sub(command: Command, json: bool) -> Result<u8, String> {
                 session: args.session,
                 resume: args.resume,
                 no_color: args.no_color,
+                reduced_motion: args.reduced_motion,
             };
             match tui::run(opts) {
                 Ok(()) => Ok(0),
