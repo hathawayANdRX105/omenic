@@ -342,6 +342,10 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
         Command::Ping => Response::ok(id, json!({ "pong": true })),
 
         Command::Shutdown => {
+            // Normally short-circuited in `connection_read_loop` before
+            // the worker lock (a prompt holds it for the whole turn;
+            // answering shutdown late hangs `oi daemon stop`). This arm is
+            // the fallback — keep its payload identical to that path.
             ctx.shutdown
                 .store(true, std::sync::atomic::Ordering::SeqCst);
             Response::ok(id, json!({ "shutting_down": true }))

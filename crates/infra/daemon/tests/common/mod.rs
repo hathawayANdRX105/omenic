@@ -6,6 +6,8 @@
 //! across suites, or a difference in one would silently mask a failure in the
 //! other.
 
+#![allow(dead_code)] // 理由: 本夹具被 5 个测试 target 各自独立编译, session_title 只用 MockOpenAi/daemon_cfg/one_text_turn、sse_tool_call 只被 plan_mode_e2e 用, 按 target 用到子集必然触发 dead_code, 属共享测试夹具固有形态, 不可删(其余 target 在用)
+
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};

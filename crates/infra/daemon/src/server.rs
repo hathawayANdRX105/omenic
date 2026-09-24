@@ -872,7 +872,24 @@ fn connection_read_loop(
             }
         };
 
-        let is_shutdown = matches!(req.command, crate::protocol::Command::Shutdown);
+        // `shutdown` is answered BEFORE taking the worker lock: an
+        // in-flight omp `prompt` holds that lock for its whole turn, and
+        // `client.shutdown()` reads its reply with no deadline — queueing
+        // `Command::Shutdown` behind the lock hangs `oi daemon stop` until
+        // the turn ends (or forever, if the turn never does). The
+        // `dispatch` Shutdown arm stays as a fallback; keep both payload
+        // shapes in sync.
+        if matches!(req.command, crate::protocol::Command::Shutdown) {
+            shutdown.store(true, Ordering::SeqCst);
+            let resp = Response::ok(
+                req.id.as_deref(),
+                serde_json::json!({ "shutting_down": true }),
+            );
+            if out.send(serde_json::to_string(&resp)?).is_err() {
+                return Ok(()); // writer dead — connection effectively gone
+            }
+            return Ok(());
+        }
 
         // Lock the worker only for the duration of this single request
         // This allows other connections to proceed while one connection is being processed
@@ -899,10 +916,6 @@ fn connection_read_loop(
         // Worker lock released here
         if out.send(payload).is_err() {
             return Ok(()); // writer dead — connection effectively gone
-        }
-
-        if is_shutdown {
-            return Ok(());
         }
     }
 }

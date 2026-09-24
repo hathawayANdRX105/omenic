@@ -8,6 +8,7 @@ members = [
   "crates/web/client", "crates/web/state",
   "crates/web/components", "crates/web/page-workspace", "crates/web/page-stats",
   "crates/web/page-config",
+  "crates/tui",
   "crates/composition",
   "crates/harness/core", "crates/harness/prompt", "crates/harness/tools",
   "crates/harness/runtime", "crates/harness/plugin",
@@ -35,6 +36,8 @@ pulldown-cmark = "0.13"
 ammonia = "4"
 ctrlc = "3"
 diffy = "0.5"
+ratatui = "0.30"
+crossterm = "0.29"
 
 [profile.release]
 opt-level = "z"
