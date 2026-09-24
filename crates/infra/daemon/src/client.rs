@@ -38,6 +38,10 @@ pub enum ClientError {
     Server { code: String, message: String },
     /// Failed to serialize a request.
     Encode(serde_json::Error),
+    /// The daemon accepted the request but did not reply within the
+    /// caller's deadline (only `shutdown` sets one, so a wedged daemon
+    /// cannot hang `oi daemon stop`).
+    Timeout(String),
 }
 
 impl std::fmt::Display for ClientError {
@@ -47,6 +51,7 @@ impl std::fmt::Display for ClientError {
             ClientError::Protocol(s) => write!(f, "daemon protocol error: {s}"),
             ClientError::Server { code, message } => write!(f, "daemon error `{code}`: {message}"),
             ClientError::Encode(e) => write!(f, "daemon request encode error: {e}"),
+            ClientError::Timeout(s) => write!(f, "daemon timeout: {s}"),
         }
     }
 }
@@ -92,10 +97,34 @@ impl DaemonClient {
     /// public command funnels through here; tests rely on the `success`
     /// field for assertions.
     pub fn call_raw(&self, command: Command, params: Value) -> Result<Response, ClientError> {
+        self.call_raw_within(command, params, None)
+    }
+
+    /// Like [`Self::call_raw`], but bounds how long we wait for the reply.
+    /// `None` keeps the historical wait-forever behaviour (prompt turns
+    /// legitimately run for minutes); callers that must never hang —
+    /// `shutdown` — pass a deadline so a wedged daemon degrades into a
+    /// clear error instead of a frozen CLI.
+    fn call_raw_within(
+        &self,
+        command: Command,
+        params: Value,
+        read_timeout: Option<std::time::Duration>,
+    ) -> Result<Response, ClientError> {
         let req = Request::new(command).with_params(params);
         let mut conn = connect(&self.socket).map_err(ClientError::Connect)?;
+        if let Some(dur) = read_timeout {
+            // Best-effort: the only platform that can't set a read timeout
+            // (non-unix) already failed in `connect`.
+            let _ = set_read_timeout(&mut conn, dur);
+        }
         write_frame(&mut conn, &req).map_err(ClientError::Connect)?;
-        read_frame(&mut conn).map_err(ClientError::Connect)
+        read_frame(&mut conn).map_err(|e| match (read_timeout, e.kind()) {
+            (Some(dur), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                ClientError::Timeout(format!("no response from daemon within {dur:?}"))
+            }
+            _ => ClientError::Connect(e),
+        })
     }
 
     /// Like [`Self::call_raw`], but unwraps a successful `data` payload into
@@ -106,17 +135,7 @@ impl DaemonClient {
         command: Command,
         params: Value,
     ) -> Result<T, ClientError> {
-        let resp = self.call_raw(command, params)?;
-        if !resp.success {
-            return Err(match resp.error {
-                Some(e) => ClientError::Server {
-                    code: e.code,
-                    message: e.message,
-                },
-                None => ClientError::Protocol("response missing error envelope".into()),
-            });
-        }
-        let data = resp.data.unwrap_or(Value::Null);
+        let data = take_data(self.call_raw(command, params)?)?;
         serde_json::from_value(data).map_err(|e| ClientError::Protocol(format!("decode: {e}")))
     }
 
@@ -138,8 +157,18 @@ impl DaemonClient {
     }
 
     /// `daemon.shutdown` requests graceful daemon termination.
+    ///
+    /// Bounded wait: the server answers `Shutdown` before taking the
+    /// worker lock (see `connection_read_loop` in `server.rs`), and this
+    /// read deadline is the backstop — `oi daemon stop` must fail fast
+    /// with a clear error rather than hang on a wedged daemon.
     pub fn shutdown(&self) -> Result<(), ClientError> {
-        let _: Value = self.call(Command::Shutdown, Value::Null)?;
+        let resp = self.call_raw_within(
+            Command::Shutdown,
+            Value::Null,
+            Some(std::time::Duration::from_secs(5)),
+        )?;
+        let _: Value = take_data(resp)?;
         Ok(())
     }
 
@@ -502,6 +531,21 @@ impl DaemonClient {
         )?;
         Ok(r.removed)
     }
+}
+
+/// Shared success check: `success: false` becomes a structured error,
+/// otherwise the `data` payload (defaulting to `null`).
+fn take_data(resp: Response) -> Result<Value, ClientError> {
+    if !resp.success {
+        return Err(match resp.error {
+            Some(e) => ClientError::Server {
+                code: e.code,
+                message: e.message,
+            },
+            None => ClientError::Protocol("response missing error envelope".into()),
+        });
+    }
+    Ok(resp.data.unwrap_or(Value::Null))
 }
 
 #[cfg(target_family = "unix")]
