@@ -1,9 +1,10 @@
 //! mode.rs — 探针 → linear/enhanced 裁决（route §3 签名，不许改）。
 //!
 //! 判定顺序即 route §3：`--tui linear` 早退 → [`enhanced_eligible`] 门
-//! （双 TTY + 颜色 + TERM 合法 + ≥44×12 + 无复用器）→ 门过在 **T1 也恒返回
-//! [`TuiMode::Linear`]**（enhanced 分支注释「T2 启用」，不留想象空间）。
-//! 门不齐一定落 linear：终端不对时永不进全屏路径。
+//! （双 TTY + 颜色 + TERM 合法 + ≥44×12 + 无复用器）→ 门过返回
+//! [`TuiMode::Enhanced`]。门不齐一定落 linear：终端不对时永不进全屏路径。
+//! T1 的「门过也恒 linear」临时分支已随 T2 启用删除（route §7 过渡层清零，
+//! 不留兼容 shim）。
 
 use crate::probe::TermProbe;
 
@@ -12,7 +13,7 @@ use crate::probe::TermProbe;
 pub enum TuiMode {
     /// 探针裁决：门全过走 enhanced，否则 linear。
     Auto,
-    /// 强制 enhanced 全屏渲染（T1 恒落 linear，T2 启用）。
+    /// 强制 enhanced 全屏渲染（仍受门约束：门不齐落 linear）。
     Enhanced,
     /// 强制裸文本行渲染（route §3 的 T1 基线）。
     Linear,
@@ -46,9 +47,8 @@ fn size_ok(probe: &TermProbe) -> bool {
 
 /// 裁决渲染档位（route §3 签名，不许改）。
 ///
-/// `Linear` 请求早退；门不过 → linear；门过 → **T1 恒返回 linear**——
-/// enhanced 分支在 T2 改为返回 [`TuiMode::Enhanced`]（route §3：
-/// 「T1 的 enhanced 就是 linear」）。
+/// `Linear` 请求早退；门不过 → linear；门过 → enhanced（T2 起启用：
+/// T1 临时的「门过也恒 linear」分支已删，`--tui enhanced` 不再被降级）。
 pub fn resolve_mode(requested: TuiMode, probe: &TermProbe) -> TuiMode {
     if matches!(requested, TuiMode::Linear) {
         return TuiMode::Linear;
@@ -56,6 +56,5 @@ pub fn resolve_mode(requested: TuiMode, probe: &TermProbe) -> TuiMode {
     if !enhanced_eligible(probe) {
         return TuiMode::Linear;
     }
-    // T1: enhanced 分支恒返回 linear —— T2 启用（route §3）。
-    TuiMode::Linear
+    TuiMode::Enhanced
 }
