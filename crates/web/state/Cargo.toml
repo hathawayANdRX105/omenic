@@ -7,7 +7,6 @@ publish = false
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-daemon = { path = "../../infra/daemon" }
 session = { path = "../../infra/session" }
 memory = { path = "../../infra/memory" }
 tools = { path = "../../agent/tools" }

@@ -4,9 +4,9 @@
 //! `infer_session_status` 是纯函数，这里按「无 run / 全关闭 / 半开孤儿 /
 //! 在飞 run」四个输入形态覆盖判定表。
 
-use daemon::state::RunRecord;
 use omenic_web_state::convert::infer_session_status;
 use omenic_web_state::types::SessionStatus;
+use session::RunRecord;
 
 /// 造一条 run 记录：`finished_at_ms` 为 None 即「有开始无 closer」的半开 run
 /// （daemon 侧只有 run 结束时才写 finished_at_ms 与 status）。

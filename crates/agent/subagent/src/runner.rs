@@ -8,7 +8,7 @@ use orbit::{AgentEvent, LlmBackend, LoopConfig, TurnStop, run_agent_streaming};
 use serde_json::Value;
 use tools::Tool;
 
-use crate::config::{MAX_SUBAGENT_RESPONSE_BYTES, SPILL_DIR, SUBAGENT_SYSTEM_PROMPT};
+use crate::config::{MAX_SUBAGENT_RESPONSE_BYTES, SUBAGENT_SYSTEM_PROMPT};
 
 /// Live events a subagent emits while running.
 #[derive(Debug, Clone)]
@@ -208,7 +208,8 @@ fn truncate_to_bytes(s: &str, cap: usize, id: u32) -> String {
     // ponytail: cheap counter — pid + nanos since process start would be
     // unique, but the caller already prefixes with a stable id; pid alone
     // is enough to avoid clobbering sibling spills in the same CLI run.
-    let spill_path = std::path::Path::new(SPILL_DIR).join(format!("oi-subagent-{pid}-{id}.txt"));
+    let spill_path =
+        std::path::Path::new(tools::SPILL_DIR).join(format!("oi-subagent-{pid}-{id}.txt"));
     let _ = std::fs::write(&spill_path, s);
     format!(
         "[output truncated: showing first {end} of {} bytes. full output: {}]\n{}",

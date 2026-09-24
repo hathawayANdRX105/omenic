@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! oh-my-pi                                  omenic
-//! packages/coding-agent/src/prompts/        crates/prompts/prompts/
+//! packages/coding-agent/src/prompts/        crates/infra/prompts/prompts/
 //! ├── agents/                               ├── agents/
 //! │   ├── task.md        ──►               │   ├── task.md
 //! │   ├── scout.md       ──►               │   ├── scout.md
@@ -24,9 +24,9 @@
 //! `include_str!`. There is no concatenation, no tool-table generation,
 //! no frontmatter stripping — the whole file is the prompt, exactly as
 //! omp sends it. Callers compose fragments at the role layer (see
-//! `crates/orbit` for the only current consumer: `agents::TASK`).
+//! `crates/agent/orbit` for the only current consumer: `agents::TASK`).
 //!
-//! The `crates/prompts/prompts/system/` files (73 fragments including the
+//! The `crates/infra/prompts/prompts/system/` files (73 fragments including the
 //! 4 `personalities/`) are omenic's fragment library, available as
 //! `prompts::system::ACTIVE_REPO_CONTEXT` / `::COMPUTER_SAFETY` / etc.
 //! omenic does not yet have an omp-equivalent `buildSystemPrompt` prep

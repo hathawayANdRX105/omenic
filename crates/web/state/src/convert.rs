@@ -6,9 +6,8 @@
 
 use std::collections::HashMap;
 
-use daemon::state::RunRecord;
 use serde_json::Value;
-use session::{SessionMessage, SessionRole, SessionSummary};
+use session::{RunRecord, SessionMessage, SessionRole, SessionSummary};
 
 use crate::types::{ChatMessage, Session, SessionStatus, format_relative_time};
 use crate::ui_state::AgentEvent;

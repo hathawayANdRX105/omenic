@@ -26,23 +26,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use session::{SessionDb, SessionError, SessionMessage, SessionRole, SessionSummary};
 
-use crate::DaemonError;
+pub use session::RunRecord;
 
-/// One run recorded in the run ledger.  `finished_at_ms` is `None` while the
-/// run is in flight; the dispatch layer writes the terminal event when the
-/// worker returns or aborts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RunRecord {
-    #[serde(default)]
-    pub seq: i64,
-    pub run_id: String,
-    pub session_id: String,
-    pub started_at_ms: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub finished_at_ms: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
-}
+use crate::DaemonError;
 
 /// Thread-safe handle to the persistent run ledger.
 #[derive(Clone)]

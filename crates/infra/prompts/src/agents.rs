@@ -2,13 +2,13 @@
 //! `oh-my-pi`'s `packages/coding-agent/src/prompts/agents/`.
 //!
 //! Each constant is the entire contents of a `.md` file under
-//! `crates/prompts/prompts/agents/`. The whole file is the prompt;
+//! `crates/infra/prompts/prompts/agents/`. The whole file is the prompt;
 //! omenic sends it verbatim to the LLM with no concatenation. File
 //! names match omp exactly; see the per-role description in each
 //! `.md`'s frontmatter (or body, for `task.md` which has none).
 //!
-//! omenic currently uses only [`TASK`] (via `crates/orbit`) and
-//! [`SCOUT`] (planned for `crates/subagent/src/config.rs:19`). The
+//! omenic currently uses only [`TASK`] (via `crates/agent/orbit`) and
+//! [`SCOUT`] (planned for `crates/agent/subagent/src/config.rs`). The
 //! other 6 roles are kept for future wiring — omenic will adopt them
 //! when it gains the corresponding tooling.
 

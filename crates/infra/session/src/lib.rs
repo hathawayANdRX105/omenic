@@ -166,6 +166,22 @@ pub struct SessionSummary {
     pub message_count: u64,
 }
 
+/// One run recorded in the daemon's run ledger. `finished_at_ms` is `None`
+/// while the run is in flight. Lives here, not in `daemon`, because the web
+/// UI reads these rows and must not depend on the daemon implementation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunRecord {
+    #[serde(default)]
+    pub seq: i64,
+    pub run_id: String,
+    pub session_id: String,
+    pub started_at_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
 /// One message row, in storage order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionMessage {
