@@ -5,8 +5,8 @@
 //! 是 `oi task` CLI（handoff F3），本模块连按键都不接。
 //!
 //! 渲染位置由调用方（`app.rs` 的 draw 接缝）决定：[`render`] 自己按
-//! [`layout::split`] 算出 transcript 区、贴其底部铺行，dock 之上、不改
-//! [`super::draw`] 的既有布局（避让并行的 T3 问题面板接线）。
+//! [`layout::split`] 算出可见 transcript 区（扣除 T3 问题面板 + footer
+//! 两层让行）、贴其底部铺行，dock 之上、不改 [`super::draw`] 的既有布局。
 
 use omenic_web_client::daemon::WebDaemon;
 use ratatui::Frame;
@@ -80,29 +80,36 @@ pub fn load_panels(client: &WebDaemon) -> PanelSnapshot {
     }
 }
 
-/// 画到 dock 上方（占 transcript 区底部若干行；全空 = 一行不占）。
+/// 画到可见 transcript 底部（全空 = 一行不占）；其下是 T3 的问题面板
+/// （实占行）与 footer（恒 1 行）——本面板贴这两层顶沿，不盖状态条/
+/// 答题卡（route §3 T3、T4 契约同屏共存）。
 ///
-/// 预算夹紧：面板最多吃 transcript 高度的一半，且恒给 transcript 留
+/// 预算夹紧：面板最多吃可见 transcript 高度的一半，且恒给 transcript 留
 /// ≥1 行——44×20 下三节全满也不许把聊天区整个挤没。
 pub fn render(frame: &mut Frame, app: &App, snapshot: &PanelSnapshot) {
     if snapshot.is_empty() {
         return;
     }
-    let (transcript, _dock) = layout::split(frame.area(), app.queued().is_some());
-    if transcript.height == 0 {
+    let (transcript, dock) = layout::split(frame.area(), app.queued().is_some());
+    // T3 三明治让行（与 `ui::draw` 同一套算术）：footer 恒 1 行（dock 压底
+    // 时才有）+ 问题面板实占行——可见 transcript 底 = 原始底减去这两层。
+    let reserved = u16::from(dock.y > 0) + app.questions().rows();
+    let bottom = (transcript.y + transcript.height).saturating_sub(reserved);
+    let avail = bottom.saturating_sub(transcript.y);
+    if avail == 0 {
         return;
     }
     let lines = snapshot_lines(snapshot);
-    let budget = (transcript.height as usize / 2)
+    let budget = (avail as usize / 2)
         .max(1)
         .min(lines.len())
-        .min(transcript.height as usize);
+        .min(avail as usize);
     if budget == 0 {
         return;
     }
     let area = Rect {
         x: transcript.x,
-        y: transcript.y + transcript.height - budget as u16,
+        y: bottom - budget as u16,
         width: transcript.width,
         height: budget as u16,
     };
