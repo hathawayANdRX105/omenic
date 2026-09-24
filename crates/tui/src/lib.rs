@@ -19,6 +19,11 @@ mod mode;
 mod probe;
 mod pump;
 
+pub mod app;
+pub mod termguard;
+pub mod theme;
+pub mod ui;
+
 pub use linear::render_linear_line;
 pub use mode::{TuiMode, enhanced_eligible, resolve_mode};
 pub use probe::{MuxKind, TermProbe};
