@@ -11,8 +11,8 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use fs2::FileExt;
@@ -90,38 +90,14 @@ impl Store {
     /// Take an exclusive lock and append one pre-serialized line, fsyncing
     /// before the lock releases. Used by every append path below.
     fn append_line(&self, path: &Path, line: &str) -> Result<(), StoreError> {
-        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-        file.lock_exclusive()?;
-
-        file.write_all(line.as_bytes())?;
-        file.write_all(b"\n")?;
-        file.flush()?;
-        file.sync_all()?;
-
-        // Lock released on drop
+        crate::jsonl::append_line(path, line)?;
         Ok(())
     }
 
     /// Shared-lock read of a jsonl file. `None` when the file does not exist
     /// or is empty.
     fn read_locked(&self, path: &Path) -> Result<Option<String>, StoreError> {
-        if !path.exists() {
-            return Ok(None);
-        }
-        let mut file = File::open(path)?;
-        file.lock_shared()?;
-
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-
-        // Lock released on drop
-        drop(file);
-
-        if content.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(content))
-        }
+        Ok(crate::jsonl::read_lines(path)?)
     }
 
     /// Handle a line that did not parse into a record: if it is the trailing
@@ -258,21 +234,7 @@ impl Store {
 
     /// Truncate the last (corrupt) line from the file.
     fn trim_trailing_line(&self, path: &Path) -> Result<(), StoreError> {
-        let mut file = OpenOptions::new().read(true).write(true).open(path)?;
-        file.lock_exclusive()?;
-
-        let mut buf = Vec::new();
-        file.read_to_end(&mut buf)?;
-        let content = String::from_utf8_lossy(&buf);
-
-        // Drop the final line whatever its shape. Strip a trailing newline
-        // first so "ends with \n" and a mid-write crash (record bytes landed,
-        // the `\n` did not — `append_line` writes them in two `write_all`
-        // calls) share one cut point: the start of the last line.
-        let body = content.strip_suffix('\n').unwrap_or(&content);
-        let pos = body.rfind('\n').map(|p| p + 1).unwrap_or(0);
-        file.set_len(pos as u64)?;
-        file.sync_all()?;
+        crate::jsonl::drop_last_line(path)?;
         Ok(())
     }
 

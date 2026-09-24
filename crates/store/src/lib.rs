@@ -2,6 +2,7 @@
 
 pub mod goal;
 pub mod graph;
+pub mod jsonl;
 pub mod store;
 pub mod template;
 pub mod todo;
