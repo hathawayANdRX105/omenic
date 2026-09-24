@@ -364,12 +364,12 @@ pub fn run() -> ExitCode {
 fn dispatch(cli: Cli) -> Result<u8, String> {
     let json = cli.json;
     match cli.command {
-        // No subcommand: interactive TUI removed; print usage hint.
+        // No subcommand: point at the TUI first, then the main commands.
         None => {
             println!(
-                "omenic: no subcommand. Available: oi init / oi task add / oi web / oi daemon ..."
+                "omenic: no subcommand. Available: oi tui / oi init / oi task add / oi web / oi daemon ..."
             );
-            eprintln!("(interactive TUI removed; use subcommands or web UI)");
+            eprintln!("(run `oi tui` for the terminal UI, or `oi --help` for the full list)");
             Ok(0)
         }
         Some(command) => dispatch_sub(command, json),
@@ -2489,7 +2489,7 @@ fn daemon_cmd_dispatch(sub: DaemonCmd, json: bool) -> Result<u8, String> {
             };
             if !bin.is_file() {
                 return Err(format!(
-                    "daemon binary not found at {} (set OMENIC_DAEMON_PATH to override)",
+                    "daemon binary not found at {} (set OMENIC_DAEMON_PATH to override; or build it with `cargo build --bin daemon`)",
                     bin.display()
                 ));
             }
