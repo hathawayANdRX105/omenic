@@ -8,6 +8,5 @@ publish = false
 
 [dependencies]
 protocol = { path = "../../protocol" }
-plugin = { path = "../../plugin" }
 serde = { workspace = true }
 serde_json = { workspace = true }

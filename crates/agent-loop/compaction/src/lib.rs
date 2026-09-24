@@ -16,7 +16,6 @@
 //! untouched. The orbit loop keeps only a call seam over this crate.
 
 pub mod pairing;
-pub mod plugin;
 pub mod policy;
 pub mod region;
 pub mod summarize;
@@ -25,7 +24,6 @@ pub use protocol::chat;
 pub use protocol::chat::Message;
 
 pub use pairing::{advance_to_balanced, is_balanced_at};
-pub use plugin::CompactionPlugin;
 pub use policy::{
     CharBudgetPolicy, CompactionPolicy, SUMMARY_PREFIX, compact_with, message_chars,
     select_compaction_cut,

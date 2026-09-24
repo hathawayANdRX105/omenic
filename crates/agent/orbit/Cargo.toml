@@ -14,7 +14,6 @@ serde_json = { workspace = true }
 fs2 = { workspace = true }
 protocol = { workspace = true }
 prompts = { path = "../../prompts" }
-plugin = { path = "../../plugin" }
 compaction = { path = "../../agent-loop/compaction" }
 instruction = { path = "../../agent-loop/instruction" }
 

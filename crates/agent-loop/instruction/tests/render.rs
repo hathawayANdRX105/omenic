@@ -5,9 +5,8 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use instruction::{
-    InstructionCache, InstructionFragments, InstructionPlugin, digest, render_fragments,
-};
+use instruction::{InstructionCache, InstructionFragments, digest, render_fragments};
+use plugin::plugins::InstructionPlugin;
 use plugin::{DshPlugin, EventBus, PluginContext, ServiceRegistry};
 
 fn file(path: &str, content: &str) -> (PathBuf, String) {

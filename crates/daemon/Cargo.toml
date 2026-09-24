@@ -20,6 +20,7 @@ mcp = { path = "../mcp" }
 tools = { path = "../tools" }
 store = { path = "../store" }
 composition = { path = "../plugin/composition" }
+plugin = { path = "../plugin" }
 tools-harness = { path = "../tools/harness" }
 jobs = { path = "../jobs" }
 terminal = { path = "../terminal" }

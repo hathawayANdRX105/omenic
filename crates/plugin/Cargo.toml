@@ -7,9 +7,13 @@ license = "MIT"
 publish = false
 
 [dependencies]
-serde_json = { workspace = true }
-protocol = { path = "../protocol" }
-agent-loop = { path = "../agent-loop" }
-
-[dev-dependencies]
+compaction = { path = "../agent-loop/compaction" }
+guard = { path = "../guard" }
+instruction = { path = "../agent-loop/instruction" }
+plan-mode = { path = "../plan-mode" }
 parking_lot = "0.12"
+serde_json = { workspace = true }
+skill = { path = "../skill" }
+tools-harness = { path = "../tools/harness" }
+
+

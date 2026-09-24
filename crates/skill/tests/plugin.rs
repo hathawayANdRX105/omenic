@@ -3,11 +3,11 @@
 use std::fs;
 use std::sync::Arc;
 
+use plugin::plugins::SkillPlugin;
 use plugin::{DshPlugin, EventBus, PluginContext, ServiceRegistry};
 use serde_json::json;
-use skill::{SKILL_SERVICE, SkillPlugin, SkillService};
+use skill::{SKILL_SERVICE, SkillService};
 use tempfile::TempDir;
-use tools_harness::ToolCatalog;
 
 #[test]
 fn plugin_name_is_stable() {

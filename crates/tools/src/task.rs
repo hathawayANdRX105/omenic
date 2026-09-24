@@ -39,12 +39,12 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::{Tool, ToolError, arg_str};
 use serde_json::{Value, json};
-use tools::{Tool, ToolError, arg_str};
 
-use crate::goal::{Goal, GoalError, GoalStatus};
-use crate::store::{Store, StoreError};
-use crate::todo::{Todo, TodoError, TodoStatus};
+use store::goal::{Goal, GoalError, GoalStatus};
+use store::store::{Store, StoreError};
+use store::todo::{Todo, TodoError, TodoStatus};
 
 // -----------------------------------------------------------------------------
 // Argument helpers
@@ -235,7 +235,7 @@ impl Tool for TodoAdd {
             // only the note moves. A re-add must not resurrect a closed todo.
             Some(existing) => {
                 existing.note = note;
-                existing.updated_at = crate::now_iso();
+                existing.updated_at = store::now_iso();
                 existing.clone()
             }
             // A blank title matches no id and lands here, surfacing

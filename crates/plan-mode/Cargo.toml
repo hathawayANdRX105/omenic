@@ -8,7 +8,6 @@ publish = false
 
 [dependencies]
 protocol = { path = "../protocol" }
-plugin = { path = "../plugin" }
 prompt = { path = "../skill/prompt" }
 tools-harness = { path = "../tools/harness" }
 serde = { workspace = true }
@@ -16,7 +15,6 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-plugin = { path = "../plugin" }
 tools-harness = { path = "../tools/harness" }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

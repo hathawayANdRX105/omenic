@@ -12,12 +12,12 @@ pub mod grep;
 pub mod memory_tool;
 pub mod read;
 pub mod str_replace_editor;
+pub mod task;
 pub mod write;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{Duration, Instant};
-
 use llm::ToolDef;
 use serde_json::Value;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 /// Tool output truncation limit (lines); tail is kept — errors live at the end.
 pub const MAX_OUTPUT_LINES: usize = 200;

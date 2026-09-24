@@ -209,7 +209,7 @@ impl Daemon {
             .plan_policy_section
             .clone()
             .unwrap_or_else(|| DEFAULT_PLAN_POLICY_SECTION.to_string());
-        let plan_plugin = plan_mode::PlanModePlugin::new(plan_mode::PlanModeConfig {
+        let plan_plugin = plugin::plugins::PlanModePlugin::new(plan_mode::PlanModeConfig {
             section: Some(plan_section.clone()),
             review_port: Some(questions.review_port()),
         });
@@ -549,7 +549,7 @@ impl Daemon {
         let jobs = std::sync::Arc::new(jobs::LocalJobRegistry::new());
         let terminals = std::sync::Arc::new(terminal::TerminalRegistry::new());
         let mut session_tools = tools_harness::jobs_terminal::session_tools(jobs, terminals);
-        session_tools.extend(store::tools::session_tools(std::sync::Arc::new(
+        session_tools.extend(tools::task::session_tools(std::sync::Arc::new(
             store::store::Store::new(data_dir),
         )));
         std::sync::Arc::new(session_tools)
@@ -595,7 +595,7 @@ impl Daemon {
     /// engine rather than being short-circuited.
     fn assemble_plugins(
         cfg: &DaemonConfig,
-        plan_plugin: plan_mode::PlanModePlugin,
+        plan_plugin: plugin::plugins::PlanModePlugin,
     ) -> Result<(composition::Fiber, composition::PluginRegistry), DaemonError> {
         let mut doc = serde_json::Map::new();
         if let Some(model) = cfg.orbit_model.as_ref() {

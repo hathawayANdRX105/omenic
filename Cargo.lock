@@ -453,7 +453,6 @@ dependencies = [
 name = "compaction"
 version = "0.1.0"
 dependencies = [
- "plugin",
  "protocol",
  "serde",
  "serde_json",
@@ -677,6 +676,7 @@ dependencies = [
  "orbit",
  "parking_lot",
  "plan-mode",
+ "plugin",
  "rpc",
  "serde",
  "serde_json",
@@ -1555,13 +1555,11 @@ name = "guard"
 version = "0.1.0"
 dependencies = [
  "parking_lot",
- "plugin",
  "protocol",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
- "tools-harness",
 ]
 
 [[package]]
@@ -1844,7 +1842,6 @@ dependencies = [
 name = "instruction"
 version = "0.1.0"
 dependencies = [
- "plugin",
  "prompt",
  "serde_json",
  "tempfile",
@@ -2534,7 +2531,6 @@ dependencies = [
  "fs2",
  "instruction",
  "llm",
- "plugin",
  "prompts",
  "protocol",
  "serde",
@@ -2783,7 +2779,6 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 name = "plan-mode"
 version = "0.1.0"
 dependencies = [
- "plugin",
  "prompt",
  "protocol",
  "serde",
@@ -2797,10 +2792,14 @@ dependencies = [
 name = "plugin"
 version = "0.1.0"
 dependencies = [
- "agent-loop",
+ "compaction",
+ "guard",
+ "instruction",
  "parking_lot",
- "protocol",
+ "plan-mode",
  "serde_json",
+ "skill",
+ "tools-harness",
 ]
 
 [[package]]
@@ -3550,7 +3549,6 @@ checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 name = "skill"
 version = "0.1.0"
 dependencies = [
- "plugin",
  "prompt",
  "protocol",
  "serde_json",
@@ -3642,14 +3640,10 @@ version = "0.1.0"
 dependencies = [
  "config",
  "fs2",
- "llm",
- "mcp",
- "rpc",
  "serde",
  "serde_json",
  "serde_yaml",
  "tempfile",
- "tools",
 ]
 
 [[package]]
@@ -4147,6 +4141,7 @@ dependencies = [
  "llm",
  "memory",
  "serde_json",
+ "store",
  "tempfile",
 ]
 

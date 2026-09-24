@@ -6,12 +6,13 @@
 //! covers the harness family plus the agent-domain thin layers.
 
 use agent_loop::LoopEngine;
-use compaction::CompactionPlugin;
-use guard::{GuardConfig, GuardPlugin};
-use instruction::InstructionPlugin;
+use guard::GuardConfig;
+use plugin::plugins::CompactionPlugin;
+use plugin::plugins::GuardPlugin;
+use plugin::plugins::InstructionPlugin;
+use plugin::plugins::SkillPlugin;
 use prompt::PromptTemplate;
 use serde_json::Value;
-use skill::SkillPlugin;
 use std::sync::Arc;
 use subagent_harness::{SubagentRuntime, ToolSubagentControlPlugin, ToolSubagentPlugin};
 
@@ -53,8 +54,11 @@ pub fn assemble(
         registry.register(Arc::new(SubagentRuntime), ctx)?;
         registry.register(Arc::new(ToolSubagentPlugin::default()), ctx)?;
         registry.register(Arc::new(ToolSubagentControlPlugin::default()), ctx)?;
-        // 4. agent domain (allowed direction: agent → harness): orbit defaults.
-        orbit::register(ctx);
+        // 4. agent domain defaults. The values come from orbit, but the
+        // registration lives in the assembly root: orbit is a loop-layer
+        // crate and must not depend on the container that hosts it.
+        ctx.provide("orbit.max_turns", orbit::DEFAULT_MAX_TURNS);
+        ctx.provide("orbit.backend", orbit::HttpLlm);
         // 5. core plugins the framework always ships. They go through the
         // named registry (not a bare `provide`) so a host plugin reusing one
         // of their names is rejected instead of silently shadowing it.

@@ -11,6 +11,7 @@ llm = { path = "../llm" }
 memory = { path = "../memory" }
 serde_json = { workspace = true }
 diffy = { workspace = true }
+store = { path = "../store" }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -11,9 +11,8 @@
 //! (`trimmedInstructionDigest` duplicate suppression).
 
 pub mod files;
-pub mod plugin;
 pub mod render;
 
 pub use files::{INSTRUCTION_CANDIDATES, InstructionCache, ancestor_chain, discover};
-pub use plugin::{INSTRUCTION_SERVICE, InstructionPlugin};
 pub use render::{InstructionFragments, digest, render_fragments};
+pub const INSTRUCTION_SERVICE: &str = "harness.instruction";

@@ -16,7 +16,6 @@ pub use repeat_tool_reminder::{
 pub use timeout_policy::{ConfigError as TimeoutConfigError, TimeoutConfig, TimeoutPolicy};
 
 use parking_lot::RwLock;
-use plugin::{DshPlugin, PluginContext, PluginError};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -58,11 +57,7 @@ impl GuardService {
     }
 }
 
-/// Guard plugin that registers the guard service and any associated tools.
-pub struct GuardPlugin {
-    config: GuardConfig,
-}
-
+/// Guard config with repeat and timeout settings.
 #[derive(Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GuardConfig {
@@ -76,40 +71,5 @@ impl Default for GuardConfig {
             repeat: RepeatConfig::default(),
             timeout: TimeoutConfig::default(),
         }
-    }
-}
-
-impl GuardPlugin {
-    pub fn new(config: GuardConfig) -> Result<Self, Box<dyn std::error::Error>> {
-        // Validate repeat config (timeout validation happens in TimeoutPolicy::new)
-        let _reminder = RepeatToolReminder::new(config.repeat.clone())?;
-        let _timeout = TimeoutPolicy::new(config.timeout.clone())?;
-        Ok(Self { config })
-    }
-}
-
-impl DshPlugin for GuardPlugin {
-    fn name(&self) -> &str {
-        "guard"
-    }
-
-    fn register(&self, ctx: &mut PluginContext<'_>) {
-        let reminder = RepeatToolReminder::new(self.config.repeat.clone())
-            .expect("repeat config already validated");
-        let timeout = TimeoutPolicy::new(self.config.timeout.clone())
-            .expect("timeout config already validated");
-
-        let service = GuardService {
-            reminder,
-            timeout,
-            snapshot: Arc::new(RwLock::new(vec![])),
-        };
-
-        ctx.provide(GUARD_SERVICE, service);
-    }
-
-    fn validate_config(&self, _config: &Value) -> Result<(), PluginError> {
-        // Config validation happens at GuardPlugin::new time; accept any for now
-        Ok(())
     }
 }

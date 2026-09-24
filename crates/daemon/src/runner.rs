@@ -26,9 +26,9 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
-use crate::graph;
-use crate::{Task, TaskStatus};
 use rpc::worker::{Worker, WorkerEvent};
+use store::graph;
+use store::{Task, TaskStatus};
 
 /// Terminal outcome of one `run`.
 #[derive(Debug, PartialEq)]
@@ -436,7 +436,7 @@ fn event_record(event: &WorkerEvent) -> serde_json::Value {
     if truncated {
         rec["truncated"] = serde_json::json!(true);
     }
-    rec["ts"] = serde_json::json!(crate::now_iso());
+    rec["ts"] = serde_json::json!(store::now_iso());
     rec
 }
 
@@ -444,7 +444,7 @@ fn event_record(event: &WorkerEvent) -> serde_json::Value {
 /// multiple runs stays ordered and separable in one append-only file (#48).
 fn run_start_record(task_id: &str) -> serde_json::Value {
     serde_json::json!({
-        "ts": crate::now_iso(),
+        "ts": store::now_iso(),
         "event": "run_start",
         "task_id": task_id,
         "pid": std::process::id(),

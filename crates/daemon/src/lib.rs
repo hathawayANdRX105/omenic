@@ -30,11 +30,11 @@ mod dispatch;
 pub mod lock;
 pub mod protocol;
 mod questions;
+pub mod runner;
 mod server;
 pub mod session_query;
 mod socket;
 pub mod state;
-
 pub use client::{AppendOutcome, ClientError, DaemonClient, DaemonInfo, Subscription};
 pub use lock::InstanceLock;
 pub use protocol::{Command, EventFrame, Request, Response, ResponseError};

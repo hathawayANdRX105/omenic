@@ -1044,7 +1044,7 @@ fn print_task_detail(task: &Task, all: &[Task]) {
         println!(
             "attempts:    {} / {}",
             task.attempts,
-            store::runner::MAX_ATTEMPTS
+            daemon::runner::MAX_ATTEMPTS
         );
     }
     match &task.parent {
@@ -1129,7 +1129,7 @@ fn plan_cmd(dot: bool, json: bool) -> Result<u8, String> {
 /// Resume/retry semantics (#47): an InProgress task with a live runner is
 /// refused (abort it first); an InProgress task without one is an orphan
 /// and gets resumed; a Failed task is retried until the attempt budget
-/// (`store::runner::MAX_ATTEMPTS`) is exhausted.
+/// (`daemon::runner::MAX_ATTEMPTS`) is exhausted.
 fn run_cmd(id: &str) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
     let store = Store::new(&config.data_dir);
@@ -1144,7 +1144,7 @@ fn run_cmd(id: &str) -> Result<u8, String> {
     // #47: live-runner guard — never double-spawn a worker for one task.
     let task_dir = config.data_dir.join("tasks").join(id);
     if task.status == TaskStatus::InProgress {
-        if store::runner::runner_alive(&task_dir) {
+        if daemon::runner::runner_alive(&task_dir) {
             eprintln!(
                 "task already running: {id} (live runner, see {}); use `cli abort {id}` first",
                 task_dir.display()
@@ -1156,7 +1156,7 @@ fn run_cmd(id: &str) -> Result<u8, String> {
         eprintln!(
             "retrying failed task: {id} (attempt {}/{})",
             task.attempts + 1,
-            store::runner::MAX_ATTEMPTS
+            daemon::runner::MAX_ATTEMPTS
         );
     }
 
@@ -1184,8 +1184,8 @@ fn run_cmd(id: &str) -> Result<u8, String> {
         .map_err(|e| format!("store error: {e}"))?;
 
     // Runner takes over from here; its outcome decides the store flip.
-    let outcome = match store::runner::run(
-        &store::runner::Ctx {
+    let outcome = match daemon::runner::run(
+        &daemon::runner::Ctx {
             omp_path: config.omp_path.clone(),
             data_dir: config.data_dir.clone(),
             mcp_servers: config.mcp_servers.clone(),
@@ -1219,8 +1219,8 @@ fn run_cmd(id: &str) -> Result<u8, String> {
     } else {
         let result_payload = serde_json::json!({
             "status": match outcome.status {
-                store::runner::RunStatus::Done => "done",
-                store::runner::RunStatus::Failed => "failed",
+                daemon::runner::RunStatus::Done => "done",
+                daemon::runner::RunStatus::Failed => "failed",
             },
             "summary": outcome.summary,
             "events_seen": outcome.events_seen,
@@ -1235,12 +1235,12 @@ fn run_cmd(id: &str) -> Result<u8, String> {
         }
     }
 
-    if outcome.status == store::runner::RunStatus::Done {
+    if outcome.status == daemon::runner::RunStatus::Done {
         println!("done {id}");
         Ok(0)
     } else {
         eprintln!("run failed: {}", outcome.summary);
-        if updated.attempts >= store::runner::MAX_ATTEMPTS {
+        if updated.attempts >= daemon::runner::MAX_ATTEMPTS {
             eprintln!(
                 "retry limit reached ({} failed attempts); reset with `cli task update {id} --attempts 0`",
                 updated.attempts
@@ -1249,7 +1249,7 @@ fn run_cmd(id: &str) -> Result<u8, String> {
             eprintln!(
                 "failed attempts: {}/{}; retry with `cli run {id}`",
                 updated.attempts,
-                store::runner::MAX_ATTEMPTS
+                daemon::runner::MAX_ATTEMPTS
             );
         }
         Ok(1)
@@ -1263,13 +1263,13 @@ fn persist_run_outcome(
     store: &Store,
     data_dir: &std::path::Path,
     pre: &Task,
-    outcome: &store::runner::RunOutcome,
+    outcome: &daemon::runner::RunOutcome,
 ) -> Result<Task, String> {
     let attempt = pre.attempts + 1;
     let mut updated = pre.clone();
     updated.status = match outcome.status {
-        store::runner::RunStatus::Done => TaskStatus::Done,
-        store::runner::RunStatus::Failed => {
+        daemon::runner::RunStatus::Done => TaskStatus::Done,
+        daemon::runner::RunStatus::Failed => {
             updated.attempts = attempt;
             TaskStatus::Failed
         }
@@ -1289,7 +1289,7 @@ fn record_attempt(
     data_dir: &std::path::Path,
     task_id: &str,
     attempt: u32,
-    outcome: &store::runner::RunOutcome,
+    outcome: &daemon::runner::RunOutcome,
 ) {
     let task_dir = data_dir.join("tasks").join(task_id);
     if let Err(e) = std::fs::create_dir_all(&task_dir) {
@@ -1300,8 +1300,8 @@ fn record_attempt(
         "ts": store::now_iso(),
         "attempt": attempt,
         "outcome": match outcome.status {
-            store::runner::RunStatus::Done => "done",
-            store::runner::RunStatus::Failed => "failed",
+            daemon::runner::RunStatus::Done => "done",
+            daemon::runner::RunStatus::Failed => "failed",
         },
         "reason": outcome.summary,
         "events_seen": outcome.events_seen,
@@ -4270,8 +4270,8 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
         };
         store.append(&pre).unwrap();
 
-        let outcome = store::runner::RunOutcome {
-            status: store::runner::RunStatus::Failed,
+        let outcome = daemon::runner::RunOutcome {
+            status: daemon::runner::RunStatus::Failed,
             summary: "read_event error: 中文 \"boom\" 💥".into(),
             events_seen: 7,
         };
@@ -4306,8 +4306,8 @@ Status: ○ open  ◐ in_progress  ✗ failed  ● blocked  ✓ done
         let pre = mk_task_titled("t2", "t2");
         store.append(&pre).unwrap();
 
-        let outcome = store::runner::RunOutcome {
-            status: store::runner::RunStatus::Done,
+        let outcome = daemon::runner::RunOutcome {
+            status: daemon::runner::RunStatus::Done,
             summary: "all good".into(),
             events_seen: 3,
         };

@@ -19,8 +19,4 @@ pub use context::{PluginContext, ServiceRegistry};
 pub use events::{EventBus, EventHandler, Subscription};
 pub use fiber::{Fiber, PluginLifecycle};
 pub use registry::{DshPlugin, PluginError, PluginRegistry};
-
-// Re-exports: plugins speak the harness vocabulary without declaring the
-// core/runtime crates themselves.
-pub use agent_loop as runtime;
-pub use protocol as core;
+pub mod plugins;
