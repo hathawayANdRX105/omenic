@@ -58,7 +58,7 @@ fn lines(app: &App, width: u16) -> Vec<Line<'static>> {
 }
 
 /// 一段文本 → 若干行：首行带 `prefix`，续行补同样宽的空白；样式统一。
-fn push_wrapped(
+pub(super) fn push_wrapped(
     out: &mut Vec<Line<'static>>,
     text: &str,
     width: usize,
