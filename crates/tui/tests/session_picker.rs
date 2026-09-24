@@ -10,15 +10,25 @@ use omenic_web_state::types::{Session, SessionStatus};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
+use ratatui::buffer::CellWidth;
 
-/// TestBackend 缓冲 → 逐行文本（同 `tests/layout.rs` 的取样法）。
+/// TestBackend 缓冲 → 逐行文本（同 `tests/layout.rs` 的取样法）+ 宽字符续格跳过。
+///
+/// 双宽 grapheme（如「无会话」）占两格：ratatui-core `set_stringn` 把首格写
+/// 进 symbol、随后的续格 `reset()` 成默认空格格。逐格 naive 拼接会得到
+/// `无 会 话`（2026-09-25 CI 红实录），故按 [`CellWidth`] 的实际显示宽跳过
+/// 续格，还原出连续原文再断言。其余四份测试只断言 ASCII，不受此影响。
 fn buffer_text(buffer: &Buffer) -> String {
     let mut out = String::new();
     for y in 0..buffer.area.height {
-        for x in 0..buffer.area.width {
+        let mut x = 0;
+        while x < buffer.area.width {
             if let Some(cell) = buffer.cell((x, y)) {
                 out.push_str(cell.symbol());
+                // 宽 ≥2 时连带吃掉 (width-1) 个续格；`.max(1)` 防零宽下溢。
+                x += cell.cell_width().max(1) - 1;
             }
+            x += 1;
         }
         out.push('\n');
     }
