@@ -10,7 +10,9 @@ mod composer;
 mod dock;
 pub mod footer;
 mod layout;
+pub mod panels;
 pub mod questions;
+pub mod session_picker;
 pub mod tool_card;
 mod transcript;
 
