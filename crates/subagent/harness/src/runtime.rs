@@ -81,13 +81,3 @@ impl SubagentRuntimeService {
 /// query subagent providers.
 #[derive(Default)]
 pub struct SubagentRuntime;
-
-impl plugin::DshPlugin for SubagentRuntime {
-    fn name(&self) -> &str {
-        "harness.subagents"
-    }
-
-    fn register(&self, ctx: &mut plugin::PluginContext<'_>) {
-        ctx.provide("harness.subagents", SubagentRuntimeService::default());
-    }
-}

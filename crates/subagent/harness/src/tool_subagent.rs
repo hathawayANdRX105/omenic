@@ -5,10 +5,9 @@
 
 use std::sync::Arc;
 
-use plugin::PluginContext;
 use protocol::{AbortSignal, ToolError, ToolResult};
 use serde_json::Value;
-use tools_harness::{Tool, ToolCatalog};
+use tools_harness::Tool;
 
 use crate::provider::{SubagentResult, SubagentStartRequest};
 use crate::runtime::SubagentRuntimeService;
@@ -27,26 +26,6 @@ impl Default for ToolSubagentPlugin {
             provider_name: "fork".into(),
             tool_name: "subagent".into(),
         }
-    }
-}
-
-impl plugin::DshPlugin for ToolSubagentPlugin {
-    fn name(&self) -> &str {
-        "tool-subagent"
-    }
-
-    fn register(&self, ctx: &mut PluginContext<'_>) {
-        let runtime = ctx
-            .resolve::<SubagentRuntimeService>("harness.subagents")
-            .expect("SubagentRuntime must register before tool-subagent");
-        let catalog = ctx
-            .resolve::<ToolCatalog>("harness.tools")
-            .expect("harness.tools must be provided by composition");
-        catalog.register(Arc::new(SubagentTool::new(
-            self.tool_name.clone(),
-            self.provider_name.clone(),
-            runtime,
-        )));
     }
 }
 

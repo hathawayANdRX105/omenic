@@ -7,10 +7,9 @@
 
 use std::sync::Arc;
 
-use plugin::PluginContext;
 use protocol::{AbortSignal, ToolError, ToolResult};
 use serde_json::Value;
-use tools_harness::{Tool, ToolCatalog};
+use tools_harness::Tool;
 
 use crate::runtime::SubagentRuntimeService;
 
@@ -25,25 +24,6 @@ impl Default for ToolSubagentControlPlugin {
         Self {
             tool_name: "subagent_control".into(),
         }
-    }
-}
-
-impl plugin::DshPlugin for ToolSubagentControlPlugin {
-    fn name(&self) -> &str {
-        "tool-subagent-control"
-    }
-
-    fn register(&self, ctx: &mut PluginContext<'_>) {
-        let runtime: Arc<SubagentRuntimeService> = ctx
-            .resolve("harness.subagents")
-            .expect("harness.subagents must be registered before tool-subagent-control");
-        let catalog: Arc<ToolCatalog> = ctx
-            .resolve("harness.tools")
-            .expect("harness.tools must be registered before tool-subagent-control");
-        catalog.register(Arc::new(SubagentControlTool::new(
-            self.tool_name.clone(),
-            runtime,
-        )));
     }
 }
 

@@ -1,6 +1,6 @@
 //! Consolidated DshPlugin implementations for the plugin crate.
 //!
-//! Order: compaction → instruction → guard → skill → plan-mode (as specified).
+//! Order: compaction → instruction → guard → skill → plan-mode → subagent family.
 //!
 //! Each plugin provides a single service under its name domain in the harness.
 //! Host plugins run after these core plugins, so they can override their services.
@@ -21,6 +21,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tools_harness::ToolCatalog;
+
+use subagent_harness::runtime::{SubagentRuntime, SubagentRuntimeService};
+use subagent_harness::tool_subagent::{SubagentTool, ToolSubagentPlugin};
+use subagent_harness::tool_subagent_control::{SubagentControlTool, ToolSubagentControlPlugin};
 
 /// Compaction plugin: provides the default char-budget policy as the
 /// `harness.compaction` service.
@@ -238,6 +242,64 @@ impl DshPlugin for PlanModePlugin {
         catalog.register(Arc::new(plan_mode::tools::exit_plan_mode_tool(
             self.runtime.clone(),
             review_port,
+        )));
+    }
+}
+
+// ---- subagent family -----------------------------------------------------
+// These live here, not in subagent-harness, so the capability crate does not
+// depend on the container: the `DshPlugin` trait and `PluginContext` are
+// plugin's own, and the subagent service/tool structs are reached through the
+// dependency that runs in the legal direction (plugin -> subagent-harness).
+
+/// Wires [`SubagentRuntimeService`] into the fiber under `harness.subagents`.
+impl DshPlugin for SubagentRuntime {
+    fn name(&self) -> &str {
+        "harness.subagents"
+    }
+
+    fn register(&self, ctx: &mut PluginContext<'_>) {
+        ctx.provide("harness.subagents", SubagentRuntimeService::default());
+    }
+}
+
+/// Installs the `subagent` model-facing tool.
+impl DshPlugin for ToolSubagentPlugin {
+    fn name(&self) -> &str {
+        "tool-subagent"
+    }
+
+    fn register(&self, ctx: &mut PluginContext<'_>) {
+        let runtime = ctx
+            .resolve::<SubagentRuntimeService>("harness.subagents")
+            .expect("SubagentRuntime must register before tool-subagent");
+        let catalog = ctx
+            .resolve::<ToolCatalog>("harness.tools")
+            .expect("harness.tools must be provided by composition");
+        catalog.register(Arc::new(SubagentTool::new(
+            self.tool_name.clone(),
+            self.provider_name.clone(),
+            runtime,
+        )));
+    }
+}
+
+/// Installs the `subagent_control` model-facing tool.
+impl DshPlugin for ToolSubagentControlPlugin {
+    fn name(&self) -> &str {
+        "tool-subagent-control"
+    }
+
+    fn register(&self, ctx: &mut PluginContext<'_>) {
+        let runtime: Arc<SubagentRuntimeService> = ctx
+            .resolve("harness.subagents")
+            .expect("harness.subagents must be registered before tool-subagent-control");
+        let catalog: Arc<ToolCatalog> = ctx
+            .resolve("harness.tools")
+            .expect("harness.tools must be registered before tool-subagent-control");
+        catalog.register(Arc::new(SubagentControlTool::new(
+            self.tool_name.clone(),
+            runtime,
         )));
     }
 }
