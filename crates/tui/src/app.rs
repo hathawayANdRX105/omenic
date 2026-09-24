@@ -288,20 +288,20 @@ fn event_loop(client: &WebDaemon, sid: &str, rx: &Receiver<AgentEvent>) -> Resul
             spawn_prompt(client, sid, msg, ptx.clone())?;
         }
         terminal.draw(|frame| crate::ui::draw(frame, &app))?;
-        if event::poll(POLL)? {
-            if let Event::Key(key) = event::read()? {
-                match app.handle_key(key) {
-                    KeyAction::Quit => break,
-                    KeyAction::Abort => {
-                        app.set_status("aborting turn");
-                        client.abort_worker().map_err(client_error)?;
-                    }
-                    KeyAction::None => {}
+        if event::poll(POLL)?
+            && let Event::Key(key) = event::read()?
+        {
+            match app.handle_key(key) {
+                KeyAction::Quit => break,
+                KeyAction::Abort => {
+                    app.set_status("aborting turn");
+                    client.abort_worker().map_err(client_error)?;
                 }
+                KeyAction::None => {}
             }
-            // resize：下一次 draw 的 autoresize 自动重排（route §3：
-            // 不崩、不写屏外）；paste/focus 不改状态。
         }
+        // resize：下一次 draw 的 autoresize 自动重排（route §3：
+        // 不崩、不写屏外）；paste/focus 不改状态。
         // 事件流：泵线程收线 = 订阅断线 = daemon 断线 → 退出码 3。
         loop {
             match rx.try_recv() {
