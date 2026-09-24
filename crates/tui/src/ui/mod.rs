@@ -7,6 +7,8 @@
 mod composer;
 mod dock;
 mod layout;
+pub mod questions;
+pub mod tool_card;
 mod transcript;
 
 use ratatui::Frame;
