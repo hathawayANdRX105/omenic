@@ -12,12 +12,12 @@
 //!
 //! Placement note: the [`LlmBackend`] trait lives in this crate (orbit),
 //! and adaptor is orbit's dependency — so the waterfall *runtime* must
-//! live here, not in `adaptor::fallback`. `adaptor::openai::stream_cb_with_policy`
+//! live here, not in `llm::fallback`. `llm::openai::stream_cb_with_policy`
 //! supplies the per-provider call; this module sequences the providers.
 
 use std::sync::atomic::AtomicBool;
 
-use adaptor::{Context, Model, StreamEvent, ToolDef, openai::RetryPolicy};
+use llm::{Context, Model, StreamEvent, ToolDef, openai::RetryPolicy};
 
 use crate::LlmBackend;
 
@@ -120,7 +120,7 @@ impl WaterfallLlm {
         // below.
         let mut leaked_content = false;
         let mut terminal = Terminal::None;
-        adaptor::openai::stream_cb_with_policy(
+        llm::openai::stream_cb_with_policy(
             &provider.to_model(),
             context,
             tools,

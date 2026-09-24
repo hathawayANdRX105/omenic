@@ -3,19 +3,20 @@
 version = 4
 
 [[package]]
-name = "adaptor"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "ureq",
-]
-
-[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
+
+[[package]]
+name = "agent-loop"
+version = "0.1.0"
+dependencies = [
+ "protocol",
+ "serde",
+ "serde_json",
+ "tools-harness",
+]
 
 [[package]]
 name = "aho-corasick"
@@ -410,29 +411,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
-name = "cli"
-version = "0.1.0"
-dependencies = [
- "adaptor",
- "clap",
- "config",
- "daemon",
- "mcp",
- "omenic-tui",
- "orbit",
- "rpc",
- "serde",
- "serde_json",
- "session",
- "spec",
- "subagent",
- "task",
- "tempfile",
- "toml",
- "tools",
-]
-
-[[package]]
 name = "cmake"
 version = "0.1.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -469,6 +447,34 @@ dependencies = [
  "rustversion",
  "ryu",
  "static_assertions",
+]
+
+[[package]]
+name = "compaction"
+version = "0.1.0"
+dependencies = [
+ "plugin",
+ "protocol",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "composition"
+version = "0.1.0"
+dependencies = [
+ "agent-loop",
+ "compaction",
+ "guard",
+ "instruction",
+ "orbit",
+ "plugin",
+ "prompt",
+ "serde_json",
+ "skill",
+ "subagent-harness",
+ "tempfile",
+ "tools-harness",
 ]
 
 [[package]]
@@ -658,30 +664,30 @@ dependencies = [
 name = "daemon"
 version = "0.1.0"
 dependencies = [
- "adaptor",
+ "agent-loop",
+ "compaction",
+ "composition",
  "config",
  "ctrlc",
  "fs2",
+ "jobs",
  "libc",
+ "llm",
  "mcp",
- "omenic-composition",
- "omenic-harness-compaction",
- "omenic-harness-jobs",
- "omenic-harness-plan-mode",
- "omenic-harness-runtime",
- "omenic-harness-subagent",
- "omenic-harness-terminal",
- "omenic-harness-tools",
  "orbit",
  "parking_lot",
+ "plan-mode",
  "rpc",
  "serde",
  "serde_json",
  "session",
- "task",
+ "store",
+ "subagent-harness",
  "tempfile",
+ "terminal",
  "thiserror 2.0.20",
  "tools",
+ "tools-harness",
  "uuid",
 ]
 
@@ -1544,6 +1550,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "guard"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+ "plugin",
+ "protocol",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tools-harness",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1819,6 +1839,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "instruction"
+version = "0.1.0"
+dependencies = [
+ "plugin",
+ "prompt",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1884,6 +1914,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jobs"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1929,6 +1968,29 @@ name = "konst_macro_rules"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4933f3f57a8e9d9da04db23fb153356ecaf00cbd14aee46279c33dc80925c37"
+
+[[package]]
+name = "kymic"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "config",
+ "daemon",
+ "llm",
+ "mcp",
+ "omenic-tui",
+ "orbit",
+ "rpc",
+ "serde",
+ "serde_json",
+ "session",
+ "spec",
+ "store",
+ "subagent",
+ "tempfile",
+ "toml",
+ "tools",
+]
 
 [[package]]
 name = "lab"
@@ -2049,6 +2111,15 @@ name = "litrs"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
+
+[[package]]
+name = "llm"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "ureq",
+]
 
 [[package]]
 name = "lock_api"
@@ -2181,8 +2252,8 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 name = "mcp"
 version = "0.1.0"
 dependencies = [
- "adaptor",
  "config",
+ "llm",
  "serde_json",
  "tools",
  "ureq",
@@ -2427,251 +2498,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef25abbcd74fb2609453eb695bd2f860d389e457f67dc17cafc8b8cbc89d0c33"
 
 [[package]]
-name = "omenic-composition"
-version = "0.1.0"
-dependencies = [
- "omenic-harness-compaction",
- "omenic-harness-guard",
- "omenic-harness-instruction",
- "omenic-harness-plugin",
- "omenic-harness-prompt",
- "omenic-harness-runtime",
- "omenic-harness-skill",
- "omenic-harness-subagent",
- "omenic-harness-tools",
- "orbit",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "omenic-harness-compaction"
-version = "0.1.0"
-dependencies = [
- "omenic-harness-core",
- "omenic-harness-plugin",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "omenic-harness-core"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "omenic-harness-guard"
-version = "0.1.0"
-dependencies = [
- "omenic-harness-core",
- "omenic-harness-plugin",
- "omenic-harness-tools",
- "parking_lot",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "omenic-harness-instruction"
-version = "0.1.0"
-dependencies = [
- "omenic-harness-plugin",
- "omenic-harness-prompt",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "omenic-harness-jobs"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "omenic-harness-plan-mode"
-version = "0.1.0"
-dependencies = [
- "omenic-harness-core",
- "omenic-harness-plugin",
- "omenic-harness-prompt",
- "omenic-harness-tools",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "omenic-harness-plugin"
-version = "0.1.0"
-dependencies = [
- "omenic-harness-core",
- "omenic-harness-runtime",
- "parking_lot",
- "serde_json",
-]
-
-[[package]]
-name = "omenic-harness-prompt"
-version = "0.1.0"
-dependencies = [
- "omenic-harness-core",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "omenic-harness-runtime"
-version = "0.1.0"
-dependencies = [
- "omenic-harness-core",
- "omenic-harness-tools",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "omenic-harness-skill"
-version = "0.1.0"
-dependencies = [
- "omenic-harness-core",
- "omenic-harness-plugin",
- "omenic-harness-prompt",
- "omenic-harness-tools",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "omenic-harness-subagent"
-version = "0.1.0"
-dependencies = [
- "adaptor",
- "omenic-harness-core",
- "omenic-harness-plugin",
- "omenic-harness-tools",
- "orbit",
- "serde",
- "serde_json",
- "subagent",
- "tempfile",
- "tools",
-]
-
-[[package]]
-name = "omenic-harness-terminal"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "portable-pty",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "omenic-harness-tools"
-version = "0.1.0"
-dependencies = [
- "omenic-harness-core",
- "omenic-harness-jobs",
- "omenic-harness-terminal",
- "serde",
- "serde_json",
- "tools",
- "ureq",
-]
-
-[[package]]
 name = "omenic-tui"
 version = "0.1.0"
 dependencies = [
  "clap",
  "crossterm",
- "omenic-web-client",
- "omenic-web-state",
  "ratatui",
  "serde_json",
  "thiserror 2.0.20",
-]
-
-[[package]]
-name = "omenic-web-client"
-version = "0.1.0"
-dependencies = [
- "daemon",
- "omenic-web-state",
- "serde",
- "serde_json",
- "session",
- "task",
- "tempfile",
- "toml",
- "toml_edit 0.22.27",
- "ureq",
-]
-
-[[package]]
-name = "omenic-web-components"
-version = "0.1.0"
-dependencies = [
- "ammonia",
- "dioxus",
- "omenic-web-client",
- "omenic-web-state",
- "pulldown-cmark",
-]
-
-[[package]]
-name = "omenic-web-page-config"
-version = "0.1.0"
-dependencies = [
- "dioxus",
- "omenic-web-client",
- "omenic-web-components",
-]
-
-[[package]]
-name = "omenic-web-page-stats"
-version = "0.1.0"
-dependencies = [
- "dioxus",
- "omenic-web-client",
-]
-
-[[package]]
-name = "omenic-web-page-workspace"
-version = "0.1.0"
-dependencies = [
- "dioxus",
- "omenic-web-client",
- "omenic-web-components",
- "omenic-web-page-config",
- "omenic-web-page-stats",
- "omenic-web-state",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "omenic-web-state"
-version = "0.1.0"
-dependencies = [
- "adaptor",
- "memory",
- "orbit",
- "serde",
- "serde_json",
- "session",
- "task",
- "tools",
+ "web-client",
+ "web-state",
 ]
 
 [[package]]
@@ -2690,11 +2526,11 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 name = "orbit"
 version = "0.1.0"
 dependencies = [
- "adaptor",
+ "compaction",
  "fs2",
- "omenic-harness-compaction",
- "omenic-harness-instruction",
- "omenic-harness-plugin",
+ "instruction",
+ "llm",
+ "plugin",
  "prompts",
  "serde",
  "serde_json",
@@ -2939,6 +2775,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
+name = "plan-mode"
+version = "0.1.0"
+dependencies = [
+ "plugin",
+ "prompt",
+ "protocol",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tools-harness",
+]
+
+[[package]]
+name = "plugin"
+version = "0.1.0"
+dependencies = [
+ "agent-loop",
+ "parking_lot",
+ "protocol",
+ "serde_json",
+]
+
+[[package]]
 name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3036,8 +2896,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "prompt"
+version = "0.1.0"
+dependencies = [
+ "protocol",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "prompts"
 version = "0.1.0"
+
+[[package]]
+name = "protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "pulldown-cmark"
@@ -3286,22 +3163,22 @@ dependencies = [
 name = "rpc"
 version = "0.1.0"
 dependencies = [
- "adaptor",
+ "agent-loop",
  "base64",
+ "compaction",
+ "composition",
+ "jobs",
  "libc",
- "omenic-composition",
- "omenic-harness-compaction",
- "omenic-harness-core",
- "omenic-harness-jobs",
- "omenic-harness-runtime",
- "omenic-harness-terminal",
- "omenic-harness-tools",
+ "llm",
  "orbit",
+ "protocol",
  "serde",
  "serde_json",
  "session",
  "tempfile",
+ "terminal",
  "tools",
+ "tools-harness",
 ]
 
 [[package]]
@@ -3665,6 +3542,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
+name = "skill"
+version = "0.1.0"
+dependencies = [
+ "plugin",
+ "prompt",
+ "protocol",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tools-harness",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3742,6 +3632,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "store"
+version = "0.1.0"
+dependencies = [
+ "config",
+ "fs2",
+ "llm",
+ "mcp",
+ "rpc",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "tools",
+]
+
+[[package]]
 name = "string_cache"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3796,12 +3702,28 @@ dependencies = [
 name = "subagent"
 version = "0.1.0"
 dependencies = [
- "adaptor",
+ "llm",
  "orbit",
  "serde",
  "serde_json",
  "tempfile",
  "tools",
+]
+
+[[package]]
+name = "subagent-harness"
+version = "0.1.0"
+dependencies = [
+ "llm",
+ "orbit",
+ "plugin",
+ "protocol",
+ "serde",
+ "serde_json",
+ "subagent",
+ "tempfile",
+ "tools",
+ "tools-harness",
 ]
 
 [[package]]
@@ -3889,22 +3811,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "task"
-version = "0.1.0"
-dependencies = [
- "adaptor",
- "config",
- "fs2",
- "mcp",
- "rpc",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "tools",
-]
-
-[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3937,6 +3843,15 @@ dependencies = [
  "rustix 1.1.4",
  "signal-hook",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "terminal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "portable-pty",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -4222,11 +4137,24 @@ checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 name = "tools"
 version = "0.1.0"
 dependencies = [
- "adaptor",
  "diffy",
+ "llm",
  "memory",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "tools-harness"
+version = "0.1.0"
+dependencies = [
+ "jobs",
+ "protocol",
+ "serde",
+ "serde_json",
+ "terminal",
+ "tools",
+ "ureq",
 ]
 
 [[package]]
@@ -4605,16 +4533,88 @@ dependencies = [
 ]
 
 [[package]]
-name = "web-cli"
+name = "web"
 version = "0.1.0"
 dependencies = [
  "axum",
  "dioxus",
  "dioxus-liveview",
- "omenic-web-client",
- "omenic-web-page-workspace",
  "serde_yaml",
  "tokio",
+ "web-client",
+ "web-page-workspace",
+]
+
+[[package]]
+name = "web-client"
+version = "0.1.0"
+dependencies = [
+ "daemon",
+ "serde",
+ "serde_json",
+ "session",
+ "store",
+ "tempfile",
+ "toml",
+ "toml_edit 0.22.27",
+ "ureq",
+ "web-state",
+]
+
+[[package]]
+name = "web-components"
+version = "0.1.0"
+dependencies = [
+ "ammonia",
+ "dioxus",
+ "pulldown-cmark",
+ "web-client",
+ "web-state",
+]
+
+[[package]]
+name = "web-page-config"
+version = "0.1.0"
+dependencies = [
+ "dioxus",
+ "web-client",
+ "web-components",
+]
+
+[[package]]
+name = "web-page-stats"
+version = "0.1.0"
+dependencies = [
+ "dioxus",
+ "web-client",
+]
+
+[[package]]
+name = "web-page-workspace"
+version = "0.1.0"
+dependencies = [
+ "dioxus",
+ "serde_json",
+ "tokio",
+ "web-client",
+ "web-components",
+ "web-page-config",
+ "web-page-stats",
+ "web-state",
+]
+
+[[package]]
+name = "web-state"
+version = "0.1.0"
+dependencies = [
+ "llm",
+ "memory",
+ "orbit",
+ "serde",
+ "serde_json",
+ "session",
+ "store",
+ "tools",
 ]
 
 [[package]]

@@ -12,7 +12,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 
-use adaptor::{Context, Message, Model, StopReason, StreamEvent, ToolDef};
+use llm::{Context, Message, Model, StopReason, StreamEvent, ToolDef};
 use orbit::{LlmBackend, LoopConfig, build_system_prompt, run_agent_streaming};
 use prompts::agents::TASK;
 

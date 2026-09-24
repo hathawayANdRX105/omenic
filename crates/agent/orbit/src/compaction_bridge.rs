@@ -19,11 +19,11 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use adaptor::{Context, Message, Model, StopReason, StreamEvent};
-use omenic_harness_compaction::{
+use compaction::{
     CharBudgetPolicy, Summarizer, compact_with, message_chars as dto_chars,
     select_compaction_cut as dto_cut, to_dto, to_wire,
 };
+use llm::{Context, Message, Model, StopReason, StreamEvent};
 
 use crate::{ContextLog, LlmBackend};
 

@@ -4,8 +4,8 @@
 //! 数据统计 / 设置弹窗）。页面数据走 daemon RPC（`stats.summary` / `runs_for_session` / `list_sessions`），无 daemon 时空态。
 
 use dioxus::prelude::*;
-use omenic_web_client::llm;
-use omenic_web_page_workspace::Workspace;
+use web_client::llm;
+use web_page_workspace::Workspace;
 
 #[component]
 pub fn App() -> Element {

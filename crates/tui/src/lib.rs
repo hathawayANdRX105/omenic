@@ -26,10 +26,10 @@ pub use probe::{MuxKind, TermProbe};
 use std::io::{BufRead, Write};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 
-use omenic_web_client::ClientError;
-use omenic_web_client::daemon::WebDaemon;
-use omenic_web_state::types::now_epoch_ms;
-use omenic_web_state::ui_state::{AgentEvent, UiState};
+use web_client::ClientError;
+use web_client::daemon::WebDaemon;
+use web_state::types::now_epoch_ms;
+use web_state::ui_state::{AgentEvent, UiState};
 
 /// `oi tui` 运行选项（CLI 解析后传入；route §3 契约字段，不许改）。
 #[derive(Debug, Clone)]

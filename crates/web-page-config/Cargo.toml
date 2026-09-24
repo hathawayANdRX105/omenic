@@ -1,0 +1,10 @@
+[package]
+name = "web-page-config"
+edition = "2024"
+version = "0.1.0"
+publish = false
+
+[dependencies]
+dioxus = { version = "0.7" }
+web-client = { path = "../web-client" }
+web-components = { path = "../web-components" }

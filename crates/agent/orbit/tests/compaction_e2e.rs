@@ -21,12 +21,12 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::atomic::AtomicBool;
 
-use adaptor::{
-    Block, Content, Context, Message, Model, StopReason, StreamEvent, ToolCallSpec, ToolDef,
-};
-use omenic_harness_compaction::{
+use compaction::{
     COMPACT_CHAR_BUDGET, KEEP_RECENT_CHARS, KEEP_RECENT_MIN, NoopSummarizer, RegionBudget,
     SUMMARY_PREFIX, compact_with, is_balanced_at, recent_window_cut, to_dto,
+};
+use llm::{
+    Block, Content, Context, Message, Model, StopReason, StreamEvent, ToolCallSpec, ToolDef,
 };
 use orbit::{ContextLog, LlmBackend, message_chars, run_agent, select_compaction_cut};
 use serde_json::json;
@@ -118,7 +118,7 @@ fn request_chars(ctx: &Context) -> usize {
 }
 
 /// Re-type wire messages into the harness DTO the policy operates on.
-fn dto(msgs: &[Message]) -> Vec<omenic_harness_compaction::Message> {
+fn dto(msgs: &[Message]) -> Vec<compaction::Message> {
     msgs.iter().map(to_dto).collect()
 }
 

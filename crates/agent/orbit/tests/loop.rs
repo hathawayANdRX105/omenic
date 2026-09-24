@@ -7,7 +7,7 @@
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use adaptor::{Context, Message, Model, StopReason, StreamEvent, ToolCallSpec, ToolDef};
+use llm::{Context, Message, Model, StopReason, StreamEvent, ToolCallSpec, ToolDef};
 use orbit::{
     AgentEvent, ContextLog, KEEP_RECENT_CHARS, KEEP_RECENT_MIN, LlmBackend, LoopConfig, TurnStop,
     message_chars, run_agent, run_agent_streaming, select_compaction_cut,
@@ -502,7 +502,7 @@ fn compaction_keeps_newest_window_on_success() {
     // The summary request carried the old prefix and none of the window.
     let seen = backend.0.borrow();
     let sent = match &seen.seen_contexts[0].messages[0].content {
-        adaptor::Content::Text(s) => s.as_str(),
+        llm::Content::Text(s) => s.as_str(),
         other => panic!("summary request should be plain text: {other:?}"),
     };
     assert!(sent.contains("0169"), "oldest prefix must be summarized");

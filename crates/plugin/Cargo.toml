@@ -1,0 +1,15 @@
+[package]
+name = "plugin"
+version = "0.1.0"
+edition = "2024"
+description = "Plugin surface: service registry, event bus, lifecycle fiber, plugin registry"
+license = "MIT"
+publish = false
+
+[dependencies]
+serde_json = { workspace = true }
+protocol = { path = "../protocol" }
+agent-loop = { path = "../agent-loop" }
+
+[dev-dependencies]
+parking_lot = "0.12"

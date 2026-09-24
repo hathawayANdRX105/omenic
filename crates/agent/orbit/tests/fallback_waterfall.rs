@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use adaptor::{Context, Message, Model, StopReason, StreamEvent, openai::RetryPolicy};
+use llm::{Context, Message, Model, StopReason, StreamEvent, openai::RetryPolicy};
 use orbit::{LlmBackend, LlmProvider, WaterfallLlm};
 
 // ---------------------------------------------------------------------------

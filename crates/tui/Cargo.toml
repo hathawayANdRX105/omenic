@@ -7,8 +7,8 @@ license = "MIT"
 publish = false
 
 [dependencies]
-omenic-web-client = { path = "../web/client" }
-omenic-web-state = { path = "../web/state" }
+web-client = { path = "../web-client" }
+web-state = { path = "../web-state" }
 clap = { workspace = true }
 crossterm = { workspace = true }
 # T1 不 import（T2 全屏渲染用）：P1 已批的两行 workspace 依赖随本 crate

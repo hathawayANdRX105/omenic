@@ -1,0 +1,22 @@
+[package]
+name = "web-client"
+edition = "2024"
+version = "0.1.0"
+publish = false
+
+[dependencies]
+web-state = { path = "../web-state" }
+daemon = { path = "../daemon" }
+session = { path = "../session" }
+store = { path = "../store" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+# 与 toml 0.8 版本族匹配（toml 0.8 内部即基于 toml_edit 0.22）。
+# save_to_file 用它做增量写回，保留 save_to_file 不管理的段/注释/格式。
+toml_edit = "0.22"
+ureq = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+# toml_edit 已在 [dependencies] 中，集成测试可直接引用，无需重复声明。

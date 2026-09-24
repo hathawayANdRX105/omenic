@@ -7,15 +7,15 @@ license = "MIT"
 publish = false
 
 [dependencies]
-adaptor = { path = "../adaptor" }
-tools = { path = "../tools" }
+llm = { path = "../../llm" }
+tools = { path = "../../tools" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 fs2 = { workspace = true }
-prompts = { path = "../../infra/prompts" }
-omenic-harness-plugin = { path = "../../harness/plugin" }
-omenic-harness-compaction = { path = "../../harness/compaction" }
-omenic-harness-instruction = { path = "../../harness/instruction" }
+prompts = { path = "../../prompts" }
+plugin = { path = "../../plugin" }
+compaction = { path = "../../agent-loop/compaction" }
+instruction = { path = "../../agent-loop/instruction" }
 
 [dev-dependencies]
 tempfile = { workspace = true }

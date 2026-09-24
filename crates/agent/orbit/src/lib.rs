@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
-use adaptor::{Context, Message, Model, StopReason, StreamEvent, ToolCallSpec, ToolDef};
+use llm::{Context, Message, Model, StopReason, StreamEvent, ToolCallSpec, ToolDef};
 use tools::{Tool, def};
 
 // The compaction policy (char-budget trigger ~4 chars/token ≈ 30k tokens,
@@ -24,7 +24,7 @@ use tools::{Tool, def};
 // public knobs stay re-exported on the orbit path.
 // ponytail: fixed budget — `Model` carries no context-window field; derive
 // it from provider metadata once one exists.
-pub use omenic_harness_compaction::{KEEP_RECENT_CHARS, KEEP_RECENT_MIN};
+pub use compaction::{KEEP_RECENT_CHARS, KEEP_RECENT_MIN};
 
 /// LLM backend abstraction: the only seam between loop and network,
 /// so invariants are testable offline with scripted streams.
@@ -67,7 +67,7 @@ impl LlmBackend for HttpLlm {
         signal: &AtomicBool,
         emit: &mut dyn FnMut(&StreamEvent),
     ) {
-        adaptor::stream_cb(model, context, tools, signal, emit)
+        llm::stream_cb(model, context, tools, signal, emit)
     }
 }
 
@@ -291,7 +291,7 @@ pub use fallback::{LlmProvider, WaterfallLlm};
 // this path needs no container and stays inside the loop's "host passes
 // every knob in, loop pulls no ambient state" contract.
 
-use omenic_harness_instruction::{InstructionCache, render_fragments};
+use instruction::{InstructionCache, render_fragments};
 
 /// Compose the default system prompt: [`prompts::agents::TASK`] prefixed with
 /// the `AGENTS.md` workspace instructions discovered up the directory chain
@@ -597,7 +597,7 @@ pub fn run_agent(
 /// Thin layer over [`run_agent`]-adjacent constants only: the loop logic is
 /// untouched, and hosts that don't use the plugin surface simply never call
 /// this. The composition root invokes it after the container is built.
-pub fn register(ctx: &mut omenic_harness_plugin::PluginContext) {
+pub fn register(ctx: &mut plugin::PluginContext) {
     ctx.provide("orbit.max_turns", DEFAULT_MAX_TURNS);
     ctx.provide("orbit.backend", HttpLlm);
 }

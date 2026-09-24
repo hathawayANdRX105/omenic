@@ -3,7 +3,7 @@
 //! shape (internally tagged `"type"`, snake_case) must stay pinned: daemon
 //! subscribers and the web UI parse these strings.
 
-use adaptor::ToolCallSpec;
+use llm::ToolCallSpec;
 use orbit::{AgentEvent, TurnStop};
 use serde_json::{Value, json};
 
