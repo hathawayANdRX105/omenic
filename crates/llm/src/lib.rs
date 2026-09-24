@@ -8,6 +8,7 @@ pub mod deepseek;
 pub mod openai;
 pub mod sse;
 
+pub use protocol::events::ToolCallSpec;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::atomic::AtomicBool;
@@ -136,17 +137,6 @@ pub enum StopReason {
     MaxTokens,
     Aborted,
 }
-
-/// A completed tool call extracted from the stream.
-/// Serde-wise this is the payload of `orbit::AgentEvent::ToolCall`; the
-/// field names are the cross-crate event contract (R2 3.1).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ToolCallSpec {
-    pub id: String,
-    pub name: String,
-    pub args: Value,
-}
-
 /// Tool definition sent to the API.
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolDef {

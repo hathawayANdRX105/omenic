@@ -6,11 +6,12 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use wire::{jsonrpc, stdio};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -308,11 +309,10 @@ impl<W: Write + Send + 'static, R: Read + Send + 'static> AcpClient<W, R> {
 
     /// `session/cancel` — a notification, so it takes no reply.
     pub fn cancel(&self, session_id: &str) -> Result<(), AcpError> {
-        self.transport.write_json(&json!({
-            "jsonrpc": JSONRPC,
-            "method": METHOD_SESSION_CANCEL,
-            "params": { "sessionId": session_id },
-        }))
+        self.transport.write_json(&jsonrpc::notification_value(
+            METHOD_SESSION_CANCEL,
+            json!({ "sessionId": session_id }),
+        ))
     }
 
     /// Drop all pending reply channels. In-flight requests then fail with
@@ -331,12 +331,8 @@ impl<W: Write + Send + 'static, R: Read + Send + 'static> AcpClient<W, R> {
         let (tx, rx) = mpsc::sync_channel::<Value>(1);
         self.pending.lock().unwrap().insert(id, tx);
 
-        self.transport.write_json(&json!({
-            "jsonrpc": JSONRPC,
-            "id": id,
-            "method": method,
-            "params": params,
-        }))?;
+        self.transport
+            .write_json(&jsonrpc::request_value(id, method, params))?;
 
         let value = rx.recv().map_err(|_| AcpError::ChannelClosed)?;
         if let Some(err) = value.get("error") {
@@ -355,11 +351,8 @@ impl<W: Write + Send + 'static, R: Read + Send + 'static> AcpClient<W, R> {
 impl<W: Write + Send + 'static, R: Read + Send + 'static> AcpTransport<W, R> {
     /// Frame one JSON object per line onto the agent's stdin.
     fn write_json(&self, value: &Value) -> Result<(), AcpError> {
-        let mut line = serde_json::to_string(value)?;
-        line.push('\n');
-        let mut writer = self.writer.lock().unwrap();
-        writer.write_all(line.as_bytes())?;
-        writer.flush()?;
+        let line = jsonrpc::encode_line(value);
+        stdio::write_json_line(&mut *self.writer.lock().unwrap(), &line)?;
         Ok(())
     }
 }
@@ -378,35 +371,31 @@ fn serve<W: Write + Send + 'static, R: Read + Send + 'static>(
     let mut line = String::new();
     loop {
         line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => break, // EOF
-            Ok(_) => {}
+        match stdio::read_line(&mut reader, &mut line) {
+            Ok(false) => break, // EOF
+            Ok(true) => {}
             Err(_) => break,
         }
-        if line.trim().is_empty() {
-            continue;
-        }
         // A malformed line is skipped, never fatal: the agent may emit logs.
-        let value = match serde_json::from_str::<Value>(&line) {
-            Ok(value) => value,
-            Err(_) => continue,
+        let value = match jsonrpc::decode_line(&line) {
+            Some(v) => v,
+            None => continue,
         };
-        match (
-            value.get("id").cloned(),
-            value.get("method").and_then(Value::as_str),
-        ) {
-            (Some(id), Some(method)) => handle_request(id, method, &value, &transport, &handlers),
-            (Some(id), None) => {
-                if let Some(id) = id.as_u64() {
-                    // Unknown ids are ignored: they belong to requests we no
-                    // longer care about, and must never panic the thread.
-                    if let Some(tx) = pending.lock().unwrap().remove(&id) {
-                        let _ = tx.send(value);
-                    }
+        match jsonrpc::classify(&value) {
+            jsonrpc::FrameKind::Request { id, method, value } => {
+                handle_request(Value::from(id), method, value, &transport, &handlers)
+            }
+            jsonrpc::FrameKind::Response { id, value } => {
+                // Unknown ids are ignored: they belong to requests we no
+                // longer care about, and must never panic the thread.
+                if let Some(tx) = pending.lock().unwrap().remove(&id) {
+                    let _ = tx.send(value.clone());
                 }
             }
-            (None, Some(method)) => handle_notification(method, &value, &handlers),
-            (None, None) => {}
+            jsonrpc::FrameKind::Notification { method, value } => {
+                handle_notification(method, value, &handlers)
+            }
+            jsonrpc::FrameKind::Ignored => {}
         }
     }
 }

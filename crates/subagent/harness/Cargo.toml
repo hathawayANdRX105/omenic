@@ -21,6 +21,7 @@ llm = { path = "../../llm" }
 orbit = { path = "../../agent/orbit" }
 tools = { path = "../../tools" }
 subagent = { path = ".." }
+wire = { path = "../../wire" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

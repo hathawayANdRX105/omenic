@@ -3,8 +3,8 @@
 //! shape (internally tagged `"type"`, snake_case) must stay pinned: daemon
 //! subscribers and the web UI parse these strings.
 
-use llm::ToolCallSpec;
-use orbit::{AgentEvent, TurnStop};
+use protocol::events::ToolCallSpec;
+use protocol::events::{AgentEvent, TurnStop};
 use serde_json::{Value, json};
 
 fn round_trip(event: &AgentEvent) -> Value {

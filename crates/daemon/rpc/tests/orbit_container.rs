@@ -21,8 +21,10 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use llm::{Content, Context, Message, Model, StopReason, StreamEvent, ToolCallSpec};
-use orbit::{AgentEvent, LlmBackend, LoopConfig, TurnStop, run_agent_streaming};
+use llm::{Content, Context, Message, Model, StopReason, StreamEvent};
+use orbit::{LlmBackend, LoopConfig, run_agent_streaming};
+use protocol::events::ToolCallSpec;
+use protocol::events::{AgentEvent, TurnStop};
 use rpc::worker::{OrbitConfig, OrbitSetup, WorkerEvent};
 use serde_json::json;
 use tempfile::tempdir;

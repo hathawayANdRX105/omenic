@@ -5,6 +5,7 @@
 //! common vocabulary for every crate in `crates/harness/`.
 
 pub mod chat;
+pub mod events;
 
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};

@@ -14,7 +14,7 @@ pub mod http;
 pub mod reconnect;
 pub mod tool;
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -128,15 +128,14 @@ pub trait McpTransport: Send + Sync {
     /// Next monotonic request id.
     fn next_id(&self) -> u64;
 }
-
 /// Serialize a JSON-RPC 2.0 request.
 pub fn request_line(id: u64, method: &str, params: &Value) -> String {
-    json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string()
+    wire::jsonrpc::request_value(id, method, params.clone()).to_string()
 }
 
 /// Serialize a JSON-RPC 2.0 notification.
 pub fn notification_line(method: &str, params: &Value) -> String {
-    json!({"jsonrpc": "2.0", "method": method, "params": params}).to_string()
+    wire::jsonrpc::notification_value(method, params.clone()).to_string()
 }
 
 /// Extract the `result` of a response; `error` and id mismatch become [`McpError`].
@@ -325,13 +324,9 @@ fn flatten_content(result: &Value) -> String {
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
-
 /// Write one newline-delimited JSON-RPC message and flush it.
 fn write_line(stdin: &mut ChildStdin, line: &str) -> Result<(), McpError> {
-    stdin
-        .write_all(line.as_bytes())
-        .and_then(|()| stdin.write_all(b"\n"))
-        .and_then(|()| stdin.flush())
+    wire::stdio::write_json_line(stdin, line)
         .map_err(|e| McpError::Transport(format!("write to server stdin failed: {e}")))
 }
 
@@ -440,27 +435,37 @@ impl McpTransport for StdioTransport {
                 return Err(McpError::Timeout);
             }
             match io.replies.recv_timeout(POLL_INTERVAL) {
-                Ok(reply) => match serde_json::from_str::<Value>(&reply) {
-                    Ok(v) => match v.get("id").and_then(Value::as_u64) {
-                        Some(got) if got == id => return Ok(reply),
+                Ok(reply) => {
+                    let value = match serde_json::from_str::<Value>(&reply) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            eprintln!("mcp: dropping non-JSON line from server");
+                            continue;
+                        }
+                    };
+                    match wire::jsonrpc::classify(&value) {
+                        wire::jsonrpc::FrameKind::Response { id: got, .. } if got == id => {
+                            return Ok(reply);
+                        }
                         // A leftover reply to an earlier request that timed
                         // out: its response arrived after we gave up and is
                         // still queued. Erroring here would desync the channel
                         // permanently — one stale line would poison every
                         // later call — so drop it and keep waiting.
-                        Some(got) => {
+                        wire::jsonrpc::FrameKind::Response { id: got, .. } => {
                             eprintln!("mcp: dropping stale response id {got} (awaiting {id})")
                         }
                         // No id: a server-pushed notification.
-                        None => eprintln!(
-                            "mcp: dropping server notification: {}",
-                            v.get("method")
-                                .and_then(Value::as_str)
-                                .unwrap_or("<no method>")
-                        ),
-                    },
-                    Err(_) => eprintln!("mcp: dropping non-JSON line from server"),
-                },
+                        wire::jsonrpc::FrameKind::Notification { method, .. } => {
+                            eprintln!("mcp: dropping server notification: {}", method)
+                        }
+                        // Request from server (not expected in this flow) or ignored.
+                        wire::jsonrpc::FrameKind::Request { .. }
+                        | wire::jsonrpc::FrameKind::Ignored => {
+                            eprintln!("mcp: dropping non-JSON line from server")
+                        }
+                    }
+                }
                 Err(RecvTimeoutError::Timeout) => {
                     if Instant::now() >= deadline {
                         return Err(McpError::Timeout);

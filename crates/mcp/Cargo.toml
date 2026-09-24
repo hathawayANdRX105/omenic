@@ -10,5 +10,6 @@ publish = false
 llm = { path = "../llm" }
 config = { path = "../config" }
 tools = { path = "../tools" }
+wire = { path = "../wire" }
 serde_json = { workspace = true }
 ureq = { workspace = true }

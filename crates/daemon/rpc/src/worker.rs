@@ -48,13 +48,13 @@ use serde_json::Value;
 /// [`WorkerEvent::AgentEnd`] carries — `end_turn` / `max_tokens` / `aborted`
 /// / `error` / `max_turns` — so a clean turn end, an abort, an error and the
 /// turn cap stay distinguishable downstream.
-fn turn_stop_to_string(s: &orbit::TurnStop) -> String {
+fn turn_stop_to_string(s: &protocol::events::TurnStop) -> String {
     match s {
-        orbit::TurnStop::EndTurn => "end_turn",
-        orbit::TurnStop::MaxTokens => "max_tokens",
-        orbit::TurnStop::Aborted => "aborted",
-        orbit::TurnStop::Error => "error",
-        orbit::TurnStop::MaxTurns => "max_turns",
+        protocol::events::TurnStop::EndTurn => "end_turn",
+        protocol::events::TurnStop::MaxTokens => "max_tokens",
+        protocol::events::TurnStop::Aborted => "aborted",
+        protocol::events::TurnStop::Error => "error",
+        protocol::events::TurnStop::MaxTurns => "max_turns",
     }
     .to_string()
 }
@@ -336,7 +336,7 @@ pub fn combined_tools(
 }
 
 /// omenic 自家引擎（OMENIC_WORKER_MODE=orbit）：进程内跑 orbit agent
-/// 循环（C1 `run_agent_streaming`），把 orbit::AgentEvent 1:1 映射成
+/// 循环（C1 `run_agent_streaming`），把 protocol::events::AgentEvent 1:1 映射成
 /// [`WorkerEvent`]（词汇与 omp 转发层一致，下游零改动）。模型配置由
 /// DaemonConfig 从 `.oi/config.toml` 的 llm 三件套解析后传入；cwd /
 /// max_turns / 压缩策略 / 工具集由宿主从装配容器解析后经
@@ -485,33 +485,37 @@ impl OrbitEngine {
                             },
                             &mut |ev| {
                                 let we = match ev {
-                                    orbit::AgentEvent::TurnStart => WorkerEvent::AgentStart,
-                                    orbit::AgentEvent::AssistantText { delta } => {
+                                    protocol::events::AgentEvent::TurnStart => {
+                                        WorkerEvent::AgentStart
+                                    }
+                                    protocol::events::AgentEvent::AssistantText { delta } => {
                                         WorkerEvent::Message { text: delta }
                                     }
-                                    orbit::AgentEvent::AssistantReasoning { delta } => {
+                                    protocol::events::AgentEvent::AssistantReasoning { delta } => {
                                         WorkerEvent::Reasoning { delta }
                                     }
-                                    orbit::AgentEvent::ToolCall(spec) => {
+                                    protocol::events::AgentEvent::ToolCall(spec) => {
                                         WorkerEvent::ToolExecutionStart {
                                             name: spec.name,
                                             input: spec.args,
                                         }
                                     }
-                                    orbit::AgentEvent::ToolStart { name, .. } => {
+                                    protocol::events::AgentEvent::ToolStart { name, .. } => {
                                         WorkerEvent::Unknown(serde_json::json!(
                                             { "name": name }
                                         ))
                                     }
-                                    orbit::AgentEvent::ToolResult { name, result, .. } => {
-                                        WorkerEvent::ToolExecutionEnd {
-                                            name,
-                                            result: serde_json::from_str(&result)
-                                                .ok()
-                                                .or(Some(serde_json::Value::String(result))),
-                                        }
-                                    }
-                                    orbit::AgentEvent::TurnEnd { stop_reason } => {
+                                    protocol::events::AgentEvent::ToolResult {
+                                        name,
+                                        result,
+                                        ..
+                                    } => WorkerEvent::ToolExecutionEnd {
+                                        name,
+                                        result: serde_json::from_str(&result)
+                                            .ok()
+                                            .or(Some(serde_json::Value::String(result))),
+                                    },
+                                    protocol::events::AgentEvent::TurnEnd { stop_reason } => {
                                         WorkerEvent::AgentEnd {
                                             stop_reason: turn_stop_to_string(&stop_reason),
                                         }
