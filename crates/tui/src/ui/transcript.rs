@@ -1,9 +1,10 @@
 //! ui/transcript — `UiState` 消息 → 若干行（route §2 纯函数管线，D10）。
 //!
 //! 只读快照渲染：user 行带 brand 前缀、assistant 正文按 `parts` 顺序出
-//! 文本/工具行（工具三态 T3 才卡片化，这里整行带过）。按列宽自己断行，
-//! 行数可数 → 底部对齐只需截尾，不依赖 Paragraph wrap 的不可见行数。
-//! 模型内容先过 [`sanitize`]：裸控制字节不许进 cell（同 linear 零 ESC 约束）。
+//! 文本/工具行（工具 part 交 [`super::tool_card`] 卡片化，T3）。按列宽
+//! 自己断行，行数可数 → 底部对齐只需截尾，不依赖 Paragraph wrap 的不可见
+//! 行数。模型内容先过 [`sanitize`]：裸控制字节不许进 cell（同 linear 零
+//! ESC 约束）。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -42,14 +43,9 @@ fn lines(app: &App, width: u16) -> Vec<Line<'static>> {
         for part in &msg.parts {
             match part {
                 MessagePart::Text(text) => push_wrapped(&mut out, text, width, "", theme::base()),
+                // T3：一个 Tool part = 一张卡（序列折叠与三态都在 tool_card）。
                 MessagePart::Tool(tc) => {
-                    let style = if tc.status == "error" {
-                        theme::danger()
-                    } else {
-                        theme::dim()
-                    };
-                    let raw = format!("[tool] {} · {}", tc.title, tc.summary);
-                    push_wrapped(&mut out, &raw, width, "", style);
+                    out.extend(super::tool_card::lines(tc, app.tools_expanded(), width));
                 }
             }
         }
@@ -58,6 +54,7 @@ fn lines(app: &App, width: u16) -> Vec<Line<'static>> {
 }
 
 /// 一段文本 → 若干行：首行带 `prefix`，续行补同样宽的空白；样式统一。
+/// （`pub(super)`：`tool_card` 的标题/结果区复用同一断行与清洗。）
 pub(super) fn push_wrapped(
     out: &mut Vec<Line<'static>>,
     text: &str,

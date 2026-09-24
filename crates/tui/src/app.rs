@@ -8,21 +8,33 @@
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use omenic_web_client::ClientError;
 use omenic_web_client::daemon::WebDaemon;
-use omenic_web_state::types::{ChatMessage, MessagePart, now_epoch_ms};
+use omenic_web_client::{QuestionAnswer, QuestionItem};
+use omenic_web_state::types::{ChatMessage, MessagePart, format_duration_ms, now_epoch_ms};
 use omenic_web_state::ui_state::{AgentEvent, UiState};
 
 use crate::termguard::{CrosstermOps, TermGuard};
+use crate::ui::footer;
+use crate::ui::questions::{AnswerRequest, QuestionPanel};
 use crate::{
     TuiError, TuiOptions, client_error, persist_assistant, push_user_message, resolve_session,
 };
 
 /// 事件循环的按键轮询间隔（draw 在每次轮询前，事件来了即刻重画）。
 const POLL: Duration = Duration::from_millis(50);
+
+/// T3：pending 快照兜底轮询间隔（`user.question` 推送之外的保底刷新）。
+const PENDING_SYNC: Duration = Duration::from_secs(1);
+
+/// T3：`stats.summary` 刷新间隔（footer 空闲段的 run 状态）。
+const STATS_SYNC: Duration = Duration::from_secs(2);
+
+/// T3：`stats.summary` 的统计窗口（footer 只用其中的半开 run 计数）。
+const STATS_RANGE: &str = "24h";
 
 /// 一次按键路由的结论（提交走 [`App`] 内部出站队列，不出现在这里）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +68,18 @@ pub struct App {
     status: String,
     /// transcript 投影（T1 同一 `UiState::apply` 形状，会话内累积）。
     ui: UiState,
+    /// T3：工具卡展开态（一个键全部展开/折叠）。
+    tools_expanded: bool,
+    /// T3：问题面板（dock 上方渲染，route §3）。
+    questions: QuestionPanel,
+    /// T3：数字键产出的待发送回答（事件循环取出走 `answer_question`）。
+    answers: VecDeque<AnswerRequest>,
+    /// T3：footer 的 model 段（事件循环注入运行时配置；测试可显式注入）。
+    model: String,
+    /// T3：`stats.summary` 的半开 run 计数（footer 空闲段 run 状态）。
+    in_flight: u64,
+    /// T3：本轮开始时刻（footer 耗时段；无 run = `None`）。
+    run_started: Option<Instant>,
 }
 
 impl App {
@@ -99,6 +123,61 @@ impl App {
         &self.ui.messages
     }
 
+    /// footer 的 model 段（事件循环注入运行时配置）。
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    /// 注入 footer 的 model 段（`footer::configured_model`；测试显式给值）。
+    pub fn set_model(&mut self, model: impl Into<String>) {
+        self.model = model.into();
+    }
+
+    /// 记入 `stats.summary` 的半开 run 计数（footer 空闲段数据源）。
+    pub fn set_in_flight(&mut self, in_flight: u64) {
+        self.in_flight = in_flight;
+    }
+
+    /// footer 耗时段：运行中 = 本轮开始至今；无 run = 空串（段被跳过）。
+    pub fn elapsed_label(&self) -> String {
+        self.run_started.map_or_else(String::new, |start| {
+            format_duration_ms(start.elapsed().as_millis() as u64)
+        })
+    }
+
+    /// footer 空闲段的 run 状态（已核字段：`stats.summary` 的半开 run
+    /// 计数——per-context 占用核不到，route §3 不许编百分比）。
+    pub fn run_state_label(&self) -> String {
+        if self.in_flight > 0 {
+            format!("{} in flight", self.in_flight)
+        } else {
+            "idle".to_string()
+        }
+    }
+
+    /// 工具卡展开态（一个键全部展开/折叠，route §3）。
+    pub fn tools_expanded(&self) -> bool {
+        self.tools_expanded
+    }
+
+    /// 问题面板（渲染与数字键路由读它）。
+    pub fn questions(&self) -> &QuestionPanel {
+        &self.questions
+    }
+
+    /// 换入最新 `pending_questions()` 快照（服务端真相整体替换；同 id
+    /// 幂等覆盖、答完消失的语义在 [`QuestionPanel::set_pending`]）。
+    pub fn set_pending_questions(&mut self, items: Vec<QuestionItem>) {
+        self.questions.set_pending(items);
+    }
+
+    /// 取一条待发送回答，同时把该题从面板摘掉（答完 → 面板消失，route §3）。
+    pub fn take_answer(&mut self) -> Option<AnswerRequest> {
+        let request = self.answers.pop_front()?;
+        self.questions.forget(&request.question_id);
+        Some(request)
+    }
+
     /// 覆写活动行文案（错误 / aborting）。
     pub fn set_status(&mut self, status: impl Into<String>) {
         self.status = status.into();
@@ -109,14 +188,16 @@ impl App {
         self.ui.apply(ev);
     }
 
-    /// 本轮收尾：回空闲、清活动覆写；队首 prompt 随即具备出站资格。
+    /// 本轮收尾：回空闲、清活动覆写与耗时起点；队首 prompt 随即具备出站
+    /// 资格。
     pub fn note_turn_end(&mut self) {
         self.running = false;
         self.status.clear();
+        self.run_started = None;
     }
 
-    /// 出站队列头（空闲才出队）。出队即置 running、把 user 消息折进
-    /// transcript 投影——事件循环随后落库 + 起 prompt 线程。
+    /// 出站队列头（空闲才出队）。出队即置 running、起耗时计时、把 user
+    /// 消息折进 transcript 投影——事件循环随后落库 + 起 prompt 线程。
     pub fn next_to_send(&mut self) -> Option<String> {
         if self.running {
             return None;
@@ -124,6 +205,7 @@ impl App {
         let msg = self.outgoing.pop_front()?;
         self.running = true;
         self.status.clear();
+        self.run_started = Some(Instant::now());
         self.ui.push_message(user_message(&msg));
         Some(msg)
     }
@@ -150,8 +232,21 @@ impl App {
         }
         // 其余任何键先撤掉未决退出确认（提示行承诺 other key cancels）。
         self.confirm_quit = false;
+        // T3 问题面板可见：数字键优先答题（route §3——按数字键发送
+        // {id, choice}；越界 = 忽略，吞掉该键不落进 composer）。
+        if !self.questions.is_empty()
+            && !ctrl
+            && let KeyCode::Char(c @ '1'..='9') = key.code
+        {
+            if let Some(request) = self.questions.press_digit(c) {
+                self.answers.push_back(request);
+            }
+            return KeyAction::None;
+        }
         match key.code {
             KeyCode::Enter => self.submit_line(),
+            // T3：一个键全部展开/折叠工具卡（route §3；Tab 不进 composer）。
+            KeyCode::Tab => self.tools_expanded = !self.tools_expanded,
             KeyCode::Backspace => {
                 self.input.pop();
                 self.history_pos = None;
@@ -274,11 +369,27 @@ pub fn run_enhanced(
     }
 }
 
-/// 全屏事件循环：出站 → draw → 按键 → 事件流 → prompt 结果，周而复始。
+/// 全屏事件循环：出站 → draw → 按键 → 事件流 → T3 面板/footer 同步 →
+/// prompt 结果，周而复始。
 fn event_loop(client: &WebDaemon, sid: &str, rx: &Receiver<AgentEvent>) -> Result<(), TuiError> {
     let mut terminal =
         ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))?;
     let mut app = App::new();
+    // T3：footer 的 model 段读运行时配置（一次性）；问题面板先吃一帧
+    // pending 快照——订阅建立前已提交的问题不漏（route §3 消费 pending）。
+    app.set_model(footer::configured_model());
+    if let Ok(items) = client.pending_questions() {
+        app.set_pending_questions(items);
+    }
+    // T3：`user.question` 推送线程 → 刷新信号；快照解码统一走 pending 路径。
+    let (qtx, qrx) = mpsc::channel::<()>();
+    spawn_question_sub(client, qtx)?;
+    let mut last_pending_sync = Instant::now();
+    // T3：stats.summary 首刷即刻做（footer 起步就有真 run 状态）。
+    if let Ok(summary) = client.stats_summary(STATS_RANGE) {
+        app.set_in_flight(summary.in_flight_runs);
+    }
+    let mut last_stats_sync = Instant::now();
     let (ptx, prx) = mpsc::channel::<Result<(), ClientError>>();
     loop {
         // 出站：user 消息先落库（T1 同序：daemon 不自动落），再起 prompt
@@ -321,11 +432,75 @@ fn event_loop(client: &WebDaemon, sid: &str, rx: &Receiver<AgentEvent>) -> Resul
                 }
             }
         }
+        // T3：数字键产出的回答 → `user.answer(id, choice)`（route §3 答题
+        // 路径）。daemon 打回（已答/不存在）不退 TUI——随后的快照刷新把
+        // 仍 pending 的问题带回来，保留卡片的决定权在数据源。
+        let mut answered = false;
+        while let Some(request) = app.take_answer() {
+            let _ = client.answer_question(
+                &request.question_id,
+                &QuestionAnswer::Select {
+                    index: request.choice,
+                },
+            );
+            answered = true;
+        }
+        // T3：面板刷新 = 推送信号 / 答后 / 兜底轮询；`pending_questions()`
+        // 快照是服务端真相（同 id 幂等覆盖、答完消失都以它为准）。
+        let mut pushed = false;
+        while qrx.try_recv().is_ok() {
+            pushed = true;
+        }
+        if pushed || answered || last_pending_sync.elapsed() >= PENDING_SYNC {
+            last_pending_sync = Instant::now();
+            if let Ok(items) = client.pending_questions() {
+                app.set_pending_questions(items);
+            }
+        }
+        // T3：footer 空闲段的 run 状态来自 `stats.summary`（半开 run 计数；
+        // 只读统计，失败不致命，沿用上一帧值）。
+        if last_stats_sync.elapsed() >= STATS_SYNC {
+            last_stats_sync = Instant::now();
+            if let Ok(summary) = client.stats_summary(STATS_RANGE) {
+                app.set_in_flight(summary.in_flight_runs);
+            }
+        }
         // prompt RPC 结果：失败即退出（错误映射同 T1：Connect→3，余→1）。
         while let Ok(res) = prx.try_recv() {
             res.map_err(client_error)?;
         }
     }
+    Ok(())
+}
+
+/// T3：订阅 `user.question` 推送，帧到达即给事件循环发刷新信号。
+///
+/// 帧体是序列化 `QuestionItem`，但解码统一走 `pending_questions()` 快照
+/// 路径（同 web `question_event_loop` 的快照兜底思路）：推送只当「有新题」
+/// 的即时信号，面板数据永远取最新快照——同 id 幂等覆盖、答完消失因此
+/// 天然成立。订阅失败不致命（老 daemon / 临时断连）：事件循环的兜底轮询
+/// 照样刷新面板。
+fn spawn_question_sub(client: &WebDaemon, tx: mpsc::Sender<()>) -> Result<(), TuiError> {
+    let Ok(mut sub) = client.subscribe_user_questions() else {
+        return Ok(());
+    };
+    std::thread::Builder::new()
+        .name("oi-tui-questions".into())
+        .spawn(move || {
+            loop {
+                match sub.next_event(crate::pump::KEEPALIVE) {
+                    // 有新题：叫醒事件循环去刷快照。
+                    Ok(Some(_)) => {
+                        if tx.send(()).is_err() {
+                            break; // 接收端已释放：收线，订阅随 Drop 断开
+                        }
+                    }
+                    Ok(None) => {}   // keepalive tick：不退出
+                    Err(_) => break, // 读错误 = 断线：轮询快照继续撑面板
+                }
+            }
+        })
+        .map_err(TuiError::Io)?;
     Ok(())
 }
 
