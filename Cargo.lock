@@ -4155,7 +4155,7 @@ dependencies = [
  "serde_json",
  "terminal",
  "tools",
- "ureq",
+ "web-tool",
 ]
 
 [[package]]
@@ -4626,6 +4626,15 @@ checksum = "9fbddc4a036f00ec4f18c83445bd3115cb306a91da554919a099d9222fe4a7f8"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "web-tool"
+version = "0.1.0"
+dependencies = [
+ "protocol",
+ "serde_json",
+ "ureq",
 ]
 
 [[package]]

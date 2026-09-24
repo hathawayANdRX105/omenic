@@ -11,6 +11,6 @@ protocol = { path = "../../protocol" }
 jobs = { path = "../../jobs" }
 terminal = { path = "../../terminal" }
 tools = { path = ".." }
+web-tool = { path = "../../web-tool" }
 
 # HTTP client dependency
-ureq = { workspace = true }

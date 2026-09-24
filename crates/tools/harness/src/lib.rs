@@ -8,17 +8,16 @@
 //! `omenic-harness-core`.
 
 pub mod jobs_terminal;
-pub mod web;
-
 use protocol::{AbortSignal, ToolError, ToolResult, ToolSpec};
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
+use web_tool::{WebFetchTool, WebSearchTool};
 
-/// A registered tool with its own spec and execution logic.
-pub trait Tool: Send + Sync {
-    fn spec(&self) -> ToolSpec;
-    fn execute(&self, args: &Value, abort: &AbortSignal) -> Result<ToolResult, ToolError>;
-}
+// The trait itself lives in `protocol` so tool *implementations* (the
+// built-ins, `web-tool`, any MCP adapter) can depend on the vocabulary
+// without pulling in this container. Re-exported here because the catalog
+// and its consumers speak `tools_harness::Tool`.
+pub use protocol::Tool;
 
 /// Registry of available tools, keyed by name.
 ///
@@ -148,8 +147,8 @@ pub fn default_catalog() -> ToolCatalog {
     // Internet tools live here (not in agent/tools::builtin_tools) because
     // they are harness-side capabilities with their own SSRF/bounds policy;
     // ref: deepseek-harness-rs/src/tools/web_{fetch,search}.rs.
-    catalog.register(Arc::new(web::WebFetchTool));
-    catalog.register(Arc::new(web::WebSearchTool));
+    catalog.register(Arc::new(WebFetchTool));
+    catalog.register(Arc::new(WebSearchTool));
     catalog
 }
 

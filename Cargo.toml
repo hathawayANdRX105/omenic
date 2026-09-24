@@ -12,6 +12,7 @@ members = [
   "crates/tui",
   "crates/agent/orbit",
   "crates/wire",
+  "crates/web-tool",
 ]
 resolver = "2"
 

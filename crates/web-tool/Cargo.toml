@@ -1,0 +1,14 @@
+[package]
+name = "web-tool"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+protocol = { path = "../protocol" }
+ureq = { workspace = true }
+serde_json = { workspace = true }
+
+[lib]
+name = "web_tool"
+path = "src/lib.rs"

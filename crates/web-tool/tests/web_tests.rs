@@ -4,7 +4,7 @@
 //! fetch/search 的真实请求路径留给 CI 之外的本地冒烟（无证书不跑）。
 
 use serde_json::json;
-use tools_harness::web::{
+use web_tool::{
     UrlPolicyError, ensure_public_url, html_to_text, parse_queries, parse_url, render_search,
 };
 

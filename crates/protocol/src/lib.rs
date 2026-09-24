@@ -201,6 +201,22 @@ impl Display for ToolError {
 
 impl std::error::Error for ToolError {}
 
+/// One model-callable tool.
+///
+/// Lives here, not in the harness, because every crate that *implements* a
+/// tool needs it and its vocabulary types ([`ToolSpec`], [`ToolResult`],
+/// [`ToolError`], [`AbortSignal`]) is already here. Keeping it in a
+/// higher crate made `web-tool` and any future capability crate depend on
+/// the whole tool container just to declare a struct.
+pub trait Tool: Send + Sync {
+    fn spec(&self) -> ToolSpec;
+    fn execute(
+        &self,
+        args: &serde_json::Value,
+        abort: &AbortSignal,
+    ) -> Result<ToolResult, ToolError>;
+}
+
 /// Create a new empty run.
 ///
 /// Reference: `omenic agent/orbit/src/lib.rs:617` (`run_agent` wrapper)
