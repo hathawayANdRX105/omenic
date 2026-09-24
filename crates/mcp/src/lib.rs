@@ -543,7 +543,7 @@ impl Mcp {
         let defaults = ReconnectPolicy::default();
         let policy = match &cfg.reconnect {
             Some(r) => ReconnectPolicy {
-                initial_delay_ms: r.initial_delay_ms.unwrap_or(defaults.initial_delay_ms),
+                base_delay_ms: r.initial_delay_ms.unwrap_or(defaults.base_delay_ms),
                 max_delay_ms: r.max_delay_ms.unwrap_or(defaults.max_delay_ms),
                 max_attempts: r.max_attempts.unwrap_or(defaults.max_attempts),
             },

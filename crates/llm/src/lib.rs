@@ -4,6 +4,7 @@
 //! DeepSeek dialect wrapper in `deepseek` (max_tokens default + reasoning_content
 //! drop — see its module docs).
 
+pub mod backoff;
 pub mod deepseek;
 pub mod openai;
 pub mod sse;

@@ -11,31 +11,13 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::thread::sleep;
-use std::time::Duration;
 
 use crate::{McpError, McpTransport};
 
-/// Backoff parameters for [`McpReconnect`].
-#[derive(Debug, Clone)]
-pub struct ReconnectPolicy {
-    /// Delay before the first retry.
-    pub initial_delay_ms: u64,
-    /// Upper bound on the per-attempt delay (doubling stops here).
-    pub max_delay_ms: u64,
-    /// Total attempts (initial + retries) before giving up.
-    pub max_attempts: u32,
-}
-
-impl Default for ReconnectPolicy {
-    /// Same defaults as dsh `RECONNECT_DEFAULTS`: 500ms → 30s, 10 attempts.
-    fn default() -> Self {
-        Self {
-            initial_delay_ms: 500,
-            max_delay_ms: 30_000,
-            max_attempts: 10,
-        }
-    }
-}
+/// Backoff parameters for [`McpReconnect`]. The delay curve itself lives in
+/// [`llm::backoff`] — the LLM call path shares it — so the two retry loops
+/// cannot drift apart.
+pub type ReconnectPolicy = llm::backoff::BackoffPolicy;
 
 /// Retry wrapper around any [`McpTransport`].
 pub struct McpReconnect {
@@ -90,51 +72,40 @@ impl McpTransport for McpReconnect {
     }
 
     fn notify(&self, line: &str) -> Result<(), McpError> {
-        let mut delay = Duration::from_millis(self.policy.initial_delay_ms);
-        let max = Duration::from_millis(self.policy.max_delay_ms);
-        let mut last_err = McpError::Transport("no attempt made".into());
-        for attempt in 0..self.policy.max_attempts {
-            if attempt > 0 {
-                // Abort during backoff: the caller's signal won't reach us here
-                // (notify has no signal), so just finish the sleep — it is capped.
-                sleep(delay);
-                delay = (delay * 2).min(max);
-            }
-            match self.inner.notify(line) {
-                Ok(()) => return Ok(()),
-                Err(e) if Self::is_retryable(&e) => {
-                    last_err = e;
-                    if attempt + 1 < self.policy.max_attempts {
-                        continue;
-                    }
-                    return Err(last_err);
-                }
-                Err(e) => return Err(e),
-            }
-        }
-        Err(last_err)
+        self.retry(|_| self.inner.notify(line), "no attempt made")
     }
 
     fn roundtrip(&self, id: u64, line: &str, signal: &AtomicBool) -> Result<String, McpError> {
-        let mut delay = Duration::from_millis(self.policy.initial_delay_ms);
-        let max = Duration::from_millis(self.policy.max_delay_ms);
-        let mut last_err = McpError::Transport("no attempt made".into());
-        for attempt in 0..self.policy.max_attempts {
-            if attempt > 0 {
-                // Back off between retries, polling the abort signal so a hung
-                // retry loop can still be interrupted.
-                sleep(delay);
-                delay = (delay * 2).min(max);
+        self.retry(
+            |_| self.inner.roundtrip(id, line, signal),
+            "no attempt made",
+        )
+    }
+}
+
+impl McpReconnect {
+    /// The retry walk both transport methods share: attempt, sleep the
+    /// backoff curve between attempts, and give up immediately on an error
+    /// that isn't a dead link.
+    ///
+    /// `fallback` is the error surfaced when `max_attempts` is 0 — the loop
+    /// never runs, so there is no real failure to report.
+    fn retry<T, F>(&self, mut op: F, fallback: &str) -> Result<T, McpError>
+    where
+        F: FnMut(u32) -> Result<T, McpError>,
+    {
+        let mut last_err = McpError::Transport(fallback.into());
+        for attempt in 1..=self.policy.max_attempts {
+            if attempt > 1 {
+                // The caller's abort signal does not reach the sleep, so the
+                // wait is only bounded, not cancellable. Adding a signal to
+                // `notify` is a public trait change — defer until a caller
+                // needs it.
+                sleep(llm::backoff::delay(attempt - 1, None, &self.policy));
             }
-            match self.inner.roundtrip(id, line, signal) {
-                Ok(resp) => return Ok(resp),
-                Err(e) if Self::is_retryable(&e) => {
-                    last_err = e;
-                    if attempt + 1 < self.policy.max_attempts {
-                        continue;
-                    }
-                    return Err(last_err);
-                }
+            match op(attempt) {
+                Ok(value) => return Ok(value),
+                Err(e) if Self::is_retryable(&e) => last_err = e,
                 Err(e) => return Err(e),
             }
         }

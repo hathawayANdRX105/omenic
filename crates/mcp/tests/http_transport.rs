@@ -80,7 +80,7 @@ fn default_timeout_matches_mcp_timeout() {
 #[test]
 fn reconnect_policy_default_values() {
     let p = ReconnectPolicy::default();
-    assert_eq!(p.initial_delay_ms, 500);
+    assert_eq!(p.base_delay_ms, 500);
     assert_eq!(p.max_delay_ms, 30_000);
     assert_eq!(p.max_attempts, 10);
 }
@@ -106,7 +106,7 @@ fn reconnect_gives_up_after_max_attempts() {
     let rc = McpReconnect::new(
         inner,
         ReconnectPolicy {
-            initial_delay_ms: 1,
+            base_delay_ms: 1,
             max_delay_ms: 2,
             max_attempts: 3,
         },
@@ -160,7 +160,7 @@ fn reconnect_does_not_retry_timeout() {
     let rc = McpReconnect::new(
         inner,
         ReconnectPolicy {
-            initial_delay_ms: 1,
+            base_delay_ms: 1,
             max_delay_ms: 2,
             max_attempts: 5,
         },
@@ -250,7 +250,7 @@ fn http_4xx_is_non_retryable_server_error_with_body() {
     let rc = McpReconnect::new(
         inner,
         ReconnectPolicy {
-            initial_delay_ms: 1,
+            base_delay_ms: 1,
             max_delay_ms: 2,
             max_attempts: 5,
         },
@@ -274,7 +274,7 @@ fn http_5xx_stays_retryable_transport_error() {
     let rc = McpReconnect::new(
         inner,
         ReconnectPolicy {
-            initial_delay_ms: 1,
+            base_delay_ms: 1,
             max_delay_ms: 2,
             max_attempts: 3,
         },

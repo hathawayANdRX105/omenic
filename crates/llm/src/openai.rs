@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use crate::backoff;
 use crate::sse::SseParser;
 use crate::{Block, Content, Context, Model, Role, StopReason, StreamEvent, ToolDef};
 
@@ -296,16 +297,18 @@ pub fn stream_cb_with_policy(
 }
 
 /// Exponential backoff for attempt `attempt` (1-based), capped, with a
-/// `Retry-After` override when the server sent one.
+/// `Retry-After` override when the server sent one. The curve itself lives
+/// in [`crate::backoff`] so the MCP reconnect path shares it.
 pub fn backoff_delay(attempt: u32, retry_after_ms: Option<u64>, policy: &RetryPolicy) -> Duration {
-    let ms = match retry_after_ms {
-        Some(ra) => ra.min(policy.max_delay_ms),
-        None => policy
-            .base_delay_ms
-            .saturating_mul(1u64 << (attempt - 1).min(16))
-            .min(policy.max_delay_ms),
-    };
-    Duration::from_millis(ms)
+    backoff::delay(
+        attempt,
+        retry_after_ms,
+        &backoff::BackoffPolicy {
+            max_attempts: policy.max_attempts,
+            base_delay_ms: policy.base_delay_ms,
+            max_delay_ms: policy.max_delay_ms,
+        },
+    )
 }
 
 /// One HTTP round-trip: send the request and stream events until the turn
