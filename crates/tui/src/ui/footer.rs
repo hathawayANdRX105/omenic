@@ -1,6 +1,7 @@
 //! ui/footer — 状态 footer（route §3 T3）。
 //!
 //! 运行中：`model · 耗时 · Esc 中断提示`；空闲：`model · run 状态`。
+//! T6 起脱钩滚动时追加 `↑N 行` 段（距内容底的精确行数，回底消失）。
 //!
 //! **开工先核（route §2/§3 硬要求，核不到不许编）**：`stats.summary`
 //! （`StatsSummary` + `unavailable` 清单）与消息侧都没有 per-context
@@ -55,6 +56,11 @@ pub fn line(app: &App) -> Line<'static> {
         push("esc abort".to_string(), theme::brand_bold());
     } else {
         push(app.run_state_label(), theme::dim());
+    }
+    // T6：脱钩时的 `↑N 行` 指示（距内容底的精确行数；跟尾回底即消失，
+    // route §3 T6）。空态（`None`）不出段，空闲段仍只含已核字段。
+    if let Some(lift) = app.viewport().lift() {
+        push(format!("↑{lift} 行"), theme::brand());
     }
     Line::from(spans)
 }

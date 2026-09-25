@@ -42,6 +42,21 @@ pub fn lines(tc: &ToolCall, expanded: bool, width: usize) -> Vec<Line<'static>> 
     out
 }
 
+/// 一张卡的行数（T6 窗口化：与 [`lines`] 同源计数，历史卡不物化）。
+///
+/// 分支与 [`lines`] / [`result_lines`] 一一镜像：卡头恒 1 行、running 无
+/// 结果区、折叠态 = 头 + 隐藏行数 + 尾；断行走 `transcript::count_wrapped`
+/// （与 `push_wrapped` 同一 `wrap_with` 核心，分叉由 `tests/scroll_follow.rs`
+/// 的 count/render 一致性测试钉）。
+pub(super) fn rows(tc: &ToolCall, expanded: bool, width: usize) -> usize {
+    let mut rows = 1 + super::transcript::count_wrapped(&tc.title, width, "  ");
+    if tc.status == "running" {
+        return rows;
+    }
+    rows += result_rows(tc, expanded, width);
+    rows
+}
+
 /// 卡头：`▸ <kind> · <三态>`，样式随状态（running=brand、failed=danger、
 /// done=dim）。
 fn header(tc: &ToolCall) -> Line<'static> {
@@ -96,4 +111,23 @@ fn result_lines(tc: &ToolCall, expanded: bool, width: usize) -> Vec<Line<'static
         push_wrapped(&mut out, line, width, "  ", theme::base());
     }
     out
+}
+
+/// 结果区行数（[`result_lines`] 的镜像：分支、折叠头尾切片逐一对应）。
+fn result_rows(tc: &ToolCall, expanded: bool, width: usize) -> usize {
+    let text = super::transcript::sanitize(&tc.detail);
+    let logical: Vec<&str> = text.lines().collect();
+    if logical.is_empty() {
+        return 0;
+    }
+    let rows = |line: &str| super::transcript::count_wrapped(line, width, "  ");
+    if expanded || logical.len() <= COLLAPSE_AFTER_LINES {
+        return logical.iter().map(|line| rows(line)).sum();
+    }
+    let head: usize = logical.iter().take(HEAD_LINES).map(|line| rows(line)).sum();
+    let tail: usize = logical[logical.len() - TAIL_LINES..]
+        .iter()
+        .map(|line| rows(line))
+        .sum();
+    head + 1 + tail // 中间那 1 行是「… N lines hidden」
 }

@@ -17,6 +17,7 @@ use web_client::{QuestionAnswer, QuestionItem};
 use web_state::types::{ChatMessage, MessagePart, format_duration_ms, now_epoch_ms};
 use web_state::ui_state::{AgentEvent, UiState};
 
+use crate::scroll::ScrollModel;
 use crate::termguard::{CrosstermOps, TermGuard};
 use crate::ui::footer;
 use crate::ui::questions::{AnswerRequest, QuestionPanel};
@@ -104,6 +105,9 @@ pub struct App {
     /// 历史滚动：从底部向上滚过的消息条数（0 = 钉底；边界见
     /// [`Self::scroll_by`]）。
     scroll: usize,
+    /// T6：transcript 视口滚动（渲染行粒度：PgUp/PgDn/Ctrl+U/End + 脱钩
+    /// 跟尾；与上面 `scroll` 的消息条数滚动是两套状态，见 `scroll` 模块）。
+    viewport: ScrollModel,
 }
 
 impl App {
@@ -304,6 +308,17 @@ impl App {
         self.scroll = next.clamp(0, max as i64) as usize;
     }
 
+    /// transcript 视口滚动模型（T6 只读观察：翻页位 / 跟尾三态 / `↑N 行`）。
+    pub fn viewport(&self) -> &ScrollModel {
+        &self.viewport
+    }
+
+    /// 视口模型的每帧几何喂入缝（`ui::sync_viewport` 在 draw 前调用；
+    /// 测试走同一入口，不绕开模型自己算边界）。
+    pub(crate) fn viewport_mut(&mut self) -> &mut ScrollModel {
+        &mut self.viewport
+    }
+
     /// 落座一个会话（起始与切换共用）：视图替换为回填历史、队列/状态
     /// 归零、滚动回到底。
     fn adopt_session(&mut self, sid: &str, history: Vec<ChatMessage>) {
@@ -318,6 +333,7 @@ impl App {
         self.status.clear();
         self.confirm_quit = false;
         self.scroll = 0;
+        self.viewport.reset();
     }
 
     /// 新一版 run_id：`r-<epoch_ms>`（与 T1/CLI 同格式），并按进程内时钟
@@ -370,6 +386,15 @@ impl App {
             }
             KeyCode::Up => self.history_back(),
             KeyCode::Down => self.history_forward(),
+            // T6：transcript 视口键（route §3 T6）。PgUp/PgDn/End 与 composer
+            // 无关——单行输入没有翻页/到头语义（光标恒在行尾），不吞编辑；
+            // Ctrl+U 半页只在 composer 为空时归滚动，有文本落回编辑语义
+            // （现有编辑不认 Ctrl+U = 忽略不吞字，jcode 仲裁口径）。↑↓ 历史
+            // 行为不动（contract §3 键位仲裁第一条）。
+            KeyCode::PageUp => self.viewport.page_up(),
+            KeyCode::PageDown => self.viewport.page_down(),
+            KeyCode::End => self.viewport.to_end(),
+            KeyCode::Char('u') if ctrl && self.input.is_empty() => self.viewport.half_up(),
             KeyCode::Char(c) if !ctrl => {
                 self.input.push(c);
                 self.history_pos = None;
@@ -556,6 +581,9 @@ fn event_loop(
             )?;
         }
         terminal.draw(|frame| {
+            // T6：先喂本帧几何（跟尾滑动 / clamp 在模型里推进），再渲染——
+            // sync 与 draw 共用 `ui` 的同一套区域几何，窗口不漂移。
+            crate::ui::sync_viewport(&mut app, frame.area());
             crate::ui::draw(frame, &app);
             crate::ui::panels::render(frame, &app, &panels);
         })?;
