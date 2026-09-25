@@ -93,6 +93,24 @@ impl ScrollModel {
         self.offset = self.offset.saturating_sub(self.half_rows());
     }
 
+    /// 行粒度滚动（T7 鼠标滚轮的唯一落点）：`delta` 为**渲染行数**，正 =
+    /// 向下（视口顶下移）、负 = 向上，0 = 不动。语义严格镜像翻页两键：
+    /// 上滚先 `follow = false` 再 clamp（同 [`Self::page_up`]），下滚 clamp
+    /// 到 max、**落 max 即 `follow = true`**（同 [`Self::page_down`]）——
+    /// 单点 clamp 位置不变。滑尾算法与既有方法的语义不动。
+    pub fn scroll_lines(&mut self, delta: i32) {
+        if delta > 0 {
+            let max = self.max_offset();
+            self.offset = self.offset.saturating_add(delta as usize).min(max);
+            if self.offset == max {
+                self.follow = true;
+            }
+        } else if delta < 0 {
+            self.follow = false;
+            self.offset = self.offset.saturating_sub(delta.unsigned_abs() as usize);
+        }
+    }
+
     /// 跳到底（End）：单点 clamp 到 max + 恢复跟尾（route §3「End = 恢复
     /// 跟随」）。
     pub fn to_end(&mut self) {
