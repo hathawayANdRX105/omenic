@@ -4,12 +4,9 @@
 //! jsonl file, the real state machine, and the real registration list.
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 
 use serde_json::{Value, json};
-use store::GoalStatus;
 use store::Store;
-use store::TodoStatus;
 use tools::task::session_tools;
 use tools::{Tool, ToolError};
 
@@ -32,7 +29,7 @@ fn call(tools: &[Arc<dyn Tool>], name: &str, args: Value) -> Result<String, Tool
 
 #[test]
 fn todo_add_creates_then_updates_note_only() {
-    let (dir, store, tools) = tmp_tools();
+    let (_dir, store, tools) = tmp_tools();
     let result = call(
         &tools,
         "todo_add",
@@ -61,7 +58,7 @@ fn todo_add_creates_then_updates_note_only() {
 
 #[test]
 fn todo_update_rejects_invalid_transition() {
-    let (dir, store, tools) = tmp_tools();
+    let (_dir, _store, tools) = tmp_tools();
     call(&tools, "todo_add", json!({ "title": "task" })).unwrap();
     // Move to a terminal state.
     call(
@@ -82,7 +79,7 @@ fn todo_update_rejects_invalid_transition() {
 
 #[test]
 fn todo_update_missing_title_errors() {
-    let (dir, store, tools) = tmp_tools();
+    let (_dir, _store, tools) = tmp_tools();
     let err = call(
         &tools,
         "todo_update",
@@ -94,7 +91,7 @@ fn todo_update_missing_title_errors() {
 
 #[test]
 fn todo_add_empty_title_errors() {
-    let (dir, store, tools) = tmp_tools();
+    let (_dir, _store, tools) = tmp_tools();
     let err = call(&tools, "todo_add", json!({ "title": "" })).expect_err("empty title rejected");
     assert!(err.to_string().contains("empty"));
 }
@@ -103,7 +100,7 @@ fn todo_add_empty_title_errors() {
 
 #[test]
 fn goal_add_links_idempotently() {
-    let (dir, store, tools) = tmp_tools();
+    let (_dir, store, tools) = tmp_tools();
     // Add a todo first
     call(&tools, "todo_add", json!({ "title": "todo1" })).unwrap();
     call(&tools, "todo_add", json!({ "title": "todo2" })).unwrap();
@@ -141,7 +138,7 @@ fn goal_add_links_idempotently() {
 
 #[test]
 fn goal_link_unlink_roundtrip() {
-    let (dir, store, tools) = tmp_tools();
+    let (_dir, store, tools) = tmp_tools();
     call(&tools, "todo_add", json!({ "title": "t1" })).unwrap();
     call(&tools, "todo_add", json!({ "title": "t2" })).unwrap();
     call(&tools, "goal_add", json!({ "title": "G" })).unwrap();
@@ -171,7 +168,7 @@ fn goal_link_unlink_roundtrip() {
 
 #[test]
 fn goal_link_missing_goal_errors() {
-    let (dir, store, tools) = tmp_tools();
+    let (_dir, _store, tools) = tmp_tools();
     let err = call(
         &tools,
         "goal_link",
@@ -185,7 +182,7 @@ fn goal_link_missing_goal_errors() {
 
 #[test]
 fn tools_are_registered_in_order() {
-    let (dir, store, tools) = tmp_tools();
+    let (_dir, _store, tools) = tmp_tools();
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     assert_eq!(
         names,
