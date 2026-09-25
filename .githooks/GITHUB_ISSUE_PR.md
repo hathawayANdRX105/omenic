@@ -2,11 +2,11 @@
 
 本指南指导 agent 创建、更新、关联 GitHub issue/PR。
 检查由 gate 二进制强制（`gate init` 安装后 `~/.local/bin/gh` 自动拦截，Rust 规则校验）。
-本文件只讲怎么做，规则见 `.githooks/spec/SPEC_OVERVIEW.md`。
+本文件只讲怎么做，规则见 `gate.md` / `rules/docs/SPEC_OVERVIEW.md`（播种到各仓 `.githooks/spec/docs/`）。
 
 ## 创建前必读
 
-- `gate init` — 安装 gh 拦截门（自动创建 `~/.local/bin/gh`）
+- `gate init` — 安装 gh 拦截门（自动创建 `~/.local/bin/gh`；规则包从 canon `rules/` 播种）
 - 安装后 `gh issue create` / `gh pr create` 自动走 Rust gate 校验（禁止绕过）
 - `.github/ISSUE_TEMPLATE/` — 选模板：`task.yml` / `feature.yml` / `bug.yml`
 - `.github/PULL_REQUEST_TEMPLATE.md` — PR 正文结构
@@ -68,5 +68,5 @@ gate review --post-inline       # 审查结果→PR inline review
 ## 参考
 
 - 规则总览：`.githooks/SPEC_OVERVIEW.md`
-- 工作流指南：`.githooks/PR_DEV_WORKFLOW.md`
+- 工作流指南：`pr-dev-workflow.md`；任务书在 `../tasks/`（closeout / feature-dev-handbook）
 - 钩子配置：`.githooks/spec/dispatch.yaml`

@@ -68,3 +68,18 @@ severity_overrides:
   RV-04: "FAIL"   # CRG/Inline Review 格式
   RV-05: "FAIL"   # 缺少 CRG Review
   RV-06: "FAIL"   # inline finding 无回复
+
+# merge 审查门 (RV-07): gate merge 时的 CRG + ocr 双重审查
+#   required: false      → 完全跳过 CRG+ocr (RV-07 降为 INFO, 不拦 merge)
+#   ocr_timeout_secs: 600 → ocr 超时秒数 (缺省 600)
+merge_review:
+  required: true
+  ocr_timeout_secs: 600
+
+# ---------------------------------------------------------------------------
+# 检查能力选择 (capability allowlist)
+#   checks: 列出「启用哪些检查项」(规则ID 或家族前缀, 如 [RV-05, RV-06] 或 [RV])
+#   缺省(不写 checks:) = 全部检查项启用; 写了 = 只保留列表内的
+# 示例:
+#   checks: [RV-01, RV-04, RV-05]
+# ---------------------------------------------------------------------------

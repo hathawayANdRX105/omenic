@@ -36,7 +36,7 @@
 # === COMMIT (CM) ===
 #   CM-01: FAIL — commit 标题非 conventional commit
 #   CM-02: FAIL — commit 标题含 CJK
-#   CM-03: WARN — commit 与 PR 不一致
+#   CM-03: FAIL — commit 与 PR 不一致
 #
 # === REVIEW (RV) ===
 #   RV-01: FAIL — review 评论含 checkbox

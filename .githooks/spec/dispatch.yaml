@@ -3,17 +3,18 @@
 # Each hook runs the listed topics in order. Add/remove topics here
 # without touching the hook scripts.
 
+# commit 快路径：只做基本代码检查（lint + 高价值候选判决）
+# 工作区卫生（WS-*）在 merge 把关：干净树是合并标准，不是提交标准
 pre-commit:
-  - workspace
   - code
   - checklist
 
 pre-push:
-  - workspace
   - code
   - checklist
 
 merge:
+  - workspace
   - github/pull_requests
   - github/reviews
   - cleanup

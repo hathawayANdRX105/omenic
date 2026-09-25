@@ -1,8 +1,12 @@
 # PR 开发工作流指南
 
+> **什么时候读**：从零开发一个功能 / 修复并要走 PR 全流程时（建 worktree → draft PR →
+> 拆任务 → 审查 → 合并 → 清理）。**解决什么**：每一步做什么、做到什么算完。
+> 子任务单的填写口径见 `../tasks/feature-dev-handbook.md`；收尾（审查/修复/清场）见 `../tasks/closeout.md`。
+
 本指南指导 agent 开发多步 PR 工作（依赖感知、隔离、委派、验证、审查、清理）。
-检查由 `.githooks/hooks` 强制（pre-commit/pre-push/merge + gate review 本地审查）。
-规则见 `.githooks/spec/SPEC_OVERVIEW.md`。
+检查由 `.githooks/hooks` 强制（pre-commit/pre-push/merge）。
+规则见 `gate.md`；任务书在 `../tasks/`：功能开发七问见 `feature-dev-handbook.md`，收尾全流程（审查/修复/PR 记录/清场/资源释放）见 `closeout.md`。
 
 ## 工作流
 
@@ -24,7 +28,10 @@ scope → 隔离 → 实现 → 验证 → 审查 → 合并 → 清理
 
 ## 阶段 2 — 实现与委派
 
-- 委派前编译 RTCO 简要：角色/任务/约束/上下文/输出结构
+- 委派前每个子代理 prompt 必须带齐五要素（缺一不打单）：
+  **R**ole（角色：子代理，只干声明范围）、**T**ask（做什么+目标）、
+  **C**onstraints（允许/禁止碰的文件清单、全局绝对路径 cwd）、
+  **C**ontext（suspect area、风险点、相关PR/issue）、**O**utput（回执格式：diff 边界+验收命令+输出）
 - 每个原子步骤用单独 worker，给明确文件范围 + 验收命令
 - 委派后独立审查 diff、文件状态、验证输出
 - worker 无产出 → 自己接手

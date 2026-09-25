@@ -95,18 +95,18 @@
 - GT-01 issue create 前校验（调 IS-*）；支持 `--disable-check` 逃生门；sub mode 被拒且看起来是 epic 时提示加 `--label epic` — FAIL 拒 — 触发：gh issue create
 - GT-02 pr create 前校验（调 PR-*）— FAIL 拒 — 触发：gh pr create
 - GT-03 sub 自动挂载 parent（addSubIssue POST + verify_mount 重试）— 挂载失败 WARN（issue 已创建不回滚，rc=2）— 触发：gh issue create
-- GT-04 issue close 前只查 Done when 段 checkbox 全勾 + 必须 --comment 理由（Implementation Order 进度格不拦）— FAIL 拒 — 触发：gh issue close
+- GT-04 issue close 前只查 Done when 段 checkbox 全勾 + 必须 --comment 理由（Implementation Order 进度格不拦）— FAIL 拒（开关 `close_done_when_gate`/`close_requires_comment`，严重度可经 severity_overrides 降级）— 触发：gh issue close
 - GT-04b issue close 前 PR 关联检查：epic 豁免（完成信号是 GT-06 sub 全关）；非 epic 无关联仅提示不阻塞 — WARN — 触发：gh issue close
-- GT-05 pr merge 前 checkbox 全勾 + 关联 Fixes issue Done when 全勾（epic 目标豁免，由 GT-06 保障）+ --body 理由 + squash 标题 CM-01/CM-02 — FAIL 拒 — 触发：gh pr merge
-- GT-06 epic close/merge 前所有 sub-issues 已关闭（fail-closed：sub 查询失败也拒绝）— FAIL 拒 — 触发：gh issue close / gh pr merge
+- GT-05 pr merge 前 checkbox 全勾 + 关联 Fixes issue Done when 全勾（epic 目标豁免，由 GT-06 保障）+ --body 理由 + squash 标题 CM-01/CM-02 — FAIL 拒（开关 `merge_checkbox_gate`/`merge_fixes_gate`/`merge_requires_body`/`merge_title_gate`）— 触发：gh pr merge
+- GT-06 epic close/merge 前所有 sub-issues 已关闭（开关 `epic_sub_issue_gate`；sub 查询失败仍 fail-closed 硬拒，不可配）— FAIL 拒 — 触发：gh issue close / gh pr merge
 - GT-07 merge 后自动在 PR 留言 + 删除本地 head 分支（安全模式）— 行为（无拦截）— 触发：gh pr merge
-- RV-07 有文件改动的 PR merge 前必须 CRG + ocr 审查 — FAIL 阻塞 — 触发：gate merge
+- RV-07 有文件改动的 PR merge 前必须 CRG + ocr 审查 — FAIL 阻塞（`github_reviews.yaml merge_review.required: false` 关；`ocr_timeout_secs` 调超时）— 触发：gate merge
 
 参数剥离：`gh_args()` 剥 `--parent`/`--repo`/`-R`；`arg_repo()` 提取 `--repo` 值（issue close 从 --repo 或 cwd 取仓库）。
 
 ## 主题三：钩子调度（gate pre-commit / pre-push / merge）
 
-- Gate 正本在 Canon；`gate init --rules-dir <canon>/rules/gate` 安装到 `~/.local/bin/gate`（并安装 `gh` 包装入口）、设置 `core.hooksPath=.githooks/hooks`、写 hook 模板并补齐缺失规则
+- `gate init` 部署：复制二进制到 `~/.local/bin/gate`（+ 同二进制为 `~/.local/bin/gh`）、设置 `core.hooksPath=.githooks/hooks`、写 hook 模板
 - pre-commit：CM-01/CM-02/CM-03（commit 标题格式/CJK/与 PR type 一致）+ workspace（WS-*）+ code（CD-*）
 - pre-push：workspace + code（cargo 不传 target、ruff 排除 .githooks、file_placement 忽略 .githooks/）
 - merge（手动 `gate merge <owner/repo> <pr_number> [--dry-run]`）：PR + reviews + cleanup + RV-07（CRG + ocr）
@@ -191,7 +191,9 @@
 |---|---|---|---|---|
 | `hardcoded_secret` | l1 | pre-commit, pre-push, merge | WARN | 硬编码密钥/密码/Token（PCRE, 5 语言） |
 | `stale_api` | l1 | pre-commit, pre-push, merge | WARN | 废弃 Rust API（uninitialized/try!/ONCE_INIT） |
-| `slop_comment` | l1 | pre-commit, pre-push, merge | WARN | AI 风格注释（Step 1:/This function/该函数…, 5 语言） |
+| `slop_comment` | l1 | pre-commit, pre-push, merge | WARN | AI 风格注释（步骤/叙述/拖延语 for now·临时·凑合/含糊语 hopefully·估计，5 语言） |
+| `ccn` | l1 | pre-commit, merge | FAIL | 函数 ccn 天花板(6) + ratchet 记账：新违规/恶化硬拦，存量 ratchet.tsv 容忍且只许降；lizard 缺失静默跳过 |
+| `antislop` | l1 | pre-commit, pre-push, merge | WARN（HIGH→FAIL） | AI slop 五类（Placeholder/Deferral/Hedging/Stub/命名），antislop 二进制；缺失静默跳过 |
 | `rust_no_process_cmd` | l1 | pre-commit, pre-push, merge | FAIL | HTTP 调用走 reqwest, 不要 subprocess curl/wget |
 | `rust_no_dead_code_allow` | l1 | pre-commit, pre-push, merge | WARN | 合并前清理 #[allow(dead_code)] |
 | `rust_no_empty_module` | l1 | pre-commit, pre-push, merge | WARN | 微型空文件, 考虑合并到上层 mod |
@@ -204,18 +206,21 @@
 | `duplication` | l2 | merge | WARN | 跨文件 4+ 连续行重复块（sh+awk, 零依赖） |
 | `crg_impact` | l2 | merge | WARN | diff 跨 3+ crate 改动 → 警告耦合 |
 | `ferrite_oversize` | l3 | merge | INFO | 大文件/大函数参考分（wildtoken `fast-l`；score/confidence，不阻断） |
+| `review_chain` | l3 | pre-push, merge | INFO（harness 透传） | 模型审查三档降级：jev（`TYPESAFE_API_KEY`）→ 小模型（`REVIEW_LLM_*`）→ 无（INFO）；per-question 阈值，p≥fail FAIL；`tier`/`confidence` extra |
+
+close 路径另有 `done_when_judge`（`github_issues.yaml`）：GT-04 机械门过后，Done when 每条过同一套三档模型评审（问题集 `harness/jev_questions_done_when.json`，`default_fail: 0.85`），p(未达标)≥0.85 FAIL 硬拦；任何基础设施失败降 `DWJ-SKIPPED` INFO 不阻断。
 
 ### SLA 分层
 
 - **l1 结构层**：零 token，毫秒～分钟级（grep / clippy / 静态分析）。FAIL 硬门槛。
 - **l2 语义层**：轻量，秒级（影响面 / 重复检测）。FAIL 硬门槛。
-- **l3 LLM 层**：按需，分钟级（`ferrite_oversize` 用 wildtoken `fast-l`）。INFO + score，不阻断。深度审查自行 `ocr review --format json --audience agent`。
+- **l3 LLM 层**：按需，秒~分钟级（`review_chain` 三档降级：jev → 小模型 → 无；`ferrite_oversize` wildtoken `fast-l`）。INFO/score/confidence，不阻断；per-question fail 阈值命中时 FAIL。深度审查自行 `ocr review --format json --audience agent`。
 
 `gate check` 默认只跑 l1；`--sla l2` 或 `l3` 解锁更高层。
 l3 默认 hooks: [merge]，本地用 `gate check <l3-name> --sla l3` 触发。
 
 ## 更新与校验
 
-- 新增或修改项目规则：改 `.githooks/spec/**/*.yaml`；通用规则包和 Gate 实现改 Canon 的 `rules/gate/`、`bin/gate/`
-- Gate 改动后：在 Canon 的 `bin/gate/` 运行 `cargo build --release`，再从目标项目运行该二进制的 `init --rules-dir <canon>/rules/gate`
+- 新增/修改规则：只改 `.githooks/spec/*.yaml` 参数 + 相应校验器逻辑，更新本文档
+- gate 改动后：`cargo build --release -p gate-bin` → `upx --best --lzma target/release/gate` → `gate init` 重部署 + `install` 复制为 `~/.local/bin/gh`
 - 触发式按上表 lazy 执行，不全局扫描
