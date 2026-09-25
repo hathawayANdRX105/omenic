@@ -50,7 +50,7 @@ cpulimit -l 65 -i -- cargo build --bin oi-web
 
 ## TUI（oi tui）
 
-TUI 已重新落地（epic #423；旧「已删除」状态 2026-09-25 起不再成立）：`crates/tui/` 存在，`oi tui` 按 `--tui auto|enhanced|linear` 三档渲染——enhanced 为全屏 alternate screen（transcript + composer dock + 历史/中断键），探针门要求 TTY、颜色、≥44×12 且非 tmux/Screen/Zellij，不合格自动回落 linear。交付：T1 linear 基线 #425，T2 enhanced 外壳与接线 #430、#438（七条契约测试，真人 TTY 验证 2026-09-25 通过）；T3–T5 在 #423 排队。验证口径：测试与 smoke 走 CI（TUI PTY smoke job 尚待授权），肉眼交互验收按 P2 路 B 推迟；渲染契约正本在 `todo/tui/route-tui.md`（local-only，不入 git）。`.agent/skills/ui-validation/SKILL.md` 面向旧 `specs/tui`，用前先核对目标（现行测试在 `crates/tui/tests/`）。前端验证分工：web 走上文「Web（oi-web）启动与样式缺失排查」「Web UI 契约验收」两节，TUI 走本节。
+TUI 已重新落地（epic #423；旧「已删除」状态 2026-09-25 起不再成立）：`crates/tui/` 存在，`oi tui` 按 `--tui auto|enhanced|linear` 三档渲染——enhanced 为全屏 alternate screen（transcript + composer dock + 历史/中断键），探针门要求 TTY、颜色、≥44×12 且非 tmux/Screen/Zellij，不合格自动回落 linear。交付（契约测试 19 条，`crates/tui/tests/`）：T1 linear 基线 #425，T2 enhanced 外壳与接线 #430、#438（七条，真人 TTY 验证 2026-09-25 通过），T3 工具卡/问题面板/footer #447、#449（四条），T4 会话导航 picker/任务面板/resume 路由 #448、#451（四条），T5 文档收口 #453；批次 epic #423。验证口径：测试与 smoke 走 CI（TUI PTY smoke job 尚待授权），肉眼交互验收按 P2 路 B 推迟；渲染契约正本在 `todo/tui/route-tui.md`（local-only，不入 git）。前端验证分工：web 走上文「Web（oi-web）启动与样式缺失排查」「Web UI 契约验收」两节，TUI 走本节。
 
 ## Web（oi-web）启动与样式缺失排查
 
