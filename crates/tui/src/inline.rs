@@ -49,27 +49,68 @@ use crate::{
 /// dock 行数（route §3 T8 设计注记 ③ 定稿：单行 composer + 状态行，恒 2）。
 pub const DOCK_ROWS: u16 = 2;
 
+/// ESC 字节（十进制形态）。theme_lint（D11 字面量禁令）禁止 src 里出现
+/// 十六进制数值与反斜杠转义形态的 ESC 序列——控制序列一律从数字/字节
+/// 码位拼装，序列的可读文本只活在 tests/ 侧。
+const ESC: u8 = 27;
+
+/// CSI 引导（ESC + `[`）。
+const CSI: [u8; 2] = [ESC, b'['];
+
 /// DEC 同步更新 begin（grok minimal 帧序：commit + dock 重绘包一对）。
-pub const SYNC_BEGIN: &[u8] = b"\x1b[?2026h";
+pub const SYNC_BEGIN: &[u8] = &[ESC, b'[', b'?', b'2', b'0', b'2', b'6', b'h'];
 
 /// DEC 同步更新 end（退出序列的第一项也用它收尾）。
-pub const SYNC_END: &[u8] = b"\x1b[?2026l";
+pub const SYNC_END: &[u8] = &[ESC, b'[', b'?', b'2', b'0', b'2', b'6', b'l'];
 
 /// 进屏序列（dh-rs `stage_attach` `inline_screen.rs:161-199` 同序）：
 /// 全屏滚动区 + 关 origin + bracketed paste + 藏光标。
-pub const ATTACH_PRELUDE: &[u8] = b"\x1b[r\x1b[?6l\x1b[?2004h\x1b[?25l";
+#[rustfmt::skip]
+pub const ATTACH_PRELUDE: &[u8] = &[
+    ESC, b'[', b'r', // 复位滚动区
+    ESC, b'[', b'?', b'6', b'l', // 关 origin
+    ESC, b'[', b'?', b'2', b'0', b'0', b'4', b'h', // 开 bracketed paste
+    ESC, b'[', b'?', b'2', b'5', b'l', // 藏光标
+];
 
 /// 半截写 / 无可锚定坐标的兜底还原（对齐 dh-rs `POISON_TEARDOWN_BYTES`，
 /// `terminal.rs:17` 引用同款）：先收同步更新，再复位滚动区与 origin，
 /// **ED2 清视口**（半截草稿不得进原生历史），关 paste、还光标、复位 SGR。
-pub const POISON_TEARDOWN_BYTES: &[u8] =
-    b"\x1b[?2026l\x1b[r\x1b[?6l\x1b[2J\x1b[H\x1b[?2004l\x1b[?25h\x1b[0m";
+#[rustfmt::skip]
+pub const POISON_TEARDOWN_BYTES: &[u8] = &[
+    ESC, b'[', b'?', b'2', b'0', b'2', b'6', b'l', // 同步收尾
+    ESC, b'[', b'r', // 复位滚动区
+    ESC, b'[', b'?', b'6', b'l', // 关 origin
+    ESC, b'[', b'2', b'J', // ED2 清视口（teardown 专用）
+    ESC, b'[', b'H', // 回屏原点
+    ESC, b'[', b'?', b'2', b'0', b'0', b'4', b'l', // 关 paste
+    ESC, b'[', b'?', b'2', b'5', b'h', // 还光标
+    ESC, b'[', b'0', b'm', // SGR 复位
+];
 
 /// EL0：清光标到行尾（只清未写字节区，绝不碰已落定的行内前缀）。
-const EL_END: &[u8] = b"\x1b[K";
+const EL_END: &[u8] = &[ESC, b'[', b'K'];
 
 /// EL2：整行清空（新行落笔前的残迹清扫，等价 EL0——列 1 起）。
-const EL_ROW: &[u8] = b"\x1b[2K";
+const EL_ROW: &[u8] = &[ESC, b'[', b'2', b'K'];
+
+/// resize 阶段帧头：复位滚动区 + 关 origin + 藏光标（进屏序列去掉
+/// bracketed paste——paste 总开关只随 attach/detach 走）。
+const RESIZE_PRELUDE: &[u8] = &[
+    ESC, b'[', b'r', ESC, b'[', b'?', b'6', b'l', ESC, b'[', b'?', b'2', b'5', b'l',
+];
+
+/// 还光标（退出序列 ②）。
+const SHOW_CURSOR: &[u8] = &[ESC, b'[', b'?', b'2', b'5', b'h'];
+
+/// 关 bracketed paste（退出序列 ③）。
+const PASTE_OFF: &[u8] = &[ESC, b'[', b'?', b'2', b'0', b'0', b'4', b'l'];
+
+/// 关 origin + 复位滚动区（退出序列 ④）。
+const ORIGIN_OFF_RESET: &[u8] = &[ESC, b'[', b'?', b'6', b'l', ESC, b'[', b'r'];
+
+/// SGR 复位（退出序列收尾）。
+const SGR_RESET: &[u8] = &[ESC, b'[', b'0', b'm'];
 
 /// 事件轮询间隔（同 enhanced `POLL` 档）。
 const POLL: Duration = Duration::from_millis(50);
@@ -82,7 +123,7 @@ const STATS_RANGE: &str = "24h";
 
 /// 退出/panic 时可锚定的坐标（transcript 尾行, 列, 屏高）。
 /// panic hook 拿不到 [`Screen`]，靠这个静态锚点做「含 panic 的退出序列」
-/// （route §3 T8：同步收尾 → 还光标 → 关 paste → `\x1b[r`）。
+/// （route §3 T8：同步收尾 → 还光标 → 关 paste → 复位滚动区）。
 static ANCHOR: Mutex<Option<(u16, u16, u16)>> = Mutex::new(None);
 
 // --- 宽度启发（不引 unicode-width 依赖：裁决级判据即可，误差行由
@@ -95,33 +136,34 @@ fn char_cells(c: char) -> u16 {
     let cp = c as u32;
     if matches!(
         cp,
-        0x0300..=0x036F   // 组合附加符号
-        | 0x1AB0..=0x1AFF
-        | 0x1DC0..=0x1DFF
-        | 0x20D0..=0x20FF
-        | 0x200B..=0x200F // 零宽空格/方向记号
-        | 0x2060..=0x2064
-        | 0xFE00..=0xFE0F // 变体选择符
-        | 0xFE20..=0xFE2F
+        // 十进制码位段（theme_lint 禁十六进制字面量）：
+        768..=879 // 0300..036F 组合附加符号
+        | 6832..=6911 // 1AB0..1AFF
+        | 7616..=7679 // 1DC0..1DFF
+        | 8400..=8447 // 20D0..20FF
+        | 8203..=8207 // 200B..200F 零宽空格/方向记号
+        | 8288..=8292 // 2060..2064
+        | 65024..=65039 // FE00..FE0F 变体选择符
+        | 65056..=65071 // FE20..FE2F
     ) {
         return 0;
     }
     if matches!(
         cp,
-        0x1100..=0x115F   //谚文音节
-        | 0x2E80..=0x303E // CJK 部首/符号
-        | 0x3041..=0x33FF
-        | 0x3400..=0x4DBF
-        | 0x4E00..=0x9FFF // 统一表意文字
-        | 0xA000..=0xA4CF
-        | 0xAC00..=0xD7A3 //谚文音节
-        | 0xF900..=0xFAFF
-        | 0xFE30..=0xFE6F
-        | 0xFF00..=0xFF60 // 全角
-        | 0xFFE0..=0xFFE6
-        | 0x1F300..=0x1F64F
-        | 0x1F900..=0x1F9FF
-        | 0x20000..=0x3FFFD
+        4352..=4447 // 1100..115F 谚文音节
+        | 11904..=12350 // 2E80..303E CJK 部首/符号
+        | 12353..=13311 // 3041..33FF
+        | 13312..=19903 // 3400..4DBF
+        | 19968..=40959 // 4E00..9FFF 统一表意文字
+        | 40960..=42191 // A000..A4CF
+        | 44032..=55203 // AC00..D7A3 谚文音节
+        | 63744..=64255 // F900..FAFF
+        | 65072..=65135 // FE30..FE6F
+        | 65280..=65376 // FF00..FF60 全角
+        | 65504..=65510 // FFE0..FFE6
+        | 127744..=128591 // 1F300..1F64F
+        | 129280..=129535 // 1F900..1F9FF
+        | 131072..=262141 // 20000..3FFFD
     ) {
         return 2;
     }
@@ -146,7 +188,8 @@ fn clip_cells(s: &str, cols: u16) -> String {
 
 /// 绝对寻址（CSI CUP，1 基）。
 fn push_cup(b: &mut Vec<u8>, row: u16, col: u16) {
-    b.extend_from_slice(format!("\x1b[{row};{col}H").as_bytes());
+    b.extend_from_slice(&CSI);
+    b.extend_from_slice(format!("{row};{col}H").as_bytes());
 }
 
 /// 清 `[from, to]` 整行（EL2）。
@@ -310,7 +353,7 @@ impl Screen {
             )));
         }
         let mut b = std::mem::take(&mut self.staged); // 旧几何增量先按时序落盘
-        b.extend_from_slice(b"\x1b[r\x1b[?6l\x1b[?25l");
+        b.extend_from_slice(RESIZE_PRELUDE);
         let old_dock_start = self.ledger.rows.saturating_sub(DOCK_ROWS).saturating_add(1);
         let old_dock_end = self.ledger.rows.min(rows);
         push_clear_rows(&mut b, old_dock_start, old_dock_end);
@@ -333,7 +376,7 @@ impl Screen {
     /// 退出帧（route §3 T8 退出序列，dh-rs `stage_detach` 同构）：
     /// 同步更新收尾 → 清 dock 两行 + 光标停到 transcript 尾之后
     /// （退出后 transcript 完整留在 scrollback，shell 提示符接在其下）→
-    /// 恢复光标 → 关 bracketed paste → `\x1b[r` 复位滚动区。
+    /// 恢复光标 → 关 bracketed paste → 复位滚动区。
     pub fn detach(&self) -> Vec<u8> {
         detach_bytes(Some(self.anchor()))
     }
@@ -504,10 +547,10 @@ pub fn detach_bytes(anchor: Option<(u16, u16, u16)>) -> Vec<u8> {
         push_cup(&mut b, park_row, park_col);
         b.extend_from_slice(b"\r\n");
     }
-    b.extend_from_slice(b"\x1b[?25h"); // ② 恢复光标
-    b.extend_from_slice(b"\x1b[?2004l"); // ③ 关 bracketed paste
-    b.extend_from_slice(b"\x1b[?6l\x1b[r"); // ④ 关 origin + 复位滚动区
-    b.extend_from_slice(b"\x1b[0m");
+    b.extend_from_slice(SHOW_CURSOR); // ② 恢复光标
+    b.extend_from_slice(PASTE_OFF); // ③ 关 bracketed paste
+    b.extend_from_slice(ORIGIN_OFF_RESET); // ④ 关 origin + 复位滚动区
+    b.extend_from_slice(SGR_RESET);
     b
 }
 
