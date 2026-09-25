@@ -11,6 +11,18 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 [[package]]
 name = "agent-loop"
 version = "0.1.0"
+dependencies = [
+ "fs2",
+ "llm",
+ "plugin",
+ "prompts",
+ "protocol",
+ "serde",
+ "serde_json",
+ "skill",
+ "tempfile",
+ "tools",
+]
 
 [[package]]
 name = "aho-corasick"
@@ -312,9 +324,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.4.7"
+version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54413ede23c2daf518f35156dfde027feb2374004d63bd497f983c8db9c0e313"
+checksum = "f360145194ee8e21db5ee7f3fcd4fe52210864c75c985dae33218202c8bbe040"
 dependencies = [
  "find-msvc-tools",
  "shlex 2.0.1",
@@ -441,34 +453,6 @@ dependencies = [
  "rustversion",
  "ryu",
  "static_assertions",
-]
-
-[[package]]
-name = "compaction"
-version = "0.1.0"
-dependencies = [
- "plugin",
- "protocol",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "composition"
-version = "0.1.0"
-dependencies = [
- "agent-loop",
- "compaction",
- "guard",
- "instruction",
- "orbit",
- "plugin",
- "prompt",
- "serde_json",
- "skill",
- "subagent-harness",
- "tempfile",
- "tools-harness",
 ]
 
 [[package]]
@@ -659,8 +643,7 @@ name = "daemon"
 version = "0.1.0"
 dependencies = [
  "agent-loop",
- "compaction",
- "composition",
+ "base64",
  "config",
  "ctrlc",
  "fs2",
@@ -668,21 +651,19 @@ dependencies = [
  "libc",
  "llm",
  "mcp",
- "orbit",
  "parking_lot",
  "plan-mode",
  "plugin",
- "rpc",
+ "protocol",
  "serde",
  "serde_json",
  "session",
  "store",
- "subagent-harness",
+ "subagent",
  "tempfile",
  "terminal",
  "thiserror 2.0.21",
  "tools",
- "tools-harness",
  "uuid",
 ]
 
@@ -1318,9 +1299,9 @@ dependencies = [
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.13"
+version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef25905e51abafe4dcea6c15fec58c57b601cdbd0ee53d22ea1d3016c587d39b"
+checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 
 [[package]]
 name = "finl_unicode"
@@ -1678,9 +1659,9 @@ dependencies = [
 
 [[package]]
 name = "hyper-util"
-version = "0.1.20"
+version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0"
+checksum = "ddc03d96684f9226b8a787cdb71488417b53ab5ea8fdb1dac946cb9431cc8bff"
 dependencies = [
  "bytes",
  "http",
@@ -1834,16 +1815,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "instruction"
-version = "0.1.0"
-dependencies = [
- "plugin",
- "prompt",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1919,9 +1890,9 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.105"
+version = "0.3.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce57d20d1ea864ce2ac172ab472d409214f4fd359f0b2a2775abdf522e2af99e"
+checksum = "7883d941dae510fb2d978fc3fe018c71c9e2892fd38854de3e8b92c2e5ad9cc5"
 dependencies = [
  "cfg-if",
  "futures-util",
@@ -1968,18 +1939,16 @@ checksum = "a4933f3f57a8e9d9da04db23fb153356ecaf00cbd14aee46279c33dc80925c37"
 name = "kymic"
 version = "0.1.0"
 dependencies = [
+ "agent-loop",
  "clap",
  "config",
  "daemon",
  "llm",
  "mcp",
  "omenic-tui",
- "orbit",
- "rpc",
  "serde",
  "serde_json",
  "session",
- "spec",
  "store",
  "subagent",
  "tempfile",
@@ -2521,22 +2490,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
-name = "orbit"
-version = "0.1.0"
-dependencies = [
- "compaction",
- "fs2",
- "instruction",
- "llm",
- "prompts",
- "protocol",
- "serde",
- "serde_json",
- "tempfile",
- "tools",
-]
-
-[[package]]
 name = "ordered-float"
 version = "4.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2777,28 +2730,28 @@ name = "plan-mode"
 version = "0.1.0"
 dependencies = [
  "plugin",
- "prompt",
  "protocol",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
- "tools-harness",
+ "tools",
 ]
 
 [[package]]
 name = "plugin"
 version = "0.1.0"
 dependencies = [
- "compaction",
+ "agent-loop",
  "guard",
- "instruction",
  "parking_lot",
  "plan-mode",
+ "protocol",
  "serde_json",
  "skill",
- "subagent-harness",
- "tools-harness",
+ "subagent",
+ "tempfile",
+ "tools",
 ]
 
 [[package]]
@@ -2896,15 +2849,6 @@ dependencies = [
  "quote",
  "syn 2.0.119",
  "version_check",
-]
-
-[[package]]
-name = "prompt"
-version = "0.1.0"
-dependencies = [
- "protocol",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -3160,28 +3104,6 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "rpc"
-version = "0.1.0"
-dependencies = [
- "agent-loop",
- "base64",
- "compaction",
- "composition",
- "jobs",
- "libc",
- "llm",
- "orbit",
- "protocol",
- "serde",
- "serde_json",
- "session",
- "tempfile",
- "terminal",
- "tools",
- "tools-harness",
 ]
 
 [[package]]
@@ -3540,21 +3462,21 @@ checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
 
 [[package]]
 name = "siphasher"
-version = "1.0.3"
+version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
+checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
 
 [[package]]
 name = "skill"
 version = "0.1.0"
 dependencies = [
  "plugin",
- "prompt",
  "protocol",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
- "tools-harness",
+ "tools",
 ]
 
 [[package]]
@@ -3604,9 +3526,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.16.1"
+version = "1.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
+checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
 
 [[package]]
 name = "socket2"
@@ -3617,10 +3539,6 @@ dependencies = [
  "libc",
  "windows-sys 0.61.2",
 ]
-
-[[package]]
-name = "spec"
-version = "0.1.0"
 
 [[package]]
 name = "stable_deref_trait"
@@ -3701,28 +3619,14 @@ dependencies = [
 name = "subagent"
 version = "0.1.0"
 dependencies = [
+ "agent-loop",
  "llm",
- "orbit",
- "serde",
- "serde_json",
- "tempfile",
- "tools",
-]
-
-[[package]]
-name = "subagent-harness"
-version = "0.1.0"
-dependencies = [
- "llm",
- "orbit",
  "plugin",
  "protocol",
  "serde",
  "serde_json",
- "subagent",
  "tempfile",
  "tools",
- "tools-harness",
  "wire",
 ]
 
@@ -4138,23 +4042,15 @@ name = "tools"
 version = "0.1.0"
 dependencies = [
  "diffy",
+ "jobs",
  "llm",
  "memory",
- "serde_json",
- "store",
- "tempfile",
-]
-
-[[package]]
-name = "tools-harness"
-version = "0.1.0"
-dependencies = [
- "jobs",
  "protocol",
  "serde",
  "serde_json",
+ "store",
+ "tempfile",
  "terminal",
- "tools",
  "web-tool",
 ]
 
@@ -4467,9 +4363,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.128"
+version = "0.2.129"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aecb87a33d3b0c5e3b7aa46336eaf486cffafbd281b195e4c8b80d50df2351bf"
+checksum = "9bb54f33acc68fd454578d9820b0bde1a1a3d17aa17bb7b6595806d02886d409"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -4480,19 +4376,20 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.78"
+version = "0.4.79"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ef4c5d3d2cdf5c54f4231181768f5510842e350db025faf1f7163b1030ed928"
+checksum = "3cbab34de2d982e9b48e18d216d04c4a6f641066ff19ffb699980f591ee3610e"
 dependencies = [
  "js-sys",
+ "tokio",
  "wasm-bindgen",
 ]
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.128"
+version = "0.2.129"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a690d511e3c1a8b3a55e33511e3c2c00c78415cd23650f32b808627f5696b9ed"
+checksum = "2e29d0c35b16e224a7eeb5cd2d25e3e1968fbd65604117b44d3b789d00ee8535"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -4500,9 +4397,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.128"
+version = "0.2.129"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "411e4887f0071ef2d2164a9d5fdf2d20efbef78fccd3a78b0c10a1dc5295e48a"
+checksum = "6f501a8bc3719dba86ef8ae4728879c08001bea749eb1333ac5b91e040e2a6b7"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -4513,9 +4410,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.128"
+version = "0.2.129"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81941cd78d0c92026c33e5e01312845a4cb1e9af3407f9134b100dd03144103e"
+checksum = "23f0c9c52aa7cd7d77769a4cfe2a9adb1b331f489a41d912ce14513d5ab995c6"
 dependencies = [
  "unicode-ident",
 ]
@@ -4608,9 +4505,9 @@ dependencies = [
 name = "web-state"
 version = "0.1.0"
 dependencies = [
+ "agent-loop",
  "llm",
  "memory",
- "orbit",
  "serde",
  "serde_json",
  "session",
@@ -4620,9 +4517,9 @@ dependencies = [
 
 [[package]]
 name = "web-sys"
-version = "0.3.105"
+version = "0.3.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fbddc4a036f00ec4f18c83445bd3115cb306a91da554919a099d9222fe4a7f8"
+checksum = "88261b9deccee56594c11a3460c462c41f58d148598fe70ad77070126a68aba4"
 dependencies = [
  "js-sys",
  "wasm-bindgen",

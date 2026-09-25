@@ -3,3 +3,17 @@ name = "agent-loop"
 version = "0.1.0"
 edition = "2024"
 publish = false
+
+[dependencies]
+protocol = { path = "../protocol" }
+skill = { path = "../skill" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+llm = { path = "../llm" }
+tools = { path = "../tools" }
+prompts = { path = "../prompts" }
+fs2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+plugin = { path = "../plugin" }

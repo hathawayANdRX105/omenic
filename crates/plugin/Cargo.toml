@@ -7,14 +7,17 @@ license = "MIT"
 publish = false
 
 [dependencies]
-compaction = { path = "../agent-loop/compaction" }
 guard = { path = "../guard" }
-instruction = { path = "../agent-loop/instruction" }
+subagent = { path = "../subagent" }
+tools = { path = "../tools" }
+protocol = { path = "../protocol" }
+agent-loop = { path = "../agent-loop" }
 plan-mode = { path = "../plan-mode" }
 parking_lot = "0.12"
 serde_json = { workspace = true }
 skill = { path = "../skill" }
-subagent-harness = { path = "../subagent/harness" }
-tools-harness = { path = "../tools/harness" }
 
 
+
+[dev-dependencies]
+tempfile = { workspace = true }

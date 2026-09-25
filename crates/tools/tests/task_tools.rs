@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use serde_json::{Value, json};
-use store::store::Store;
-use store::todo::TodoStatus;
+use store::Store;
+use store::TodoStatus;
 use tools::task::session_tools;
 use tools::{Tool, ToolError};
 

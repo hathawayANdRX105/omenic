@@ -12,8 +12,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use agent_loop::orbit::HttpLlm;
 use llm::Model;
-use orbit::HttpLlm;
 use serde_json::{Value, json};
 use tools::{Tool, ToolError};
 

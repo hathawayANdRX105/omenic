@@ -35,7 +35,7 @@ pub struct DaemonConfig {
     /// Unix-domain socket path.  When `None`, falls back to
     /// `Config::daemon_socket_path()` (via env).
     pub socket_path: Option<PathBuf>,
-    /// Path to the omp binary handed to `rpc::worker::Worker::new`.
+    /// Path to the omp binary handed to `crate::rpc::worker::Worker::new`.
     pub omp_path: String,
     /// Session database file path.  When `None`, the daemon refuses to
     /// start — there is no default and we don't want to silently create one
@@ -66,7 +66,7 @@ pub struct DaemonConfig {
     /// Fallback LLM providers tried in order after the primary `[llm]`
     /// provider fails before emitting any content
     /// (`.oi/config.toml` `[[llm.fallbacks]]`). Empty = single-provider
-    /// behaviour (`orbit::HttpLlm`, historic path, zero change).
+    /// behaviour (`agent_loop::orbit::HttpLlm`, historic path, zero change).
     pub llm_fallbacks: Vec<config::LlmFallbackConfig>,
     /// Out-of-process subagent providers (`[[subagent.providers]]` in
     /// `.oi/config.toml`), each a spawned ACP child agent the daemon can
@@ -113,7 +113,9 @@ impl DaemonConfig {
             orbit_model,
             cwd: cfg.cwd.clone(),
             data_dir: cfg.data_dir.clone(),
-            max_turns: cfg.max_turns.unwrap_or(orbit::DEFAULT_MAX_TURNS),
+            max_turns: cfg
+                .max_turns
+                .unwrap_or(agent_loop::orbit::DEFAULT_MAX_TURNS),
             mcp_servers: cfg.mcp_servers.clone(),
             llm_fallbacks: cfg.llm_fallbacks.clone(),
             subagent_providers: cfg.subagent_providers.clone(),
@@ -172,8 +174,8 @@ pub struct Daemon {
     /// process lifetime: dropping the fiber unloads plugins in reverse
     /// registration order, so it must outlive the accept loop that serves
     /// requests against those services.
-    pub(crate) fiber: composition::Fiber,
-    pub(crate) plugins: composition::PluginRegistry,
+    pub(crate) fiber: plugin::Fiber,
+    pub(crate) plugins: plugin::PluginRegistry,
 }
 
 impl Daemon {
@@ -316,17 +318,19 @@ impl Daemon {
     /// `fail_on_startup_error = true` that fails to start aborts the daemon
     /// start loudly (B1/T2 semantics honored at the daemon boundary).
     fn orbit_setup(
-        fiber: &composition::Fiber,
+        fiber: &plugin::Fiber,
         model: &llm::Model,
         cfg: &DaemonConfig,
         plan_mode: &plan_mode::PlanModeRuntime,
-    ) -> Result<rpc::worker::OrbitSetup, DaemonError> {
+    ) -> Result<crate::rpc::worker::OrbitSetup, DaemonError> {
         let catalog = fiber
-            .resolve::<tools_harness::ToolCatalog>("harness.tools")
-            .unwrap_or_else(|| std::sync::Arc::new(tools_harness::default_catalog()));
+            .resolve::<tools::ToolCatalog>("harness.tools")
+            .unwrap_or_else(|| std::sync::Arc::new(tools::default_catalog()));
         let compaction = fiber
-            .resolve::<compaction::CharBudgetPolicy>("harness.compaction")
-            .unwrap_or_else(|| std::sync::Arc::new(compaction::CharBudgetPolicy::default()));
+            .resolve::<agent_loop::compaction::CharBudgetPolicy>("harness.compaction")
+            .unwrap_or_else(|| {
+                std::sync::Arc::new(agent_loop::compaction::CharBudgetPolicy::default())
+            });
         let max_turns = fiber
             .resolve::<agent_loop::LoopEngine>("harness.loop")
             .map(|engine| engine.max_turns)
@@ -339,11 +343,11 @@ impl Daemon {
         // fallbacks, per-provider retry inside, no switch after content
         // leaks). Empty list keeps the historic `HttpLlm` path verbatim —
         // zero behaviour change for single-provider configs.
-        let backend: std::sync::Arc<dyn orbit::LlmBackend + Send + Sync> =
+        let backend: std::sync::Arc<dyn agent_loop::orbit::LlmBackend + Send + Sync> =
             if cfg.llm_fallbacks.is_empty() {
-                std::sync::Arc::new(orbit::HttpLlm)
+                std::sync::Arc::new(agent_loop::orbit::HttpLlm)
             } else {
-                let primary = orbit::LlmProvider {
+                let primary = agent_loop::orbit::LlmProvider {
                     api_key: model.api_key.clone(),
                     model: model.model.clone(),
                     base_url: model.base_url.clone(),
@@ -368,7 +372,7 @@ impl Daemon {
                         if fallback_model.is_none() {
                             eprintln!("warn: [[llm.fallbacks]] entry #{i} has no model; skipped");
                         }
-                        fallback_model.map(|fallback_model| orbit::LlmProvider {
+                        fallback_model.map(|fallback_model| agent_loop::orbit::LlmProvider {
                             api_key: f
                                 .api_key
                                 .clone()
@@ -380,7 +384,7 @@ impl Daemon {
                         })
                     })
                     .collect();
-                std::sync::Arc::new(orbit::WaterfallLlm::new(primary, fallbacks))
+                std::sync::Arc::new(agent_loop::orbit::WaterfallLlm::new(primary, fallbacks))
             };
         // Subagent seam: resolve the container's SubagentRuntimeService and
         // register the in-process fork provider into it (mutating the
@@ -390,15 +394,12 @@ impl Daemon {
         // container lacks the key (same style as the catalog/compaction
         // fallbacks above).
         let subagents = fiber
-            .resolve::<subagent_harness::SubagentRuntimeService>("harness.subagents")
-            .unwrap_or_else(|| {
-                std::sync::Arc::new(subagent_harness::SubagentRuntimeService::default())
-            });
-        let fork_tools =
-            std::sync::Arc::new(tools_harness::filter_builtin_tools(FORK_SUBAGENT_TOOLS));
+            .resolve::<subagent::SubagentRuntimeService>("harness.subagents")
+            .unwrap_or_else(|| std::sync::Arc::new(subagent::SubagentRuntimeService::default()));
+        let fork_tools = std::sync::Arc::new(tools::filter_builtin_tools(FORK_SUBAGENT_TOOLS));
         subagents.register(
             "fork",
-            std::sync::Arc::new(subagent_harness::ForkProvider::new(
+            std::sync::Arc::new(subagent::ForkProvider::new(
                 std::sync::Arc::clone(&backend),
                 model.clone(),
                 fork_tools,
@@ -414,13 +415,13 @@ impl Daemon {
         // the earlier one (HashMap semantics) and no entry can shadow the
         // built-in.
         for p in &cfg.subagent_providers {
-            let mut spec = subagent_harness::AcpProviderSpec::new(&p.command);
+            let mut spec = subagent::AcpProviderSpec::new(&p.command);
             spec.args = p.args.clone();
             spec.cwd = p.cwd.clone().map(std::path::PathBuf::from);
             spec.env = p.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
             spec.permission = match p.permission {
-                config::SubagentPermission::Allow => subagent_harness::AcpPermission::Allow,
-                config::SubagentPermission::Reject => subagent_harness::AcpPermission::Reject,
+                config::SubagentPermission::Allow => subagent::AcpPermission::Allow,
+                config::SubagentPermission::Reject => subagent::AcpPermission::Reject,
             };
             // eof_grace is the post-stdin-EOF quiesce window, kill_grace the
             // post-SIGKILL reap window (see `AcpProviderSpec`); both config
@@ -433,7 +434,7 @@ impl Daemon {
             }
             subagents.register(
                 p.name.as_str(),
-                std::sync::Arc::new(subagent_harness::AcpProvider::new(spec)),
+                std::sync::Arc::new(subagent::AcpProvider::new(spec)),
             );
         }
         // The tool the model calls when it wants a subagent defaults to the
@@ -450,14 +451,14 @@ impl Daemon {
         // `HarnessTool`, which also wires the engine's abort flag into the
         // `AbortSignal` the tools take — the piece an interrupt rides on).
         catalog.register(std::sync::Arc::new(
-            subagent_harness::tool_subagent::SubagentTool::new(
+            subagent::tool_subagent::SubagentTool::new(
                 "subagent".into(),
                 default_provider.into(),
                 std::sync::Arc::clone(&subagents),
             ),
         ));
         catalog.register(std::sync::Arc::new(
-            subagent_harness::tool_subagent_control::SubagentControlTool::new(
+            subagent::tool_subagent_control::SubagentControlTool::new(
                 "subagent_control".into(),
                 std::sync::Arc::clone(&subagents),
             ),
@@ -492,10 +493,10 @@ impl Daemon {
             Some(std::sync::Arc::new(move || {
                 plan_runtime.plan_policy_section(&plan_section)
             }));
-        Ok(rpc::worker::OrbitSetup {
+        Ok(crate::rpc::worker::OrbitSetup {
             model: model.clone(),
             backend,
-            config: rpc::worker::OrbitConfig {
+            config: crate::rpc::worker::OrbitConfig {
                 cwd: Some(std::sync::Arc::from(cfg.cwd.clone())),
                 max_turns,
                 compaction,
@@ -548,7 +549,7 @@ impl Daemon {
     ) -> std::sync::Arc<Vec<std::sync::Arc<dyn tools::Tool>>> {
         let jobs = std::sync::Arc::new(jobs::LocalJobRegistry::new());
         let terminals = std::sync::Arc::new(terminal::TerminalRegistry::new());
-        let mut session_tools = tools_harness::jobs_terminal::session_tools(jobs, terminals);
+        let mut session_tools = tools::jobs_terminal::session_tools(jobs, terminals);
         session_tools.extend(tools::task::session_tools(std::sync::Arc::new(
             store::store::Store::new(data_dir),
         )));
@@ -596,7 +597,7 @@ impl Daemon {
     fn assemble_plugins(
         cfg: &DaemonConfig,
         plan_plugin: plugin::plugins::PlanModePlugin,
-    ) -> Result<(composition::Fiber, composition::PluginRegistry), DaemonError> {
+    ) -> Result<(plugin::Fiber, plugin::PluginRegistry), DaemonError> {
         let mut doc = serde_json::Map::new();
         if let Some(model) = cfg.orbit_model.as_ref() {
             doc.insert("model".into(), serde_json::Value::from(model.model.clone()));
@@ -621,12 +622,9 @@ impl Daemon {
         );
         // Plan mode rides the daemon-owned broker (see `start`), so the
         // composition root stays unaware of the review transport.
-        let plugins: Vec<std::sync::Arc<dyn composition::DshPlugin>> =
+        let plugins: Vec<std::sync::Arc<dyn plugin::DshPlugin>> =
             vec![std::sync::Arc::new(plan_plugin)];
-        Ok(composition::assemble(
-            serde_json::Value::Object(doc),
-            plugins,
-        )?)
+        Ok(plugin::assemble(serde_json::Value::Object(doc), plugins)?)
     }
 
     /// Trigger a graceful shutdown.  Sets the shutdown flag and waits for
@@ -682,7 +680,7 @@ impl Daemon {
     /// provided at start is resolvable from here for the daemon's lifetime.
     /// G6: the daemon resolves the orbit engine's tools / compaction policy /
     /// turn cap out of this rather than hardcoding them.
-    pub fn fiber(&self) -> &composition::Fiber {
+    pub fn fiber(&self) -> &plugin::Fiber {
         &self.fiber
     }
 }

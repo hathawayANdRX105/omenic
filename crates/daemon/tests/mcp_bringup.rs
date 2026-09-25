@@ -2,7 +2,7 @@
 //!
 //! `Daemon::start` (orbit path) spawns every configured MCP server exactly
 //! once and hands their tools to the engine through
-//! `rpc::worker::OrbitConfig::mcp_tools`. What is under test here:
+//! `daemon::rpc::worker::OrbitConfig::mcp_tools`. What is under test here:
 //!
 //! 1. Default policy: a server that fails to start is skipped (logged by the
 //!    mcp crate) and the daemon starts anyway; `DaemonConfig.mcp_servers`

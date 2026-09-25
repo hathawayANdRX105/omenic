@@ -19,4 +19,8 @@ pub use context::{PluginContext, ServiceRegistry};
 pub use events::{EventBus, EventHandler, Subscription};
 pub use fiber::{Fiber, PluginLifecycle};
 pub use registry::{DshPlugin, PluginError, PluginRegistry};
+pub mod composition;
 pub mod plugins;
+
+/// Composition root (old `composition` crate): assemble the plugin container.
+pub use composition::assemble;

@@ -26,7 +26,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
-use rpc::worker::{Worker, WorkerEvent};
+use crate::rpc::worker::{Worker, WorkerEvent};
 use store::graph;
 use store::{Task, TaskStatus};
 

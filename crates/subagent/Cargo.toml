@@ -5,13 +5,21 @@ edition = "2024"
 description = "Read-only subagent task tool for parallel exploration"
 license = "MIT"
 publish = false
+autoexamples = false
+
+[[bin]]
+name = "mock_acp_server"
+path = "examples/mock_acp_server.rs"
 
 [dependencies]
 llm = { path = "../llm" }
 tools = { path = "../tools" }
-orbit = { path = "../agent/orbit" }
+agent-loop = { path = "../agent-loop" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+protocol = { path = "../protocol" }
+wire = { path = "../wire" }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+plugin = { path = "../plugin" }

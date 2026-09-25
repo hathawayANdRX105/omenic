@@ -1,9 +1,0 @@
-[package]
-name = "spec"
-version = "0.1.0"
-edition = "2024"
-description = "Spec tables: markdown skeletons for GitHub artifacts"
-license = "MIT"
-publish = false
-
-[dependencies]

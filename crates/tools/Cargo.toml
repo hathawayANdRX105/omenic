@@ -12,6 +12,11 @@ memory = { path = "../memory" }
 serde_json = { workspace = true }
 diffy = { workspace = true }
 store = { path = "../store" }
+protocol = { path = "../protocol" }
+jobs = { path = "../jobs" }
+terminal = { path = "../terminal" }
+web-tool = { path = "../web-tool" }
+serde = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

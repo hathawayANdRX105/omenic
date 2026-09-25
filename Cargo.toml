@@ -10,7 +10,6 @@ members = [
   "crates/web-client", "crates/web-state", "crates/web-components",
   "crates/web-page-workspace", "crates/web-page-stats", "crates/web-page-config",
   "crates/tui",
-  "crates/agent/orbit",
   "crates/wire",
   "crates/web-tool",
 ]

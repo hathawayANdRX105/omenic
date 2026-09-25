@@ -17,10 +17,28 @@
 //! exists for one tool call and dies. The main agent must not assume state
 //! across calls.
 
+pub mod acp;
+pub mod acp_provider;
 pub mod config;
+pub mod fork;
 pub mod parallel;
+pub mod provider;
 pub mod runner;
+pub mod runtime;
 pub mod task_tool;
+pub mod tool_subagent;
+pub mod tool_subagent_control;
 
 pub use runner::{SubagentError, SubagentEvent, run_subagent};
 pub use task_tool::TaskTool;
+
+// Subagent plugin seam (old `subagent-harness` crate, now a module set here).
+pub use acp_provider::{AcpPermission, AcpProvider, AcpProviderSpec};
+pub use fork::ForkProvider;
+pub use provider::{
+    RunDisposer, SubagentCapabilities, SubagentProvider, SubagentResult, SubagentRun,
+    SubagentStartRequest,
+};
+pub use runtime::{SubagentRuntime, SubagentRuntimeService};
+pub use tool_subagent::ToolSubagentPlugin;
+pub use tool_subagent_control::ToolSubagentControlPlugin;

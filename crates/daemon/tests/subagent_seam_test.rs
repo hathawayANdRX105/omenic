@@ -14,9 +14,9 @@
 
 use std::sync::Arc;
 
-use orbit::LlmBackend;
+use agent_loop::orbit::LlmBackend;
 
-use subagent_harness::{ForkProvider, SubagentRuntimeService};
+use subagent::{ForkProvider, SubagentRuntimeService};
 
 /// The daemon's fork provider registration (server.rs block, condensed):
 /// a service + a `ForkProvider` built over the read-only tool subset.
@@ -27,10 +27,9 @@ fn register_fork(service: &SubagentRuntimeService) {
         base_url: None,
         max_tokens: None,
     };
-    let backend: Arc<dyn LlmBackend + Send + Sync> = Arc::new(orbit::HttpLlm);
+    let backend: Arc<dyn LlmBackend + Send + Sync> = Arc::new(agent_loop::orbit::HttpLlm);
     let wanted = ["read_file", "grep", "glob"];
-    let tools: Arc<Vec<Box<dyn tools::Tool>>> =
-        Arc::new(tools_harness::filter_builtin_tools(&wanted));
+    let tools: Arc<Vec<Box<dyn tools::Tool>>> = Arc::new(tools::filter_builtin_tools(&wanted));
     service.register(
         "fork",
         Arc::new(ForkProvider::new(backend, model, tools, 8)),
@@ -68,7 +67,7 @@ fn re_register_same_name_overwrites() {
 #[test]
 fn fork_tools_filter_yields_read_only_subset() {
     let wanted = ["read_file", "grep", "glob"];
-    let names: Vec<String> = tools_harness::filter_builtin_tools(&wanted)
+    let names: Vec<String> = tools::filter_builtin_tools(&wanted)
         .into_iter()
         .map(|t| tools::def(&*t).name)
         .collect();

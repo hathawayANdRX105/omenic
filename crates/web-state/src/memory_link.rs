@@ -70,7 +70,7 @@ pub fn embedder_from_env() -> Option<impl memory::Embedder> {
 ///   without one they fall back to plain appends (documented degradation,
 ///   not a skipped write).
 pub fn extract_and_remember(
-    backend: &dyn orbit::LlmBackend,
+    backend: &dyn agent_loop::orbit::LlmBackend,
     model: &llm::Model,
     sid: &str,
     turns_used: u32,

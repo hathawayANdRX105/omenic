@@ -28,8 +28,7 @@ pub fn init_cmd_at(dir: &std::path::Path, json: bool) -> Result<u8, String> {
             .map_err(|e| format!("could not create .oi/config.toml: {e}"))?;
     }
     // Spec templates (never overwrite user edits).
-    spec::template::init::write_default_specs(&oi_dir)
-        .map_err(|e| format!("spec templates: {e}"))?;
+    store::specs::init::write_default_specs(&oi_dir).map_err(|e| format!("spec templates: {e}"))?;
     // Task templates (never overwrite user edits).
     store::template::write_default_templates(&oi_dir)
         .map_err(|e| format!("task templates: {e}"))?;

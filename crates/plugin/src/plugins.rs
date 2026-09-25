@@ -9,9 +9,11 @@ use crate::context::PluginContext;
 use crate::{DshPlugin, PluginError};
 use serde_json::Value;
 
-use compaction::CharBudgetPolicy;
+use agent_loop::compaction::CharBudgetPolicy;
+use agent_loop::instruction::{
+    INSTRUCTION_SERVICE, InstructionCache, InstructionFragments, render_fragments,
+};
 use guard::{GUARD_SERVICE, GuardConfig, GuardService};
-use instruction::{INSTRUCTION_SERVICE, InstructionCache, InstructionFragments, render_fragments};
 use plan_mode::PlanModeConfig;
 use plan_mode::core::{PLAN_MODE_SERVICE, PlanModeService};
 use plan_mode::state::PlanModeRuntime;
@@ -20,11 +22,11 @@ use skill::tool::SkillTool;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tools_harness::ToolCatalog;
+use tools::ToolCatalog;
 
-use subagent_harness::runtime::{SubagentRuntime, SubagentRuntimeService};
-use subagent_harness::tool_subagent::{SubagentTool, ToolSubagentPlugin};
-use subagent_harness::tool_subagent_control::{SubagentControlTool, ToolSubagentControlPlugin};
+use subagent::runtime::{SubagentRuntime, SubagentRuntimeService};
+use subagent::tool_subagent::{SubagentTool, ToolSubagentPlugin};
+use subagent::tool_subagent_control::{SubagentControlTool, ToolSubagentControlPlugin};
 
 /// Compaction plugin: provides the default char-budget policy as the
 /// `harness.compaction` service.
@@ -111,7 +113,7 @@ impl DshPlugin for GuardPlugin {
     }
 
     fn validate_config(&self, _config: &Value) -> Result<(), PluginError> {
-        // Config validation happens at GuardPlugin::new time; accept any for now
+        // GuardPlugin::new already validated this config; re-validation is a no-op.
         Ok(())
     }
 }

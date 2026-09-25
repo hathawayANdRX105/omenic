@@ -2,7 +2,7 @@
 //!
 //! 转译器不关心事件来自哪里：G4 之前是 `omenic-web-mock` 的模拟流，
 //! 之后换成 daemon `event.subscribe` 的实时流（C3.3），页面代码零改动。
-//! serde 形状对齐 `orbit::AgentEvent`（3.1 定稿后以冻结契约为准）。
+//! serde 形状对齐 `agent_loop::orbit::AgentEvent`（3.1 定稿后以冻结契约为准）。
 
 use crate::types::{ChatMessage, MessagePart, ToolCall};
 use serde::{Deserialize, Serialize};

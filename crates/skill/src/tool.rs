@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
+use protocol::Tool;
 use protocol::{ToolError, ToolResult, ToolSpec};
 use serde_json::Value;
-use tools_harness::Tool;
 
 use crate::catalog::{SkillService, SkillServiceError};
 use crate::parse::SkillLoadError;
