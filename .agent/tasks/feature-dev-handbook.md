@@ -1,4 +1,4 @@
-<!-- canon: hathawayANdRX105/canon @ 2e3c3d0 (synced 2026-09-25) -->
+<!-- canon: hathawayANdRX105/canon @ eb4bc4a (synced 2026-09-25) -->
 # 功能开发任务书指南
 
 > 日期 2026-09-16。基线 main `235fcf1`。
