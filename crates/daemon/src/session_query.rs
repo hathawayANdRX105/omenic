@@ -1,8 +1,8 @@
 //! The single daemon-backed tool exposed to omp.
 //!
 //! `session_query` is the only tool the daemon registers with the worker via
-//! [`crate::rpc::worker::Worker::register_external_tools`]. Its execution lives
-//! behind a future tool-call dispatcher; for now the daemon registers the
+//! [`crate::rpc::worker::Worker::register_external_tools`]. Its execution is
+//! delegated through the daemon's tool-call dispatcher; the daemon registers the
 //! `ToolDef` so the agent's schema reflects a daemon-backed entry point,
 //! and [`Client::session_query`] on the daemon client implements the same
 //! payload shape end-to-side.
