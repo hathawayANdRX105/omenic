@@ -3,10 +3,10 @@
 use std::fs;
 use std::sync::Arc;
 
+use protocol::Tool;
 use serde_json::json;
 use skill::{SkillService, SkillTool};
 use tempfile::TempDir;
-use tools_harness::Tool;
 
 fn workspace_with_skill(name: &str, frontmatter: &str, body: &str) -> TempDir {
     let tmp = TempDir::new().unwrap();

@@ -3,8 +3,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
+use agent_loop::orbit::{AgentEvent, LlmBackend, LoopConfig, TurnStop, run_agent_streaming};
 use llm::{Context, Message, StopReason};
-use orbit::{AgentEvent, LlmBackend, LoopConfig, TurnStop, run_agent_streaming};
 use serde_json::Value;
 use tools::Tool;
 

@@ -7,7 +7,7 @@ use config::Config;
 /// `spec list` subcommand: list spec tables loaded from `<data>/specs/`.
 pub fn spec_list_cmd(json: bool) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let specs = spec::template::parse::load_all_specs(&config.data_dir)
+    let specs = store::specs::parse::load_all_specs(&config.data_dir)
         .map_err(|e| format!("spec error: {e}"))?;
     if specs.is_empty() {
         eprintln!(
@@ -55,9 +55,9 @@ pub fn spec_new_cmd(
     json: bool,
 ) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let spec = spec::template::parse::load_spec(&config.data_dir, kind)
+    let spec = store::specs::parse::load_spec(&config.data_dir, kind)
         .map_err(|e| format!("spec error: {e} — try `cli spec list` or `cli init`"))?;
-    let doc = spec::template::render::render_skeleton(&spec, title.as_deref().unwrap_or(""));
+    let doc = store::specs::render::render_skeleton(&spec, title.as_deref().unwrap_or(""));
     match output {
         Some(path) => {
             std::fs::write(&path, &doc).map_err(|e| format!("write {}: {e}", path))?;
@@ -80,9 +80,9 @@ pub fn spec_new_cmd(
 /// `spec check` subcommand: validate a filled document against the kind's rules.
 pub fn spec_check_cmd(kind: &str, file: &str, json: bool) -> Result<u8, String> {
     let config = Config::load().map_err(|e| format!("config error: {e}"))?;
-    let spec = spec::template::parse::load_spec(&config.data_dir, kind)
+    let spec = store::specs::parse::load_spec(&config.data_dir, kind)
         .map_err(|e| format!("spec error: {e} — try `cli spec list` or `cli init`"))?;
-    let findings = spec::template::check::check_file(&spec, std::path::Path::new(file))?;
+    let findings = store::specs::check::check_file(&spec, std::path::Path::new(file))?;
     let fails: Vec<_> = findings.iter().filter(|f| f.fail).collect();
     if json {
         let obj = serde_json::json!({

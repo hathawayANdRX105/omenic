@@ -1,7 +1,7 @@
 //! Headless omenic daemon.
 //!
 //! Provides a single-instance, JSONL-over-UDS daemon that owns a long-lived
-//! `rpc::worker::Worker` and a `session::SessionDb`, exposing a small request
+//! `crate::rpc::worker::Worker` and a `session::SessionDb`, exposing a small request
 //! surface to local CLI/TUI clients.
 //!
 //! Lifecycle:
@@ -30,6 +30,7 @@ mod dispatch;
 pub mod lock;
 pub mod protocol;
 mod questions;
+pub mod rpc;
 pub mod runner;
 mod server;
 pub mod session_query;
@@ -78,5 +79,5 @@ pub enum DaemonError {
     /// duplicate plugin name). Startup aborts: a half-built fiber is never
     /// handed to the accept loop.
     #[error("daemon plugin assembly error: {0}")]
-    Plugin(#[from] composition::PluginError),
+    Plugin(#[from] plugin::PluginError),
 }

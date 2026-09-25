@@ -3,10 +3,17 @@
 pub mod goal;
 pub mod graph;
 pub mod jsonl;
+pub mod specs;
 pub mod store;
 pub mod template;
 pub mod todo;
 use serde::{Deserialize, Serialize};
+
+pub use goal::GoalStatus;
+/// Spec table types (old `spec` crate, now a module under store).
+pub use specs::{Spec, SpecField};
+pub use store::Store;
+pub use todo::TodoStatus;
 
 /// Whether a task is a milestone, feature, bug, plain task, chore, spike, or decision.
 /// Unknown variants from old data deserialize as `Task` (backward compat).

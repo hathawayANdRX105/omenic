@@ -6,12 +6,12 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use crate::task::session_tools;
-use crate::{Tool, ToolError};
 use serde_json::{Value, json};
 use store::GoalStatus;
 use store::Store;
 use store::TodoStatus;
+use tools::task::session_tools;
+use tools::{Tool, ToolError};
 
 fn tmp_tools() -> (tempfile::TempDir, Arc<Store>, Vec<Arc<dyn Tool>>) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -53,10 +53,10 @@ fn todo_add_creates_then_updates_note_only() {
     assert!(!result2.contains("initial"));
 
     // Verify store state: only one todo with that title
-    let todos = store.list().expect("list");
+    let todos = store.load_todos().expect("list");
     let matches: Vec<_> = todos.iter().filter(|t| t.title == "first").collect();
     assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].note, "updated");
+    assert_eq!(matches[0].note.as_deref(), Some("updated"));
 }
 
 #[test]
@@ -133,11 +133,10 @@ fn goal_add_links_idempotently() {
     assert!(res2.contains("Goal"));
 
     // Verify store state: one goal, two links
-    let goals = store.list_goals().expect("list goals");
+    let goals = store.load_goals().expect("load goals");
     assert_eq!(goals.len(), 1);
     assert_eq!(goals[0].title, "Goal");
-    let links = store.links_for(&goals[0].id).expect("links");
-    assert_eq!(links.len(), 2);
+    assert_eq!(goals[0].todo_ids.len(), 2);
 }
 
 #[test]
@@ -164,9 +163,10 @@ fn goal_link_unlink_roundtrip() {
     .unwrap();
     assert!(res.contains("unlinked"));
 
-    let links = store.links_for("G").expect("links");
-    assert_eq!(links.len(), 1);
-    assert_eq!(links[0], "t2");
+    let goals = store.load_goals().expect("load goals");
+    let g = goals.iter().find(|g| g.title == "G").expect("goal G");
+    assert_eq!(g.todo_ids.len(), 1);
+    assert_eq!(g.todo_ids[0], "t2");
 }
 
 #[test]

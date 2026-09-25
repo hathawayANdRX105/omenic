@@ -5,15 +5,20 @@
 
 pub mod apply_patch;
 pub mod bash;
+pub mod catalog;
 pub mod delete;
 pub mod edit;
 pub mod glob;
 pub mod grep;
+pub mod jobs_terminal;
 pub mod memory_tool;
 pub mod read;
 pub mod str_replace_editor;
 pub mod task;
 pub mod write;
+
+/// Tool catalog / executor + jobs-terminal tool family (old `tools-harness` crate).
+pub use catalog::{ToolCatalog, ToolExecutor, default_catalog, filter_builtin_tools};
 use llm::ToolDef;
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

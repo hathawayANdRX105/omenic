@@ -11,11 +11,9 @@ path = "src/main.rs"
 
 [dependencies]
 llm = { path = "../../crates/llm" }
-orbit = { path = "../../crates/agent/orbit" }
 tools = { path = "../../crates/tools" }
-rpc = { path = "../../crates/daemon/rpc" }
 store = { path = "../../crates/store" }
-spec = { path = "../../crates/store/spec" }
+agent-loop = { path = "../../crates/agent-loop" }
 config = { path = "../../crates/config" }
 
 subagent = { path = "../../crates/subagent" }

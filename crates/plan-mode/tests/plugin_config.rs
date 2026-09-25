@@ -2,10 +2,11 @@
 
 use std::sync::Arc;
 
-use plan_mode::{PLAN_MODE_SERVICE, PlanModePlugin, PlanModeService};
+use plan_mode::{PLAN_MODE_SERVICE, PlanModeService};
+use plugin::plugins::PlanModePlugin;
 use plugin::{DshPlugin, PluginContext, ServiceRegistry};
 use serde_json::json;
-use tools_harness::ToolCatalog;
+use tools::ToolCatalog;
 
 fn plugin() -> PlanModePlugin {
     PlanModePlugin::new(plan_mode::PlanModeConfig {

@@ -1,8 +1,8 @@
 //! Public API for plan mode.
 
+use protocol::Tool;
 use protocol::{AbortSignal, ToolError, ToolResult, ToolSpec};
 use serde_json::Value;
-use tools_harness::Tool;
 
 use crate::port::{DynPlanReviewPort, ReviewError, ReviewOutcome};
 use crate::state::PlanModeRuntime;

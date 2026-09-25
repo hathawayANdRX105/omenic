@@ -11,6 +11,18 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 [[package]]
 name = "agent-loop"
 version = "0.1.0"
+dependencies = [
+ "fs2",
+ "llm",
+ "plugin",
+ "prompts",
+ "protocol",
+ "serde",
+ "serde_json",
+ "skill",
+ "tempfile",
+ "tools",
+]
 
 [[package]]
 name = "aho-corasick"
@@ -444,33 +456,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "compaction"
-version = "0.1.0"
-dependencies = [
- "protocol",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "composition"
-version = "0.1.0"
-dependencies = [
- "agent-loop",
- "compaction",
- "guard",
- "instruction",
- "orbit",
- "plugin",
- "prompt",
- "serde_json",
- "skill",
- "subagent-harness",
- "tempfile",
- "tools-harness",
-]
-
-[[package]]
 name = "config"
 version = "0.1.0"
 dependencies = [
@@ -658,8 +643,7 @@ name = "daemon"
 version = "0.1.0"
 dependencies = [
  "agent-loop",
- "compaction",
- "composition",
+ "base64",
  "config",
  "ctrlc",
  "fs2",
@@ -667,21 +651,19 @@ dependencies = [
  "libc",
  "llm",
  "mcp",
- "orbit",
  "parking_lot",
  "plan-mode",
  "plugin",
- "rpc",
+ "protocol",
  "serde",
  "serde_json",
  "session",
  "store",
- "subagent-harness",
+ "subagent",
  "tempfile",
  "terminal",
  "thiserror 2.0.21",
  "tools",
- "tools-harness",
  "uuid",
 ]
 
@@ -1833,15 +1815,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "instruction"
-version = "0.1.0"
-dependencies = [
- "prompt",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1966,18 +1939,16 @@ checksum = "a4933f3f57a8e9d9da04db23fb153356ecaf00cbd14aee46279c33dc80925c37"
 name = "kymic"
 version = "0.1.0"
 dependencies = [
+ "agent-loop",
  "clap",
  "config",
  "daemon",
  "llm",
  "mcp",
  "omenic-tui",
- "orbit",
- "rpc",
  "serde",
  "serde_json",
  "session",
- "spec",
  "store",
  "subagent",
  "tempfile",
@@ -2519,22 +2490,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
-name = "orbit"
-version = "0.1.0"
-dependencies = [
- "compaction",
- "fs2",
- "instruction",
- "llm",
- "prompts",
- "protocol",
- "serde",
- "serde_json",
- "tempfile",
- "tools",
-]
-
-[[package]]
 name = "ordered-float"
 version = "4.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2774,28 +2729,29 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 name = "plan-mode"
 version = "0.1.0"
 dependencies = [
- "prompt",
+ "plugin",
  "protocol",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
- "tools-harness",
+ "tools",
 ]
 
 [[package]]
 name = "plugin"
 version = "0.1.0"
 dependencies = [
- "compaction",
+ "agent-loop",
  "guard",
- "instruction",
  "parking_lot",
  "plan-mode",
+ "protocol",
  "serde_json",
  "skill",
- "subagent-harness",
- "tools-harness",
+ "subagent",
+ "tempfile",
+ "tools",
 ]
 
 [[package]]
@@ -2893,15 +2849,6 @@ dependencies = [
  "quote",
  "syn 2.0.119",
  "version_check",
-]
-
-[[package]]
-name = "prompt"
-version = "0.1.0"
-dependencies = [
- "protocol",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -3157,28 +3104,6 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "rpc"
-version = "0.1.0"
-dependencies = [
- "agent-loop",
- "base64",
- "compaction",
- "composition",
- "jobs",
- "libc",
- "llm",
- "orbit",
- "protocol",
- "serde",
- "serde_json",
- "session",
- "tempfile",
- "terminal",
- "tools",
- "tools-harness",
 ]
 
 [[package]]
@@ -3545,12 +3470,13 @@ checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 name = "skill"
 version = "0.1.0"
 dependencies = [
- "prompt",
+ "plugin",
  "protocol",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
- "tools-harness",
+ "tools",
 ]
 
 [[package]]
@@ -3613,10 +3539,6 @@ dependencies = [
  "libc",
  "windows-sys 0.61.2",
 ]
-
-[[package]]
-name = "spec"
-version = "0.1.0"
 
 [[package]]
 name = "stable_deref_trait"
@@ -3697,28 +3619,14 @@ dependencies = [
 name = "subagent"
 version = "0.1.0"
 dependencies = [
+ "agent-loop",
  "llm",
- "orbit",
- "serde",
- "serde_json",
- "tempfile",
- "tools",
-]
-
-[[package]]
-name = "subagent-harness"
-version = "0.1.0"
-dependencies = [
- "llm",
- "orbit",
  "plugin",
  "protocol",
  "serde",
  "serde_json",
- "subagent",
  "tempfile",
  "tools",
- "tools-harness",
  "wire",
 ]
 
@@ -4134,23 +4042,15 @@ name = "tools"
 version = "0.1.0"
 dependencies = [
  "diffy",
+ "jobs",
  "llm",
  "memory",
- "serde_json",
- "store",
- "tempfile",
-]
-
-[[package]]
-name = "tools-harness"
-version = "0.1.0"
-dependencies = [
- "jobs",
  "protocol",
  "serde",
  "serde_json",
+ "store",
+ "tempfile",
  "terminal",
- "tools",
  "web-tool",
 ]
 
@@ -4604,9 +4504,9 @@ dependencies = [
 name = "web-state"
 version = "0.1.0"
 dependencies = [
+ "agent-loop",
  "llm",
  "memory",
- "orbit",
  "serde",
  "serde_json",
  "session",

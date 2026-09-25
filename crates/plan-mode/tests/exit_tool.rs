@@ -6,8 +6,8 @@ use plan_mode::{
     AutoDenyReview, ExitPlanModeTool, PlanModeRuntime, PlanReviewPort, ReviewError, ReviewOutcome,
 };
 use protocol::AbortSignal;
+use protocol::Tool;
 use serde_json::json;
-use tools_harness::Tool;
 
 struct ApproveAll;
 

@@ -7,14 +7,14 @@
 //!
 //! ponytail: dispatch is split out so the server module can stay tiny.  All
 //! command logic lives here, all protocol concerns live in `protocol.rs`,
-//! and the worker handle is the only piece that knows about `rpc::Worker`.
+//! and the worker handle is the only piece that knows about `crate::rpc::worker::Worker`.
 
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 
-use rpc::worker::WorkerEvent;
+use crate::rpc::worker::WorkerEvent;
 use serde_json::{Value, json};
 use session::{SessionMessage, SessionRole, TurnRecord};
 
@@ -75,7 +75,7 @@ where
 /// Shared worker handle.  The dispatch layer takes `&mut` so concurrent
 /// connections are serialized by the server's mutex.
 pub struct WorkerHandle {
-    inner: Option<rpc::worker::Worker>,
+    inner: Option<crate::rpc::worker::Worker>,
     omp_path: String,
     /// Whether the forwarder thread feeding [`WORKER_TOPIC`] is alive.
     /// Cleared by the forwarder itself when the worker's event channel
@@ -89,11 +89,14 @@ pub struct WorkerHandle {
     active_run: Arc<std::sync::RwLock<Option<String>>>,
     /// orbit 模式构造包（模型 + 后端 + 容器解析出的 OrbitConfig）；
     /// None = omp 兼容模式。daemon 在 start 时从装配容器解析一次。
-    orbit_setup: Option<rpc::worker::OrbitSetup>,
+    orbit_setup: Option<crate::rpc::worker::OrbitSetup>,
 }
 
 impl WorkerHandle {
-    pub fn new(omp_path: impl Into<String>, orbit_setup: Option<rpc::worker::OrbitSetup>) -> Self {
+    pub fn new(
+        omp_path: impl Into<String>,
+        orbit_setup: Option<crate::rpc::worker::OrbitSetup>,
+    ) -> Self {
         WorkerHandle {
             inner: None,
             omp_path: omp_path.into(),
@@ -148,13 +151,13 @@ impl WorkerHandle {
     /// daemon-backed entry to the session store.
     fn ensure_started(&mut self) -> Result<(), Response> {
         if self.inner.is_none() {
-            let mut w = rpc::worker::Worker::new(&self.omp_path, self.orbit_setup.clone())
+            let mut w = crate::rpc::worker::Worker::new(&self.omp_path, self.orbit_setup.clone())
                 .map_err(|e| {
-                    Response::err(
-                        None,
-                        ResponseError::new("worker_spawn_failed", e.to_string()),
-                    )
-                })?;
+                Response::err(
+                    None,
+                    ResponseError::new("worker_spawn_failed", e.to_string()),
+                )
+            })?;
             // Register session_query as the single daemon-backed tool. A
             // registration failure is non-fatal: omp might not implement
             // the call yet, and we don't want tool negotiation to take
@@ -176,7 +179,7 @@ impl WorkerHandle {
     }
 
     /// Replay persisted session history into the live worker before a prompt
-    /// (B2a resume).  Delegates to the inner [`rpc::worker::Worker`], which is
+    /// (B2a resume).  Delegates to the inner [`crate::rpc::worker::Worker`], which is
     /// a no-op returning 0 in omp mode (there is no in-process engine context
     /// to rebuild) and, in orbit mode, appends the user/assistant rows to the
     /// engine's context — deduped per session id inside the engine, so the
@@ -204,7 +207,7 @@ impl WorkerHandle {
         }
     }
 
-    /// Start the worker-side event pump once (R2 3.3): `rpc::Worker::
+    /// Start the worker-side event pump once (R2 3.3): `crate::rpc::worker::Worker::
     /// subscribe` hands the wire read loop to a pump thread; this daemon
     /// side forwarder drains that receiver and broadcasts [`EventFrame`]
     /// lines to every [`WORKER_TOPIC`] subscriber on the [`EventBus`].
