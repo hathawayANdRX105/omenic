@@ -5,6 +5,11 @@ edition = "2024"
 description = "Read-only subagent task tool for parallel exploration"
 license = "MIT"
 publish = false
+autoexamples = false
+
+[[bin]]
+name = "mock_acp_server"
+path = "examples/mock_acp_server.rs"
 
 [dependencies]
 llm = { path = "../llm" }
