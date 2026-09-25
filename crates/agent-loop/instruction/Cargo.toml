@@ -10,5 +10,6 @@ publish = false
 prompt = { path = "../../skill/prompt" }
 
 [dev-dependencies]
+plugin = { path = "../../plugin" }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

@@ -447,6 +447,7 @@ dependencies = [
 name = "compaction"
 version = "0.1.0"
 dependencies = [
+ "plugin",
  "protocol",
  "serde",
  "serde_json",
@@ -1836,6 +1837,7 @@ dependencies = [
 name = "instruction"
 version = "0.1.0"
 dependencies = [
+ "plugin",
  "prompt",
  "serde_json",
  "tempfile",
@@ -2774,6 +2776,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 name = "plan-mode"
 version = "0.1.0"
 dependencies = [
+ "plugin",
  "prompt",
  "protocol",
  "serde",
@@ -3545,6 +3548,7 @@ checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 name = "skill"
 version = "0.1.0"
 dependencies = [
+ "plugin",
  "prompt",
  "protocol",
  "serde_json",

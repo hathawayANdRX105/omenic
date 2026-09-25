@@ -2,21 +2,21 @@
 # find 关键字全部取自 omenic rsx 源码中的稳定 class/字面量，由
 # bin/web/tests/ui_contract.rs 的「源码锚点抽查」测试自动核对。
 name: chat
-target: crates/web/components/src/chat.rs
+target: crates/web-components/src/chat.rs
 description: 会话区（Chat / MessageItem / ProcessBlock / ToolLine）——780 消息列、用户右气泡 r22、工作过程折叠、composer 胶囊卡。
 anchors:
   - key: message-column
     find: 'max-w-[780px] w-full mx-auto px-4 pt-4 pb-[220px]'
     expect: '消息列为居中限宽容器（实现统一 780；dsh 消息列 748，见 notes 偏差记录）。'
-    source: 'omenic: crates/web/components/src/chat.rs:92；dsh: ConversationRoot.module.css:22（--dsh-chat-content-width: 748px）'
+    source: 'omenic: crates/web-components/src/chat.rs:92；dsh: ConversationRoot.module.css:22（--dsh-chat-content-width: 748px）'
   - key: user-bubble
     find: 'bg-bubble rounded-[22px] px-4 py-2.5 max-w-[525px]'
     expect: '用户气泡 bg-bubble（#2c2c2e）、r22、内边距 10/16、最大宽 525。'
-    source: 'omenic: crates/web/components/src/chat.rs:238；dsh: MessageItem.module.css:17-27（bubble r22 pad 10/16 max-width 525）'
+    source: 'omenic: crates/web-components/src/chat.rs:238；dsh: MessageItem.module.css:17-27（bubble r22 pad 10/16 max-width 525）'
   - key: bubble-right-align
     find: 'flex flex-col items-end gap-1 w-full group'
     expect: '用户消息整行右对齐（items-end），气泡下挂 hover 时间戳。'
-    source: 'omenic: crates/web/components/src/chat.rs:235；dsh: MessageItem.module.css userRow（align-items: flex-end）'
+    source: 'omenic: crates/web-components/src/chat.rs:235；dsh: MessageItem.module.css userRow（align-items: flex-end）'
   - key: assistant-body
     file: bin/web/assets/tailwind-input.css
     find: 'line-height: 28px;'
@@ -25,64 +25,64 @@ anchors:
   - key: process-header
     find: 'h-6 flex items-center gap-1.5 cursor-pointer select-none w-fit'
     expect: '「工作过程」折叠行高 24px，chevron 12px，计数为 caption 弱化文本。'
-    source: 'omenic: crates/web/components/src/chat.rs:321；dsh: DisclosureRow.module.css:15（头高 24px）'
+    source: 'omenic: crates/web-components/src/chat.rs:321；dsh: DisclosureRow.module.css:15（头高 24px）'
   - key: process-chevron
     find: 'ChevronRight { size: 12 }'
     expect: '折叠 chevron 统一 12px，展开时 rotate-90。'
-    source: 'omenic: crates/web/components/src/chat.rs:327,372；dsh: DisclosureRow chevron'
+    source: 'omenic: crates/web-components/src/chat.rs:327,372；dsh: DisclosureRow chevron'
   - key: tool-row-header
     find: 'h-6 flex items-center gap-2 cursor-pointer select-none w-fit'
     expect: '单条工具调用行（ToolLine）头高 24px，与工作过程行同构。'
-    source: 'omenic: crates/web/components/src/chat.rs:367；dsh: DisclosureRow.module.css:15（24px 头）'
+    source: 'omenic: crates/web-components/src/chat.rs:367；dsh: DisclosureRow.module.css:15（24px 头）'
   - key: tool-chip
     find: 'font-mono text-[10px] font-semibold uppercase px-1.5 py-px leading-4 rounded-md'
     expect: '工具 kind chip：mono 10px 大写、圆角 r6、shrink-0。'
-    source: 'omenic: crates/web/components/src/chat.rs:373；dsh: 状态 chip 900 底 + 400 字规格'
+    source: 'omenic: crates/web-components/src/chat.rs:373；dsh: 状态 chip 900 底 + 400 字规格'
   - key: chip-kind-bash
     find: '"bash" | "job" | "terminal" => "bg-chip-brand text-brand-300"'
     expect: 'bash / job / terminal 类工具 chip 同为 brand 配色（三者都是「跑命令」，靠 chip 上的 kind 文字区分，不靠颜色）。'
-    source: 'omenic: crates/web/components/src/chat.rs:31；dsh: kind→状态色映射'
+    source: 'omenic: crates/web-components/src/chat.rs:31；dsh: kind→状态色映射'
   - key: chip-kind-edit
     find: '"edit" | "write" => "bg-chip-success text-success-2"'
     expect: 'edit/write 类工具 chip 为 success 配色。'
-    source: 'omenic: crates/web/components/src/chat.rs:30；dsh: kind→状态色映射'
+    source: 'omenic: crates/web-components/src/chat.rs:30；dsh: kind→状态色映射'
   - key: chip-kind-read
     find: '"read" | "grep" | "glob" => "bg-chip-warn text-warn-2"'
     expect: 'read/grep/glob 类工具 chip 为 warn 配色。'
-    source: 'omenic: crates/web/components/src/chat.rs:31；dsh: kind→状态色映射'
+    source: 'omenic: crates/web-components/src/chat.rs:31；dsh: kind→状态色映射'
   - key: chip-kind-delete
     find: '"delete" => "bg-chip-danger text-danger"'
     expect: 'delete 类工具 chip 为 danger 配色。'
-    source: 'omenic: crates/web/components/src/chat.rs:32；dsh: kind→状态色映射'
+    source: 'omenic: crates/web-components/src/chat.rs:32；dsh: kind→状态色映射'
   - key: statsline
     find: 'text-[12px] leading-5 text-label-3 text-center select-none'
     expect: 'StatsLine 状态行 12/20 tertiary 居中：model · ↑in ↓out · $cost · context %。'
-    source: 'omenic: crates/web/components/src/chat.rs:151；dsh: StatsLine.module.css:8-16（center 12px/20px tertiary）'
+    source: 'omenic: crates/web-components/src/chat.rs:151；dsh: StatsLine.module.css:8-16（center 12px/20px tertiary）'
   - key: composer-card
     find: 'rounded-[22px] border border-b1 bg-input-bg shadow-lv2'
     expect: 'composer 输入卡 r22 胶囊（max-w 780 随消息列），focus-within 提亮边框。'
-    source: 'omenic: crates/web/components/src/chat.rs:159；dsh: InputBar.module.css:56,85（border-radius: 22px）'
+    source: 'omenic: crates/web-components/src/chat.rs:159；dsh: InputBar.module.css:56,85（border-radius: 22px）'
   - key: send-button
     find: 'w-[34px] h-[34px] rounded-full bg-brand'
     expect: '发送钮 34px 圆形 bg-brand（#679efe），流式时 disabled 半透明。'
-    source: 'omenic: crates/web/components/src/chat.rs:214；dsh: InputBar.module.css:371-379（34px circle）'
+    source: 'omenic: crates/web-components/src/chat.rs:214；dsh: InputBar.module.css:371-379（34px circle）'
   - key: tool-button-28
-    file: crates/web/components/src/ui.rs
+    file: crates/web-components/src/ui.rs
     find: 'w-7 h-7 rounded-full text-label-3'
     expect: 'composer 工具钮（附件/看板/下拉触发）28px 圆形。'
-    source: 'omenic: crates/web/components/src/ui.rs:97（IconButton）；dsh: InputBar.module.css:316-324（attach 28px circle）'
+    source: 'omenic: crates/web-components/src/ui.rs:97（IconButton）；dsh: InputBar.module.css:316-324（attach 28px circle）'
   - key: minimap
     find: 'id: "minimap"'
     expect: '左侧 minimap 锚点列（每条用户 prompt 一条横杠，客户端 JS 聚光梯度）。'
-    source: 'omenic: crates/web/components/src/chat.rs:128 + bin/web/src/app.rs setupMinimap'
+    source: 'omenic: crates/web-components/src/chat.rs:128 + bin/web/src/app.rs setupMinimap'
   - key: question-card
     find: 'question-card rounded-[14px] border border-b1 bg-layer-1 shadow-lv2'
     expect: '用户问题卡（plan-mode review）：composer 上方、dock 之下，r14 卡片 + 品牌蓝「计划评审」标签 + 选项钮 h28 r8；无问题时整卡不渲染。'
-    source: 'omenic: crates/web/components/src/chat.rs（P1 plan-mode 批次新增；dsh 无对应组件，官方 packages/plan/plan-mode 的 review 卡为参考形态）'
+    source: 'omenic: crates/web-components/src/chat.rs（P1 plan-mode 批次新增；dsh 无对应组件，官方 packages/plan/plan-mode 的 review 卡为参考形态）'
   - key: empty-state
     find: '开始一个新的任务'
     expect: '空会话态：26px semibold 标题 + 420px 限宽副文案 + 品牌光斑。'
-    source: 'omenic: crates/web/components/src/chat.rs:96-99'
+    source: 'omenic: crates/web-components/src/chat.rs:96-99'
 notes: |
   已知偏差（报告不改）：dsh 消息列 748px（ConversationRoot.module.css
   --dsh-chat-content-width），omenic 实现把消息列与 composer 统一为

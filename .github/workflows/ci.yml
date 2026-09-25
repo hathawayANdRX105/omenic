@@ -43,10 +43,10 @@ jobs:
         run: cargo test --locked -p daemon --test plan_mode_e2e -- --nocapture
         timeout-minutes: 15
       - name: Profile CLI
-        run: cargo test --locked -p cli --test profile_cli -- --nocapture
+        run: cargo test --locked -p kymic --test profile_cli -- --nocapture
         timeout-minutes: 15
       - name: UI contract anchors
-        run: cargo test --locked -p web-cli --test ui_contract -- --nocapture
+        run: cargo test --locked -p web --test ui_contract -- --nocapture
         timeout-minutes: 10
       # T1 linear pipe smoke (route-tui §6): real daemon + one full turn over
       # a pipe — zero ESC bytes on stdout, exit 0; unknown --session = one-line
