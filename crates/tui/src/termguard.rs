@@ -1,13 +1,22 @@
-//! termguard.rs — D15：alternate screen / raw mode 进出封装 + panic hook。
+//! termguard.rs — D15：alternate screen / raw mode / mouse tracking 进出
+//! 封装 + panic hook。
 //!
 //! 三条底线（route §3 T2）：① 正常退出必 leave alternate screen + disable
-//! raw mode + show cursor（[`TermGuard::leave`] 幂等，未进入/重复 leave 不碰
-//! 终端）；② panic 先还原终端再打印（ratatui *Setup Panic Hooks* recipe），
-//! 并把 message + backtrace 写 `$TMPDIR` 崩溃报告（D15 埋点禁令的正式范围）；
-//! ③ 还原两步各试各的，一步失败不吞另一步。
+//! mouse tracking + disable raw mode + show cursor（[`TermGuard::leave`] 幂等，
+//! 未进入/重复 leave 不碰终端）；② panic 先还原终端再打印（ratatui *Setup
+//! Panic Hooks* recipe），并把 message + backtrace 写 `$TMPDIR` 崩溃报告
+//! （D15 埋点禁令的正式范围）；③ 还原两步各试各的，一步失败不吞另一步。
+//!
+//! mouse tracking（T7 route §3）随进屏序列一起开、随还原序列一起拆——
+//! 本模块是 enhanced 专属进出封装（`lib.rs` 只在 Enhanced 臂分派
+//! `run_enhanced`，linear 路径不碰），linear/非 TTY 因此收不到也留不下
+//! 捕获态；退出与 panic 两条路径都走 [`restore_terminal`]，终端拖选在
+//! 退出后不失灵。
 //!
 //! 进出走 [`TermOps`] 注入边界——生产用 [`CrosstermOps`]，测试用记录型
-//! mock 断言还原调用序列（`tests/keys.rs` 的 quit/panic 两例）。
+//! mock 断言还原调用序列（`tests/keys.rs` 的 quit/panic 两例）；字节序列
+//! 本身由 [`enter_sequence`] / [`restore_sequence`] 单独导出给
+//! `tests/wheel_scroll.rs` 断言捕获的开与拆。
 
 use std::io::{self, Write};
 use std::panic::PanicHookInfo;
@@ -15,9 +24,10 @@ use std::path::PathBuf;
 
 /// 终端进出操作的可注入边界（route §3 D15 的测试缝）。
 pub trait TermOps {
-    /// 进入全屏态：alternate screen + raw mode。
+    /// 进入全屏态：alternate screen + mouse tracking + raw mode。
     fn enter(&mut self) -> io::Result<()>;
-    /// 离开全屏态：disable raw + leave alternate screen + show cursor。
+    /// 离开全屏态：disable raw + disable mouse tracking + leave alternate
+    /// screen + show cursor。
     fn leave(&mut self) -> io::Result<()>;
 }
 
@@ -26,7 +36,7 @@ pub struct CrosstermOps;
 
 impl TermOps for CrosstermOps {
     fn enter(&mut self) -> io::Result<()> {
-        crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
+        enter_sequence(&mut io::stdout())?;
         crossterm::terminal::enable_raw_mode()
     }
 
@@ -35,19 +45,40 @@ impl TermOps for CrosstermOps {
     }
 }
 
-/// 还原终端三样（raw / alternate screen / cursor）：两步都必须尝试，
-/// 一步失败不吞另一步；返回先发生错误。幂等，可被 panic hook 复用。
-pub fn restore_terminal() -> io::Result<()> {
-    let raw = crossterm::terminal::disable_raw_mode();
-    let screen = crossterm::execute!(
-        io::stdout(),
+/// 进屏字节序列（T7：alternate screen + 启用鼠标捕获）。raw mode 不是
+/// 字节序列，由调用方另走 [`crossterm::terminal::enable_raw_mode`]。
+/// 单独导出是测试缝：`tests/wheel_scroll.rs` 断言 enhanced 进屏开捕获。
+pub fn enter_sequence(out: &mut impl Write) -> io::Result<()> {
+    crossterm::execute!(
+        out,
+        crossterm::terminal::EnterAlternateScreen,
+        crossterm::event::EnableMouseCapture
+    )
+}
+
+/// 还原字节序列（disable mouse tracking + leave alternate screen + show
+/// cursor）。与 [`enter_sequence`] 严格对称——T7 route §3「退出还原
+/// mouse tracking」的正本；panic 路径（[`install_panic_hook`] →
+/// [`restore_terminal`]）与正常 leave 共用它，两条路径都不漏拆捕获。
+pub fn restore_sequence(out: &mut impl Write) -> io::Result<()> {
+    crossterm::execute!(
+        out,
+        crossterm::event::DisableMouseCapture,
         crossterm::terminal::LeaveAlternateScreen,
         crossterm::cursor::Show
-    );
+    )
+}
+
+/// 还原终端四样（raw / mouse tracking / alternate screen / cursor）：两步
+/// 都必须尝试，一步失败不吞另一步；返回先发生错误。幂等，可被 panic hook
+/// 复用。
+pub fn restore_terminal() -> io::Result<()> {
+    let raw = crossterm::terminal::disable_raw_mode();
+    let screen = restore_sequence(&mut io::stdout());
     raw.and(screen)
 }
 
-/// alt-screen/raw 生命周期闸门：enter 一次、leave 至多一次。
+/// alt-screen/raw/mouse-tracking 生命周期闸门：enter 一次、leave 至多一次。
 pub struct TermGuard<O: TermOps> {
     ops: O,
     active: bool,

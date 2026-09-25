@@ -10,7 +10,9 @@ use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
+};
 use web_client::ClientError;
 use web_client::daemon::WebDaemon;
 use web_client::{QuestionAnswer, QuestionItem};
@@ -36,6 +38,34 @@ const STATS_SYNC: Duration = Duration::from_secs(2);
 
 /// T3：`stats.summary` 的统计窗口（footer 只用其中的半开 run 计数）。
 const STATS_RANGE: &str = "24h";
+
+// --- T7 鼠标滚轮归一化常数（route §3 T7；出处 grok-build refs
+// `xai-grok-pager-render/src/input/mouse.rs:63-76`，四常数与量纲由
+// `tests/wheel_scroll.rs::wheel_constants_snapshot` 钉死防漂移） ---
+
+/// 每个滚轮 notch 入队的行数（grok `DEFAULT_WHEEL_LINES_PER_TICK`：
+/// 终端只报方向不报量级，一个物理 tick 恒定滚 WHEEL_LINES_PER_TICK 行）。
+pub const WHEEL_LINES_PER_TICK: i32 = 3;
+
+/// 冲刷节流下限（grok `REDRAW_CADENCE_MS`，≈60fps）：相邻两次缓出冲刷的
+/// 间隔不得小于该值；16ms 内到达的 drain tick 直接跳过。
+pub const REDRAW_CADENCE_MS: u64 = 16;
+
+/// 流间隔（grok `STREAM_GAP_MS`）：与上一个 notch 相隔超过该值即视为
+/// 上一手势（流）已收尾、本 notch 开新流——本版单队列模型下新流的折算
+/// 口径见 [`App::wheel_tick`]（换向清残留、同向余量继续缓出），
+/// trackpad 档（流级状态）接入时该常数直接接管流边界判定。
+pub const STREAM_GAP_MS: u64 = 80;
+
+/// 滚轮 tick 判窗（grok `DEFAULT_WHEEL_TICK_DETECT_MAX_MS`）：连续 notch
+/// 间隔 ≤ 该值属同一物理 tick 批次（终端一批多报 / 手势抖动），归并进同一
+/// 队列；出判窗的反向 notch = 换向新流，先清残留反向队列。
+pub const WHEEL_TICK_DETECT_MAX_MS: u64 = 12;
+
+/// 滚轮队列上限（防雪崩：高分 wheel / 触控板事件密度再高，待出行数也
+/// clamp 在 ±该值内；抄 jcode `MOUSE_SCROLL_MAX_QUEUE` 的抄写位，本版取
+/// ±128——超限的 notch 直接丢弃，不让待出行数无限堆积）。
+pub const WHEEL_QUEUE_MAX: i32 = 128;
 
 /// 一次按键路由的结论（提交走 [`App`] 内部出站队列，不出现在这里）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,6 +138,15 @@ pub struct App {
     /// T6：transcript 视口滚动（渲染行粒度：PgUp/PgDn/Ctrl+U/End + 脱钩
     /// 跟尾；与上面 `scroll` 的消息条数滚动是两套状态，见 `scroll` 模块）。
     viewport: ScrollModel,
+    /// T7：滚轮待出行数（正 = 向下行待走；每 notch ±[`WHEEL_LINES_PER_TICK`]，
+    /// 事件循环按 [`WHEEL_QUEUE_MAX`] clamp 后入队、按 3/2/1 缓出冲刷）。
+    wheel_queue: i32,
+    /// T7：上一个 notch 的 (时刻, 方向)——[`WHEEL_TICK_DETECT_MAX_MS`] 判窗
+    /// 与流间隔 gap 的基准；`None` = 尚无滚轮输入。
+    wheel_last: Option<(Instant, i32)>,
+    /// T7：上次缓出冲刷时刻（[`REDRAW_CADENCE_MS`] 下限判定；`None` = 尚未
+    /// 冲刷过，首刷不等节流）。
+    wheel_flushed: Option<Instant>,
 }
 
 impl App {
@@ -319,6 +358,76 @@ impl App {
         &mut self.viewport
     }
 
+    /// T7：滚轮入队（事件循环把 `Event::Mouse` 的 ScrollUp/ScrollDown 折成
+    /// `dir = -1 / +1` 传进来）。每 notch 入队 [`WHEEL_LINES_PER_TICK`] 行，
+    /// 总量 clamp [`WHEEL_QUEUE_MAX`] 防雪崩。
+    ///
+    /// 判窗与流（grok `on_scroll_event_at` 的归一化口径，refs `mouse.rs:666-677`）：
+    /// - 间隔 ≤ [`WHEEL_TICK_DETECT_MAX_MS`]：同一物理 tick 批次（终端一批
+    ///   多报 / 手势抖动）→ 归并进同一队列——同向累加，反向就地对消；
+    /// - 出判窗的反向：换向即新流，**先清掉残留反向队列**（grok
+    ///   `cancel_backlog`——反转必须即刻生效，不许先播一段反向余量），
+    ///   再入队；
+    /// - 同向跨 [`STREAM_GAP_MS`]（grok `gap > STREAM_GAP` 的新流）：本版
+    ///   单队列折算 = 余量不清、继续按缓出冲刷消化（不整段跳、也不丢用户
+    ///   行数）；流边界的独立分支留给 trackpad 档（见常数注释）。
+    ///
+    /// 本方法只入队不推进视口——推进全在 [`Self::drain_wheel`]，由此保证
+    /// 「一次事件不整段跳、分 tick 前进」。
+    pub fn wheel_tick(&mut self, dir: i32, now: Instant) {
+        if dir == 0 {
+            return;
+        }
+        if let Some((last_at, last_dir)) = self.wheel_last {
+            let gap = now.saturating_duration_since(last_at);
+            // 出判窗的换向：清残留反向队列（同流换向与跨流残留同口径，
+            // grok `cancel_backlog`；同向不在此列，见 doc 上第 3 条）。
+            if dir != last_dir && gap > Duration::from_millis(WHEEL_TICK_DETECT_MAX_MS) {
+                self.wheel_queue = 0;
+            }
+        }
+        self.wheel_last = Some((now, dir));
+        self.wheel_queue = (self.wheel_queue + dir * WHEEL_LINES_PER_TICK)
+            .clamp(-WHEEL_QUEUE_MAX, WHEEL_QUEUE_MAX);
+    }
+
+    /// T7：缓出冲刷（jcode `mouse_scroll_drain_amount` 的 3/2/1，refs
+    /// `navigation.rs:795-808`）：距上次冲刷 ≥ [`REDRAW_CADENCE_MS`] 才推进
+    /// 一次，按队列余量取步长——余量 ≥6 → 3 行、≥3 → 2 行、否则 1 行；
+    /// 返回本次实际滚动的**带符号行数**（0 = 节流未到点 / 队列已空）。
+    ///
+    /// 落点是 [`ScrollModel::scroll_lines`]：上滚即脱钩、下滚落 max 重挂，
+    /// `↑N 行` 指示随 T6 既有逻辑自动出现/消失。事件循环每 50ms 醒来调它
+    /// 一次作 drain tick（idle 时队列也能消化）；flush 下限用 `Instant`
+    /// 记账，不动 `POLL`。
+    pub fn drain_wheel(&mut self, now: Instant) -> i32 {
+        if self.wheel_queue == 0 {
+            return 0;
+        }
+        if let Some(at) = self.wheel_flushed
+            && now.saturating_duration_since(at) < Duration::from_millis(REDRAW_CADENCE_MS)
+        {
+            return 0;
+        }
+        let queued = self.wheel_queue.unsigned_abs();
+        let want = match queued {
+            n if n >= 6 => 3,
+            n if n >= 3 => 2,
+            _ => 1,
+        };
+        let step = want.min(queued) as i32;
+        let dir = self.wheel_queue.signum();
+        self.viewport.scroll_lines(dir * step);
+        self.wheel_queue -= dir * step;
+        self.wheel_flushed = Some(now);
+        dir * step
+    }
+
+    /// T7：滚轮待出行数（测试观察缝：入队 clamp / 缓出消化的账都在这）。
+    pub fn wheel_queue(&self) -> i32 {
+        self.wheel_queue
+    }
+
     /// 落座一个会话（起始与切换共用）：视图替换为回填历史、队列/状态
     /// 归零、滚动回到底。
     fn adopt_session(&mut self, sid: &str, history: Vec<ChatMessage>) {
@@ -334,6 +443,10 @@ impl App {
         self.confirm_quit = false;
         self.scroll = 0;
         self.viewport.reset();
+        // T7：上一台的滚轮待出行数不许滚进新会话视图（否则新会话钉底刚
+        // 回填就被旧队列拽着脱钩）；冲刷节流记账保留（pacing 是全局的）。
+        self.wheel_queue = 0;
+        self.wheel_last = None;
     }
 
     /// 新一版 run_id：`r-<epoch_ms>`（与 T1/CLI 同格式），并按进程内时钟
@@ -478,12 +591,15 @@ fn user_message(text: &str) -> ChatMessage {
 
 /// enhanced 全屏外壳（route §3 签名，不许改）。
 ///
-/// 行为契约：进 alternate screen + raw mode（[`TermGuard`]）；布局 = 上方
+/// 行为契约：进 alternate screen + 启用鼠标捕获 + raw mode（[`TermGuard`]）；
+/// 布局 = 上方
 /// transcript + 底部 dock（composer/活动/排队/按键提示）；Enter 非空提交
 /// （`worker_prompt_run`）、空串不提交；↑/↓ 本地历史；Esc/Ctrl+C 运行中
-/// `worker.abort`、空闲确认退出；Ctrl+D 空 composer 退出；daemon 断线单行
-/// 错误退出码 3；**所有退出路径**都经 [`TermGuard::leave`] 还原，panic 走
-/// 先装的 hook（先还原再打印 + `$TMPDIR` 崩溃报告）。
+/// `worker.abort`、空闲确认退出；Ctrl+D 空 composer 退出；鼠标滚轮滚动
+/// transcript（T7 [`App::wheel_tick`] / [`App::drain_wheel`]，仅本路径启
+/// 捕获）；daemon 断线单行错误退出码 3；**所有退出路径**都经
+/// [`TermGuard::leave`] 还原（含拆 mouse tracking），panic 走先装的 hook
+/// （先还原再打印 + `$TMPDIR` 崩溃报告）。
 ///
 /// `rx` = 调用方起好的会话级 worker 事件流；`opts` 解析会话（`--session`
 /// 不存在 → 退出码 2，先于进屏，错误不落在 alternate screen 里）。
@@ -587,30 +703,46 @@ fn event_loop(
             crate::ui::draw(frame, &app);
             crate::ui::panels::render(frame, &app, &panels);
         })?;
-        if event::poll(POLL)?
-            && let Event::Key(key) = event::read()?
-        {
-            // 会话切换键：空闲才开 picker（运行中忽略——排队 prompt 会跟着
-            // 搬进新会话，正是 T4 红线要防的事故）。
-            if switch_key(key) {
-                if !app.is_running()
-                    && let Some(picked) = crate::ui::session_picker::run_picker(client, "")?
-                {
-                    let history = crate::ui::session_picker::load_history(client, &picked)?;
-                    app.switch_session(&picked, history);
-                    run_rx = None; // 旧 run 流随接收端丢弃（红线）
+        if event::poll(POLL)? {
+            match event::read()? {
+                Event::Key(key) => {
+                    // 会话切换键：空闲才开 picker（运行中忽略——排队 prompt 会跟着
+                    // 搬进新会话，正是 T4 红线要防的事故）。
+                    if switch_key(key) {
+                        if !app.is_running()
+                            && let Some(picked) = crate::ui::session_picker::run_picker(client, "")?
+                        {
+                            let history = crate::ui::session_picker::load_history(client, &picked)?;
+                            app.switch_session(&picked, history);
+                            run_rx = None; // 旧 run 流随接收端丢弃（红线）
+                        }
+                        continue;
+                    }
+                    match app.handle_key(key) {
+                        KeyAction::Quit => break,
+                        KeyAction::Abort => {
+                            app.set_status("aborting turn");
+                            client.abort_worker().map_err(client_error)?;
+                        }
+                        KeyAction::None => {}
+                    }
                 }
-                continue;
-            }
-            match app.handle_key(key) {
-                KeyAction::Quit => break,
-                KeyAction::Abort => {
-                    app.set_status("aborting turn");
-                    client.abort_worker().map_err(client_error)?;
-                }
-                KeyAction::None => {}
+                // T7：滚轮入队（route §3 T7——鼠标捕获只随 enhanced 进屏序列
+                // 开，linear 路径收不到这些事件）；其余鼠标事件（移动/按键/
+                // 拖拽）首版不接管（route §8：点击/拖选后置）。
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollUp => app.wheel_tick(-1, Instant::now()),
+                    MouseEventKind::ScrollDown => app.wheel_tick(1, Instant::now()),
+                    _ => {}
+                },
+                // resize/paste/focus 不改状态。
+                _ => {}
             }
         }
+        // T7 drain tick：50ms 轮询每次醒来冲刷滚轮队列（idle 时队列也能
+        // 消化；16ms 下限按 Instant 记账，不动 POLL），推进结果落在下一帧
+        // draw——与出站/事件流处理同拍，不额外醒循环。
+        app.drain_wheel(Instant::now());
         // resize：下一次 draw 的 autoresize 自动重排（route §3：
         // 不崩、不写屏外）；paste/focus 不改状态。
         // 会话级事件流：切台前 = 视图事件源；切台后只做断线探测——旧 run
