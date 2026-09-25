@@ -77,7 +77,7 @@ fn todo_update_rejects_invalid_transition() {
         json!({ "title": "task", "status": "cancelled" }),
     )
     .expect_err("done -> cancelled rejected");
-    assert!(err.to_string().contains("invalid transition"));
+    assert!(err.to_string().contains("invalid todo transition"));
 }
 
 #[test]
