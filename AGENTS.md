@@ -48,11 +48,9 @@ cpulimit -l 65 -i -- cargo build --bin oi-web
 - 用途：验证 epic/sub/PR 链路、checkbox 强制、双向关联(GT-04b)、审查强制等，避免污染 omenic
 - .githooks 与 omenic 同步；规则改动后先在此仓库验证，再同步到其他项目(deskctl / new-api)
 
-## TUI（已删除）
+## TUI（oi tui）
 
-终端 UI（Ratatui）已在 dsh web 复刻转正时删除：`crates/tui/` 与 `specs/tui/` 均不存在，别再去找。前端验证全部走上面的 Web（oi-web）与「Web UI 契约验收」两节。
-
-`.agent/skills/ui-validation/SKILL.md` 仍保留，但其描述的 TestBackend/specs/tui 流程已无对应代码，用到时先核实目标是否存在。
+TUI 已重新落地（epic #423；旧「已删除」状态 2026-09-25 起不再成立）：`crates/tui/` 存在，`oi tui` 按 `--tui auto|enhanced|linear` 三档渲染——enhanced 为全屏 alternate screen（transcript + composer dock + 历史/中断键），探针门要求 TTY、颜色、≥44×12 且非 tmux/Screen/Zellij，不合格自动回落 linear。交付：T1 linear 基线 #425，T2 enhanced 外壳与接线 #430、#438（七条契约测试，真人 TTY 验证 2026-09-25 通过）；T3–T5 在 #423 排队。验证口径：测试与 smoke 走 CI（TUI PTY smoke job 尚待授权），肉眼交互验收按 P2 路 B 推迟；渲染契约正本在 `todo/tui/route-tui.md`（local-only，不入 git）。`.agent/skills/ui-validation/SKILL.md` 面向旧 `specs/tui`，用前先核对目标（现行测试在 `crates/tui/tests/`）。前端验证分工：web 走上文「Web（oi-web）启动与样式缺失排查」「Web UI 契约验收」两节，TUI 走本节。
 
 ## Web（oi-web）启动与样式缺失排查
 

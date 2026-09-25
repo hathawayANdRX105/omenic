@@ -1,4 +1,4 @@
-<!-- canon: hathawayANdRX105/canon @ 7b45b1c (synced 2026-09-24) -->
+<!-- canon: hathawayANdRX105/canon @ 2e3c3d0 (synced 2026-09-25) -->
 # omenic 任务模板手册（phases / steps）
 
 > **什么时候读**：写 Issue 的 Done when 或 PR 的 Construction plan 需要选编排模板时

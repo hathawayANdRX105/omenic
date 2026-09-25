@@ -1,4 +1,4 @@
-<!-- canon: hathawayANdRX105/canon @ 7b45b1c (synced 2026-09-24) -->
+<!-- canon: hathawayANdRX105/canon @ 2e3c3d0 (synced 2026-09-25) -->
 # 版本统计任务书（版本口径唯一正本）
 
 > **什么时候读**：要发版、统计版本号、或改版本口径的时候。**解决什么**：major/minor/patch
@@ -112,3 +112,17 @@ git log <发版分支> --no-merges --format="%s" | grep -cE "^fix"
 - [ ] 版本文件/lock 已更新，构建通过
 - [ ] tag 已推送，CI success
 - [ ] Release 标题 / notes / assets 回读无误，无 stale draft
+
+## 项目篇：canon gate 产物（.githooks 发行版）
+
+- 发版分支 `main`；tag `v$V`；release 走 `gh release create`（canon 无 release.yml，
+  一次性手工发版；产物 = 静态 gate 二进制 + spec/hooks 树 tarball，各带 .sha256）。
+- 版本 = 通用篇口径：major 0（无 breaking）· minor = 功能域 5 · patch = main 上 `^fix` 提交数。
+- 功能域 5 项（移除后使用方察觉 → 计数）：
+  1. l1 结构检查（grep/wc/machete 确定性层）
+  2. l2 语义检查（重复块/跨 crate 影响面）
+  3. l3 LLM 检查（review_chain + jev 问题集 + ccn harness）
+  4. spec 引擎（yaml 规则加载 / dispatch / severity_overrides）
+  5. hook 集成（pre-commit / pre-push / merge）
+- 项目侧安装契约：**只加不覆盖**（`.githooks/spec/` 缺什么补什么，存量一律不动；
+  gate 二进制缺失才拷入，存在不升级）。

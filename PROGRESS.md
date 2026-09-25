@@ -7,9 +7,9 @@
 > - 技术教训（会重复犯的错与规则）：[LESSONS.md](LESSONS.md)
 > - 编号体系：`C1–C8` 能力域 / `R1–R7` 并发路线 / `G1–G8` 整合门 / `B1–B3` dsh 对照批次 / `P0–P2` 体验批次 / `F1–F4` 审查遗留——均只见于历史 PR 标题，本文不再展开
 
-## 当前位置（2026-09-21）
+## 当前位置（2026-09-25）
 
-main `43534a6`。daemon / web / CLI 三入口均可构建运行（CI 证实）；web 本地停用中，复起：`hub start omenic-daemon`（`./target/debug/daemon`，**cwd=仓库根**读 `.oi/config.toml`）+ `hub start oi-web`（`./target/debug/oi-web`，端口 8026；daemon 重启后先发一条预热消息避开 known-issue 1）。
+main `901edba`。daemon / web / CLI / TUI（`oi tui`）**四入口**均可构建运行（CI 证实；TUI 真人 TTY 验证 2026-09-25 通过）；web 本地停用中，复起：`hub start omenic-daemon`（`./target/debug/daemon`，**cwd=仓库根**读 `.oi/config.toml`）+ `hub start oi-web`（`./target/debug/oi-web`，端口 8026；daemon 重启后先发一条预热消息避开 known-issue 1）。
 
 ## 已实现（能力级）
 
@@ -20,6 +20,7 @@ main `43534a6`。daemon / web / CLI 三入口均可构建运行（CI 证实）�
 | 事件流推 web | `AgentEvent` DTO + daemon 广播订阅 + web 断线退避重连 |
 | compaction + AGENTS.md 注入 | 插件化压缩与指令注入，**生产路径已生效**（非仅测试口径） |
 | web 界面全真数据 | 聊天流式 + tool 折叠卡 / 侧栏谱系树 / 任务看板 / 统计 / 设置页（TOML 往返） |
+| TUI（`oi tui`，第三 daemon 客户端） | `--tui auto\|enhanced\|linear` 探针门三档：linear 线性回显（管道 / dumb / 无色 / 复用器内自动回落）+ enhanced 全屏 alternate screen（transcript + composer dock + 历史/中断键）+ `--reduced-motion` 降动效；七条契约测试。T1 #425、T2 #430/#438，T3–T5 见「接下来可并发推进」 |
 | 插件面 | 服务容器 + 事件总线 + 生命周期 + 注册表（重名拒绝）；`assemble()` 装配 Compaction/Instruction 两核心插件，daemon bind 前消费 |
 | MCP | stdio + Streamable HTTP 双传输、重连监督（指数退避 + 熔断）、per-server timeout/cwd |
 | session resume | daemon 重启后按 session 回放最近 50 条 user/assistant（dedupe + 切换清 ctx） |
@@ -71,6 +72,7 @@ main `43534a6`。daemon / web / CLI 三入口均可构建运行（CI 证实）�
 2. **Leptos 资源基线**：保持现有 Dioxus 路径不动，在独立应用中完成空载、单会话和流式消息场景的 CPU/内存对照。数据不足前不启动迁移。
 3. **代码结构治理**：扩展 `.githooks/spec/quality/` 的结构规则，优先覆盖超大文件、重复实现、模块聚合和无效包装。Gate 只消费规则，不重新承载项目策略。
 4. **Agent 能力缺口**：从现有队列中独立实现 MCP tool-level filter、session resume checkpoint flush，或 jobs/terminal 缺口。每条路线限制在一个能力域。
+5. **TUI 收尾波**（epic #423）：T3 工具卡+问题面板 与 T4 会话导航+任务/统计面板（**并行波**，`app.rs` 单一 owner 派工时指定）→ T5 文档收口；T1/T2 已交付（#425、#430、#438，基线 `901edba`）。TUI PTY smoke job 待授权后补 CI 级全屏断言。
 
 整合顺序：先合 Web 稳定性；Leptos 只产出基准结论；结构治理和 Agent 能力可并行，避免同时修改共享 composition/daemon 入口。
 
