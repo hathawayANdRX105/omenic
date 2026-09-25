@@ -15,5 +15,6 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 plugin = { path = "../plugin" }
+
 serde_json = { workspace = true }
 tempfile = { workspace = true }

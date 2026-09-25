@@ -19,6 +19,7 @@ mod probe;
 mod pump;
 
 pub mod app;
+pub mod scroll;
 pub mod termguard;
 pub mod theme;
 pub mod ui;

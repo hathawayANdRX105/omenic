@@ -8,80 +8,80 @@ anchors:
   - key: container
     find: 'relative h-full bg-sidebar border-r border-b1 flex flex-col shrink-0'
     expect: '侧栏容器 bg-sidebar（#1b1b1c）+ 右缘 1px 边框，纵向 flex 列。'
-    source: 'omenic: crates/web/components/src/sidebar.rs:59；dsh: SidebarRoot.module.css（panel 底色/边）'
+    source: 'omenic: crates/web-components/src/sidebar.rs:59；dsh: SidebarRoot.module.css（panel 底色/边）'
   - key: logo-row
     find: 'h-[52px] flex items-center justify-between pl-1 pr-0'
     expect: 'logo 行高 52px：omenic 字标 + 折叠钮两端对齐。'
-    source: 'omenic: crates/web/components/src/sidebar.rs:76；dsh: SidebarRoot.module.css:90-101（logoRow）'
+    source: 'omenic: crates/web-components/src/sidebar.rs:76；dsh: SidebarRoot.module.css:90-101（logoRow）'
   - key: wordmark
     file: crates/web-components/src/icons.rs
     find: 'text-[18px] leading-6 font-semibold tracking-[0.04em]'
     expect: 'omenic 字标 18/24 semibold + 品牌色圆点。'
-    source: 'omenic: crates/web/components/src/icons.rs:225（Wordmark）；dsh: SidebarRoot.module.css:110-116（brand group）'
+    source: 'omenic: crates/web-components/src/icons.rs:225（Wordmark）；dsh: SidebarRoot.module.css:110-116（brand group）'
   - key: new-session-button
     find: 'h-[38px] mx-0.5 mb-2 px-4 rounded-xl border border-b2 bg-layer-2'
     expect: '新会话钮 h38、r12（rounded-xl）、layer-2 底 + 1px 边框，hover 提亮。'
-    source: 'omenic: crates/web/components/src/sidebar.rs:91；dsh: SidebarRoot.module.css:227-235（38px bar, 12px radius）'
+    source: 'omenic: crates/web-components/src/sidebar.rs:91；dsh: SidebarRoot.module.css:227-235（38px bar, 12px radius）'
   - key: section-header
     find: 'h-9 flex items-center justify-between pl-1 pr-0.5'
     expect: '区头高 36px：「会话」caption 标题 + ⌘K 搜索钮。'
-    source: 'omenic: crates/web/components/src/sidebar.rs:101；dsh: SidebarRoot 区头规格'
+    source: 'omenic: crates/web-components/src/sidebar.rs:101；dsh: SidebarRoot 区头规格'
   - key: cmdk-search
     find: 'nav-search-bar'
     expect: '搜索钮挂 nav-search-bar hook class，⌘K/Ctrl+K 全局触发快速切换。'
-    source: 'omenic: crates/web/components/src/sidebar.rs:104 + bin/web/src/app.rs（keydown 处理）'
+    source: 'omenic: crates/web-components/src/sidebar.rs:104 + bin/web/src/app.rs（keydown 处理）'
   - key: project-row
     find: 'h-[34px] mx-0 px-2 rounded-lg flex items-center gap-2'
     expect: '项目行 h34、r8，folder 图标 + 名称 + hover 显示新建/移除钮 + 计数。'
-    source: 'omenic: crates/web/components/src/sidebar.rs:129'
+    source: 'omenic: crates/web-components/src/sidebar.rs:129'
   - key: session-row
     find: 'group h-8 px-2 rounded-lg flex items-center gap-2'
     expect: '会话行 h32、r8，激活态 bg-ihover 常亮。'
-    source: 'omenic: crates/web/components/src/sidebar.rs:288-290（SessionRow）'
+    source: 'omenic: crates/web-components/src/sidebar.rs:288-290（SessionRow）'
   - key: session-indent
     find: 'pl-[22px] flex flex-col gap-px pb-1'
     expect: '会话行相对项目行缩进 22px。'
-    source: 'omenic: crates/web/components/src/sidebar.rs:164'
+    source: 'omenic: crates/web-components/src/sidebar.rs:164'
   - key: session-tree-group
     find: 'fn group_sessions(sessions: &[Session]) -> Vec<(&Session, usize)>'
     expect: '扁平列表按 parent_id 组渲染树：父在前、子紧随其后；父不在本列表当根，成环/超深由 visited 与深度上限截断。'
-    source: 'omenic: crates/web/components/src/sidebar.rs:211（group_sessions）；omenic 自研——dsh 侧会话列表无谱系分组控件'
+    source: 'omenic: crates/web-components/src/sidebar.rs:211（group_sessions）；omenic 自研——dsh 侧会话列表无谱系分组控件'
   - key: child-indent
     find: 'pl-[18px]'
     expect: '子会话行相对父行再缩进 18px（层级 1；2/3 层 36/54px，再深封顶）。'
-    source: 'omenic: crates/web/components/src/sidebar.rs:264-271（depth_indent_class）；omenic 自研——dsh 侧无此层级语言'
+    source: 'omenic: crates/web-components/src/sidebar.rs:264-271（depth_indent_class）；omenic 自研——dsh 侧无此层级语言'
   - key: create-child-button
     find: 'title: "新建子会话"'
     expect: '会话行 hover 显示 + 钮（样式语言同项目行 + 钮），点击以该行为父创建子会话；与删除钮共用时间戳 group-hover:hidden 让出的空间。'
-    source: 'omenic: crates/web/components/src/sidebar.rs:307（SessionRow）；omenic 自研——dsh 侧行内无此控件'
+    source: 'omenic: crates/web-components/src/sidebar.rs:307（SessionRow）；omenic 自研——dsh 侧行内无此控件'
   - key: status-dot-active
     find: 'SessionStatus::Active => "bg-brand"'
     expect: '运行中会话状态点为品牌蓝 bg-brand。'
-    source: 'omenic: crates/web/components/src/sidebar.rs:13'
+    source: 'omenic: crates/web-components/src/sidebar.rs:13'
   - key: status-dot-idle
     find: 'SessionStatus::Idle => "bg-dim"'
     expect: '空闲会话状态点为暗色 bg-dim。'
-    source: 'omenic: crates/web/components/src/sidebar.rs:14'
+    source: 'omenic: crates/web-components/src/sidebar.rs:14'
   - key: status-dot-archived
     find: 'SessionStatus::Archived | SessionStatus::Aborted => "bg-danger/70"'
     expect: '归档与中断（半开 run）会话状态点同为 danger 70% 透明。'
-    source: 'omenic: crates/web/components/src/sidebar.rs:15'
+    source: 'omenic: crates/web-components/src/sidebar.rs:15'
   - key: time-hover-hide
     find: 'group-hover:hidden'
     expect: '会话行时间戳 12px 右置，hover 行时隐藏（让位给新建子会话/删除钮）。'
-    source: 'omenic: crates/web/components/src/sidebar.rs:323'
+    source: 'omenic: crates/web-components/src/sidebar.rs:323'
   - key: footer-row
     find: 'h-[42px] px-2.5 rounded-xl flex items-center gap-2.5'
     expect: '底部「数据统计 / 设置」触发行 h42、r12。'
-    source: 'omenic: crates/web/components/src/sidebar.rs:180-185'
+    source: 'omenic: crates/web-components/src/sidebar.rs:180-185'
   - key: collapsed-rail
     find: 'width:56px;min-width:56px;'
     expect: '折叠态侧栏固定 56px rail。'
-    source: 'omenic: crates/web/components/src/sidebar.rs:53；dsh: SidebarRoot.module.css:25（56px rail）'
+    source: 'omenic: crates/web-components/src/sidebar.rs:53；dsh: SidebarRoot.module.css:25（56px rail）'
   - key: rail-hover-panel
     find: 'w-52 rounded-xl border border-binv bg-menu px-3 py-2 shadow-lv3'
     expect: '折叠 rail 图标 hover 出纯 CSS 信息面板（标题 + 项目 + 时间）。'
-    source: 'omenic: crates/web/components/src/sidebar.rs:381'
+    source: 'omenic: crates/web-components/src/sidebar.rs:381'
 notes: |
   状态点三色锚点取自 status_dot_class 的 match 字面量，属于静态映射；
   会话标题等动态文本不作为锚点。
