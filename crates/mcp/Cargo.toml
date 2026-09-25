@@ -1,0 +1,15 @@
+[package]
+name = "mcp"
+version = "0.1.0"
+edition = "2024"
+description = "MCP (Model Context Protocol) stdio client: maps external MCP server tools onto the built-in Tool trait"
+license = "MIT"
+publish = false
+
+[dependencies]
+llm = { path = "../llm" }
+config = { path = "../config" }
+tools = { path = "../tools" }
+wire = { path = "../wire" }
+serde_json = { workspace = true }
+ureq = { workspace = true }

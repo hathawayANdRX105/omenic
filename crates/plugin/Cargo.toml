@@ -1,0 +1,20 @@
+[package]
+name = "plugin"
+version = "0.1.0"
+edition = "2024"
+description = "Plugin surface: service registry, event bus, lifecycle fiber, plugin registry"
+license = "MIT"
+publish = false
+
+[dependencies]
+compaction = { path = "../agent-loop/compaction" }
+guard = { path = "../guard" }
+instruction = { path = "../agent-loop/instruction" }
+plan-mode = { path = "../plan-mode" }
+parking_lot = "0.12"
+serde_json = { workspace = true }
+skill = { path = "../skill" }
+subagent-harness = { path = "../subagent/harness" }
+tools-harness = { path = "../tools/harness" }
+
+

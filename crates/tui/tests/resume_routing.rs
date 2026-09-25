@@ -9,8 +9,8 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use omenic_tui::app::{App, PromptDelivery};
-use omenic_web_state::types::{ChatMessage, MessagePart};
-use omenic_web_state::ui_state::AgentEvent;
+use web_state::types::{ChatMessage, MessagePart};
+use web_state::ui_state::AgentEvent;
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)

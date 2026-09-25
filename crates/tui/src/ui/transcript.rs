@@ -12,7 +12,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use omenic_web_state::types::MessagePart;
+use web_state::types::MessagePart;
 
 use crate::app::App;
 use crate::theme;

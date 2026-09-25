@@ -6,11 +6,11 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use omenic_tui::ui::session_picker::{PickerAction, PickerItem, PickerState, RunBadge, render};
-use omenic_web_state::types::{Session, SessionStatus};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::buffer::CellWidth;
+use web_state::types::{Session, SessionStatus};
 
 /// TestBackend 缓冲 → 逐行文本（同 `tests/layout.rs` 的取样法）+ 宽字符续格跳过。
 ///

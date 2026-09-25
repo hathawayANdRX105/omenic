@@ -1,0 +1,16 @@
+[package]
+name = "tools-harness"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+protocol = { path = "../../protocol" }
+jobs = { path = "../../jobs" }
+terminal = { path = "../../terminal" }
+tools = { path = ".." }
+web-tool = { path = "../../web-tool" }
+
+# HTTP client dependency

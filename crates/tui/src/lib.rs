@@ -1,12 +1,12 @@
 //! omenic-tui — `oi tui` 的终端前端（T1：linear 基线；T2：enhanced 全屏外壳）。
 //!
 //! 纯 daemon 客户端（route §2 铁律）：探针裁决模式（[`mode`] / [`probe`]），
-//! 经 `omenic-web-client` 的 [`WebDaemon`] 订阅 worker 事件，独立泵线程进
+//! 经 `web-client` 的 [`WebDaemon`] 订阅 worker 事件，独立泵线程进
 //! mpsc（[`pump`]）→ [`UiState::apply`] 投影 → 两个渲染器共用同一投影：
 //! linear 裸写 stdout（零 ESC 字节），enhanced 走 ratatui 全屏
 //! （[`app::run_enhanced`]，termguard 进出 + theme 样式 + dock 按键）。
 //!
-//! 只依赖 `omenic-web-client` + `omenic-web-state`：路由面走 client 门面，
+//! 只依赖 `web-client` + `web-state`：路由面走 client 门面，
 //! 不 import daemon 协议层；wire 帧统一过 `WireTranslator`。
 //!
 //! 错误出口（CLI dispatch 按变体映射退出码，route §5 smoke）：session 不存在
@@ -30,11 +30,11 @@ pub use probe::{MuxKind, TermProbe};
 use std::io::{BufRead, Write};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 
-use omenic_web_client::ClientError;
-use omenic_web_client::daemon::WebDaemon;
-use omenic_web_state::convert::WireTranslator;
-use omenic_web_state::types::now_epoch_ms;
-use omenic_web_state::ui_state::{AgentEvent, UiState};
+use web_client::ClientError;
+use web_client::daemon::WebDaemon;
+use web_state::convert::WireTranslator;
+use web_state::types::now_epoch_ms;
+use web_state::ui_state::{AgentEvent, UiState};
 
 /// `oi tui` 运行选项（CLI 解析后传入；route §3 契约字段，不许改）。
 #[derive(Debug, Clone)]

@@ -16,9 +16,9 @@
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
-use omenic_web_client::daemon::RunFilteredSubscription;
-use omenic_web_state::convert::WireTranslator;
-use omenic_web_state::ui_state::AgentEvent;
+use web_client::daemon::RunFilteredSubscription;
+use web_state::convert::WireTranslator;
+use web_state::ui_state::AgentEvent;
 
 /// 订阅读帧的 keepalive 间隔；`run()` 的事件接收等待用同一个值。
 pub(crate) const KEEPALIVE: Duration = Duration::from_secs(5);

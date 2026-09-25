@@ -12,7 +12,7 @@
 
 use ratatui::text::{Line, Span};
 
-use omenic_web_state::types::ToolCall;
+use web_state::types::ToolCall;
 
 use crate::theme;
 

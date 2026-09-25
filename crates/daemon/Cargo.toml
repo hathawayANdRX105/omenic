@@ -1,0 +1,38 @@
+[package]
+name = "daemon"
+version = "0.1.0"
+edition = "2024"
+description = "Headless omenic daemon: JSONL socket protocol, single-instance lifecycle, persistent session/run state"
+license = "MIT"
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+fs2 = { workspace = true }
+llm = { path = "../llm" }
+orbit = { path = "../agent/orbit" }
+rpc = { path = "rpc" }
+session = { path = "../session" }
+config = { path = "../config" }
+mcp = { path = "../mcp" }
+tools = { path = "../tools" }
+store = { path = "../store" }
+composition = { path = "../plugin/composition" }
+plugin = { path = "../plugin" }
+tools-harness = { path = "../tools/harness" }
+jobs = { path = "../jobs" }
+terminal = { path = "../terminal" }
+compaction = { path = "../agent-loop/compaction" }
+agent-loop = { path = "../agent-loop" }
+subagent-harness = { path = "../subagent/harness" }
+plan-mode = { path = "../plan-mode" }
+parking_lot = "0.12"
+uuid = { version = "1", features = ["v4", "serde"] }
+ctrlc = { workspace = true, features = ["termination"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+libc = "0.2"
+subagent-harness = { path = "../subagent/harness" }

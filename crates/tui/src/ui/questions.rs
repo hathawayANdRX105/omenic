@@ -13,7 +13,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use omenic_web_client::QuestionItem;
+use web_client::QuestionItem;
 
 use crate::theme;
 

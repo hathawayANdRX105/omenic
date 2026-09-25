@@ -1,0 +1,12 @@
+[package]
+name = "web-components"
+edition = "2024"
+version = "0.1.0"
+publish = false
+
+[dependencies]
+web-state = { path = "../web-state" }
+web-client = { path = "../web-client" }
+dioxus = { version = "0.7" }
+pulldown-cmark = { workspace = true }
+ammonia = { workspace = true }

@@ -1,4 +1,4 @@
-<!-- canon: hathawayANdRX105/canon @ 7b45b1c (synced 2026-09-24) -->
+<!-- canon: hathawayANdRX105/canon @ 2e3c3d0 (synced 2026-09-25) -->
 ---
 name: refactor-workflow
 description: "重构/移植多模块工作流：主控负责铺地基（scaffold-dsh）→ 建 .wt 工作树 → 拆任务派子代理 → 代码审查验收。适用场景：用户说'重构/移植/复刻某模块'、'铺好骨架然后派子代理实现'、'拆任务'、'开 worktree'、'主控子代理分工'。本 skill 是主控（编排 agent）的操作手册；铺地基细节见 scaffold-dsh skill。"

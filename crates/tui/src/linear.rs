@@ -9,8 +9,8 @@
 //! ESC、回车、响铃等 C0 控制字符滤掉（保留换行与制表），渲染器自己也不
 //! 写任何转义序列——piped smoke 的输出永远是纯文本。
 
-use omenic_web_state::types::MessagePart;
-use omenic_web_state::ui_state::{AgentEvent, UiState};
+use web_state::types::MessagePart;
+use web_state::ui_state::{AgentEvent, UiState};
 
 /// 一条事件的线性投影（route §3 签名，不许改：ev 先于 state）。
 ///
@@ -101,7 +101,7 @@ fn text_line_open(state: &UiState) -> bool {
 }
 
 /// 最近一条 assistant 消息（apply 的目标消息）。
-fn last_assistant(state: &UiState) -> Option<&omenic_web_state::types::ChatMessage> {
+fn last_assistant(state: &UiState) -> Option<&web_state::types::ChatMessage> {
     state.messages.iter().rev().find(|m| m.role == "assistant")
 }
 

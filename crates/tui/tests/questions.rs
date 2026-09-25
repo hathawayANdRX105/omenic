@@ -8,7 +8,7 @@ use ratatui::buffer::Buffer;
 
 use omenic_tui::app::App;
 use omenic_tui::ui;
-use omenic_web_client::QuestionItem;
+use web_client::QuestionItem;
 
 /// TestBackend 缓冲 → 逐行文本（同 dsh `tests/chat_flow.rs` 的取样法）。
 fn buffer_text(buffer: &Buffer) -> String {

@@ -1,0 +1,18 @@
+[package]
+name = "terminal"
+version = "0.1.0"
+edition = "2024"
+description = "Persistent pty-backed terminal sessions that survive across tool calls"
+license = "MIT"
+publish = false
+
+[dependencies]
+portable-pty = "0.9"
+# `portable-pty` returns `anyhow::Error` from its fallible API and does not
+# re-export the type, so converting one into `TerminalError` needs the crate
+# in scope. Already in the dependency graph via portable-pty; naming it here
+# adds no new resolution.
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]

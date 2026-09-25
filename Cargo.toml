@@ -1,26 +1,23 @@
 [workspace]
 members = [
-  "bin/cli", "bin/web",
-  "crates/agent/adaptor", "crates/agent/orbit", "crates/agent/tools", "crates/agent/mcp",
-  "crates/agent/task", "crates/evidence/spec", "crates/infra/config",
-  "crates/agent/subagent", "crates/infra/memory", "crates/infra/prompts",
-  "crates/infra/session", "crates/infra/daemon",
-  "crates/web/client", "crates/web/state",
-  "crates/web/components", "crates/web/page-workspace", "crates/web/page-stats",
-  "crates/web/page-config",
+  "bin/kymic", "bin/web",
+  "crates/daemon", "crates/protocol", "crates/llm", "crates/mcp",
+  "crates/agent-loop", "crates/tools", "crates/subagent",
+  "crates/skill", "crates/plan-mode", "crates/guard",
+  "crates/jobs", "crates/terminal", "crates/store",
+  "crates/memory", "crates/session", "crates/plugin",
+  "crates/config", "crates/prompts",
+  "crates/web-client", "crates/web-state", "crates/web-components",
+  "crates/web-page-workspace", "crates/web-page-stats", "crates/web-page-config",
   "crates/tui",
-  "crates/composition",
-  "crates/harness/core", "crates/harness/prompt", "crates/harness/tools",
-  "crates/harness/runtime", "crates/harness/plugin",
-  "crates/harness/compaction", "crates/harness/instruction",
-  "crates/harness/subagent",
-  "crates/harness/jobs",
-  "crates/harness/terminal",
-  "crates/harness/plan-mode", "crates/harness/guard", "crates/harness/skill",
+  "crates/agent/orbit",
+  "crates/wire",
+  "crates/web-tool",
 ]
 resolver = "2"
 
 [workspace.dependencies]
+protocol = { path = "crates/protocol" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"

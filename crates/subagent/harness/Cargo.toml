@@ -1,0 +1,29 @@
+[package]
+name = "subagent-harness"
+version = "0.1.0"
+edition = "2024"
+description = "Subagent provider trait, runtime service, and in-process fork backend"
+license = "MIT"
+publish = false
+# The mock agent doubles as the tests' child binary under `[[bin]]` below, so
+# it must not also be picked up as an auto-discovered example target.
+autoexamples = false
+
+[[bin]]
+name = "mock_acp_server"
+path = "examples/mock_acp_server.rs"
+
+[dependencies]
+protocol = { path = "../../protocol" }
+tools-harness = { path = "../../tools/harness" }
+llm = { path = "../../llm" }
+orbit = { path = "../../agent/orbit" }
+tools = { path = "../../tools" }
+subagent = { path = ".." }
+wire = { path = "../../wire" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+plugin = { path = "../../plugin" }
+tempfile = { workspace = true }

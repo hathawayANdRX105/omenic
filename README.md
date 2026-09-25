@@ -50,7 +50,7 @@ oi session resume <id> "follow-up prompt" # 向 worker 续发 prompt，run 记�
 
 ## Subagent exploration (opt-in)
 
-Read-only parallel exploration via `crates/subagent`. Each subagent only sees
+Read-only parallel exploration via `crates/agent/subagent`. Each subagent only sees
 `read` / `grep` / `glob`; no write, edit, or bash. Use it for "where is X" /
 "list functions in Y" questions instead of stuffing large files into the main
 context.
@@ -63,7 +63,7 @@ oi subagent run --prompt "列出 src/agent.rs 里的函数签名" --max-turns 5
 oi subagent run --prompt "X 在哪" --prompt "Y 怎么调" --max-turns 3
 ```
 
-Limits (see `crates/subagent/src/config.rs`):
+Limits (see `crates/agent/subagent/src/config.rs`):
 
 - 5-minute wall clock per `subagent run` call
 - 128KB per-subagent output, with spill to `/tmp/oi-subagent-<pid>-<id>.txt`

@@ -27,7 +27,7 @@ const SEP: &str = " · ";
 /// 根 `model` / `[llm].model` / `OMENIC_LLM_MODEL`）。这是配置里的真实
 /// 值，与 web 状态行取的是同一份配置文件，不是 footer 自己编的名字。
 pub fn configured_model() -> String {
-    omenic_web_client::llm::LlmRuntimeConfig::load_from_system().model
+    web_client::llm::LlmRuntimeConfig::load_from_system().model
 }
 
 /// 渲染 footer 单行到 `area`（0 行区域直接跳过）。

@@ -8,12 +8,12 @@
 //! [`layout::split`] 算出可见 transcript 区（扣除 T3 问题面板 + footer
 //! 两层让行）、贴其底部铺行，dock 之上、不改 [`super::draw`] 的既有布局。
 
-use omenic_web_client::daemon::WebDaemon;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use web_client::daemon::WebDaemon;
 
 use crate::app::App;
 use crate::theme;

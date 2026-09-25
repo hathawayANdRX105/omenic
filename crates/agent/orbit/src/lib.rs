@@ -16,7 +16,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
-use adaptor::{Context, Message, Model, StopReason, StreamEvent, ToolCallSpec, ToolDef};
+use llm::{Context, Message, Model, StopReason, StreamEvent, ToolDef};
+pub use protocol::events::{AgentEvent, TurnStop};
 use tools::{Tool, def};
 
 // The compaction policy (char-budget trigger ~4 chars/token ≈ 30k tokens,
@@ -24,7 +25,7 @@ use tools::{Tool, def};
 // public knobs stay re-exported on the orbit path.
 // ponytail: fixed budget — `Model` carries no context-window field; derive
 // it from provider metadata once one exists.
-pub use omenic_harness_compaction::{KEEP_RECENT_CHARS, KEEP_RECENT_MIN};
+pub use compaction::{KEEP_RECENT_CHARS, KEEP_RECENT_MIN};
 
 /// LLM backend abstraction: the only seam between loop and network,
 /// so invariants are testable offline with scripted streams.
@@ -67,64 +68,13 @@ impl LlmBackend for HttpLlm {
         signal: &AtomicBool,
         emit: &mut dyn FnMut(&StreamEvent),
     ) {
-        adaptor::stream_cb(model, context, tools, signal, emit)
+        llm::stream_cb(model, context, tools, signal, emit)
     }
-}
-
-/// Events emitted by the agent loop, for UI/evidence consumption.
-/// Turn shape mirrors oh-my-pi's AgentEvent (agent-loop.ts): per-LLM-round
-/// `TurnStart`, streamed text deltas, tool dispatch start/end, turn end.
-/// Serde shape is the frozen cross-crate event contract (R2 3.1):
-/// `{"type":"turn_start"}`, `{"type":"assistant_text","delta":…}`,
-/// `{"type":"tool_call","id":…,"name":…,"args":…}` (flattened
-/// `ToolCallSpec`), `{"type":"tool_start",…}`, `{"type":"tool_result",…}`,
-/// `{"type":"turn_end","stop_reason":…}`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum AgentEvent {
-    /// One LLM round-trip begins (before the stream, after maintenance).
-    TurnStart,
-    AssistantText {
-        delta: String,
-    },
-    AssistantReasoning {
-        delta: String,
-    },
-    /// Tool call parsed from the stream (not yet executed).
-    ToolCall(ToolCallSpec),
-    /// Tool dispatch begins (OMP `tool_execution_start`).
-    ToolStart {
-        id: String,
-        name: String,
-    },
-    ToolResult {
-        id: String,
-        name: String,
-        result: String,
-    },
-    TurnEnd {
-        stop_reason: TurnStop,
-    },
-}
-
-/// Loop-level stop reasons (`error`/`max_turns` added on top of the stream set).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TurnStop {
-    EndTurn,
-    MaxTokens,
-    Aborted,
-    Error,
-    /// [`LoopConfig::max_turns`] LLM round-trips exhausted.
-    MaxTurns,
 }
 
 /// Host context-maintenance hook (compaction etc.), run before each model call.
 pub type MaintainFn<'a> = &'a dyn Fn(&dyn LlmBackend, &Model, &mut Context, &AtomicBool);
 
-/// Host-provided loop configuration, the omp `AgentLoopConfig` seam: the
-/// loop stays pure — every policy knob arrives through this struct, and the
-/// loop imports nothing from app layers.
 pub struct LoopConfig<'a> {
     /// Evidence log; assistant/tool_result/summary messages are appended
     /// as the loop produces them.
@@ -291,7 +241,7 @@ pub use fallback::{LlmProvider, WaterfallLlm};
 // this path needs no container and stays inside the loop's "host passes
 // every knob in, loop pulls no ambient state" contract.
 
-use omenic_harness_instruction::{InstructionCache, render_fragments};
+use instruction::{InstructionCache, render_fragments};
 
 /// Compose the default system prompt: [`prompts::agents::TASK`] prefixed with
 /// the `AGENTS.md` workspace instructions discovered up the directory chain
@@ -411,7 +361,7 @@ pub fn run_agent_streaming(
         // 1. Stream one LLM turn, forwarding deltas live as they arrive.
         let mut text = String::new();
         let mut stop_reason = StopReason::EndTurn;
-        let mut tool_calls: Vec<ToolCallSpec> = Vec::new();
+        let mut tool_calls: Vec<protocol::events::ToolCallSpec> = Vec::new();
         let mut stream_failed = false;
 
         backend.stream_cb(model, context, &tool_defs, signal, &mut |ev| match ev {
@@ -588,16 +538,4 @@ pub fn run_agent(
         },
     );
     events
-}
-
-// ===== plugin face (C6) =====
-
-/// Register orbit's loop defaults as harness services in a plugin context.
-///
-/// Thin layer over [`run_agent`]-adjacent constants only: the loop logic is
-/// untouched, and hosts that don't use the plugin surface simply never call
-/// this. The composition root invokes it after the container is built.
-pub fn register(ctx: &mut omenic_harness_plugin::PluginContext) {
-    ctx.provide("orbit.max_turns", DEFAULT_MAX_TURNS);
-    ctx.provide("orbit.backend", HttpLlm);
 }

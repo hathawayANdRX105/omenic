@@ -17,13 +17,11 @@ harness:
   args:
     - "-c"
     - |
-      ROOT=$(git rev-parse --show-toplevel)
+      ROOT=$(git rev-parse --show-toplevel); cd "$ROOT"
       # 提取 4+ 连续非空行的块 (排除单行注释/单行 use 等短行)
       # 用 awk 标记每个文件的 4-行块, sort+uniq 找跨文件重复
-      matches=$(find "$ROOT" -name "*.rs" \
-        -not -path "*/target/*" -not -path "*/.wt/*" -not -path "*/.git/*" \
-        -not -path "*/tests/*" 2>/dev/null \
-        | xargs awk '
+      matches=$(git ls-files -- '*.rs' | grep -vE '(^|/)tests/' \
+        | xargs -r awk '
         BEGIN { block=""; count=0; file=FILENAME }
         /^[[:space:]]*$/ { if (count >= 4 && length(block) > 80) print file ":" block "<<<CLONE>>>"; block=""; count=0; next }
         { if (block == "") file=FILENAME; block = block "\n" $0; count++ }

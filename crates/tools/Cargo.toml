@@ -1,0 +1,17 @@
+[package]
+name = "tools"
+version = "0.1.0"
+edition = "2024"
+description = "Built-in agent tools: read_file / write_file / edit / run_bash"
+license = "MIT"
+publish = false
+
+[dependencies]
+llm = { path = "../llm" }
+memory = { path = "../memory" }
+serde_json = { workspace = true }
+diffy = { workspace = true }
+store = { path = "../store" }
+
+[dev-dependencies]
+tempfile = { workspace = true }

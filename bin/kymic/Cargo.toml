@@ -1,0 +1,31 @@
+[package]
+name = "kymic"
+version = "0.1.0"
+edition = "2024"
+description = "Task-driven agent orchestrator CLI"
+license = "MIT"
+
+[[bin]]
+name = "oi"
+path = "src/main.rs"
+
+[dependencies]
+llm = { path = "../../crates/llm" }
+orbit = { path = "../../crates/agent/orbit" }
+tools = { path = "../../crates/tools" }
+rpc = { path = "../../crates/daemon/rpc" }
+store = { path = "../../crates/store" }
+spec = { path = "../../crates/store/spec" }
+config = { path = "../../crates/config" }
+
+subagent = { path = "../../crates/subagent" }
+mcp = { path = "../../crates/mcp" }
+daemon = { path = "../../crates/daemon" }
+session = { path = "../../crates/session" }
+tui = { path = "../../crates/tui", package = "omenic-tui" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+toml = { workspace = true }
+[dev-dependencies]
+tempfile = { workspace = true }

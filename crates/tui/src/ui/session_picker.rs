@@ -17,12 +17,12 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use omenic_web_client::daemon::WebDaemon;
-use omenic_web_state::types::{ChatMessage, Session};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use web_client::daemon::WebDaemon;
+use web_state::types::{ChatMessage, Session};
 
 use crate::termguard::{CrosstermOps, TermGuard};
 use crate::theme;

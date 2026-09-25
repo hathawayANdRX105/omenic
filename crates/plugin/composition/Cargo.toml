@@ -1,0 +1,23 @@
+[package]
+name = "composition"
+version = "0.1.0"
+edition = "2024"
+description = "Composition root: assembles domain crates (daemon Worker + SessionDb wiring placeholder)"
+license = "MIT"
+publish = false
+
+[dependencies]
+orbit = { path = "../../agent/orbit" }
+serde_json = { workspace = true }
+plugin = { path = ".." }
+prompt = { path = "../../skill/prompt" }
+subagent-harness = { path = "../../subagent/harness" }
+tools-harness = { path = "../../tools/harness" }
+agent-loop = { path = "../../agent-loop" }
+compaction = { path = "../../agent-loop/compaction" }
+guard = { path = "../../guard" }
+instruction = { path = "../../agent-loop/instruction" }
+skill = { path = "../../skill" }
+
+[dev-dependencies]
+tempfile = { workspace = true }

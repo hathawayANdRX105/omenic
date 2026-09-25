@@ -1,0 +1,15 @@
+[package]
+name = "web-state"
+edition = "2024"
+version = "0.1.0"
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+session = { path = "../session" }
+memory = { path = "../memory" }
+tools = { path = "../tools" }
+llm = { path = "../llm" }
+orbit = { path = "../agent/orbit" }
+store = { path = "../store" }

@@ -11,11 +11,11 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use omenic_web_client::ClientError;
-use omenic_web_client::daemon::WebDaemon;
-use omenic_web_client::{QuestionAnswer, QuestionItem};
-use omenic_web_state::types::{ChatMessage, MessagePart, format_duration_ms, now_epoch_ms};
-use omenic_web_state::ui_state::{AgentEvent, UiState};
+use web_client::ClientError;
+use web_client::daemon::WebDaemon;
+use web_client::{QuestionAnswer, QuestionItem};
+use web_state::types::{ChatMessage, MessagePart, format_duration_ms, now_epoch_ms};
+use web_state::ui_state::{AgentEvent, UiState};
 
 use crate::termguard::{CrosstermOps, TermGuard};
 use crate::ui::footer;
