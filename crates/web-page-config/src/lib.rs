@@ -14,6 +14,16 @@ enum Section {
     About,
 }
 
+/// Max Tokens 输入校验：空白修剪后须为 16–200,000 的 u32，合法返回 `None`。
+pub fn validate_max_tokens(value: &str) -> Option<&'static str> {
+    match value.trim().parse::<u32>() {
+        Ok(v) if v < 16 => Some("Max Tokens 至少 16"),
+        Ok(v) if v > 200_000 => Some("Max Tokens 超过上限 200,000"),
+        Ok(_) => None,
+        Err(_) => Some("必须为有效正整数"),
+    }
+}
+
 #[component]
 pub fn SettingsModal(
     config: LlmRuntimeConfig,
@@ -157,12 +167,7 @@ fn ConfigForm(
     };
 
     let tokens_val = max_tokens();
-    let tokens_error: Option<&'static str> = match tokens_val.trim().parse::<u32>() {
-        Ok(v) if v < 16 => Some("Max Tokens 至少 16"),
-        Ok(v) if v > 200_000 => Some("Max Tokens 超过上限 200,000"),
-        Ok(_) => None,
-        Err(_) => Some("必须为有效正整数"),
-    };
+    let tokens_error = validate_max_tokens(&tokens_val);
 
     let dir_val = data_dir();
     let dir_error: Option<&'static str> = if dir_val.trim().is_empty() {
@@ -170,7 +175,6 @@ fn ConfigForm(
     } else {
         None
     };
-
     let is_form_valid = url_error.is_none()
         && key_error.is_none()
         && model_error.is_none()

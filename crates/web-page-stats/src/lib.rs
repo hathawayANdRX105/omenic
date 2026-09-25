@@ -37,7 +37,7 @@ const BRAND: &str = "#679efe";
 /// KPI / delta chip 的三态色调。`Flat` = 没有可比的上一窗口（All 范围或
 /// 上一窗口零 run），此时不能声称涨跌。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Tone {
+pub enum Tone {
     Good,
     Bad,
     Flat,
@@ -55,20 +55,20 @@ impl Tone {
 
 /// 一张 KPI 卡。
 #[derive(Debug, Clone, PartialEq)]
-struct Kpi {
-    label: String,
-    value: String,
-    delta: String,
-    tone: Tone,
+pub struct Kpi {
+    pub label: String,
+    pub value: String,
+    pub delta: String,
+    pub tone: Tone,
 }
 
 /// 环比 chip：KPI 卡右下角的涨跌标识。独立成类型，而不是复用 `Kpi`——
 /// 一个 label/value 全空的 Kpi 是不完整的数据，只能靠 `..` 结构更新语法
 /// 临时拼装，单独传出去会产生「空卡片」这种无效状态。
 #[derive(Debug, Clone, PartialEq)]
-struct DeltaChip {
-    delta: String,
-    tone: Tone,
+pub struct DeltaChip {
+    pub delta: String,
+    pub tone: Tone,
 }
 
 impl Kpi {
@@ -84,34 +84,34 @@ impl Kpi {
 
 /// 指标带的一格。
 #[derive(Debug, Clone, PartialEq)]
-struct Band {
-    label: String,
-    value: String,
+pub struct Band {
+    pub label: String,
+    pub value: String,
 }
 
 /// 运行状态分布的一条（复用原 Agent 分布条的视觉）。
 #[derive(Debug, Clone, PartialEq)]
-struct StatusBar {
-    label: String,
-    count: String,
-    pct: f64,
-    color: String,
+pub struct StatusBar {
+    pub label: String,
+    pub count: String,
+    pub pct: f64,
+    pub color: String,
 }
 
 /// 吞吐折线的一个点。
 #[derive(Debug, Clone, PartialEq)]
-struct Point {
-    value: f64,
+pub struct Point {
+    pub value: f64,
 }
 
 /// 最近运行 feed 的一行。
 #[derive(Debug, Clone, PartialEq)]
-struct Feed {
-    run_id: String,
-    session_id: String,
-    duration: String,
-    status: String,
-    status_class: String,
+pub struct Feed {
+    pub run_id: String,
+    pub session_id: String,
+    pub duration: String,
+    pub status: String,
+    pub status_class: String,
 }
 
 #[component]
@@ -359,7 +359,7 @@ fn FeedRow(item: Feed) -> Element {
 /// 五张 KPI 卡，全部来自 run ledger 可算的量（原 mock 的费用 / 缓存节省 /
 /// 缓存率三张卡没有数据源，直接不再出现——见 [`build_unavailable_note`]）。
 /// `None`（无 daemon）时保持五张卡的骨架，数值归零、delta 占位 `—`。
-fn build_kpis(s: Option<&StatsSummary>) -> Vec<Kpi> {
+pub fn build_kpis(s: Option<&StatsSummary>) -> Vec<Kpi> {
     let Some(s) = s else {
         return ["运行数", "成功数", "错误率", "平均耗时", "活跃会话"]
             .iter()
@@ -412,7 +412,7 @@ fn build_kpis(s: Option<&StatsSummary>) -> Vec<Kpi> {
 
 /// 七格指标带，同样全为真实可算量。原 mock 的四格 token / TTFT 指标换成
 /// 运行终态拆分与吞吐速率。
-fn build_band(s: Option<&StatsSummary>) -> Vec<Band> {
+pub fn build_band(s: Option<&StatsSummary>) -> Vec<Band> {
     const LABELS: [&str; 7] = [
         "RUNS/H",
         "AVG LATENCY",
@@ -459,7 +459,7 @@ fn build_band(s: Option<&StatsSummary>) -> Vec<Band> {
 /// 运行终态分布。原位置是「按 Agent 的 Token 分布」——主副 agent 的 token
 /// 归属在 ledger 里不存在（`agent_token_split` 在 `unavailable` 里），换成
 /// 同样是「占比条」形态、但有真实数据的终态分布。
-fn build_status_bars(s: Option<&StatsSummary>) -> Vec<StatusBar> {
+pub fn build_status_bars(s: Option<&StatsSummary>) -> Vec<StatusBar> {
     let rows: [(&str, u64, &str); 4] = match s {
         Some(s) => [
             ("成功", s.ok_runs, BRAND),
@@ -490,7 +490,7 @@ fn build_status_bars(s: Option<&StatsSummary>) -> Vec<StatusBar> {
 }
 
 /// 吞吐折线：每桶的运行数。空 summary → 空序列（图表画布仍渲染）。
-fn build_points(s: Option<&StatsSummary>) -> Vec<Point> {
+pub fn build_points(s: Option<&StatsSummary>) -> Vec<Point> {
     s.map(|s| {
         s.throughput
             .iter()
@@ -504,7 +504,7 @@ fn build_points(s: Option<&StatsSummary>) -> Vec<Point> {
 
 /// 最近运行 feed。model / provider / cost 在 ledger 里不存在，改显示
 /// run id、session id、耗时、终态。
-fn build_feed(s: Option<&StatsSummary>) -> Vec<Feed> {
+pub fn build_feed(s: Option<&StatsSummary>) -> Vec<Feed> {
     let Some(s) = s else {
         return Vec::new();
     };
@@ -534,7 +534,7 @@ fn build_feed(s: Option<&StatsSummary>) -> Vec<Feed> {
 
 /// 「暂无数据源」说明行：把 daemon 报的 `unavailable` 键翻成中文短语。
 /// 这样页面上缺失的卡片有据可查，而不是静默消失或填一个假零。
-fn build_unavailable_note(s: Option<&StatsSummary>) -> String {
+pub fn build_unavailable_note(s: Option<&StatsSummary>) -> String {
     let Some(s) = s else {
         return "未连接 daemon：统计数据不可用。".to_string();
     };
@@ -562,14 +562,14 @@ fn build_unavailable_note(s: Option<&StatsSummary>) -> String {
 
 /// 终态运行里的错误占比。分母只算已结束的 run（在飞 run 还没有结果，
 /// 计入分母会让错误率被稀释）。无终态 run → `None`。
-fn error_rate(s: &StatsSummary) -> Option<f64> {
+pub fn error_rate(s: &StatsSummary) -> Option<f64> {
     let terminal = s.ok_runs + s.failed_runs + s.aborted_runs;
     (terminal > 0).then(|| s.error_runs() as f64 * 100.0 / terminal as f64)
 }
 
 /// 计数类指标的环比 chip。`higher_is_good` 决定涨了算好还是坏；上一窗口
 /// 缺失（All 范围）或为 0（没有可比基数）时给中性 `Flat`，不编百分比。
-fn delta_count(cur: u64, prev: Option<u64>, higher_is_good: bool) -> DeltaChip {
+pub fn delta_count(cur: u64, prev: Option<u64>, higher_is_good: bool) -> DeltaChip {
     let (delta, tone) = match prev {
         Some(p) if p > 0 => {
             let pct = (cur as f64 - p as f64) * 100.0 / p as f64;
@@ -582,7 +582,7 @@ fn delta_count(cur: u64, prev: Option<u64>, higher_is_good: bool) -> DeltaChip {
 }
 
 /// 平均耗时的环比 chip——耗时变短是好事。
-fn delta_avg(cur: Option<f64>, prev: Option<f64>) -> DeltaChip {
+pub fn delta_avg(cur: Option<f64>, prev: Option<f64>) -> DeltaChip {
     let (delta, tone) = match (cur, prev) {
         (Some(c), Some(p)) if p > 0.0 => {
             let pct = (c - p) * 100.0 / p;
@@ -594,7 +594,7 @@ fn delta_avg(cur: Option<f64>, prev: Option<f64>) -> DeltaChip {
 }
 
 /// 变化率 → 色调。零变化恒中性。
-fn tone_for(pct: f64, higher_is_good: bool) -> Tone {
+pub fn tone_for(pct: f64, higher_is_good: bool) -> Tone {
     if pct.abs() < f64::EPSILON {
         return Tone::Flat;
     }
@@ -606,7 +606,7 @@ fn tone_for(pct: f64, higher_is_good: bool) -> Tone {
 }
 
 /// 毫秒 → 人读串：`820ms` / `12.4s` / `3m12s`。
-fn format_duration(ms: f64) -> String {
+pub fn format_duration(ms: f64) -> String {
     if !ms.is_finite() || ms < 0.0 {
         return "—".to_string();
     }
