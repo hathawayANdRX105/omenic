@@ -95,16 +95,18 @@ fn footer_row(app: &App) -> String {
         .to_string()
 }
 
-// --- 模型级：追尾滑动三语义（jcode 测试语义照抄，refs ui_viewport.rs:1595+） ---
+// --- 模型级：追尾滑动三语义（jcode 测试语义照抄，refs ui_viewport.rs:1595+；
+// 坐标系换算：jcode 的数值是 `max_scroll` 口径，本模型 `sync(total, height)`
+// 取总行数、顶行 max = `total − height`——断言一律用换算后的 max。 ---
 
 /// 小追加（≤4 行）直接 snap 贴底：流式小步不整屏蹦。
 #[test]
 fn tail_follow_small_appends_snap_to_bottom() {
     let mut model = ScrollModel::new();
     model.sync(100, 30);
-    assert_eq!(model.offset(), 100, "首帧钉底");
+    assert_eq!(model.offset(), 70, "首帧钉底 = total - height");
     model.sync(103, 30);
-    assert_eq!(model.offset(), 103, "≤4 行追加直接贴底，不起滑动");
+    assert_eq!(model.offset(), 73, "≤4 行追加直接贴底，不起滑动");
     assert!(model.is_following());
 }
 
@@ -115,12 +117,12 @@ fn tail_follow_large_append_slides_in_bounded_steps() {
     model.sync(100, 30);
     model.sync(112, 30);
     let first = model.offset();
-    assert!(first < 112, "12 行追加不许一步贴底: {first}");
-    assert!(first - 100 <= 3, "首帧步长 ≤3 行: {first}");
+    assert!(first < 82, "12 行追加不许一步贴底: {first}");
+    assert!(first - 70 <= 3, "首帧步长 ≤3 行: {first}");
 
     let mut prev = first;
     let mut guard = 0;
-    while model.offset() < 112 {
+    while model.offset() < 82 {
         model.sync(112, 30);
         let step = model.offset() - prev;
         assert!(step <= 3, "每帧步长 ≤3 行: {prev} → {}", model.offset());
@@ -128,7 +130,7 @@ fn tail_follow_large_append_slides_in_bounded_steps() {
         guard += 1;
         assert!(guard < 50, "滑动必须收敛到底");
     }
-    assert_eq!(model.offset(), 112, "滑动终点 = 内容底");
+    assert_eq!(model.offset(), 82, "滑动终点 = 内容底 = total - height");
     assert!(model.is_following());
 }
 
@@ -139,19 +141,19 @@ fn tail_follow_caps_lag_to_one_viewport() {
     model.sync(100, 30);
     model.sync(400, 30);
     assert!(
-        model.offset() >= 400 - 30,
-        "滞后封顶 1 视口: offset={}",
+        model.offset() >= 340,
+        "滞后封顶 1 视口（max 370 - height 30）: offset={}",
         model.offset()
     );
-    assert!(model.offset() < 400, "封顶后仍从滞后位起滑，不直接贴底");
+    assert!(model.offset() < 370, "封顶后仍从滞后位起滑，不直接贴底");
 
     let mut guard = 0;
-    while model.offset() < 400 {
+    while model.offset() < 370 {
         model.sync(400, 30);
         guard += 1;
         assert!(guard < 50, "封顶后的滑动必须收敛");
     }
-    assert_eq!(model.offset(), 400);
+    assert_eq!(model.offset(), 370, "收敛到 total - height");
 }
 
 /// 内容收缩（落后位 > 新底）：直接 snap 回新底，不倒着播动画。
@@ -160,7 +162,7 @@ fn tail_follow_backward_motion_snaps() {
     let mut model = ScrollModel::new();
     model.sync(100, 30);
     model.sync(80, 30);
-    assert_eq!(model.offset(), 80, "内容收缩直接 snap，不滑动");
+    assert_eq!(model.offset(), 50, "内容收缩直接 snap 到新底 = 80 - 30");
     assert!(model.is_following());
 }
 
