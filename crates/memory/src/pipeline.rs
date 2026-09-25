@@ -7,7 +7,7 @@
 //! model from jcode `memory_agent`: extract when the topic jumped, on a
 //! periodic cadence, or at session end — no LLM in the decision chain.
 
-use crate::{Category, EmbedError, Embedder, Memory, MemoryEntry, MemoryError, cosine, now_iso};
+use crate::{Category, EmbedError, Embedder, Memory, MemoryEntry, MemoryError, cosine};
 
 /// Cosine at or above which an incoming text is a duplicate of an existing
 /// entry: reinforce it, do not append. jcode used `STORAGE_DEDUP_THRESHOLD`
@@ -95,7 +95,7 @@ impl Memory {
             && sim >= DEDUP_COSINE
         {
             let id = existing.id;
-            existing.ts = now_iso();
+            existing.ts = store::now_iso();
             existing.strength += 1;
             existing.embedding = Some(embedding);
             self.remember_update(existing)?;

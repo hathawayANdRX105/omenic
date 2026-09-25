@@ -19,7 +19,7 @@ pub mod recall;
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -113,7 +113,7 @@ impl MemoryEntry {
     pub fn new(text: impl Into<String>) -> MemoryEntry {
         MemoryEntry {
             id: 0,
-            ts: now_iso(),
+            ts: store::now_iso(),
             text: text.into(),
             category: Category::Custom,
             tags: Vec::new(),
@@ -291,7 +291,7 @@ impl Memory {
         // Heal a torn trailing line under this same lock, so the new entry is
         // never appended onto a partial one.
         if buf.last().is_some_and(|&b| b != b'\n') {
-            let pos = buf.iter().rposition(|&b| b == b'\n').map_or(0, |p| p + 1);
+            let pos = store::jsonl::last_line_start(&buf);
             file.set_len(pos as u64)?;
             buf.truncate(pos);
         }
@@ -317,17 +317,9 @@ impl Memory {
         let Some(path) = self.path.as_deref() else {
             return Ok(vec![]);
         };
-        if !path.exists() {
+        let Some(content) = store::jsonl::read_lines(path)? else {
             return Ok(vec![]);
-        }
-
-        let mut file = File::open(path)?;
-        file.lock_shared()?;
-        let mut buf = Vec::new();
-        file.read_to_end(&mut buf)?;
-        drop(file);
-        // Lossy: a torn multi-byte char must not fail the whole read.
-        let content = String::from_utf8_lossy(&buf);
+        };
 
         let lines: Vec<&str> = content.lines().collect();
         let mut map: BTreeMap<u64, MemoryEntry> = BTreeMap::new();
@@ -340,7 +332,7 @@ impl Memory {
                     map.insert(entry.id, entry);
                 }
                 Err(_) if i == lines.len() - 1 => {
-                    trim_trailing_line(path)?;
+                    store::jsonl::drop_last_line(path)?;
                     break;
                 }
                 Err(e) => {
@@ -385,49 +377,4 @@ fn max_id(content: &str) -> u64 {
         .map(|e| e.id)
         .max()
         .unwrap_or(0)
-}
-
-/// Drop the last line of the file (a torn write).
-fn trim_trailing_line(path: &Path) -> Result<(), MemoryError> {
-    let mut file = OpenOptions::new().read(true).write(true).open(path)?;
-    file.lock()?;
-
-    let mut buf = Vec::new();
-    file.read_to_end(&mut buf)?;
-
-    // Byte offsets, not offsets into a lossy string: each invalid byte
-    // widens to U+FFFD, which would shift `pos` and truncate mid-line.
-    let end = buf.iter().rposition(|&b| b != b'\n').map_or(0, |p| p + 1);
-    let pos = buf[..end]
-        .iter()
-        .rposition(|&b| b == b'\n')
-        .map_or(0, |p| p + 1);
-    file.set_len(pos as u64)?;
-    file.sync_all()?;
-    Ok(())
-}
-
-/// ISO-8601-ish UTC timestamp, seconds precision.
-/// ponytail: duplicated from `store::now_iso` on purpose — this crate's only
-/// deps are serde and the embed HTTP client (ureq); fold both into one crate
-/// if a third caller needs it.
-fn now_iso() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let days = secs / 86_400;
-    let rem = secs % 86_400;
-    let (hh, mm, ss) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    let z = days as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z")
 }

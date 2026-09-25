@@ -37,6 +37,41 @@ const RESUME_CONTEXT_LIMIT: u32 = 50;
 /// touched tasks is stale backlog the UI can page in later.
 const TASK_LIST_DEFAULT_LIMIT: u32 = 50;
 
+/// Generic paged list helper for TaskList / TodoList / GoalList.
+/// Extracts `limit` from params (default: `TASK_LIST_DEFAULT_LIMIT`), runs
+/// the provided `load` closure, sorts by `updated_at` descending, truncates
+/// to `limit`, and serializes the result.
+fn paged_list<T, E>(
+    id: Option<&str>,
+    params: &serde_json::Value,
+    load: impl FnOnce(u32) -> Result<Vec<T>, E>,
+    sort_by_updated_at: impl FnOnce(&mut [T]),
+) -> Response
+where
+    T: serde::Serialize,
+    E: std::fmt::Display,
+{
+    let limit = params
+        .get("limit")
+        .and_then(serde_json::Value::as_u64)
+        .map(|n| n.min(u32::MAX as u64) as u32)
+        .unwrap_or(TASK_LIST_DEFAULT_LIMIT);
+    match load(limit) {
+        Ok(mut rows) => {
+            sort_by_updated_at(&mut rows);
+            rows.truncate(limit as usize);
+            match serde_json::to_value(&rows) {
+                Ok(v) => Response::ok(id, v),
+                Err(e) => Response::err(
+                    id,
+                    ResponseError::new("internal", format!("serialize: {e}")),
+                ),
+            }
+        }
+        Err(e) => Response::err(id, ResponseError::new("internal", format!("store: {e}"))),
+    }
+}
+
 /// Shared worker handle.  The dispatch layer takes `&mut` so concurrent
 /// connections are serialized by the server's mutex.
 pub struct WorkerHandle {
@@ -491,35 +526,23 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
             // sends a page size only once it paginates, a bare `{}` is
             // the default page.  A missing / non-number falls back too
             // — a stale client must not break a newer daemon.
-            let limit = req
-                .params
-                .get("limit")
-                .and_then(Value::as_u64)
-                .map(|n| n.min(u32::MAX as u64) as u32)
-                .unwrap_or(TASK_LIST_DEFAULT_LIMIT);
-            let store = store::store::Store::new(&ctx.task_data_dir);
-            let mut tasks = match store.load_all() {
-                Ok(t) => t,
-                Err(e) => {
-                    return Response::err(
-                        id,
-                        ResponseError::new("internal", format!("task store: {e}")),
-                    );
-                }
-            };
-            // `updated_at` is ISO-8601 UTC at second precision, so
-            // lexical order *is* chronological.  `sort_by` is stable,
-            // so same-second tasks keep `load_all`'s id order instead
-            // of reshuffling between requests.
-            tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-            tasks.truncate(limit as usize);
-            match serde_json::to_value(&tasks) {
-                Ok(v) => Response::ok(id, v),
-                Err(e) => Response::err(
-                    id,
-                    ResponseError::new("internal", format!("serialize: {e}")),
-                ),
-            }
+            paged_list(
+                id,
+                &req.params,
+                |limit| {
+                    let store = store::store::Store::new(&ctx.task_data_dir);
+                    let mut tasks = match store.load_all() {
+                        Ok(t) => t,
+                        Err(e) => return Err(format!("task store: {e}")),
+                    };
+                    tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                    tasks.truncate(limit as usize);
+                    Ok(tasks)
+                },
+                |rows: &mut [store::Task]| {
+                    rows.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                },
+            )
         }
 
         // ---------------- Todo ----------------
@@ -527,65 +550,46 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
             // Same contract as `task.list`: `limit` optional, a stale
             // client's missing / non-number value falls back to the
             // default page rather than failing.
-            let limit = req
-                .params
-                .get("limit")
-                .and_then(Value::as_u64)
-                .map(|n| n.min(u32::MAX as u64) as u32)
-                .unwrap_or(TASK_LIST_DEFAULT_LIMIT);
-            let store = store::store::Store::new(&ctx.task_data_dir);
-            let mut todos = match store.load_todos() {
-                Ok(t) => t,
-                Err(e) => {
-                    return Response::err(
-                        id,
-                        ResponseError::new("internal", format!("todo store: {e}")),
-                    );
-                }
-            };
-            // ISO-8601 UTC at second precision: lexical order *is*
-            // chronological, and `sort_by` is stable, so same-second
-            // todos keep the store's id order.
-            todos.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-            todos.truncate(limit as usize);
-            match serde_json::to_value(&todos) {
-                Ok(v) => Response::ok(id, v),
-                Err(e) => Response::err(
-                    id,
-                    ResponseError::new("internal", format!("serialize: {e}")),
-                ),
-            }
+            paged_list(
+                id,
+                &req.params,
+                |limit| {
+                    let store = store::store::Store::new(&ctx.task_data_dir);
+                    let mut todos = match store.load_todos() {
+                        Ok(t) => t,
+                        Err(e) => return Err(format!("todo store: {e}")),
+                    };
+                    todos.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                    todos.truncate(limit as usize);
+                    Ok(todos)
+                },
+                |rows: &mut [store::todo::Todo]| {
+                    rows.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                },
+            )
         }
 
         // ---------------- Goal ----------------
         Command::GoalList => {
             // Same contract as `task.list` / `todo.list` (shared page
             // size constant — todos, goals and tasks page alike).
-            let limit = req
-                .params
-                .get("limit")
-                .and_then(Value::as_u64)
-                .map(|n| n.min(u32::MAX as u64) as u32)
-                .unwrap_or(TASK_LIST_DEFAULT_LIMIT);
-            let store = store::store::Store::new(&ctx.task_data_dir);
-            let mut goals = match store.load_goals() {
-                Ok(g) => g,
-                Err(e) => {
-                    return Response::err(
-                        id,
-                        ResponseError::new("internal", format!("goal store: {e}")),
-                    );
-                }
-            };
-            goals.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-            goals.truncate(limit as usize);
-            match serde_json::to_value(&goals) {
-                Ok(v) => Response::ok(id, v),
-                Err(e) => Response::err(
-                    id,
-                    ResponseError::new("internal", format!("serialize: {e}")),
-                ),
-            }
+            paged_list(
+                id,
+                &req.params,
+                |limit| {
+                    let store = store::store::Store::new(&ctx.task_data_dir);
+                    let mut goals = match store.load_goals() {
+                        Ok(g) => g,
+                        Err(e) => return Err(format!("goal store: {e}")),
+                    };
+                    goals.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                    goals.truncate(limit as usize);
+                    Ok(goals)
+                },
+                |rows: &mut [store::goal::Goal]| {
+                    rows.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                },
+            )
         }
 
         // ---------------- Stats (G5) ----------------
