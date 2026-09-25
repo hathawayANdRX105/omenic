@@ -8,6 +8,7 @@ use std::sync::atomic::AtomicBool;
 
 use serde_json::{Value, json};
 use store::store::Store;
+use store::todo::TodoStatus;
 use tools::task::session_tools;
 use tools::{Tool, ToolError};
 
@@ -59,23 +60,36 @@ fn todo_add_creates_then_updates_note_only() {
 
 #[test]
 fn todo_update_rejects_invalid_transition() {
-    let (dir, store, tools) = tmp_tools();
+    let (_dir, store, tools) = tmp_tools();
     call(&tools, "todo_add", json!({ "title": "task" })).unwrap();
-    // Move to InProgress
+    // Move to done — a terminal state
     call(
         &tools,
         "todo_update",
-        json!({ "title": "task", "status": "in_progress" }),
+        json!({ "title": "task", "status": "done" }),
     )
     .unwrap();
-    // Attempt invalid transition: InProgress -> Open (not allowed)
+    // Attempt invalid transition: Done -> Cancelled (the two terminal states
+    // are mutually exclusive, a finished item was not cancelled)
     let err = call(
         &tools,
         "todo_update",
-        json!({ "title": "task", "status": "open" }),
+        json!({ "title": "task", "status": "cancelled" }),
     )
-    .expect_err("invalid transition rejected");
-    assert!(err.to_string().contains("invalid transition"));
+    .expect_err("invalid transition rejected")
+    .to_string();
+    assert!(
+        err.contains("invalid todo transition"),
+        "error names the refusal: {err}"
+    );
+    assert!(
+        err.contains("done") && err.contains("cancelled"),
+        "error names from/to states: {err}"
+    );
+
+    // A refused transition must leave the todo done
+    let todos = store.load_todos().expect("load");
+    assert_eq!(todos[0].status, TodoStatus::Done);
 }
 
 #[test]
@@ -145,22 +159,22 @@ fn goal_link_unlink_roundtrip() {
     call(&tools, "todo_add", json!({ "title": "t2" })).unwrap();
     call(&tools, "goal_add", json!({ "title": "G" })).unwrap();
 
-    // Link t1
-    let res = call(&tools, "goal_link", json!({ "goal": "G", "todos": ["t1"] })).unwrap();
-    assert!(res.contains("linked"));
+    // Link t1 (goal_link's args: goal title, one todo, unlink flag)
+    let res = call(&tools, "goal_link", json!({ "title": "G", "todo": "t1" })).unwrap();
+    assert!(res.contains("linked: 1"));
 
     // Link t2
-    let res = call(&tools, "goal_link", json!({ "goal": "G", "todos": ["t2"] })).unwrap();
-    assert!(res.contains("linked"));
+    let res = call(&tools, "goal_link", json!({ "title": "G", "todo": "t2" })).unwrap();
+    assert!(res.contains("linked: 2"));
 
     // Unlink t1
     let res = call(
         &tools,
         "goal_link",
-        json!({ "goal": "G", "todos": [], "remove": ["t1"] }),
+        json!({ "title": "G", "todo": "t1", "unlink": true }),
     )
     .unwrap();
-    assert!(res.contains("unlinked"));
+    assert!(res.contains("linked: 1"));
 
     let goals = store.load_goals().expect("list goals");
     let goal = goals.iter().find(|g| g.id == "G").expect("goal G");
@@ -175,7 +189,7 @@ fn goal_link_missing_goal_errors() {
     let err = call(
         &tools,
         "goal_link",
-        json!({ "goal": "nonexistent", "todos": ["t"] }),
+        json!({ "title": "nonexistent", "todo": "t" }),
     )
     .expect_err("missing goal rejected");
     assert!(err.to_string().contains("not found"));
