@@ -113,7 +113,7 @@ impl DshPlugin for GuardPlugin {
     }
 
     fn validate_config(&self, _config: &Value) -> Result<(), PluginError> {
-        // Config validation happens at GuardPlugin::new time; accept any for now
+        // GuardPlugin::new already validated this config; re-validation is a no-op.
         Ok(())
     }
 }

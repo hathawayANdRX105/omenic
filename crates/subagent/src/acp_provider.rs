@@ -209,7 +209,9 @@ fn failed_start(
 struct NoopDisposer;
 
 impl RunDisposer for NoopDisposer {
-    fn dispose(&self) {}
+    fn dispose(&self) {
+        // The failed-start path never spawned a child; there is nothing to tear down.
+    }
 }
 
 /// Build the child process from the spec (no shell involved).

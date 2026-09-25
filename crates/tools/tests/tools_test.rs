@@ -1,4 +1,29 @@
+use protocol::{AbortSignal, ToolResult, ToolSpec};
+use serde_json::Value;
+use std::sync::Arc;
 use tools::ToolCatalog;
+
+struct DummyTool;
+
+impl protocol::Tool for DummyTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "sample".to_string(),
+            description: "test".to_string(),
+            params_schema: Value::Object(serde_json::Map::new()),
+        }
+    }
+    fn execute(
+        &self,
+        _args: &Value,
+        _abort: &AbortSignal,
+    ) -> Result<ToolResult, protocol::ToolError> {
+        Ok(ToolResult {
+            output: "ok".to_string(),
+            is_error: false,
+        })
+    }
+}
 
 #[test]
 fn empty_catalog_has_zero_specs() {
@@ -8,37 +33,12 @@ fn empty_catalog_has_zero_specs() {
 
 #[test]
 fn catalog_register_and_find() {
-    use protocol::{AbortSignal, ToolResult, ToolSpec};
-    use serde_json::Value;
-    use std::sync::Arc;
-
-    struct DummyTool;
-    impl protocol::Tool for DummyTool {
-        fn spec(&self) -> ToolSpec {
-            ToolSpec {
-                name: "dummy".to_string(),
-                description: "test".to_string(),
-                params_schema: Value::Object(serde_json::Map::new()),
-            }
-        }
-        fn execute(
-            &self,
-            _args: &Value,
-            _abort: &AbortSignal,
-        ) -> Result<ToolResult, protocol::ToolError> {
-            Ok(ToolResult {
-                output: "ok".to_string(),
-                is_error: false,
-            })
-        }
-    }
-
     let cat = ToolCatalog::new();
     cat.register(Arc::new(DummyTool));
     let specs = cat.specs();
     assert_eq!(specs.len(), 1);
-    assert_eq!(specs[0].name, "dummy");
-    let found = cat.find("dummy");
+    assert_eq!(specs[0].name, "sample");
+    let found = cat.find("sample");
     assert!(found.is_some());
     let not_found = cat.find("nope");
     assert!(not_found.is_none());

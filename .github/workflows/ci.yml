@@ -28,7 +28,7 @@ jobs:
         run: cargo fmt --all -- --check
 
   # Batch smoke: the P1 plan-mode feature end-to-end through a real daemon
-  # socket (stub LLM calls exit_plan_mode, user.answer approves) plus the
+  # socket (test LLM calls exit_plan_mode, user.answer approves) plus the
   # `oi profile` CLI against the real binary. Kept as its own job so a
   # feature-level regression names itself instead of hiding in the suite.
   smoke:
@@ -51,7 +51,7 @@ jobs:
       # T1 linear pipe smoke (route-tui §6): real daemon + one full turn over
       # a pipe — zero ESC bytes on stdout, exit 0; unknown --session = one-line
       # error, exit 2; then `session attach` proves the turn landed in the DB.
-      # LLM traffic goes to a throwaway SSE stub via OMENIC_LLM_BASE_URL (same
+      # LLM traffic goes to a throwaway SSE test server via OMENIC_LLM_BASE_URL (same
       # idea as plan_mode_e2e's MockOpenAi), so no API key is needed.
       - name: TUI linear pipe smoke
         run: |
@@ -63,7 +63,7 @@ jobs:
           export OMENIC_DAEMON_SOCKET="$TMP/daemon.sock"
           export OMENIC_DATA_DIR="$TMP"
 
-          cat > "$TMP/stub_openai.py" <<'PY'
+          cat > "$TMP/test_openai.py" <<'PY'
           import http.server, json, sys
 
           class H(http.server.BaseHTTPRequestHandler):
@@ -71,7 +71,7 @@ jobs:
                   n = int(self.headers.get("Content-Length") or 0)
                   self.rfile.read(n)
                   chunk = json.dumps({
-                      "choices": [{"delta": {"content": "hello from the stub backend"},
+                      "choices": [{"delta": {"content": "hello from the test backend"},
                                     "finish_reason": "stop"}]
                   })
                   body = ("data: " + chunk + "\n\n").encode()
@@ -86,7 +86,7 @@ jobs:
 
           http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
           PY
-          python3 "$TMP/stub_openai.py" 18099 &
+          python3 "$TMP/test_openai.py" 18099 &
           STUB_PID=$!
           for _ in $(seq 1 50); do
             if curl -s -m 1 -o /dev/null "http://127.0.0.1:18099/"; then
@@ -95,7 +95,7 @@ jobs:
             sleep 0.1
           done
           curl -s -m 1 -o /dev/null "http://127.0.0.1:18099/" || {
-            echo "stub backend did not come up"
+            echo "test backend did not come up"
             exit 1
           }
 
@@ -106,8 +106,8 @@ jobs:
           trap cleanup EXIT
 
           export OMENIC_LLM_BASE_URL="http://127.0.0.1:18099"
-          export OMENIC_LLM_API_KEY="stub-key"
-          export OMENIC_LLM_MODEL="stub-model"
+          export OMENIC_LLM_API_KEY="test-key"
+          export OMENIC_LLM_MODEL="test-model"
           ./target/debug/oi daemon start
 
           # 1) pipe full turn: linear echo, zero ESC bytes, exit 0
@@ -118,7 +118,7 @@ jobs:
           echo "--- linear exit=$rc ---"
           test "$rc" -eq 0
           ! grep -q $'\x1b' "$TMP/linear.out"
-          grep -q "hello from the stub backend" "$TMP/linear.out"
+          grep -q "hello from the test backend" "$TMP/linear.out"
 
           # 2) unknown --session: one-line error, exit 2, no ESC
           rc=0
@@ -137,4 +137,4 @@ jobs:
             'import json,sys; d=json.load(sys.stdin); rows = d if isinstance(d, list) else (d.get("sessions") or d.get("rows") or []); print(rows[0]["id"])')
           ./target/debug/oi session attach "$sid" | tee "$TMP/attach.out"
           grep -q "数到三" "$TMP/attach.out"
-          grep -q "hello from the stub backend" "$TMP/attach.out"
+          grep -q "hello from the test backend" "$TMP/attach.out"
