@@ -2,7 +2,8 @@
 
 use serde_json::Value;
 
-use compaction::{CharBudgetPolicy, CompactionPlugin};
+use compaction::CharBudgetPolicy;
+use plugin::plugins::CompactionPlugin;
 use plugin::{DshPlugin, EventBus, PluginContext, ServiceRegistry};
 
 #[test]
