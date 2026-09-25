@@ -63,20 +63,20 @@ fn todo_add_creates_then_updates_note_only() {
 fn todo_update_rejects_invalid_transition() {
     let (dir, store, tools) = tmp_tools();
     call(&tools, "todo_add", json!({ "title": "task" })).unwrap();
-    // Move to InProgress
+    // Move to a terminal state.
     call(
         &tools,
         "todo_update",
-        json!({ "title": "task", "status": "in_progress" }),
+        json!({ "title": "task", "status": "done" }),
     )
     .unwrap();
-    // Attempt invalid transition: InProgress -> Open (not allowed)
+    // Terminals are mutually exclusive: a done todo cannot become cancelled.
     let err = call(
         &tools,
         "todo_update",
-        json!({ "title": "task", "status": "open" }),
+        json!({ "title": "task", "status": "cancelled" }),
     )
-    .expect_err("invalid transition rejected");
+    .expect_err("done -> cancelled rejected");
     assert!(err.to_string().contains("invalid transition"));
 }
 
@@ -147,21 +147,21 @@ fn goal_link_unlink_roundtrip() {
     call(&tools, "goal_add", json!({ "title": "G" })).unwrap();
 
     // Link t1
-    let res = call(&tools, "goal_link", json!({ "goal": "G", "todos": ["t1"] })).unwrap();
+    let res = call(&tools, "goal_link", json!({ "title": "G", "todo": "t1" })).unwrap();
     assert!(res.contains("linked"));
 
     // Link t2
-    let res = call(&tools, "goal_link", json!({ "goal": "G", "todos": ["t2"] })).unwrap();
+    let res = call(&tools, "goal_link", json!({ "title": "G", "todo": "t2" })).unwrap();
     assert!(res.contains("linked"));
 
     // Unlink t1
     let res = call(
         &tools,
         "goal_link",
-        json!({ "goal": "G", "todos": [], "remove": ["t1"] }),
+        json!({ "title": "G", "todo": "t1", "unlink": true }),
     )
     .unwrap();
-    assert!(res.contains("unlinked"));
+    assert!(res.contains("linked"));
 
     let goals = store.load_goals().expect("load goals");
     let g = goals.iter().find(|g| g.title == "G").expect("goal G");
@@ -175,7 +175,7 @@ fn goal_link_missing_goal_errors() {
     let err = call(
         &tools,
         "goal_link",
-        json!({ "goal": "nonexistent", "todos": ["t"] }),
+        json!({ "title": "nonexistent", "todo": "t" }),
     )
     .expect_err("missing goal rejected");
     assert!(err.to_string().contains("not found"));
