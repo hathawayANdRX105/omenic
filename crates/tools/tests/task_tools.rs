@@ -4,6 +4,7 @@
 //! jsonl file, the real state machine, and the real registration list.
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use serde_json::{Value, json};
 use store::Store;
