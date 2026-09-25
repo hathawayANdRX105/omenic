@@ -2,7 +2,7 @@
 # find 关键字全部取自 omenic rsx 源码中的稳定 class/字面量，由
 # bin/web/tests/ui_contract.rs 的「源码锚点抽查」测试自动核对。
 name: chat
-target: crates/web/components/src/chat.rs
+target: crates/web-components/src/chat.rs
 description: 会话区（Chat / MessageItem / ProcessBlock / ToolLine）——780 消息列、用户右气泡 r22、工作过程折叠、composer 胶囊卡。
 anchors:
   - key: message-column
@@ -67,7 +67,7 @@ anchors:
     expect: '发送钮 34px 圆形 bg-brand（#679efe），流式时 disabled 半透明。'
     source: 'omenic: crates/web/components/src/chat.rs:214；dsh: InputBar.module.css:371-379（34px circle）'
   - key: tool-button-28
-    file: crates/web/components/src/ui.rs
+    file: crates/web-components/src/ui.rs
     find: 'w-7 h-7 rounded-full text-label-3'
     expect: 'composer 工具钮（附件/看板/下拉触发）28px 圆形。'
     source: 'omenic: crates/web/components/src/ui.rs:97（IconButton）；dsh: InputBar.module.css:316-324（attach 28px circle）'

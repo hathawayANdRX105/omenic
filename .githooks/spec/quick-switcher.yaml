@@ -2,7 +2,7 @@
 # find 关键字全部取自 omenic rsx 源码中的稳定 class/字面量，由
 # bin/web/tests/ui_contract.rs 的「源码锚点抽查」测试自动核对。
 name: quick-switcher
-target: crates/web/page-workspace/src/lib.rs
+target: crates/web-page-workspace/src/lib.rs
 description: 快速切换（Workspace 内 ⌘K Modal）——560px 顶部对齐、h11 搜索输入、h10 会话行、ESC 退出。
 anchors:
   - key: width
@@ -30,7 +30,7 @@ anchors:
     expect: '底部提示行「选择会话快速切换 + ESC 退出」，kbd 样式键帽。'
     source: 'omenic: crates/web/page-workspace/src/lib.rs:533-538'
   - key: cmdk-search
-    file: crates/web/components/src/sidebar.rs
+    file: crates/web-components/src/sidebar.rs
     find: 'nav-search-bar'
     expect: '入口为侧栏区头搜索钮（nav-search-bar hook），⌘K/Ctrl+K 全局触发。'
     source: 'omenic: crates/web/components/src/sidebar.rs:104 + bin/web/src/app.rs keydown'

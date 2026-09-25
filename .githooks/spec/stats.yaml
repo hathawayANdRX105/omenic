@@ -2,7 +2,7 @@
 # find 关键字全部取自 omenic rsx 源码中的稳定 class/字面量，由
 # bin/web/tests/ui_contract.rs 的「源码锚点抽查」测试自动核对。
 name: stats
-target: crates/web/page-stats/src/lib.rs
+target: crates/web-page-stats/src/lib.rs
 description: 数据统计页（StatsView）——KPI 五列卡、七列指标带、320/1fr/340 三列主体。
 anchors:
   - key: page-container

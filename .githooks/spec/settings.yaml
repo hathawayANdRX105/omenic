@@ -2,7 +2,7 @@
 # find 关键字全部取自 omenic rsx 源码中的稳定 class/字面量，由
 # bin/web/tests/ui_contract.rs 的「源码锚点抽查」测试自动核对。
 name: settings
-target: crates/web/page-config/src/lib.rs
+target: crates/web-page-config/src/lib.rs
 description: 设置弹窗（SettingsModal / ConfigForm / LlmFallbackCard / McpServersPane / AboutPane）——800 面板、188 导航、模型与渠道表单（含 Fallback Provider 卡列表）、MCP 服务器卡列表、关于页版本号。
 anchors:
   - key: modal-width
@@ -10,7 +10,7 @@ anchors:
     expect: '弹窗卡片宽 800px（Modal width_class 传入）。'
     source: 'omenic: crates/web/page-config/src/lib.rs:32；dsh: SettingsRoot 面板宽度'
   - key: modal-radius
-    file: crates/web/components/src/ui.rs
+    file: crates/web-components/src/ui.rs
     find: 'rounded-3xl border border-binv bg-layer-2 shadow-lv3'
     expect: 'Modal 卡片 r24（rounded-3xl）、layer-2 底、lv3 阴影 + blur 遮罩。'
     source: 'omenic: crates/web/components/src/ui.rs:263（Modal）；dsh: Modal r24 + mask blur 2px 规格'
