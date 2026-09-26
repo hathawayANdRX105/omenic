@@ -57,29 +57,15 @@ fn areas(app: &App, area: Rect) -> Areas {
         height: footer.y - panel_y,
     };
     // T11 搜索 overlay：问题面板之上恒 `search::OVERLAY_ROWS` 行（0 行 =
-    // 关闭；小屏按 transcript 余量夹紧）。与斜杠面板开合互斥（`slash_visible`
-    // 在 overlay 打开时恒 false），两块不会同帧同时占行。
-    let search_rows = app.search_rows().min(panel_y.saturating_sub(transcript.y));
-    let search_y = panel_y.saturating_sub(search_rows);
-    let search = Rect {
-        x: area.x,
-        y: search_y,
-        width: area.width,
-        height: panel_y - search_y,
-    };
-    // T9 斜杠面板：问题面板之上、同样从 transcript 让行（0 行 = 关闭；
-    // 行数 = 面板候选数，无命中也留 1 行提示；小屏按 transcript 余量夹紧）。
-    let slash_rows = app.slash_rows().min(search_y.saturating_sub(transcript.y));
-    let slash_y = search_y.saturating_sub(slash_rows);
-    let palette = Rect {
-        x: area.x,
-        y: slash_y,
-        width: area.width,
-        height: search_y - slash_y,
-    };
+    // 关闭）。与斜杠面板开合互斥（`slash_visible` 在 overlay 打开时恒 false），
+    // 两块不会同帧同时占行。让行几何与斜杠面板**共用** `overlay_rect`。
+    let search = overlay_rect(area, panel_y, app.search_rows(), transcript.y);
+    // T9 斜杠面板：贴在搜索 overlay 之下（0 行 = 关闭；行数 = 面板候选数，
+    // 无命中也留 1 行提示；小屏按 transcript 余量夹紧——同款几何）。
+    let palette = overlay_rect(area, search.y, app.slash_rows(), transcript.y);
     // transcript：吃掉斜杠面板 + 搜索 overlay + footer + 面板让出的行。
     let transcript = Rect {
-        height: slash_y.saturating_sub(transcript.y),
+        height: palette.y.saturating_sub(transcript.y),
         ..transcript
     };
     Areas {
@@ -89,6 +75,21 @@ fn areas(app: &App, area: Rect) -> Areas {
         palette,
         search,
         dock,
+    }
+}
+
+/// 一块贴底 overlay 的让行矩形：T9 斜杠面板与 T11 搜索 overlay 用**同一套**
+/// 几何（贴 `boundary` 底向上让 `rows` 行，小屏按 `ceiling` 余量夹紧；0 行 =
+/// 关闭，矩形 y 退回 boundary）。两块本是同一模式的两次实例（改名复制），
+/// 抽成一处后结构上不可能各自漂移。
+fn overlay_rect(area: Rect, boundary: u16, rows: u16, ceiling: u16) -> Rect {
+    let rows = rows.min(boundary.saturating_sub(ceiling));
+    let y = boundary.saturating_sub(rows);
+    Rect {
+        x: area.x,
+        y,
+        width: area.width,
+        height: boundary - y,
     }
 }
 
