@@ -182,6 +182,18 @@ pub struct RunRecord {
     pub status: Option<String>,
 }
 
+/// One image attached to a user message, stored alongside the text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attachment {
+    /// Original file name, for UI display and diagnostics only.
+    pub name: String,
+    /// Whitelisted MIME type, e.g. "image/png" — validation happens
+    /// upstream of the store.
+    pub media_type: String,
+    /// Plain base64 payload, no "data:" prefix.
+    pub data: String,
+}
+
 /// One message row, in storage order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionMessage {
@@ -193,6 +205,11 @@ pub struct SessionMessage {
     pub text: String,
     /// Unix epoch milliseconds — set when the row is appended.
     pub created_at_ms: i64,
+    /// Images attached to this message; empty when it carries none.
+    /// `#[serde(default)]` keeps payloads written before this field
+    /// deserializable as "no attachments".
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
 }
 
 // -----------------------------------------------------------------------------
@@ -305,6 +322,7 @@ async fn apply_schema(conn: &Connection) -> Result<(), SessionError> {
             role TEXT NOT NULL,
             text TEXT NOT NULL,
             created_at INTEGER NOT NULL,
+            attachments TEXT,
             PRIMARY KEY (session_id, seq),
             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
          );
@@ -378,6 +396,36 @@ async fn apply_parent_id_column(conn: &Connection) -> Result<(), SessionError> {
     .await
 }
 
+/// Add the `attachments` column to `messages` when the file predates it.
+///
+/// Same idempotent shape as [`apply_parent_id_column`]: SQLite has no
+/// `ADD COLUMN IF NOT EXISTS`, so the column list is read first and the
+/// `ALTER` runs only when the column is missing.
+///
+/// The column is a bare nullable `TEXT` with no default: legacy rows stay
+/// `NULL` and surface as "no attachments", so the migration moves no data
+/// and old session files open unchanged.
+async fn apply_messages_attachments_column(conn: &Connection) -> Result<(), SessionError> {
+    let mut rows = conn.query("PRAGMA table_info(messages)", ()).await?;
+    let mut has_attachments = false;
+    while let Some(row) = rows.next().await? {
+        // Column 1 of `table_info` is the name (0 = cid).
+        if row.get_str(1).is_ok_and(|name| name == "attachments") {
+            has_attachments = true;
+        }
+    }
+    drop(rows);
+    if has_attachments {
+        return Ok(());
+    }
+    run_with_lock_retry(|| async {
+        conn.execute_batch("ALTER TABLE messages ADD COLUMN attachments TEXT;")
+            .await?;
+        Ok(())
+    })
+    .await
+}
+
 async fn apply_pragmas(conn: &Connection) -> Result<(), SessionError> {
     conn.execute_batch("PRAGMA synchronous = NORMAL;").await?;
     Ok(())
@@ -419,6 +467,7 @@ async fn init_database(conn: &Connection) -> Result<(), SessionError> {
     apply_schema(conn).await?;
     apply_turn_log_column(conn).await?;
     apply_parent_id_column(conn).await?;
+    apply_messages_attachments_column(conn).await?;
     Ok(())
 }
 
@@ -731,6 +780,16 @@ async fn load_session_row(conn: &Connection, id: &str) -> Option<SessionSummary>
 // API: messages
 // -----------------------------------------------------------------------------
 
+/// Decode the `messages.attachments` column.
+///
+/// `NULL` (a row written before the column migration, or one with no
+/// attachments) and a malformed payload both degrade to an empty vec —
+/// one corrupted row must never fail the whole session read.
+fn parse_attachments(raw: Option<&str>) -> Vec<Attachment> {
+    raw.and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default()
+}
+
 impl SessionDb {
     /// Append a message to a session inside an `Immediate` transaction.
     /// Returns the assigned `seq` (1-based, monotonic per session) and the
@@ -739,11 +798,16 @@ impl SessionDb {
     /// Creates the session row if it does not yet exist (caller may have
     /// forgotten to `ensure_session` first; the id is used as a placeholder
     /// title).
+    ///
+    /// `attachments` are stored in the nullable `messages.attachments`
+    /// column as a JSON array; an empty slice binds `NULL` so a legacy
+    /// reader sees no attachments.
     pub fn append_message(
         &self,
         session_id: &str,
         role: SessionRole,
         text: &str,
+        attachments: &[Attachment],
     ) -> Result<(i64, i64), SessionError> {
         SessionError::invalid_id_if_blank(session_id)?;
         if text.is_empty() {
@@ -751,6 +815,14 @@ impl SessionDb {
         }
         let id_owned = session_id.to_string();
         let text_owned = text.to_string();
+        let attachments_json: Option<String> = if attachments.is_empty() {
+            None
+        } else {
+            Some(
+                serde_json::to_string(attachments)
+                    .expect("Attachment holds plain strings; serialization cannot fail"),
+            )
+        };
 
         let guard = self.inner.conn.lock();
         self.inner.runtime.block_on(async move {
@@ -794,14 +866,16 @@ impl SessionDb {
                 + 1;
 
             tx.execute(
-                "INSERT INTO messages (session_id, seq, role, text, created_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO messages \
+                 (session_id, seq, role, text, created_at, attachments) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 libsql::params![
                     id_owned.as_str(),
                     next_seq,
                     role.as_str(),
                     text_owned.as_str(),
-                    now
+                    now,
+                    attachments_json,
                 ],
             )
             .await?;
@@ -843,7 +917,7 @@ impl SessionDb {
             let conn = &*guard;
             let mut rows = conn
                 .query(
-                    "SELECT session_id, seq, role, text, created_at \
+                    "SELECT session_id, seq, role, text, created_at, attachments \
                      FROM messages WHERE session_id = ?1 \
                      ORDER BY seq DESC LIMIT ?2",
                     libsql::params![id_owned.as_str(), limit],
@@ -859,6 +933,7 @@ impl SessionDb {
                     role,
                     text: row.get(3)?,
                     created_at_ms: row.get(4)?,
+                    attachments: parse_attachments(row.get::<Option<String>>(5)?.as_deref()),
                 });
             }
             // SQL walked the tail window backwards (DESC); flip it so
@@ -901,7 +976,7 @@ impl SessionDb {
             let mut rows = match scoped_owned {
                 Some(sid) => {
                     conn.query(
-                        "SELECT session_id, seq, role, text, created_at \
+                        "SELECT session_id, seq, role, text, created_at, attachments \
                          FROM messages \
                          WHERE session_id = ?1 AND text LIKE ?2 COLLATE NOCASE \
                          ORDER BY created_at ASC, session_id ASC, seq ASC \
@@ -912,7 +987,7 @@ impl SessionDb {
                 }
                 None => {
                     conn.query(
-                        "SELECT session_id, seq, role, text, created_at \
+                        "SELECT session_id, seq, role, text, created_at, attachments \
                          FROM messages \
                          WHERE text LIKE ?1 COLLATE NOCASE \
                          ORDER BY created_at ASC, session_id ASC, seq ASC \
@@ -933,6 +1008,7 @@ impl SessionDb {
                     role,
                     text: row.get(3)?,
                     created_at_ms: row.get(4)?,
+                    attachments: parse_attachments(row.get::<Option<String>>(5)?.as_deref()),
                 });
             }
             Ok(out)

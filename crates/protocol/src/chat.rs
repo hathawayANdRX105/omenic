@@ -20,12 +20,22 @@ pub enum Role {
     Assistant,
 }
 
-/// Content block: text, tool invocation (assistant), or tool result (user).
+/// Content block: text, image, tool invocation (assistant), or tool
+/// result (user).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Block {
     Text {
         text: String,
+    },
+    /// Image block for user turns: the payload ships as a `data:` URL to
+    /// the model. Mirrors `llm::Block::Image` (field names and order).
+    Image {
+        /// MIME type, e.g. "image/png". Callers pass validated
+        /// allow-listed values.
+        media_type: String,
+        /// Bare base64 payload, no "data:" prefix.
+        data: String,
     },
     ToolUse {
         id: String,

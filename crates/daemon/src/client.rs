@@ -235,15 +235,17 @@ impl DaemonClient {
         session_id: &str,
         role: SessionRole,
         text: &str,
+        attachments: &[session::Attachment],
     ) -> Result<AppendOutcome, ClientError> {
-        self.call(
-            Command::SessionAppend,
-            json!({
-                "session_id": session_id,
-                "role": role.as_str(),
-                "text": text,
-            }),
-        )
+        let mut params = json!({
+            "session_id": session_id,
+            "role": role.as_str(),
+            "text": text,
+        });
+        if !attachments.is_empty() {
+            params["attachments"] = serde_json::to_value(attachments).unwrap_or(Value::Null);
+        }
+        self.call(Command::SessionAppend, params)
     }
 
     /// `session.load_messages` → up to `limit` messages.

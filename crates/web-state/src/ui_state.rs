@@ -125,6 +125,7 @@ impl UiState {
                 reasoning: String::new(),
                 tool_calls: vec![],
                 parts: vec![],
+                attachments: vec![],
                 timestamp: "刚刚".into(),
                 ts_epoch_ms: now_ms,
             });

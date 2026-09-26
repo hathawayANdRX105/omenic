@@ -314,6 +314,59 @@ pub async fn launch() {
         setTimeout(scrollToBottom, 150);
         observer.observe(document.body, {{ childList: true, subtree: true }});
         setupMinimap();
+
+        // ---- 附件桥：file input -> base64 JSON -> 隐藏 textarea ----
+        // LiveView 只认 input/change 事件，所以文件不进 form post，而是读成
+        // base64 后写进 #attachment-bridge，由 Rust 侧 oninput 解析。
+        // media type 一律按文件后缀推断并限白名单：伪造的 type 会进入
+        // provider 的 data: URL，daemon 侧还会再校验一次。
+        var ATTACHMENT_TYPES = {{
+            "png": "image/png",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "gif": "image/gif",
+            "webp": "image/webp",
+        }};
+        var ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+        var ATTACHMENT_MAX_COUNT = 4;
+        var bridgeEl = document.getElementById("attachment-bridge");
+        var pickerEl = document.getElementById("attachment-input");
+        if (bridgeEl && pickerEl) {{
+            pickerEl.addEventListener("change", function () {{
+                var files = Array.prototype.slice.call(pickerEl.files || []);
+                pickerEl.value = "";
+                if (files.length === 0) return;
+                var picked = [];
+                var pending = files.slice(0, ATTACHMENT_MAX_COUNT);
+                pending.forEach(function (file) {{
+                    var ext = (file.name.split(".").pop() || "").toLowerCase();
+                    var mediaType = ATTACHMENT_TYPES[ext];
+                    if (!mediaType) {{
+                        window.console && console.warn("skipped attachment with unsupported type: " + file.name);
+                        return;
+                    }}
+                    if (file.size > ATTACHMENT_MAX_BYTES) {{
+                        window.console && console.warn("skipped oversized attachment: " + file.name);
+                        return;
+                    }}
+                    var reader = new FileReader();
+                    reader.onload = function () {{
+                        var result = reader.result || "";
+                        var comma = result.indexOf(",");
+                        picked.push({{
+                            name: file.name,
+                            media_type: mediaType,
+                            data: comma >= 0 ? result.slice(comma + 1) : result,
+                        }});
+                        // 一次 change 一个 payload：读完一个发一次，服务端
+                        // 收到即替换待发列表，用户可连续选多次。
+                        bridgeEl.value = JSON.stringify(picked);
+                        bridgeEl.dispatchEvent(new Event("input", {{ bubbles: true }}));
+                    }};
+                    reader.readAsDataURL(file);
+                }});
+            }});
+        }}
     }})();
     </script>
 </body>

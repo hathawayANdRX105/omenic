@@ -116,7 +116,7 @@ pub fn run(opts: TuiOptions) -> Result<(), TuiError> {
         // 都不能漏——语义见 daemon dispatch.rs 的 G7-B set_active_run 注释。
         let rx = pump::spawn(daemon.subscribe_worker_run(&run_id).map_err(client_error)?)?;
         daemon
-            .worker_prompt_run(&sid, &run_id, &msg)
+            .worker_prompt_run(&sid, &run_id, &msg, &[])
             .map_err(client_error)?;
         // 6) 投影本轮：每事件 linear 落屏 + flush，TurnEnd 收行后落库回复。
         let mut state = UiState::default();
@@ -220,7 +220,7 @@ fn resolve_session(daemon: &WebDaemon, opts: &TuiOptions) -> Result<String, TuiE
 /// user 消息落库（`role_user = true`），必须发生在 prompt 之前。
 fn push_user_message(daemon: &WebDaemon, sid: &str, text: &str) -> Result<(), TuiError> {
     daemon
-        .append_message(sid, true, text)
+        .append_message(sid, true, text, &[])
         .map_err(client_error)?;
     Ok(())
 }
@@ -235,7 +235,7 @@ fn persist_assistant(daemon: &WebDaemon, sid: &str, state: &UiState) -> Result<(
         return Ok(());
     }
     daemon
-        .append_message(sid, false, &text)
+        .append_message(sid, false, &text, &[])
         .map_err(client_error)?;
     Ok(())
 }

@@ -87,6 +87,7 @@ fn message_user_maps_role_and_timestamp() {
         role: SessionRole::User,
         text: "你好".into(),
         created_at_ms: now as i64,
+        attachments: Vec::new(),
     };
     let c = message_to_chat(&m);
     // 字段映射：role/text/ts；id = session_id-seq；tool_calls/parts 留空
@@ -108,6 +109,7 @@ fn message_non_user_maps_to_assistant() {
         role: SessionRole::Tool,
         text: "工具输出".into(),
         created_at_ms: (now - 3_600_000) as i64,
+        attachments: Vec::new(),
     };
     let c = message_to_chat(&m);
     // 非 User 角色（system/tool/assistant）统一映射为 assistant

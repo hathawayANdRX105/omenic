@@ -661,8 +661,10 @@ impl SessionState {
         session_id: &str,
         role: SessionRole,
         text: &str,
+        attachments: &[session::Attachment],
     ) -> Result<(i64, i64), SessionError> {
-        self.inner.append_message(session_id, role, text)
+        self.inner
+            .append_message(session_id, role, text, attachments)
     }
 
     pub fn load_messages(
@@ -730,6 +732,78 @@ pub fn require_u32(params: &Value, field: &str) -> Result<u32, String> {
         .and_then(Value::as_u64)
         .map(|n| n.min(u32::MAX as u64) as u32)
         .ok_or_else(|| format!("missing required numeric field `{field}`"))
+}
+
+/// Image MIME types an attachment may claim. The RPC surface is a trust
+/// boundary (any socket client may call it) and the media type ends up in a
+/// `data:` URL the provider fetches, so the set is closed rather than
+/// passed through.
+pub const ATTACHMENT_MEDIA_TYPES: [&str; 4] =
+    ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+/// Decoded-byte ceiling per image, and the count ceiling per message: an
+/// image is base64 in the prompt params, in the transcript and in the model
+/// context, so its cost multiplies.
+const ATTACHMENT_MAX_BYTES: usize = 10 * 1024 * 1024;
+const ATTACHMENT_MAX_COUNT: usize = 4;
+
+/// Optional `attachments` field: an array of `{name, media_type, data}`
+/// with `data` a base64 payload (no `data:` prefix). A missing field means
+/// "no attachments"; a present-but-malformed field is an error rather than a
+/// silent drop, so a client that believes it attached an image learns that
+/// it did not.
+pub fn optional_attachments(params: &Value) -> Result<Vec<session::Attachment>, String> {
+    let Some(value) = params.get("attachments") else {
+        return Ok(Vec::new());
+    };
+    let Some(items) = value.as_array() else {
+        return Err("`attachments` must be an array".to_string());
+    };
+    if items.len() > ATTACHMENT_MAX_COUNT {
+        return Err(format!(
+            "at most {ATTACHMENT_MAX_COUNT} attachments per message, got {}",
+            items.len()
+        ));
+    }
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        let media_type = item
+            .get("media_type")
+            .and_then(Value::as_str)
+            .ok_or("attachment missing `media_type`")?;
+        if !ATTACHMENT_MEDIA_TYPES.contains(&media_type) {
+            return Err(format!("unsupported attachment media type `{media_type}`"));
+        }
+        let data = item
+            .get("data")
+            .and_then(Value::as_str)
+            .ok_or("attachment missing `data`")?;
+        if data.is_empty() {
+            return Err("attachment `data` is empty".to_string());
+        }
+        // `data` rides into a provider request; reject anything that is not
+        // strict base64 instead of forwarding junk that fails far downstream.
+        use base64::Engine as _;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|e| format!("attachment `data` is not valid base64: {e}"))?;
+        if decoded.len() > ATTACHMENT_MAX_BYTES {
+            return Err(format!(
+                "attachment exceeds {ATTACHMENT_MAX_BYTES} bytes (got {})",
+                decoded.len()
+            ));
+        }
+        out.push(session::Attachment {
+            name: item
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            media_type: media_type.to_string(),
+            data: data.to_string(),
+        });
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------

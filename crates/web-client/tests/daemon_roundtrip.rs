@@ -8,7 +8,7 @@
 use daemon::ClientError;
 use daemon::{Daemon, DaemonConfig};
 use web_client::daemon::WebDaemon;
-use web_state::types::SessionStatus;
+use web_state::types::{PendingAttachment, SessionStatus};
 
 #[test]
 fn daemon_roundtrip() {
@@ -34,7 +34,7 @@ fn daemon_roundtrip() {
     // create + append(user)
     wd.create_session("rt-1", "往返测试")
         .expect("create_session");
-    wd.append_message("rt-1", true, "你好，daemon")
+    wd.append_message("rt-1", true, "你好，daemon", &[])
         .expect("append user");
 
     // list 断言含该会话（存储无状态概念 → Idle）
@@ -107,4 +107,83 @@ fn update_session_title_surfaces_daemon_error() {
     }
 
     drop(server); // 停 accept 线程 + 清理 socket/lock 文件
+}
+
+/// 图片附件要跨 socket 往返：`session.append` 带上 `attachments`，
+/// `session.load_messages` 读回的必须是同一条消息同三字段。
+///
+/// Red when: web-client 侧把 `attachments` 吞掉（只发 text），或 daemon
+/// 侧解析成了空 vec —— 落库就断在第一步，resume 时模型看不到图。
+#[test]
+fn attachment_survives_socket_roundtrip() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let socket = dir.path().join("daemon.sock");
+    let server = Daemon::start(DaemonConfig {
+        socket_path: Some(socket.clone()),
+        omp_path: "omp".into(),
+        session_db_path: Some(dir.path().join("sessions.db")),
+        cwd: dir.path().to_path_buf(),
+        max_turns: 64,
+        ..Default::default()
+    })
+    .expect("启动 daemon");
+
+    let wd = WebDaemon::connect_to(&socket);
+    wd.create_session("att-1", "附件往返")
+        .expect("create_session");
+    let picked = vec![PendingAttachment {
+        name: "shot.png".into(),
+        media_type: "image/png".into(),
+        data: "aGVsbG8=".into(),
+    }];
+    wd.append_message("att-1", true, "看这张图", &picked)
+        .expect("append user with attachment");
+
+    let msgs = wd.load_messages("att-1", 10).expect("load_messages");
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0].attachments.len(), 1, "附件应随消息落库");
+    assert_eq!(msgs[0].attachments[0].name, "shot.png");
+    assert_eq!(msgs[0].attachments[0].media_type, "image/png");
+    assert_eq!(msgs[0].attachments[0].data, "aGVsbG8=");
+
+    drop(server);
+}
+
+/// daemon 必须在 RPC 边界拒掉坏附件：非白名单 media type 不能进库，
+/// 否则它会被拼进 provider 的 data: URL。
+#[test]
+fn daemon_rejects_non_image_attachment() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let socket = dir.path().join("daemon.sock");
+    let server = Daemon::start(DaemonConfig {
+        socket_path: Some(socket.clone()),
+        omp_path: "omp".into(),
+        session_db_path: Some(dir.path().join("sessions.db")),
+        cwd: dir.path().to_path_buf(),
+        max_turns: 64,
+        ..Default::default()
+    })
+    .expect("启动 daemon");
+
+    let wd = WebDaemon::connect_to(&socket);
+    wd.create_session("att-2", "坏附件")
+        .expect("create_session");
+    let bad = vec![PendingAttachment {
+        name: "payload.pdf".into(),
+        media_type: "application/pdf".into(),
+        data: "aGk=".into(),
+    }];
+    let err = wd
+        .append_message("att-2", true, "带坏附件", &bad)
+        .expect_err("daemon 应拒绝非图片附件");
+    assert!(
+        err.to_string().contains("media type"),
+        "错误应说明是 media type 问题，实际: {err}"
+    );
+
+    // 拒绝后库里不应留下这条消息。
+    let msgs = wd.load_messages("att-2", 10).expect("load_messages");
+    assert!(msgs.is_empty(), "被拒的消息不应落库");
+
+    drop(server);
 }

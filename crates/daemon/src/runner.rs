@@ -231,7 +231,9 @@ pub fn run(ctx: &Ctx, task_id: &str) -> Result<RunOutcome, RunnerError> {
     let mut events_seen = 0usize;
     let mut last_text = String::new();
 
-    let prompt_result = worker.prompt(&brief);
+    // Task briefs are text-only; attachments arrive through the interactive
+    // prompt path.
+    let prompt_result = worker.prompt(&brief, &[]);
     if let Err(e) = prompt_result {
         let _ = worker.abort();
         return Ok(RunOutcome {

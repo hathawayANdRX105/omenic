@@ -68,6 +68,7 @@ fn block_ids(m: &Message) -> Vec<(String, bool)> {
             Block::ToolUse { id, .. } => (id.clone(), true),
             Block::ToolResult { tool_use_id, .. } => (tool_use_id.clone(), false),
             Block::Text { .. } => (String::new(), false),
+            Block::Image { .. } => (String::new(), false),
         })
         .filter(|(id, _)| !id.is_empty())
         .collect()
