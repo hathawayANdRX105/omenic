@@ -362,6 +362,8 @@ pub fn builtin_tools_with_policy(policy: Policy) -> Vec<Box<dyn Tool>> {
         // Their gate is the default-off env switch resolved once per call
         // in memory_tool::memory_store.
         Box::new(memory_tool::MemoryAppendTool),
+        Box::new(memory_tool::MemorySearchTool),
+        Box::new(memory_tool::MemoryListTool),
         // Completion mark: zero side effect, no command, nothing to gate.
         // Registered unwrapped so it reaches every orbit run regardless of
         // policy (the fork subagent allow-list simply omits it).
