@@ -50,6 +50,7 @@ fn request() -> SubagentStartRequest {
         prompt: "Work forever".into(),
         signal: Arc::new(AtomicBool::new(false)),
         inherits_parent_context: false,
+        inbox: None,
     }
 }
 

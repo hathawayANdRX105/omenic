@@ -1,5 +1,7 @@
 //! Run a single subagent loop: fresh context → read-only tools → text collection.
 
+use std::collections::VecDeque;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
@@ -58,6 +60,10 @@ impl Drop for AbortGuard<'_> {
 /// Run a single subagent. Returns the collected assistant text (truncated to
 /// `MAX_SUBAGENT_RESPONSE_BYTES`) or a `SubagentError` carrying whatever was
 /// collected before the failure.
+///
+/// `inbox` is the mid-run message queue: it is drained as steering at every
+/// step boundary, so a message sent while the child runs reaches it between
+/// LLM calls without aborting the tool in flight.
 #[allow(clippy::too_many_arguments)]
 pub fn run_subagent(
     backend: &dyn LlmBackend,
@@ -68,6 +74,7 @@ pub fn run_subagent(
     signal: &AtomicBool,
     id: u32,
     event_tx: Option<&mpsc::Sender<SubagentEvent>>,
+    inbox: Option<&Mutex<VecDeque<String>>>,
 ) -> Result<String, SubagentError> {
     let _guard = AbortGuard(signal);
 
@@ -135,6 +142,19 @@ pub fn run_subagent(
         }
         let budget = max_turns - turn_count;
         turns_used.set(0);
+        // Drain the inbox as steering. Rebuilt per re-feed so the borrow
+        // stays inside one `run_agent_streaming` call.
+        let drain_inbox = || -> Vec<Message> {
+            match inbox {
+                Some(q) => q
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .drain(..)
+                    .map(|m| Message::user_text(format!("[from parent] {m}")))
+                    .collect(),
+                None => Vec::new(),
+            }
+        };
         run_agent_streaming(
             backend,
             model,
@@ -143,6 +163,7 @@ pub fn run_subagent(
             signal,
             LoopConfig {
                 max_turns: budget,
+                get_steering: Some(&drain_inbox),
                 ..LoopConfig::default()
             },
             &mut emitter,

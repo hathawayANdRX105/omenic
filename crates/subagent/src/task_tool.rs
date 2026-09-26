@@ -82,6 +82,10 @@ impl Tool for TaskTool {
                 signal,
                 0,
                 None,
+                // The `subagent` tool waits for its child, so there is no
+                // live run id to steer; the runtime-service path is the one
+                // that gets an inbox.
+                None,
             )
             .map_err(|e| ToolError::Message(format!("subagent: {e}")))?;
             return Ok(format!("## Task 1:\n{out}"));
@@ -114,6 +118,7 @@ impl Tool for TaskTool {
                     let outcome = match sem.acquire(&local) {
                         Ok(_guard) => run_subagent(
                             backend, &model, prompt, max_turns, tools, &local, idx as u32, None,
+                            None,
                         ),
                         Err(_) => Err(SubagentError::Aborted {
                             partial: String::new(),

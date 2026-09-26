@@ -117,6 +117,7 @@ fn fork_provider_returns_run() {
         prompt: "Say hello".into(),
         signal,
         inherits_parent_context: true,
+        inbox: None,
     };
     let run = provider.start(request);
     let result = run.result();
@@ -161,6 +162,7 @@ fn dispose_aborts_running_subagent() {
         prompt: "Work forever".into(),
         signal: signal.clone(),
         inherits_parent_context: true,
+        inbox: None,
     };
     let run = provider.start(request);
     // Worker is now blocked inside stream_cb. dispose flips the signal

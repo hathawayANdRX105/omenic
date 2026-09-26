@@ -47,6 +47,7 @@ fn request(prompt: &str) -> SubagentStartRequest {
         prompt: prompt.to_string(),
         signal: Arc::new(AtomicBool::new(false)),
         inherits_parent_context: false,
+        inbox: None,
     }
 }
 
