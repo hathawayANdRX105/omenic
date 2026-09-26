@@ -210,6 +210,7 @@ fn orbit_setup_with_mcp_tools_stays_clone_and_shares_the_list() {
             mcp_tools: Arc::clone(&mcp_tools),
             session_tools: Arc::new(Vec::new()),
             plan_policy_section: None,
+            aside_queue: Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
         },
     };
 

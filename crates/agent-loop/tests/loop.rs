@@ -835,3 +835,116 @@ fn follow_up_extends_the_run_past_model_endturn() {
         })
     );
 }
+
+/// Aside 与 steering 同一个 step 边界，但**不延长 run**：模型说完了就是
+/// 说完了，异步通知只是让它下次请求时知道发生了什么。
+///
+/// Red when: aside 被接成 follow-up 语义（模型停了就再逼一轮）或接到
+/// steering 之前（顺序错，模型先看到旧通知）——两种都改变了"何时知道"。
+#[test]
+fn aside_lands_at_step_boundary_without_extending_the_run() {
+    let backend = Shared(RefCell::new(Scripted::new(vec![
+        vec![
+            StreamEvent::TextDelta("done".into()),
+            StreamEvent::Done {
+                stop_reason: StopReason::EndTurn,
+            },
+        ],
+        // Must stay unconsumed: an aside never earns a second round.
+        vec![
+            StreamEvent::TextDelta("unreached".into()),
+            StreamEvent::Done {
+                stop_reason: StopReason::EndTurn,
+            },
+        ],
+    ])));
+    let queue = RefCell::new(vec![Message::user_text("[background] job-1 completed")]);
+    let mut ctx = Context {
+        system_prompt: Some("sys".into()),
+        messages: vec![Message::user_text("start")],
+    };
+    let get = || std::mem::take(&mut *queue.borrow_mut());
+    run_agent_streaming(
+        &backend,
+        &model(),
+        &mut ctx,
+        &[],
+        &sig(),
+        LoopConfig {
+            get_aside: Some(&get),
+            ..LoopConfig::default()
+        },
+        &mut |_| {},
+    );
+
+    let seen = backend.0.borrow();
+    assert_eq!(
+        seen.calls_made, 1,
+        "aside must not extend a run the model already ended"
+    );
+    // Delivered anyway: it sits in the context for the next turn.
+    assert!(
+        ctx.messages
+            .contains(&Message::user_text("[background] job-1 completed"))
+    );
+}
+
+/// Aside 在工具批次后到达，下一次模型请求必须看得到它——这是"非中断投递"
+/// 的全部意义：不打断在飞的工具，不等模型停。
+#[test]
+fn aside_arriving_mid_turn_reaches_the_next_model_call() {
+    let backend = Shared(RefCell::new(Scripted::new(vec![
+        vec![
+            StreamEvent::TextDelta("calling".into()),
+            StreamEvent::ToolCall(ToolCallSpec {
+                id: "t1".into(),
+                name: "echo".into(),
+                args: serde_json::json!({}),
+            }),
+            StreamEvent::Done {
+                stop_reason: StopReason::ToolUse,
+            },
+        ],
+        vec![
+            StreamEvent::TextDelta("seen".into()),
+            StreamEvent::Done {
+                stop_reason: StopReason::EndTurn,
+            },
+        ],
+    ])));
+    let queue = RefCell::new(Vec::<Message>::new());
+    let round = std::cell::Cell::new(0usize);
+    let get = || {
+        round.set(round.get() + 1);
+        if round.get() >= 2 {
+            vec![Message::user_text("[background] job-2 finished")]
+        } else {
+            Vec::new()
+        }
+    };
+    let mut ctx = Context {
+        system_prompt: Some("sys".into()),
+        messages: vec![Message::user_text("start")],
+    };
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
+    run_agent_streaming(
+        &backend,
+        &model(),
+        &mut ctx,
+        &tools,
+        &sig(),
+        LoopConfig {
+            get_aside: Some(&get),
+            ..LoopConfig::default()
+        },
+        &mut |_| {},
+    );
+
+    let seen = backend.0.borrow();
+    assert_eq!(seen.calls_made, 2);
+    assert_eq!(
+        seen.seen_contexts[1].messages.last(),
+        Some(&Message::user_text("[background] job-2 finished")),
+        "the model must see the aside on its next request"
+    );
+}

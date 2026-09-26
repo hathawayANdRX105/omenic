@@ -92,6 +92,14 @@ pub struct LoopConfig<'a> {
     /// model sees them before its next call. Remaining messages stay in
     /// the host queue when the loop stops.
     pub get_steering: Option<&'a dyn Fn() -> Vec<Message>>,
+    /// Pull passive notifications (a finished background job, a late
+    /// diagnostic) drained at the same step boundary as steering, but
+    /// *without* extending the run: an aside tells the model something
+    /// changed between requests, it is not a reason to keep working after
+    /// the model has already decided to stop. omp's `aside` channel
+    /// (`getAsideMessages`) is the reference: never abort in-flight tools,
+    /// never wake an idle loop.
+    pub get_aside: Option<&'a dyn Fn() -> Vec<Message>>,
     /// Pull follow-up messages (async job delivery). Checked when the
     /// model stops calling tools — a non-empty pull extends the run (the
     /// drained messages enter the context and the loop makes another
@@ -124,6 +132,7 @@ impl Default for LoopConfig<'_> {
             max_turns: DEFAULT_MAX_TURNS,
             maintain: None,
             get_steering: None,
+            get_aside: None,
             get_follow_up: None,
             instruction_cwd: None,
         }
@@ -353,6 +362,13 @@ pub fn run_agent_streaming(
         // steering at the inner-loop top, before the provider call).
         if let Some(get_steering) = config.get_steering {
             for msg in get_steering() {
+                record(context, config.context_log, msg);
+            }
+        }
+        // 0.6. Asides land at the same boundary but never keep the loop
+        // alive on their own — see `LoopConfig::get_aside`.
+        if let Some(get_aside) = config.get_aside {
+            for msg in get_aside() {
                 record(context, config.context_log, msg);
             }
         }

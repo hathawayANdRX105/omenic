@@ -306,7 +306,14 @@ impl Drop for RegistryState {
 struct Shared {
     state: Mutex<RegistryState>,
     changed: Condvar,
+    done_hook: Mutex<Option<JobDoneHook>>,
 }
+
+/// Callback fired when a job reaches a terminal state (grok `onJobDone`).
+/// Takes the summary by reference; the registry is not borrowed and the
+/// state lock is not held when it runs, so a hook may call back into the
+/// registry.
+pub type JobDoneHook = std::sync::Arc<dyn Fn(&JobSummary) + Send + Sync>;
 
 impl Shared {
     /// Mark `id` terminal and wake every `wait` caller.
@@ -372,6 +379,7 @@ impl LocalJobRegistry {
                     shutdown: false,
                 }),
                 changed: Condvar::new(),
+                done_hook: Mutex::new(None),
             }),
             max_running: AtomicU64::new(Self::MAX_RUNNING as u64),
         }
@@ -402,6 +410,20 @@ impl LocalJobRegistry {
         }
         state.jobs.clear();
         self.shared.changed.notify_all();
+    }
+
+    /// Register a hook fired once per job that reaches a terminal state.
+    ///
+    /// The hook runs on the job's own thread *after* the registry lock is
+    /// released, so a slow consumer cannot stall the registry and a hook may
+    /// re-enter it. Re-registering replaces the previous hook — one consumer
+    /// (the daemon's aside channel) is the expected shape.
+    pub fn on_job_done(&self, hook: JobDoneHook) {
+        *self
+            .shared
+            .done_hook
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(hook);
     }
 
     /// Override the running-job ceiling.
@@ -482,6 +504,22 @@ impl JobRegistry for LocalJobRegistry {
                     record_state,
                     output,
                 );
+                let summary = state
+                    .jobs
+                    .get(&id_for_thread)
+                    .map(|rec| rec.summary(&id_for_thread));
+                drop(state);
+                // Outside the lock on purpose: the hook is consumer code.
+                if let Some(hook) = shared
+                    .done_hook
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone()
+                {
+                    if let Some(summary) = summary.as_ref() {
+                        hook(summary);
+                    }
+                }
             })
             .expect("job thread spawn");
 
