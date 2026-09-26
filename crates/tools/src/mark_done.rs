@@ -1,10 +1,10 @@
 //! mark_done tool: the model's active completion mark.
 //!
 //! Zero side effect — it only tells the harness "the task is done". The
-//! real stop decision lives in the loop: when the model stops calling tools
-//! the host checks whether `mark_done` was called this run (via the tool
-//! call event) before letting the turn end. This is the freebuff
-//! `task_completed` shape: an explicit-completion gate the run must pass.
+//! loop observes the call via `LoopConfig::completion_tool` and ends the
+//! run the moment the tool result is recorded (freebuff `task_completed`
+//! shape); a *silent* stop without the mark is what the host's bare-
+//! continue guard (`LoopConfig::should_continue`) forces back to work.
 
 use std::sync::atomic::AtomicBool;
 

@@ -196,8 +196,14 @@ fn agents_md_from_container_cwd_reaches_the_backend() {
         "run must terminate"
     );
 
-    let s = backend.0.lock().unwrap();
-    assert_eq!(s.calls, 1, "exactly one LLM round-trip");
+    // The scripted "ok" turn is a bare stop without mark_done, so the
+    // host's completion guard may bare-continue it up to MARK_GUARD_MAX_FIRES
+    // (2) times before the run ends unmarked: 1..=3 round-trips.
+    assert!(
+        (1..=3).contains(&s.calls),
+        "LLM round-trips out of 1..=3: {}",
+        s.calls
+    );
     let prompt = s.seen[0].system_prompt.as_deref().unwrap_or("");
     let heading = format!("Instructions from: {}", agents_md.display());
     assert!(

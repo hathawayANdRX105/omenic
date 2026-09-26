@@ -556,6 +556,7 @@ impl OrbitEngine {
                                         false
                                     }
                                 }),
+                                completion_tool: Some(&|name| name == "mark_done"),
                                 instruction_cwd: run_cwd.as_deref(),
                             },
                             &mut |ev| {

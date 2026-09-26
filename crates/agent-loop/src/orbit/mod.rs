@@ -115,6 +115,13 @@ pub struct LoopConfig<'a> {
     /// most this one extra round, then the run ends unmarked. `None`
     /// (default) keeps the pre-hook behavior: empty follow-ups end the run.
     pub should_continue: Option<&'a dyn Fn() -> bool>,
+    /// Detects explicit-completion marker tools (freebuff `task_completed`
+    /// shape, e.g. `mark_done`): when the model calls one, the run ends the
+    /// moment that tool's result is recorded — no further LLM round-trip is
+    /// owed, unlike a bare stop which the host may still continue via
+    /// [`Self::should_continue`]. `None` (default) disables the marker: the
+    /// run ends only through the bare-stop / error / abort / cap paths.
+    pub completion_tool: Option<&'a dyn Fn(&str) -> bool>,
     /// Working directory whose ancestor chain is searched for `AGENTS.md`
     /// workspace instructions when the caller left `Context.system_prompt`
     /// unset (harness `instruction` crate, called directly here — plugin /
@@ -143,6 +150,7 @@ pub const MAX_SAME_ERROR: u32 = 10;
 impl Default for LoopConfig<'_> {
     fn default() -> Self {
         LoopConfig {
+            completion_tool: None,
             context_log: None,
             max_turns: DEFAULT_MAX_TURNS,
             maintain: None,
@@ -565,6 +573,19 @@ pub fn run_agent_streaming(
 
         let msg = Message::tool_results(&results);
         record(context, config.context_log, msg);
+
+        // 8. Explicit completion: a marker tool (e.g. mark_done) ends the
+        // run here — the model confirmed the task is done, so no further
+        // LLM round is owed (unlike a bare stop the host may continue).
+        let marked = tool_calls
+            .iter()
+            .any(|tc| config.completion_tool.map_or(false, |f| f(&tc.name)));
+        if marked {
+            emit(AgentEvent::TurnEnd {
+                stop_reason: TurnStop::EndTurn,
+            });
+            return;
+        }
     }
 }
 
