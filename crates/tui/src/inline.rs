@@ -707,6 +707,9 @@ fn drive(
     out: &mut impl Write,
 ) -> Result<(), TuiError> {
     let mut app = App::new();
+    // T9：斜杠命令面板 enhanced 专属（route §3 T9）——inline 关闸，行首 `/`
+    // 保持 T8 普通文本语义（不补全、不当命令拦截、不产生本地输出）。
+    app.disable_slash();
     app.start_session(sid, Vec::new());
     app.set_model(footer::configured_model());
     if let Ok(summary) = client.stats_summary(STATS_RANGE) {

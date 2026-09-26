@@ -20,6 +20,7 @@ use web_state::types::{ChatMessage, MessagePart, format_duration_ms, now_epoch_m
 use web_state::ui_state::{AgentEvent, UiState};
 
 use crate::scroll::ScrollModel;
+use crate::slash::{self, Action, Intent};
 use crate::termguard::{CrosstermOps, TermGuard};
 use crate::ui::footer;
 use crate::ui::questions::{AnswerRequest, QuestionPanel};
@@ -38,6 +39,10 @@ const STATS_SYNC: Duration = Duration::from_secs(2);
 
 /// T3：`stats.summary` 的统计窗口（footer 只用其中的半开 run 计数）。
 const STATS_RANGE: &str = "24h";
+
+/// T9：`/theme` 回显文案（主题能力现状：TUI 只有内置单套命名色，见
+/// `theme.rs` D11；`/theme` 切换是 T17 的活——编不到就不编，明说没有）。
+const THEME_LINE: &str = "theme: default — palette switching not available yet";
 
 // --- T7 鼠标滚轮归一化常数（route §3 T7；出处 grok-build refs
 // `xai-grok-pager-render/src/input/mouse.rs:63-76`，四常数与量纲由
@@ -147,12 +152,28 @@ pub struct App {
     /// T7：上次缓出冲刷时刻（[`REDRAW_CADENCE_MS`] 下限判定；`None` = 尚未
     /// 冲刷过，首刷不等节流）。
     wheel_flushed: Option<Instant>,
+    /// T9：斜杠面板抑制态（Escape 关闭 / 第一段 Enter 补全后置位；composer
+    /// 再次编辑即复位重新武装，见 [`Self::slash_edited`]）。
+    slash_suppressed: bool,
+    /// T9：面板高亮游标（编辑回顶；读取时按候选数夹紧，见 [`Self::slash_selected`]）。
+    slash_selected: usize,
+    /// T9：斜杠命令总闸（enhanced 恒开；inline 档 [`Self::disable_slash`]
+    /// 关闸——面板 enhanced 专属，route §3 T9）。
+    slash_enabled: bool,
+    /// T9：命令意图出站队列（`App` 无 IO：入队不出手，事件循环按
+    /// [`Self::take_intent`] 消费，picker/RPC 归它）。
+    intents: VecDeque<slash::Intent>,
 }
 
 impl App {
     /// 空会话状态（事件循环与测试的同一入口）。
     pub fn new() -> Self {
-        Self::default()
+        // T9：斜杠总闸默认开（`#[derive(Default)]` 的 bool 落 false，这里
+        // 显式翻开；inline 档随后 [`Self::disable_slash`] 关闸）。
+        Self {
+            slash_enabled: true,
+            ..Self::default()
+        }
     }
 
     /// 喂一个字符按键（测试与事件循环共用的打字辅助）。
@@ -163,6 +184,60 @@ impl App {
     /// composer 当前行。
     pub fn input(&self) -> &str {
         &self.input
+    }
+
+    /// T9：斜杠面板是否可见（总闸开 + 整行以 `/` 开头 + 未被抑制——非行首
+    /// `/` 永不触发，route §3 T9）。面板渲染与按键短路都读这一个判据。
+    pub fn slash_visible(&self) -> bool {
+        self.slash_enabled && !self.slash_suppressed && self.input.starts_with('/')
+    }
+
+    /// T9：面板候选（注册表按 composer 整行模糊过滤，保持注册表顺序；
+    /// 总闸关 = 空）。面板可见时的导航、补全与渲染共用这一份。
+    pub fn slash_matches(&self) -> Vec<&'static slash::Command> {
+        if !self.slash_enabled {
+            return Vec::new();
+        }
+        slash::filter(&self.input)
+    }
+
+    /// T9：高亮候选（按 [`Self::slash_matches`] 夹紧后的游标项；面板隐藏
+    /// 或无命中 = `None`）。
+    pub fn slash_selected(&self) -> Option<&'static slash::Command> {
+        if !self.slash_visible() {
+            return None;
+        }
+        let matches = self.slash_matches();
+        matches.get(self.slash_cursor(matches.len())).copied()
+    }
+
+    /// T9：面板占行数（0 = 关闭不占行；无命中也占 1 行提示——`ui::areas`
+    /// 按这个数从 transcript 让行）。
+    pub fn slash_rows(&self) -> u16 {
+        if !self.slash_visible() {
+            return 0;
+        }
+        self.slash_matches().len().max(1) as u16
+    }
+
+    /// T9：取走一条命令意图（事件循环消费；无 = `None`）。
+    pub fn take_intent(&mut self) -> Option<slash::Intent> {
+        self.intents.pop_front()
+    }
+
+    /// T9：关掉斜杠面板（inline 档专用：面板 enhanced 专属，行首 `/` 在
+    /// inline 保持 T8 普通文本语义——不补全、不当命令拦截）。
+    pub fn disable_slash(&mut self) {
+        self.slash_enabled = false;
+    }
+
+    /// T9：面板高亮游标的夹紧位置（候选空 = 0）。
+    fn slash_cursor(&self, len: usize) -> usize {
+        if len == 0 {
+            0
+        } else {
+            self.slash_selected.min(len - 1)
+        }
     }
 
     /// 本轮是否在跑。
@@ -466,6 +541,15 @@ impl App {
         if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
             return KeyAction::None;
         }
+        // T9：面板可见时的短路路由（dh-rs 分流结构，任务书 §2 实录）：导航 /
+        // 第一段补全 / Esc 关面板在这里**早 return**——补全与执行被
+        // [`Self::slash_complete`] 的单臂出口隔开，fencing 结构上不可能双触发。
+        // 编辑键、ctrl 键、翻页键不拦截，落回下面的既有路由。
+        if self.slash_visible()
+            && let Some(action) = self.slash_key(key)
+        {
+            return action;
+        }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             // 退出/中断双键与确认态：先于一切编辑路由。
@@ -495,6 +579,7 @@ impl App {
             KeyCode::Tab => self.tools_expanded = !self.tools_expanded,
             KeyCode::Backspace => {
                 self.input.pop();
+                self.slash_edited();
                 self.history_pos = None;
             }
             KeyCode::Up => self.history_back(),
@@ -510,6 +595,7 @@ impl App {
             KeyCode::Char('u') if ctrl && self.input.is_empty() => self.viewport.half_up(),
             KeyCode::Char(c) if !ctrl => {
                 self.input.push(c);
+                self.slash_edited();
                 self.history_pos = None;
             }
             _ => {}
@@ -529,16 +615,158 @@ impl App {
         KeyAction::None
     }
 
-    /// Enter：非空（trim 后）进历史 + 出站队列；空/纯空白只清行不提交
+    /// T9：面板可见时的短路键——返回 `Some` = 已拦截（[`Self::handle_key`]
+    /// 早 return），`None` = 不归面板管，落回既有路由（编辑键、ctrl 键、
+    /// 翻页键都在那一侧）。
+    fn slash_key(&mut self, key: KeyEvent) -> Option<KeyAction> {
+        match key.code {
+            // Esc：只关面板（composer 原文保留）；不进退出确认、不碰中断
+            // 路由——想 abort 再按一次（面板已关）就回到既有语义。
+            KeyCode::Esc => {
+                self.slash_suppressed = true;
+                Some(KeyAction::None)
+            }
+            // 第一段 Enter：选中项补全进 composer（执行是第二段的事）。
+            KeyCode::Enter => self.slash_complete(),
+            KeyCode::Up | KeyCode::BackTab => {
+                self.slash_move(-1);
+                Some(KeyAction::None)
+            }
+            // Tab 归面板导航（面板可见时不翻工具卡，关面板后恢复原路由）。
+            KeyCode::Down | KeyCode::Tab => {
+                self.slash_move(1);
+                Some(KeyAction::None)
+            }
+            _ => None,
+        }
+    }
+
+    /// T9：第一段 Enter——补全高亮项并抑制面板，**只补全不执行**：本臂的
+    /// 早 return 就是 fencing（第二段 Enter 面板已关，才走 [`Self::submit_line`]
+    /// 执行）。无命中（如 `/zz`）不拦截：落回提交路由报「未知命令」，不发消息。
+    fn slash_complete(&mut self) -> Option<KeyAction> {
+        let matches = self.slash_matches();
+        let selected = matches.get(self.slash_cursor(matches.len()))?;
+        self.input = selected.name.to_string();
+        self.slash_suppressed = true;
+        self.slash_selected = 0;
+        Some(KeyAction::None)
+    }
+
+    /// T9：面板游标移动（候选空 = no-op；到顶/到底夹紧，不环绕）。
+    fn slash_move(&mut self, delta: i32) {
+        let len = self.slash_matches().len();
+        if len == 0 {
+            return;
+        }
+        let cursor = self.slash_cursor(len) as i32;
+        self.slash_selected = cursor.saturating_add(delta).clamp(0, len as i32 - 1) as usize;
+    }
+
+    /// T9：composer 编辑 → 面板复位（解除抑制重新武装 + 游标回顶）。
+    fn slash_edited(&mut self) {
+        self.slash_suppressed = false;
+        self.slash_selected = 0;
+    }
+
+    /// Enter：面板可见时第一段只补全（[`Self::slash_complete`]）；否则——
+    /// 整行 trim 后命中注册表 → **本地执行**（不进 prompt 提交路径、不产生
+    /// 模型回合，route §3 T9）；行首未知 `/` → 状态行报未知命令、原文留在
+    /// composer（同样不发消息）；其余照旧：非空进历史 + 出站队列，空行只清行
     /// （route §3：Enter 空串不提交——空行误发由这里挡）。
     fn submit_line(&mut self) {
         let text = std::mem::take(&mut self.input);
         self.history_pos = None;
-        if text.trim().is_empty() {
+        self.slash_suppressed = false;
+        self.slash_selected = 0;
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
             return;
+        }
+        if self.slash_enabled {
+            if let Some(cmd) = slash::find(trimmed) {
+                self.run_command(cmd);
+                return;
+            }
+            if trimmed.starts_with('/') {
+                // 未知斜杠行：不发消息，原文留给用户改，活动行可见。
+                let status = format!("unknown command: {trimmed}");
+                self.input = text;
+                self.set_status(status);
+                return;
+            }
         }
         self.history.push(text.clone());
         self.outgoing.push_back(text);
+    }
+
+    /// T9：本地执行一条注册命令（首批全是本地/面板语义）：不入出站队列、
+    /// 不碰 prompt 提交路径——命令执行不产生模型回合。
+    fn run_command(&mut self, cmd: &slash::Command) {
+        match cmd.action {
+            // 输出遍历注册表生成（面板与 /help 同源，见 `slash::help_text`）。
+            Action::Help => self.push_local(&slash::help_text()),
+            // 回显 footer 同源的运行时配置（`footer::configured_model`）：
+            // TUI 没有模型选择能力，只报真值不编造。
+            Action::Model => {
+                let model = if self.model.is_empty() {
+                    "unset".to_string()
+                } else {
+                    self.model.clone()
+                };
+                self.push_local(&format!("model: {model}"));
+            }
+            // 主题能力现状回显：TUI 只有一套内置命名色（D11），切换是 T17
+            // 的活——编不到就明说没有切换能力。
+            Action::Theme => self.push_local(THEME_LINE),
+            // 视图清屏（只清本地投影；运行中禁——落库源就在这张表里）。
+            Action::Clear => {
+                if self.running {
+                    self.set_status("clear unavailable while running");
+                } else {
+                    self.clear_view();
+                }
+            }
+            // 会话导航：入意图队列，picker 由事件循环开（App 无 IO）。
+            Action::Sessions => {
+                if self.running {
+                    self.set_status("sessions unavailable while running");
+                } else {
+                    self.intents.push_back(Intent::OpenSessions);
+                }
+            }
+        }
+    }
+
+    /// T9：`/clear` 清本地视图（route §3「视图清屏」）：只清 transcript 投影
+    /// 与滚动，daemon 侧会话数据不动（回填走切会话的 `load_history`）。
+    fn clear_view(&mut self) {
+        self.ui = UiState::default();
+        self.scroll = 0;
+        self.viewport.reset();
+    }
+
+    /// T9：一条本地输出进 transcript（`system` 角色：与 user/assistant 区分，
+    /// 渲染走无前缀正文；`persist_assistant` 只挑 `assistant`，它永不落库）。
+    ///
+    /// 流式进行中 `messages.last()` 必须保持 `assistant`——`UiState::apply`
+    /// 的 `last_assistant_or_placeholder` 按最后一条的 role 决定增量落在哪，
+    /// 追加到它后面会把本轮回复劈成两条（后半截丢落库）。故本轮在跑且最后
+    /// 一条是 assistant 时插到它前面；其余情形直接追加。
+    fn push_local(&mut self, text: &str) {
+        let msg = local_message(text);
+        let streaming = self.running
+            && self
+                .ui
+                .messages
+                .last()
+                .is_some_and(|m| m.role == "assistant");
+        if streaming {
+            let at = self.ui.messages.len() - 1;
+            self.ui.messages.insert(at, msg);
+        } else {
+            self.ui.push_message(msg);
+        }
     }
 
     /// ↑：往回翻历史（首触时暂存草稿）；到最老一条停住，不越界。
@@ -580,6 +808,22 @@ fn user_message(text: &str) -> ChatMessage {
     ChatMessage {
         id: format!("user-{now}"),
         role: "user".to_string(),
+        content: text.to_string(),
+        reasoning: String::new(),
+        tool_calls: vec![],
+        parts: vec![MessagePart::Text(text.to_string())],
+        timestamp: String::new(),
+        ts_epoch_ms: now,
+    }
+}
+
+/// T9：本地命令输出的投影（`system` 角色——渲染走无前缀正文，
+/// `persist_assistant` 的 assistant 过滤天然跳过它，永不落库）。
+fn local_message(text: &str) -> ChatMessage {
+    let now = now_epoch_ms();
+    ChatMessage {
+        id: format!("local-{now}"),
+        role: "system".to_string(),
         content: text.to_string(),
         reasoning: String::new(),
         tool_calls: vec![],
@@ -737,6 +981,22 @@ fn event_loop(
                 },
                 // resize/paste/focus 不改状态。
                 _ => {}
+            }
+        }
+        // T9：斜杠命令意图（`App` 无 IO，picker 归事件循环开）：与 Ctrl+K
+        // 同一落点、同一「运行中不开」口径；切台后的 run 作用域红线照旧
+        //（旧 run 流随接收端丢弃）。
+        while let Some(intent) = app.take_intent() {
+            match intent {
+                Intent::OpenSessions => {
+                    if !app.is_running()
+                        && let Some(picked) = crate::ui::session_picker::run_picker(client, "")?
+                    {
+                        let history = crate::ui::session_picker::load_history(client, &picked)?;
+                        app.switch_session(&picked, history);
+                        run_rx = None; // 旧 run 流随接收端丢弃（T4 红线）
+                    }
+                }
             }
         }
         // T7 drain tick：50ms 轮询每次醒来冲刷滚轮队列（idle 时队列也能
