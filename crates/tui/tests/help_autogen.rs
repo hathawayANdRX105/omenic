@@ -1,7 +1,7 @@
 //! help_autogen — handoff §4 ⑤（jcode 口径）：`/help` 输出**遍历注册表**
 //! 生成——新注册命令不可能缺席帮助。硬编码命令清单会让这里红。
 //!
-//! 三层断言：① 首批五条就位（集合/顺序钉死）；② `help_text()` 覆盖注册表
+//! 三层断言：① 首批六条就位（集合/顺序钉死）；② `help_text()` 覆盖注册表
 //! 每一项的名称与描述、行数 = 表头 + 条数；③ 真正执行 `/help`（两段 Enter）
 //! 后 transcript 的输出同样覆盖全集，且不产生模型回合。
 
@@ -10,8 +10,16 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use omenic_tui::app::App;
 use omenic_tui::slash::{self, COMMANDS};
 
-/// T9 首批五条（route §3 T9 定的命令集；增删注册表必红这一行）。
-const FIRST_BATCH: [&str; 5] = ["/help", "/clear", "/model", "/sessions", "/theme"];
+/// T9 首批五条 + T11 `/search`（route §3 T9/T11 定的命令集；增删注册表
+/// 必红这一行）。
+const FIRST_BATCH: [&str; 6] = [
+    "/help",
+    "/clear",
+    "/model",
+    "/sessions",
+    "/theme",
+    "/search",
+];
 
 fn type_str(app: &mut App, text: &str) {
     for c in text.chars() {

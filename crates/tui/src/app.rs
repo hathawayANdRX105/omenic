@@ -20,6 +20,7 @@ use web_state::types::{ChatMessage, MessagePart, format_duration_ms, now_epoch_m
 use web_state::ui_state::{AgentEvent, UiState};
 
 use crate::scroll::ScrollModel;
+use crate::search::{self, SearchState};
 use crate::slash::{self, Action, Intent};
 use crate::termguard::{CrosstermOps, TermGuard};
 use crate::ui::footer;
@@ -179,15 +180,27 @@ pub struct App {
     /// T9：命令意图出站队列（`App` 无 IO：入队不出手，事件循环按
     /// [`Self::take_intent`] 消费，picker/RPC 归它）。
     intents: VecDeque<slash::Intent>,
+    /// T11：搜索 overlay 状态（开合/查询/命中/视口快照，route §3 T11；
+    /// 键路由短路与 `ui::areas` 让行都读它，见 [`Self::search_open`]）。
+    search: SearchState,
+    /// T11：overlay 总闸（enhanced 恒开；inline 档 [`Self::disable_search`]
+    /// 关闸——overlay 仅 enhanced，回看/搜索/复制归终端，同 `disable_slash`
+    /// 口径）。
+    search_enabled: bool,
+    /// T6/T11：最近一次 `ui::sync_viewport` 的 transcript 列宽（命中行
+    /// 定位按这个宽度断行；0 = 尚未喂过几何，跳转 no-op）。
+    view_width: u16,
 }
 
 impl App {
     /// 空会话状态（事件循环与测试的同一入口）。
     pub fn new() -> Self {
-        // T9：斜杠总闸默认开（`#[derive(Default)]` 的 bool 落 false，这里
-        // 显式翻开；inline 档随后 [`Self::disable_slash`] 关闸）。
+        // T9：斜杠总闸默认开、T11：搜索 overlay 总闸默认开（`#[derive(Default)]`
+        // 的 bool 落 false，这里显式翻开；inline 档随后 [`Self::disable_slash`] /
+        // [`Self::disable_search`] 关闸）。
         Self {
             slash_enabled: true,
+            search_enabled: true,
             ..Self::default()
         }
     }
@@ -204,8 +217,13 @@ impl App {
 
     /// T9：斜杠面板是否可见（总闸开 + 整行以 `/` 开头 + 未被抑制——非行首
     /// `/` 永不触发，route §3 T9）。面板渲染与按键短路都读这一个判据。
+    /// T11：搜索 overlay 打开时面板让位（overlay 短路了全部按键，面板此刻
+    /// 既不可操作也不该叠着渲染——开合两态互斥，composer 原文不受影响）。
     pub fn slash_visible(&self) -> bool {
-        self.slash_enabled && !self.slash_suppressed && self.input.starts_with('/')
+        self.slash_enabled
+            && !self.search_open()
+            && !self.slash_suppressed
+            && self.input.starts_with('/')
     }
 
     /// T9：面板候选（注册表按 composer 整行模糊过滤，保持注册表顺序；
@@ -254,6 +272,168 @@ impl App {
         } else {
             self.slash_selected.min(len - 1)
         }
+    }
+
+    // --- T11 转录搜索 overlay（route §3 T11；状态在 [`SearchState`]，
+    // RPC 归事件循环，本组是观察缝与开合落点） ---
+
+    /// T11：overlay 是否打开（键路由短路与 `ui::areas` 让行的同一判据）。
+    pub fn search_open(&self) -> bool {
+        self.search.is_open()
+    }
+
+    /// T11：overlay 占行数（0 = 关闭；开 = [`search::OVERLAY_ROWS`]，
+    /// `ui::areas` 按这个数从 transcript 让行——渲染与让行同源，
+    /// 同 [`Self::slash_rows`] 口径）。
+    pub fn search_rows(&self) -> u16 {
+        if self.search_open() {
+            search::OVERLAY_ROWS
+        } else {
+            0
+        }
+    }
+
+    /// T11：只读观察缝（渲染与测试读查询词 / 命中 / 状态文案 / 视口快照）。
+    pub fn search_state(&self) -> &SearchState {
+        &self.search
+    }
+
+    /// T11：事件循环的取数判据——打开 + 查询变更 + 非空词。空查询不发
+    /// RPC（存储侧空查询是 `InvalidSearchQuery` 错误；状态行显 `type to
+    /// search`，不冒充无命中）。
+    pub fn search_needs_fetch(&self) -> bool {
+        self.search_open() && self.search.dirty() && !self.search.query().trim().is_empty()
+    }
+
+    /// T11：查询词（事件循环取走发 RPC；返回 owned 避免与 `&mut self`
+    /// 的后续注入撞借用）。
+    pub fn search_query(&self) -> String {
+        self.search.query().to_string()
+    }
+
+    /// T11：注入 `session.search` 回执——把命中映射到当前 transcript 的
+    /// 消息下标（[`search::map_hits`]），并记上触顶标志（`FETCH_LIMIT`
+    /// 打满 = 结果可能截断，状态行 `N+ matches` 不装全量）。
+    pub fn set_search_hits(&mut self, rows: Vec<ChatMessage>) {
+        let capped = rows.len() as u32 >= search::FETCH_LIMIT;
+        let hits = search::map_hits(&self.ui.messages, &rows);
+        self.search.set_hits(hits, capped);
+    }
+
+    /// T11：取数失败可见（真值安全：状态行报错，不静默、不假装无命中）。
+    pub fn set_search_error(&mut self, message: impl Into<String>) {
+        self.search.set_error(message.into());
+    }
+
+    /// T11：inline 档关闸（route §3 T8 设计注记：回看/搜索/复制全归终端，
+    /// overlay 仅 enhanced；同 [`Self::disable_slash`] 口径——关闸后 Ctrl+R
+    /// 与 `/search` 都不产生 overlay，键位行为与合入前一致）。
+    pub fn disable_search(&mut self) {
+        self.search_enabled = false;
+    }
+
+    /// T11：开 overlay（Ctrl+R 与 `/search` 的**同一落点**，双入口等效由
+    /// `tests/search_overlay.rs` 钉）：快照当前视口供 ESC 还原（bug 本体：
+    /// 搜索后滚动位置丢失）、复位查询与命中、撤掉未决退出确认（dock 提示
+    /// 承诺 other key cancels，开 overlay 也算 other key）。总闸关 /
+    /// 已打开 = no-op。
+    pub fn open_search(&mut self) {
+        if !self.search_enabled || self.search.is_open() {
+            return;
+        }
+        self.confirm_quit = false;
+        self.search.open(self.viewport);
+    }
+
+    /// T11：关 overlay（ESC 落点）：交还打开前的视口快照——`close` 先取
+    /// 快照再复位状态，写回视口后下一次 `sync_viewport` 按当时几何 clamp，
+    /// offset/follow 原样回来（bug：搜索后滚动位置丢失的修复正本）。
+    pub fn close_search(&mut self) {
+        if let Some(saved) = self.search.close() {
+            *self.viewport_mut() = saved;
+        }
+    }
+
+    /// T11：视图整体更换（切会话 / 清屏）：命中行号与视口快照全部作废，
+    /// overlay 一并收掉——调用方随后 reset 视口，不走 [`Self::close_search`]
+    /// 的还原语义（旧台的滚动位置没有意义）。
+    pub fn forget_search(&mut self) {
+        self.search.forget();
+    }
+
+    /// T11：overlay 打开时的整段短路路由（[`Self::handle_key`] 最先分派，
+    /// 同 T4 picker 的分流结构）：查询编辑 / 命中导航 / ESC 关闭在这里
+    /// 收口，composer、退出确认、翻页键、Ctrl+K、Ctrl+C/D 一律不漏——
+    /// 全部返回 [`KeyAction::None`]（不产生退出/中断/入队副作用）。
+    fn search_key(&mut self, key: KeyEvent) -> KeyAction {
+        match key.code {
+            // ESC：关 overlay + 还原视口（本任务 bug 正本）。
+            KeyCode::Esc => self.close_search(),
+            // 导航：Enter 下一条 / Shift+Enter 上一条（循环边界）。
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.search_step(true);
+            }
+            KeyCode::Enter => self.search_step(false),
+            // 查询编辑：普通字符入词、退格删词（Alt/Ctrl 组合落 `_` 吞掉）。
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.search.edit(|query| query.push(c));
+            }
+            KeyCode::Backspace => self.search.edit(|query| {
+                query.pop();
+            }),
+            // 其余键（翻页/历史/提交/退出/切换/工具卡…）一律吞掉：overlay
+            // 期间没有 composer 语义，按键提示在 overlay 状态行自述。
+            _ => {}
+        }
+        KeyAction::None
+    }
+
+    /// T11：跳上/下一条命中并把视口定位到该行（跳转即滚动定位，复用 T6
+    /// 视口 API——[`SearchState::step`] 算目标，[`Self::jump_to_hit`] 落位；
+    /// 无命中 = 不动视口）。
+    fn search_step(&mut self, back: bool) {
+        if let Some(index) = self.search.step(back) {
+            self.jump_to_hit(index);
+        }
+    }
+
+    /// T11：把视口挪到命中行——行坐标 = [`crate::ui::search_overlay::line_offset`]
+    /// （命中消息之前的渲染行数，transcript 断行核心只读复用），落位走
+    /// [`ScrollModel::scroll_lines`]（视口首行差值；clamp / 脱钩语义全在
+    /// 既有模型里，不发明新边界）。命中不在视图（`msg = None`）或几何未
+    /// 喂过（`view_width = 0`）= 跳转 no-op，不编造行号。
+    fn jump_to_hit(&mut self, index: usize) {
+        let Some(hit) = self.search.hits().get(index) else {
+            return;
+        };
+        let Some(msg) = hit.msg else {
+            return;
+        };
+        if self.view_width == 0 {
+            return;
+        }
+        let line = crate::ui::search_overlay::line_offset(
+            &self.ui.messages,
+            self.tools_expanded,
+            msg,
+            self.view_width,
+        );
+        let top = {
+            let view = &self.viewport;
+            view.view_top(view.total(), view.height())
+        };
+        let delta = (line as i64 - top as i64).clamp(i32::MIN as i64, i32::MAX as i64);
+        self.viewport.scroll_lines(delta as i32);
+    }
+
+    /// T6/T11：`ui::sync_viewport` 喂本帧几何时同步记录列宽（命中行定位
+    /// 的断行坐标；测试走同一入口，不绕开模型自己算宽度）。
+    pub(crate) fn set_view_width(&mut self, width: u16) {
+        self.view_width = width;
     }
 
     /// 本轮是否在跑。
@@ -545,6 +725,10 @@ impl App {
         self.status.clear();
         self.confirm_quit = false;
         self.scroll = 0;
+        // T11：切台 = 视图整体更换——搜索命中/视口快照随旧台作废，overlay
+        // 一并收掉（不走 [`Self::close_search`] 的还原语义：旧台的滚动
+        // 位置没有意义，下面的 reset 才是新台基准）。
+        self.forget_search();
         self.viewport.reset();
         // T7：上一台的滚轮待出行数不许滚进新会话视图（否则新会话钉底刚
         // 回填就被旧队列拽着脱钩）；冲刷节流记账保留（pacing 是全局的）。
@@ -569,6 +753,12 @@ impl App {
         if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
             return KeyAction::None;
         }
+        // T11：搜索 overlay 打开 = 整段短路（最前分派，早于斜杠面板与一切
+        // composer/退出/滚动路由——overlay 期间没有 composer 语义，按键
+        // 全部在 [`Self::search_key`] 收口，不产生退出/中断/入队副作用）。
+        if self.search_open() {
+            return self.search_key(key);
+        }
         // T9：面板可见时的短路路由（dh-rs 分流结构，任务书 §2 实录）：导航 /
         // 第一段补全 / Esc 关面板在这里**早 return**——补全与执行被
         // [`Self::slash_complete`] 的单臂出口隔开，fencing 结构上不可能双触发。
@@ -586,6 +776,13 @@ impl App {
             // Ctrl+D 只在 composer 为空时是退出（非空 = 忽略，不吞输入）。
             KeyCode::Char('d') if ctrl && self.input.is_empty() => return KeyAction::Quit,
             KeyCode::Char('d') if ctrl => return KeyAction::None,
+            // T11：Ctrl+R 开搜索 overlay（route §3 T11 双入口之一，与
+            // `/search` 同落点 [`Self::open_search`]；总闸关 = no-op，
+            // 键位与合入前一致）。落回普通字符前拦，别让它进 composer。
+            KeyCode::Char('r' | 'R') if ctrl => {
+                self.open_search();
+                return KeyAction::None;
+            }
             _ => {}
         }
         // 其余任何键先撤掉未决退出确认（提示行承诺 other key cancels）。
@@ -797,6 +994,9 @@ impl App {
                     self.intents.push_back(Intent::OpenSessions);
                 }
             }
+            // T11：转录搜索 overlay（与 Ctrl+R 同一落点——双入口等效由
+            // `tests/search_overlay.rs` 钉；总闸关 = no-op）。
+            Action::Search => self.open_search(),
         }
     }
 
@@ -805,6 +1005,9 @@ impl App {
     fn clear_view(&mut self) {
         self.ui = UiState::default();
         self.scroll = 0;
+        // T11：命中行号与视口快照全部作废，overlay 一并收掉（视图清空后
+        // 旧命中/旧快照都没有意义）。
+        self.forget_search();
         self.viewport.reset();
     }
 
@@ -1031,8 +1234,10 @@ fn event_loop(
             match event::read()? {
                 Event::Key(key) => {
                     // 会话切换键：空闲才开 picker（运行中忽略——排队 prompt 会跟着
-                    // 搬进新会话，正是 T4 红线要防的事故）。
-                    if switch_key(key) {
+                    // 搬进新会话，正是 T4 红线要防的事故）。T11：搜索 overlay
+                    // 打开时也让位——overlay 短路了全部按键，Ctrl+K 不该绕过它
+                    // 把 picker 叠上来（按键先落 `handle_key` 的 overlay 分派）。
+                    if switch_key(key) && !app.search_open() {
                         if !app.is_running()
                             && let Some(picked) = crate::ui::session_picker::run_picker(client, "")?
                         {
@@ -1077,6 +1282,18 @@ fn event_loop(
                         run_rx = None; // 旧 run 流随接收端丢弃（T4 红线）
                     }
                 }
+            }
+        }
+        // T11：搜索取数（`App` 无 IO，同意图队列的分工）——查询变更才发
+        // `session.search`（scope = 当前会话，`FETCH_LIMIT` 上限），回执里
+        // 的命中下标映射由 `App::set_search_hits` 收口；失败进状态行（真值
+        // 安全，不静默不冒充无命中）。同步阻塞与 picker 同量级（服务端
+        // LIKE 子串查询），不另起线程。
+        if app.search_needs_fetch() {
+            let query = app.search_query();
+            match client.search_messages(&query, app.session_id(), search::FETCH_LIMIT) {
+                Ok(rows) => app.set_search_hits(rows),
+                Err(err) => app.set_search_error(err.to_string()),
             }
         }
         // T7 drain tick：50ms 轮询每次醒来冲刷滚轮队列（idle 时队列也能

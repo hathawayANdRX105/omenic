@@ -711,6 +711,10 @@ fn drive(
     // T9：斜杠命令面板 enhanced 专属（route §3 T9）——inline 关闸，行首 `/`
     // 保持 T8 普通文本语义（不补全、不当命令拦截、不产生本地输出）。
     app.disable_slash();
+    // T11：搜索 overlay 同样 enhanced 专属（route §3 T8 设计注记：回看/
+    // 搜索/复制全归终端）——inline 关闸，Ctrl+R 与 `/search` 都不产生
+    // overlay，键位行为与合入前一致。
+    app.disable_search();
     app.start_session(sid, Vec::new());
     app.set_model(footer::configured_model());
     if let Ok(summary) = client.stats_summary(STATS_RANGE) {

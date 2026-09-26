@@ -103,6 +103,20 @@ impl WebDaemon {
         Ok(out)
     }
 
+    /// `session.search` 的**会话内**（scope）版本：`T11` 转录搜索唯一出口
+    /// ——按消息文本搜一个会话，命中按 storage 顺序（`created_at/seq` 升序）
+    /// 映射回 UI 消息形状。excerpt 与高亮区间由 TUI 客户端按 query 现算，
+    /// 协议不需要 excerpt/分页字段（`limit` 即分页上限，打满由调用方标注）。
+    pub fn search_messages(
+        &self,
+        query: &str,
+        scope: &str,
+        limit: u32,
+    ) -> Result<Vec<ChatMessage>, ClientError> {
+        let rows = self.client.session_search(query, Some(scope), limit)?;
+        Ok(rows.iter().map(message_to_chat).collect())
+    }
+
     /// 新建会话（存储侧幂等：已存在的 id 原样返回原行）。
     pub fn create_session(&self, sid: &str, title: &str) -> Result<(), ClientError> {
         self.create_session_with_parent(sid, title, None)

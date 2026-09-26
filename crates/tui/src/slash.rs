@@ -28,6 +28,8 @@ pub enum Action {
     Sessions,
     /// `/theme`：回显当前主题。
     Theme,
+    /// `/search`：开 T11 转录搜索 overlay（与 Ctrl+R 同一落点）。
+    Search,
 }
 
 /// 需要事件循环做 IO 的命令意图（[`App`](crate::app::App) 是无 IO 纯状态：
@@ -76,6 +78,13 @@ pub const COMMANDS: &[Command] = &[
         name: "/theme",
         description: "show the current theme",
         action: Action::Theme,
+    },
+    // T11：追加在**表尾**（首批五条之外的第 6 条）——顺序即面板默认顺序，
+    // `tests/help_autogen.rs` / `tests/slash_palette.rs` 的登记行同步 +1。
+    Command {
+        name: "/search",
+        description: "search the transcript (Ctrl+R)",
+        action: Action::Search,
     },
 ];
 

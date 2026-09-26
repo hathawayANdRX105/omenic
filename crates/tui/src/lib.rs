@@ -24,6 +24,7 @@ mod pump;
 pub mod app;
 pub mod inline;
 pub mod scroll;
+pub mod search;
 pub mod slash;
 pub mod termguard;
 pub mod theme;
