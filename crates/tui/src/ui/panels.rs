@@ -5,8 +5,9 @@
 //! 是 `oi task` CLI（handoff F3），本模块连按键都不接。
 //!
 //! 渲染位置由调用方（`app.rs` 的 draw 接缝）决定：[`render`] 自己按
-//! [`layout::split`] 算出可见 transcript 区（扣除 T3 问题面板 + footer
-//! 两层让行）、贴其底部铺行，dock 之上、不改 [`super::draw`] 的既有布局。
+//! [`layout::split`] 算出可见 transcript 区（扣除 T3 问题面板 + footer +
+//! T9 斜杠面板三层让行）、贴其底部铺行，dock 之上、不改 [`super::draw`]
+//! 的既有布局。
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -92,8 +93,9 @@ pub fn render(frame: &mut Frame, app: &App, snapshot: &PanelSnapshot) {
     }
     let (transcript, dock) = layout::split(frame.area(), app.queued().is_some());
     // T3 三明治让行（与 `ui::draw` 同一套算术）：footer 恒 1 行（dock 压底
-    // 时才有）+ 问题面板实占行——可见 transcript 底 = 原始底减去这两层。
-    let reserved = u16::from(dock.y > 0) + app.questions().rows();
+    // 时才有）+ 问题面板实占行 + T9 斜杠面板行——可见 transcript 底 = 原始
+    // 底减去这三层（斜杠面板开着时任务卡要再往上让，不许盖住候选行）。
+    let reserved = u16::from(dock.y > 0) + app.questions().rows() + app.slash_rows();
     let bottom = (transcript.y + transcript.height).saturating_sub(reserved);
     let avail = bottom.saturating_sub(transcript.y);
     if avail == 0 {

@@ -75,7 +75,9 @@ fn dock_layout_fits_80x24_and_44x20() {
         // 四件套齐全且自上而下：transcript → 活动 → 排队 → composer → hints。
         let transcript = row("❯ hello");
         let activity = row("● running");
-        let queued = row("queued: second");
+        // T10：排队行显计数（route §3 `queued: n`，n = 队列条数=1），
+        // 行显隐与顺序契约（活动 < 排队 < composer）不变。
+        let queued = row("queued: 1");
         let composer = row("> world");
         let hints = row("history");
 

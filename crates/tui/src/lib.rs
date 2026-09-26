@@ -2,9 +2,12 @@
 //!
 //! 纯 daemon 客户端（route §2 铁律）：探针裁决模式（[`mode`] / [`probe`]），
 //! 经 `web-client` 的 [`WebDaemon`] 订阅 worker 事件，独立泵线程进
-//! mpsc（[`pump`]）→ [`UiState::apply`] 投影 → 两个渲染器共用同一投影：
+//! mpsc（[`pump`]）→ [`UiState::apply`] 投影 → 渲染器共用同一投影：
 //! linear 裸写 stdout（零 ESC 字节），enhanced 走 ratatui 全屏
-//! （[`app::run_enhanced`]，termguard 进出 + theme 样式 + dock 按键）。
+//! （[`app::run_enhanced`]，termguard 进出 + theme 样式 + dock 按键 +
+//! T9 斜杠命令面板 [`slash`]），
+//! inline（T8 第四档）走原生 scrollback 轨（[`inline`]，写即定稿 + 底部
+//! 两行 dock）。
 //!
 //! 只依赖 `web-client` + `web-state`：路由面走 client 门面，
 //! 不 import daemon 协议层；wire 帧统一过 `WireTranslator`。
@@ -19,7 +22,9 @@ mod probe;
 mod pump;
 
 pub mod app;
+pub mod inline;
 pub mod scroll;
+pub mod slash;
 pub mod termguard;
 pub mod theme;
 pub mod ui;
@@ -40,7 +45,7 @@ use web_state::ui_state::{AgentEvent, UiState};
 /// `oi tui` 运行选项（CLI 解析后传入；route §3 契约字段，不许改）。
 #[derive(Debug, Clone)]
 pub struct TuiOptions {
-    /// 请求档位（auto/enhanced/linear）；裁决见 [`resolve_mode`]。
+    /// 请求档位（auto/enhanced/inline/linear）；裁决见 [`resolve_mode`]。
     pub mode: TuiMode,
     /// 指定已有会话 id；不存在 → [`TuiError::SessionNotFound`]（退出码 2）。
     pub session: Option<String>,
@@ -70,7 +75,8 @@ pub enum TuiError {
 }
 
 /// 跑 `oi tui`（route §3 签名，不许改）：探针 → 裁决 → 分派渲染器——
-/// enhanced 走 [`app::run_enhanced`] 全屏外壳，linear 走「解析会话 →
+/// enhanced 走 [`app::run_enhanced`] 全屏外壳，inline（T8 第四档）走
+/// [`inline::run_inline`] 原生 scrollback 轨，linear 走「解析会话 →
 /// 读行 → 落库 → 订阅 → prompt → 投影到 TurnEnd」循环，EOF 干净退出 0。
 pub fn run(opts: TuiOptions) -> Result<(), TuiError> {
     // 1) 探针：`--no-color` / `NO_COLOR` 都折进 color，resolve 只看快照。
@@ -86,6 +92,12 @@ pub fn run(opts: TuiOptions) -> Result<(), TuiError> {
             "daemon unreachable: daemon socket not found (try `oi daemon start`)".to_string(),
         )
     })?;
+    // T8 第四档（route §3 T8 设计注记 ①）：只有显式 `--tui inline` 会走到
+    // 这（auto 永不选 inline）；与 enhanced 共用会话级事件流订阅。
+    if let TuiMode::Inline = mode {
+        let rx = spawn_worker_stream(&daemon)?;
+        return inline::run_inline(opts, daemon, rx);
+    }
     // 4) enhanced：一次会话级订阅喂全程（多次 prompt 的事件同流进，
     //    断线 = 泵收线 = 退出码 3），分派全屏外壳。
     if let TuiMode::Enhanced = mode {

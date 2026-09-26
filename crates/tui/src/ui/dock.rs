@@ -17,8 +17,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let rows = dock_rows(app.queued().is_some());
     let chunks = Layout::vertical(vec![Constraint::Length(1); rows as usize]).split(area);
     frame.render_widget(Paragraph::new(activity(app)), chunks[0]);
-    if let Some(queued) = app.queued() {
-        frame.render_widget(Paragraph::new(queue_line(queued)), chunks[1]);
+    if app.queued().is_some() {
+        frame.render_widget(Paragraph::new(queue_line(app.queued_count())), chunks[1]);
     }
     composer::render(frame, chunks[chunks.len() - 2], app);
     frame.render_widget(Paragraph::new(hints(app)), chunks[chunks.len() - 1]);
@@ -38,11 +38,13 @@ fn activity(app: &App) -> Line<'static> {
     ))
 }
 
-/// 排队 prompt：运行中按 Enter 的消息，等本轮 TurnEnd 后自动出站。
-fn queue_line(queued: &str) -> Line<'static> {
+/// 排队计数（route §3 T10 `queued: n`，n = 队列条数：入队/召回/消费三点
+/// 都走 [`App::queued_count`]）。只显计数不预览正文——dh-rs dock 的
+/// `Next turn queued | n items` 同口径（看内容用首行 ↑ 召回）。
+fn queue_line(count: usize) -> Line<'static> {
     Line::from(vec![
         Span::styled("queued: ", theme::brand_bold()),
-        Span::styled(queued.to_string(), theme::dim()),
+        Span::styled(count.to_string(), theme::dim()),
     ])
 }
 
