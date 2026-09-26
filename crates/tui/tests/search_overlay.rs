@@ -80,18 +80,24 @@ fn view_top(app: &App) -> usize {
     view.view_top(view.total(), view.height())
 }
 
-/// 一条单行历史消息（id 与 `session.search` 回执同口径 `{sid}-{seq}`）。
-fn line_msg(i: usize) -> ChatMessage {
+/// 单行历史消息的通用构造（三处构造点共用一份字段序列：无推理、无工具、
+/// 无附件、零时间戳——变的只有 id / 角色 / 正文）。
+fn mk_msg(id: String, role: &str, content: String) -> ChatMessage {
     ChatMessage {
-        id: format!("s-1-{i:03}"),
-        role: "user".to_string(),
-        content: format!("mid-{i:03}"),
+        id,
+        role: role.to_string(),
+        content,
         reasoning: String::new(),
         tool_calls: vec![],
         parts: vec![],
         timestamp: String::new(),
         ts_epoch_ms: 0,
     }
+}
+
+/// 一条单行历史消息（id 与 `session.search` 回执同口径 `{sid}-{seq}`）。
+fn line_msg(i: usize) -> ChatMessage {
+    mk_msg(format!("s-1-{i:03}"), "user", format!("mid-{i:03}"))
 }
 
 /// 60 条单行历史（每条 1 行 → total 60；80×24 视口 20 行、max 40）。
@@ -253,16 +259,7 @@ fn no_match_state_is_explicit() {
     capped.handle_key(ctrl('r'));
     type_str(&mut capped, "mid");
     let flood: Vec<ChatMessage> = (0..search::FETCH_LIMIT as usize)
-        .map(|i| ChatMessage {
-            id: format!("remote-{i}"),
-            role: "assistant".to_string(),
-            content: format!("mid-{i}"),
-            reasoning: String::new(),
-            tool_calls: vec![],
-            parts: vec![],
-            timestamp: String::new(),
-            ts_epoch_ms: 0,
-        })
+        .map(|i| mk_msg(format!("remote-{i}"), "assistant", format!("mid-{i}")))
         .collect();
     capped.set_search_hits(flood);
     assert_eq!(
@@ -473,16 +470,11 @@ fn jump_positions_and_highlights_hit_line() {
 
     // ④ 渲染：查询行与状态行上屏，composer 行不长出查询词。
     type_str(&mut app, "needle");
-    app.set_search_hits(vec![ChatMessage {
-        id: "s-1-000".to_string(),
-        role: "user".to_string(),
-        content: "a needle in the haystack".to_string(),
-        reasoning: String::new(),
-        tool_calls: vec![],
-        parts: vec![],
-        timestamp: String::new(),
-        ts_epoch_ms: 0,
-    }]);
+    app.set_search_hits(vec![mk_msg(
+        "s-1-000".to_string(),
+        "user",
+        "a needle in the haystack".to_string(),
+    )]);
     let shown = screen(&app);
     assert!(shown.contains("> needle"), "查询行上屏:\n{shown}");
     assert!(shown.contains("1 matches"), "状态行计数上屏:\n{shown}");
