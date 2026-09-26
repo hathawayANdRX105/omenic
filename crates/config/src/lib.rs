@@ -71,6 +71,10 @@ pub struct Config {
     /// Cap on LLM round-trips per run for the orbit engine. `None` = the
     /// loop's own default (`[daemon] max_turns`, or `OMENIC_MAX_TURNS`).
     pub max_turns: Option<usize>,
+    /// `[tui] notify_osc9` — besides the bell, emit an OSC9 notification
+    /// when a long turn batch completes. Off by default: the bell is the
+    /// primary channel and OSC9 delivery varies by terminal.
+    pub tui_notify_osc9: bool,
 }
 
 /// One external MCP server: a stdio child process (`command`), or a running
@@ -325,6 +329,7 @@ impl Config {
             memory_dir: None,
             cwd: Self::default_cwd(),
             max_turns: None,
+            tui_notify_osc9: false,
         };
 
         // Load from TOML file (.oi/config.toml, legacy fallback omenic.toml);

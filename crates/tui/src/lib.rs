@@ -24,6 +24,7 @@ mod pump;
 pub mod app;
 pub mod autostart;
 pub mod inline;
+pub mod notify;
 pub mod scroll;
 pub mod search;
 pub mod slash;
@@ -37,6 +38,7 @@ pub use probe::{MuxKind, TermProbe};
 
 use std::io::{BufRead, Write};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::time::Instant;
 
 use web_client::ClientError;
 use web_client::daemon::WebDaemon;
@@ -108,6 +110,11 @@ pub fn run(opts: TuiOptions) -> Result<(), TuiError> {
     }
     // 5) linear（T1 基线不动）：解析会话 → 交互循环。
     let sid = resolve_session(&daemon, &opts)?;
+    // T15：OSC9 开关启动读定（route §1 已知坑：不热载；读不到按默认关）。
+    // linear 无出站队列：一个 prompt 就是一个批次（任务书 §3 裁决 1 的
+    // 「队列排空段」在本档退化为单 turn）。
+    let mut batch = notify::BatchNotify::new();
+    batch.set_osc9(notify::osc9_from_config());
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
     let mut line = String::new();
@@ -129,14 +136,32 @@ pub fn run(opts: TuiOptions) -> Result<(), TuiError> {
         // 先订阅后 prompt（route §3 边界）：prompt 返回即可能开跑，事件一帧
         // 都不能漏——语义见 daemon dispatch.rs 的 G7-B set_active_run 注释。
         let rx = pump::spawn(daemon.subscribe_worker_run(&run_id).map_err(client_error)?)?;
+        // T15：批次起点 = 出站派发（任务书 §3 裁决 1）。
+        batch.note_dispatch(Instant::now());
         daemon
             .worker_prompt_run(&sid, &run_id, &msg, &[])
             .map_err(client_error)?;
         // 6) 投影本轮：每事件 linear 落屏 + flush，TurnEnd 收行后落库回复。
         let mut state = UiState::default();
         render_until_turn_end(&mut state, &rx)?;
+        // T15：TurnEnd = 批次完成（linear 队列恒空）→ 阈值判定恰好一次，
+        // 写出走接线层旁路（linear「零 ESC 字节」是渲染层约束，通知字节
+        // 不经 render_linear_line）。
+        batch.note_turn_end(true, Instant::now());
+        if let Some(bytes) = batch.take_bytes() {
+            write_raw(&bytes)?;
+        }
         persist_assistant(&daemon, &sid, &state)?;
     }
+}
+
+/// 接线层 stdout 裸字节写出 + flush（T12 OSC52 与 T15 通知共用的旁路写
+/// 点）：通知 / 剪贴板这类终端控制字节直接落 stdout，不经渲染器——linear
+/// 的「零 ESC 字节」约束只管 `render_linear_line` 的输出。
+pub(crate) fn write_raw(bytes: &[u8]) -> Result<(), TuiError> {
+    let mut out = std::io::stdout().lock();
+    out.write_all(bytes).map_err(TuiError::Io)?;
+    out.flush().map_err(TuiError::Io)
 }
 
 /// 起会话级 worker 事件泵（enhanced 用）：一条 `subscribe_worker` 长连接

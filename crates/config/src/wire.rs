@@ -28,6 +28,8 @@ pub(crate) struct TomlConfig {
     daemon: DaemonToml,
     #[serde(default)]
     subagent: SubagentToml,
+    #[serde(default)]
+    tui: TuiToml,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -43,6 +45,15 @@ pub(crate) struct DaemonToml {
     cwd: Option<String>,
     /// Cap on LLM round-trips per run.
     max_turns: Option<u64>,
+}
+
+/// `[tui]` TOML section: terminal front-end knobs (T15 completion
+/// notification). Absent field keeps the default (off).
+#[derive(Debug, Default, serde::Deserialize)]
+pub(crate) struct TuiToml {
+    /// Emit an OSC9 notification (besides the bell) when a long turn
+    /// batch completes.
+    notify_osc9: Option<bool>,
 }
 
 /// `[llm]` TOML section for direct LLM credentials. `fallbacks` is a list
@@ -158,6 +169,9 @@ impl TomlConfig {
             // field is u64 because TOML integers are. usize::try_from keeps a
             // too-large value out of the config instead of wrapping it.
             base.max_turns = usize::try_from(v).ok();
+        }
+        if let Some(v) = self.tui.notify_osc9 {
+            base.tui_notify_osc9 = v;
         }
         base
     }

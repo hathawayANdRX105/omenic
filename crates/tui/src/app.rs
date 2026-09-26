@@ -19,6 +19,7 @@ use web_client::{QuestionAnswer, QuestionItem};
 use web_state::types::{ChatMessage, MessagePart, format_duration_ms, now_epoch_ms};
 use web_state::ui_state::{AgentEvent, UiState};
 
+use crate::notify::BatchNotify;
 use crate::scroll::ScrollModel;
 use crate::search::{self, SearchState};
 use crate::slash::{self, Action, Intent};
@@ -218,6 +219,11 @@ pub struct App {
     /// ——App 无 IO，事件循环 [`Self::take_rewind`] 消费（同 T12
     /// [`Self::take_truncate`] 的分工）。
     rewind_pending: Option<(i64, i64)>,
+    /// T15：完成通知批次状态机——出站派发（[`Self::take_prompt`]）、可打印
+    /// 输入（[`Self::handle_key`]）、`TurnEnd`（[`Self::note_turn_end`]）三个
+    /// 钩子收口在 App，事件循环 [`Self::take_notice`] 取字节旁路写 stdout
+    ///（同 T12 [`Self::take_copy`] 的无 IO 分工）。
+    notify: BatchNotify,
     /// T6/T11：最近一次 `ui::sync_viewport` 的 transcript 列宽（命中行
     /// 定位按这个宽度断行；0 = 尚未喂过几何，跳转 no-op）。
     view_width: u16,
@@ -507,6 +513,27 @@ impl App {
         self.rewind_pending.take()
     }
 
+    // --- T15 完成通知（route §3 T15；状态机在 [`BatchNotify`]，本组是
+    // 观察缝与事件循环的消费口） ---
+
+    /// T15：取走批次完成通知字节（事件循环 / inline 循环消费去写 stdout；
+    /// App 无 IO，同 [`Self::take_copy`] 的分工）。
+    pub fn take_notice(&mut self) -> Option<Vec<u8>> {
+        self.notify.take_bytes()
+    }
+
+    /// T15：OSC9 开关注入（事件循环启动读定一次，见
+    /// [`crate::notify::osc9_from_config`]；不热载）。
+    pub fn set_notify_osc9(&mut self, on: bool) {
+        self.notify.set_osc9(on);
+    }
+
+    /// T15：通知状态机只读观察缝（渲染与测试读响铃次数 / 抑制标志 /
+    /// 批次在途——任务书 §4「状态行或计数可见」的断言口径）。
+    pub fn notify(&self) -> &BatchNotify {
+        &self.notify
+    }
+
     /// T12：出站消息落库回执——把本地投影里刚推的那条 user 消息 id 回填成
     /// ledger 口径 `{session_id}-{seq}`（`message_to_chat` 同一套序号）。
     /// retry/edit 的 seq 只认这个口径：不回填就只认得历史回填的消息，
@@ -621,6 +648,12 @@ impl App {
     /// 帧随之被 [`Self::apply_run_event`] 拒收）；队首 prompt 随即具备
     /// 出站资格。
     pub fn note_turn_end(&mut self) {
+        self.note_turn_end_at(Instant::now());
+    }
+
+    /// T15：[`Self::note_turn_end`] 的时钟注入缝（测试不真睡阈值，T7
+    /// `wheel_tick(now)` 同款范式）——清理语义与批次判定共用同一入口。
+    pub fn note_turn_end_at(&mut self, now: Instant) {
         self.running = false;
         // T13：确认态的提示行（`discard n turn(s)? [y/n]`）不许被迟到的
         // TurnEnd 清掉——模态问题面板还在等 y/n，清了就没提示可读了。
@@ -630,6 +663,10 @@ impl App {
         }
         self.run_started = None;
         self.current_run = None;
+        // T15：此刻队列为空 = 队列排空段的最终 TurnEnd（任务书 §3 裁决 1），
+        // 批次收口、阈值与抑制的判定在状态机里恰好发生一次；队列非空 =
+        // T10 还会逐放后续 prompt，批次继续（中间 TurnEnd 不产生通知）。
+        self.notify.note_turn_end(self.outgoing.is_empty(), now);
     }
 
     /// 出站队列头（文本视图，空闲才出队）。语义同
@@ -659,7 +696,11 @@ impl App {
         if self.rewind_confirm.take().is_some() {
             self.status = "rewind cancelled — turn running".to_string();
         }
-        self.run_started = Some(Instant::now());
+        let now = Instant::now();
+        self.run_started = Some(now);
+        // T15：出站派发 = 批次计时起点（任务书 §3 裁决 1；批次已在途则
+        // 状态机原样保留计时与抑制——连续排队 prompt 同属一个批次）。
+        self.notify.note_dispatch(now);
         self.ui.push_message(user_message(&text));
         let session_id = self.session_id.clone();
         let run_id = self.fresh_run_id();
@@ -963,6 +1004,10 @@ impl App {
                 self.input.push(c);
                 self.slash_edited();
                 self.history_pos = None;
+                // T15：批次进行中的可打印输入 → 本批次通知抑制（任务书 §3
+                // 裁决 4；下一批次首个派发重新武装）。Backspace / ↑↓ 等
+                // 非可打印键不算「正在输入」。
+                self.notify.note_input();
             }
             _ => {}
         }
@@ -1617,11 +1662,13 @@ fn visible_text(msg: &ChatMessage) -> String {
 // 数值字面量都在禁令里（裸字节与文本形态同罚）——ESC、BEL 一律用十进制
 // const 拼装，base64 查表也只用十进制下标。
 
-/// ESC（十进制 27）：OSC 转义序列的开场字节。
-const OSC_ESC: u8 = 27;
+/// ESC（十进制 27）：OSC 转义序列的开场字节（OSC52 与 T15 OSC9 共用，
+/// `pub(crate)` 供 `notify` 拼装）。
+pub(crate) const OSC_ESC: u8 = 27;
 
-/// BEL（十进制 7）：OSC52 序列的终止字节。
-const OSC_BEL: u8 = 7;
+/// BEL（十进制 7）：OSC 序列的终止字节，也是 T15 完成通知的响铃字节
+/// （同样 `pub(crate)` 供 `notify` 复用，不另立同值常量）。
+pub(crate) const OSC_BEL: u8 = 7;
 
 /// T12：正文 → OSC52 序列字节（`ESC ] 52 ; c ; <base64> BEL`，`c` = 剪贴板
 /// 选择，dsh/jcode 同款目标）。序列化为纯函数，测试直接钉字节形状。
@@ -1634,13 +1681,11 @@ pub fn osc52_bytes(text: &str) -> Vec<u8> {
     out
 }
 
-/// T12：把一条 copy 写到 stdout（事件循环消费 [`App::take_copy`]）——写完
-/// 刷缓冲，OSC52 才赶在下一帧重绘前进终端。
+/// T12：把一条 copy 写到 stdout（事件循环消费 [`App::take_copy`]）——写出
+/// + flush 与 T15 通知共用 [`crate::write_raw`]，OSC52 才赶在下一帧重绘前
+/// 进终端。
 fn write_osc52(text: &str) -> Result<(), TuiError> {
-    use std::io::Write as _;
-    let mut out = std::io::stdout().lock();
-    out.write_all(&osc52_bytes(text)).map_err(TuiError::Io)?;
-    out.flush().map_err(TuiError::Io)
+    crate::write_raw(&osc52_bytes(text))
 }
 
 /// 标准 base64（RFC 4648 含 padding）——OSC52 的载荷格式。手写是为了不给
@@ -1739,6 +1784,9 @@ fn event_loop(
     // T3：footer 的 model 段读运行时配置（一次性）；问题面板先吃一帧
     // pending 快照——订阅建立前已提交的问题不漏（route §3 消费 pending）。
     app.set_model(footer::configured_model());
+    // T15：OSC9 开关启动读定（route §1 已知坑：不热载；配置读不到按默认
+    // 关，不 panic 不刷错误）。
+    app.set_notify_osc9(crate::notify::osc9_from_config());
     if let Ok(items) = client.pending_questions() {
         app.set_pending_questions(items);
     }
@@ -1764,6 +1812,12 @@ fn event_loop(
         // 退出：不能假装复制成功（同 prompt 落库的真值口径）。
         while let Some(text) = app.take_copy() {
             write_osc52(&text)?;
+        }
+        // T15：批次完成通知（BEL / 附 OSC9）——App 无 IO，字节从接线层
+        // 旁路写 stdout（同 T12 OSC52 的写出口径，写出 + flush 归
+        // [`crate::write_raw`]）。
+        while let Some(bytes) = app.take_notice() {
+            crate::write_raw(&bytes)?;
         }
         // T13：确认后的回退动作（`App` 无 IO，同 T12 [`Self::take_truncate`]
         // 的分工）——先发 `session.rewind`（快照 + 截断单事务），成功再
