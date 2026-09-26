@@ -16,8 +16,15 @@ use omenic_tui::slash;
 use omenic_tui::ui;
 use web_state::ui_state::AgentEvent;
 
-/// T9 首批五条（顺序 = 面板默认顺序）。
-const FIRST_BATCH: [&str; 5] = ["/help", "/clear", "/model", "/sessions", "/theme"];
+/// T9 首批五条 + T11 `/search`（顺序 = 面板默认顺序）。
+const FIRST_BATCH: [&str; 6] = [
+    "/help",
+    "/clear",
+    "/model",
+    "/sessions",
+    "/theme",
+    "/search",
+];
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
@@ -113,7 +120,7 @@ fn palette_opens_only_at_line_start() {
     let mut app = App::new();
     type_str(&mut app, "/");
     assert!(app.slash_visible(), "行首 `/` 触发面板");
-    assert_eq!(app.slash_rows(), FIRST_BATCH.len() as u16, "起步全量五行");
+    assert_eq!(app.slash_rows(), FIRST_BATCH.len() as u16, "起步全量六行");
     app.handle_key(key(KeyCode::Backspace));
     assert!(!app.slash_visible(), "删掉行首 `/` 收起面板");
 
@@ -142,11 +149,18 @@ fn fuzzy_filter_hits_and_misses() {
         FIRST_BATCH,
         "空查询 = 注册表全量（表序即面板序）"
     );
-    assert_eq!(matches("/se"), ["/sessions"], "子序列命中唯一项");
+    // T11：`/search` 登记后 `/se` 不再唯一——子序列同时命中 `/sessions`
+    // 与 `/search`（注册表顺序：sessions 在前、search 追加在表尾）。
+    assert_eq!(
+        matches("/se"),
+        ["/sessions", "/search"],
+        "子序列命中按表序返回多条"
+    );
+    assert_eq!(matches("/sear"), ["/search"], "更长子序列收敛到唯一项");
     assert_eq!(matches("/the"), ["/theme"], "/theme 唯一命中");
     assert_eq!(matches("/cl"), ["/clear"], "/clear 唯一命中");
     assert_eq!(matches("/hp"), ["/help"], "非子串子序列也算命中");
-    assert_eq!(matches("/SE"), ["/sessions"], "大小写不敏感");
+    assert_eq!(matches("/SE"), ["/sessions", "/search"], "大小写不敏感");
     assert!(
         matches("/zzz").is_empty(),
         "无命中 = 空候选（不许悄悄回退到全量）"
@@ -180,13 +194,16 @@ fn palette_navigation_and_escape_restore_composer() {
     assert_eq!(highlighted(&app), Some("/sessions"));
     app.handle_key(key(KeyCode::Down));
     assert_eq!(highlighted(&app), Some("/theme"));
+    // T11：`/search` 是表尾第 6 条，到底夹紧点随之后移一位。
     app.handle_key(key(KeyCode::Down));
-    assert_eq!(highlighted(&app), Some("/theme"), "到底夹紧不环绕");
+    assert_eq!(highlighted(&app), Some("/search"));
+    app.handle_key(key(KeyCode::Down));
+    assert_eq!(highlighted(&app), Some("/search"), "到底夹紧不环绕");
     app.handle_key(key(KeyCode::BackTab));
-    assert_eq!(highlighted(&app), Some("/sessions"));
+    assert_eq!(highlighted(&app), Some("/theme"));
     app.handle_key(key(KeyCode::Up));
-    assert_eq!(highlighted(&app), Some("/model"));
-    for _ in 0..3 {
+    assert_eq!(highlighted(&app), Some("/sessions"));
+    for _ in 0..4 {
         app.handle_key(key(KeyCode::Up));
     }
     assert_eq!(highlighted(&app), Some("/help"), "到顶夹紧不环绕");
