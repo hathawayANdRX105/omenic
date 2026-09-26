@@ -1,11 +1,14 @@
 @import "tailwindcss";
 
 /* Scan Dioxus rsx source for class candidates (Rust macro strings).
-   NOTE: build.rs rewrites the first source-directive line to an absolute
-   path; keep this bin/web line first. The crates line is resolved relative
-   to the generated input (bin/web/.tailwind.gen-input.css) → repo/crates. */
+   build.rs strips every `@source` line from this file and emits two absolute
+   directives instead (this crate's rsx source dir, plus the merged web-ui
+   crate's rsx source dir), because Tailwind v4.3 only resolves a relative
+   `@source` glob when it has an explicit `./` prefix and against the
+   generated-input dir, which is fragile. The two lines below are documented
+   intent; build.rs ignores them. */
 @source "../src/**/*.rs";
-@source "../../crates/web/**/*.rs";
+@source "../../crates/web-ui/**/*.rs";
 
 /* ── dsh design tokens (dark theme), replicating ui-theme/design-platform.css ──
    static: neutral-bluish scale; brand: deepseek blues; alias: dark-mode values.

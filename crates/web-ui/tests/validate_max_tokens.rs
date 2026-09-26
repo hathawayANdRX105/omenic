@@ -1,6 +1,6 @@
 //! Max Tokens input validation extracted from the SettingsModal form.
 
-use web_page_config::validate_max_tokens;
+use web_ui::views::config::validate_max_tokens;
 
 #[test]
 fn valid_values_inside_bounds_pass() {

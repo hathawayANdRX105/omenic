@@ -1,9 +1,0 @@
-[package]
-name = "web-page-stats"
-edition = "2024"
-version = "0.1.0"
-publish = false
-
-[dependencies]
-dioxus = { version = "0.7" }
-web-client = { path = "../web-client" }

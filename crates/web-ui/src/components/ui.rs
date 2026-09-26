@@ -3,7 +3,7 @@
 
 use dioxus::prelude::*;
 
-use crate::icons::{Check, ChevronDown, X};
+use crate::components::icons::{Check, ChevronDown, X};
 
 // ── Button ──────────────────────────────────────────────────────────────────
 

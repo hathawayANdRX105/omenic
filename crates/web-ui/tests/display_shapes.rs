@@ -2,7 +2,7 @@
 //! KPI cards, status bars, feed rows, and delta chips.
 
 use web_client::daemon::{StatsBucket, StatsRecentRun, StatsSummary};
-use web_page_stats::{
+use web_ui::views::stats::{
     Tone, build_band, build_feed, build_kpis, build_points, build_status_bars,
     build_unavailable_note, delta_avg, delta_count, error_rate, format_duration, tone_for,
 };

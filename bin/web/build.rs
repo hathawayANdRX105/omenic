@@ -15,30 +15,52 @@ fn main() {
     // `@import "tailwindcss"` from the INPUT FILE's directory hierarchy, so this
     // generated input must live inside the crate — we drop it next to the real
     // input and it is gitignored.
-    let mut css = std::fs::read_to_string(&input).unwrap_or_default();
-    let my_src = manifest.join("src").to_string_lossy().replace('\\', "/");
-    let my_src_directive = format!("@source \"{my_src}/**/*.rs\";");
-    // Match a real directive line (anchored at line start), never prose that
-    // merely mentions the directive name.
-    let idx = css.find("\n@source").map(|i| i + 1).or_else(|| {
-        if css.starts_with("@source") {
-            Some(0)
-        } else {
-            None
+    let css = std::fs::read_to_string(&input).unwrap_or_default();
+    let crate_src = manifest.join("src").to_string_lossy().replace('\\', "/") + "/**/*.rs";
+    // repo root = two ancestors above bin/web; join from there so the glob has
+    // no `..` segments that Tailwind's matcher may not normalize.
+    let webui_src = manifest
+        .ancestors()
+        .nth(2)
+        .expect("bin/web lives at <repo>/bin/web")
+        .join("crates/web-ui/**/*.rs")
+        .to_string_lossy()
+        .replace('\\', "/");
+    // Every `@source` glob must be absolute. Tailwind v4.3 resolves a relative
+    // glob only when it carries an explicit `./` prefix, and resolves it
+    // against the INPUT file's directory — the generated input in the crate
+    // root, not assets/. The relative globs written in assets/tailwind-input.css
+    // use inconsistent bases and a bare `../../..` silently matches nothing,
+    // which is how the web crates' rsx classes fell out of the stylesheet.
+    // So drop any `@source` line from the source CSS and emit two well-known
+    // absolute directives instead: this crate's src + the merged web-ui crate.
+    let mut body = String::with_capacity(css.len());
+    let mut injected = false;
+    for line in css.lines() {
+        if line.trim_start().starts_with("@source ") {
+            continue; // strip: we inject our own absolute directives below
         }
-    });
-    if let Some(idx) = idx {
-        // Replace the existing relative source directive with an absolute one.
-        let line_end = css[idx..].find('\n').map(|e| idx + e).unwrap_or(css.len());
-        // Guard: only rewrite a line that really is the directive.
-        if css[idx..line_end].contains("@source") {
-            css.replace_range(idx..line_end, &my_src_directive);
+        body.push_str(line);
+        body.push('\n');
+        // Tailwind v4.3 only honors `@source` directives that sit near the top
+        // (after the `@import`, before the `@theme`/`@layer` rules); appended at
+        // the end they are silently ignored. Inject right after the import line.
+        if !injected && line.trim_start().starts_with("@import ") {
+            body.push_str(&format!(
+                "@source \"{crate_src}\";\n@source \"{webui_src}\";\n"
+            ));
+            injected = true;
         }
-    } else {
-        css.push_str(&format!("\n{my_src_directive}\n"));
+    }
+    if !injected {
+        // No `@import` found (shouldn't happen); fall back to a leading line.
+        body.insert_str(
+            0,
+            &format!("@source \"{crate_src}\";\n@source \"{webui_src}\";\n"),
+        );
     }
     let gen_input = manifest.join(".tailwind.gen-input.css");
-    let _ = std::fs::write(&gen_input, &css);
+    let _ = std::fs::write(&gen_input, &body);
 
     let local_bin = manifest.join("node_modules/.bin/tailwindcss");
 
@@ -85,5 +107,5 @@ fn main() {
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=build.rs");
     // rsx classes live in the web crates; their edits must re-run this script.
-    println!("cargo:rerun-if-changed=../../crates/web");
+    println!("cargo:rerun-if-changed=../../crates/web-ui");
 }

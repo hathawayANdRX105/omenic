@@ -4,8 +4,8 @@
 //! 父不在本列表、自环、互相成环、层级超深。任何一条处理不好，轻则树错位，
 //! 重则渲染路径死循环（侧栏卡死）。这些用例只测纯函数，不起 UI。
 
-use web_components::sidebar::group_sessions;
 use web_state::types::{Session, SessionStatus};
+use web_ui::components::sidebar::group_sessions;
 
 fn session(id: &str, parent_id: Option<&str>) -> Session {
     Session {

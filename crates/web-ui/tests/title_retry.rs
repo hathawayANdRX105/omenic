@@ -3,7 +3,7 @@
 use std::cell::Cell;
 
 use web_client::ClientError;
-use web_page_workspace::{retry_update, title_to_persist};
+use web_ui::views::workspace::{retry_update, title_to_persist};
 
 fn database_missing() -> ClientError {
     ClientError::Server {

@@ -2,27 +2,12 @@
 //! assistant 全宽 16/28、工作过程折叠行、浮动 composer（r22 胶囊卡）。
 
 use dioxus::prelude::*;
-use pulldown_cmark::{Options as MarkdownOptions, Parser, html};
 use web_client::{QuestionAnswer, QuestionItem};
 use web_state::types::{ChatMessage, MessagePart, PendingAttachment, StatusLine, ToolCall};
 
-use crate::icons::{ArrowUp, ChevronRight, Paperclip, SquareCheck};
-use crate::ui::{Dropdown, IconButton, Spinner};
-
-/// Markdown → HTML。CommonMark 会透传原始 HTML（经 `dangerous_inner_html`
-/// 注入 DOM，是真实 XSS 面），所以生成后必须过 ammonia 白名单清洗：
-/// 剥离 script/事件属性/javascript: URL，只留安全标签。
-/// `pub` 供 `tests/markdown_sanitize.rs` 集成测试直接断言。
-pub fn markdown_to_html(input: &str) -> String {
-    let mut opts = MarkdownOptions::empty();
-    opts.insert(MarkdownOptions::ENABLE_STRIKETHROUGH);
-    opts.insert(MarkdownOptions::ENABLE_TASKLISTS);
-    opts.insert(MarkdownOptions::ENABLE_TABLES);
-    let parser = Parser::new_ext(input, opts);
-    let mut output = String::new();
-    html::push_html(&mut output, parser);
-    ammonia::clean(&output)
-}
+use crate::components::icons::{ArrowUp, ChevronRight, Paperclip, SquareCheck};
+use crate::components::ui::{Dropdown, IconButton, Spinner};
+use crate::utils::markdown::markdown_to_html;
 
 /// 工具类型的 chip 配色（dsh 状态色 chip：900 底 + 400 字）。
 ///

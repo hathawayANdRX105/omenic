@@ -9,18 +9,19 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
+use crate::components::chat::Chat;
+use crate::components::sidebar::Sidebar;
+use crate::components::taskpanel::TaskPanel;
+use crate::components::ui::Modal;
+use crate::layouts::app_frame::AppFrame;
+use crate::views::config::SettingsModal;
+use crate::views::stats::StatsView;
 use dioxus::prelude::*;
 use web_client::ClientError;
 use web_client::QuestionAnswer;
 use web_client::QuestionItem;
 use web_client::daemon::WebDaemon;
 use web_client::llm::LlmRuntimeConfig;
-use web_components::chat::Chat;
-use web_components::sidebar::Sidebar;
-use web_components::taskpanel::TaskPanel;
-use web_components::ui::Modal;
-use web_page_config::SettingsModal;
-use web_page_stats::StatsView;
 use web_state::convert::{WireTranslator, infer_session_status};
 use web_state::title_from_first_message;
 use web_state::types::{
@@ -380,20 +381,34 @@ pub fn Workspace(
     on_update_config: EventHandler<LlmRuntimeConfig>,
 ) -> Element {
     // ── 数据后端：探测 daemon，连不上就是空态 ─────────────────────────────
-    // 连接 + ping 放线程内执行（线程 + join，仿旧 db_load_sessions 的做法）；
-    // UDS 往返耗时极短，不显著拖慢首帧。ping 不通（无 daemon / 陈旧 socket
-    // 文件）→ None → Disconnected（全空态），不 panic、不阻塞渲染。
+    // 连接 + ping 放独立线程执行（UDS 往返通常 <10ms），主渲染线程最多等
+    // 2s（`recv_timeout`）。daemon 卡住（socket 存在但 peer 不响应）时首帧
+    // 不再冻死：超时退化为 Disconnected，空态先渲染，数据由事件订阅补。
+    // 保留 JoinError 日志——socket 解析或 ping 里的真 panic 不能静默吞。
     let backend = use_signal(move || {
-        // 探测线程的 panic 不静默吞：`.ok()` 会把 JoinError 抹成 Disconnected，
-        // 于是 socket 解析或 ping 里的真 panic 只表现为空态，无从排查。
-        // 失败仍是 Disconnected（空态），但先留下痕迹。
-        match std::thread::spawn(|| WebDaemon::from_env_or_default().filter(|d| d.ping())).join() {
-            Ok(Some(d)) => DataBackend::Daemon(d),
-            Ok(None) => DataBackend::Disconnected,
-            Err(e) => {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            // 内层 spawn + join：保留 JoinError 的 panic 检测语义；外层 2s
+            // 有界等待：daemon 卡住时不阻塞首帧。代价是有界的：`use_signal`
+            // 初始化只在挂载时跑一次，超时路径会滞留「探测线程 + relay 线程」
+            // 一对，卡住的 ping 一断（daemon 恢复 / socket 关闭）二者自然退出，
+            // 非永久泄漏。
+            let _ = tx.send(
+                std::thread::spawn(|| WebDaemon::from_env_or_default().filter(|d| d.ping())).join(),
+            );
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+            Ok(Ok(Some(d))) => DataBackend::Daemon(d),
+            Ok(Ok(None)) => DataBackend::Disconnected,
+            Ok(Err(e)) => {
                 eprintln!("[web] workspace daemon probe thread panicked: {e:?}");
                 DataBackend::Disconnected
             }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                eprintln!("[web] daemon probe timed out (>2s); rendering disconnected state");
+                DataBackend::Disconnected
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => DataBackend::Disconnected,
         }
     });
 
@@ -1328,10 +1343,13 @@ pub fn Workspace(
     let sidebar_sessions = merge_run_statuses(space_sessions.read().clone(), &run_status_cache());
 
     rsx! {
-        div { class: "grid h-screen w-screen bg-base overflow-hidden relative select-none",
-            style: "grid-template-columns: {grid_cols(sidebar_collapsed(), sidebar_width())};",
-            onmousemove: on_root_mousemove,
-            onmouseup: on_root_mouseup,
+        // 三列框架壳在 layouts/app_frame.rs：这里只喂侧栏、中栏头与正文。
+        AppFrame {
+            collapsed: sidebar_collapsed(),
+            width: sidebar_width(),
+            on_resize: Callback::new(on_root_mousemove),
+            on_resize_end: Callback::new(on_root_mouseup),
+            sidebar: rsx! {
             Sidebar {
                 spaces: spaces(),
                 space_sessions: sidebar_sessions,
@@ -1358,9 +1376,9 @@ pub fn Workspace(
                 on_open_stats: move |_| view.set(View::Stats),
                 on_open_settings: move |_| show_settings.set(true),
             }
-
+            },
             // 中栏：面包屑头 + 视图
-            div { class: "min-w-0 flex flex-col bg-base overflow-hidden",
+            header: rsx! {
                 div { class: "min-h-[44px] pl-7 pr-5 pt-3 pb-2 border-b border-b1 flex items-center gap-2 shrink-0",
                     if view() == View::Stats {
                         span { class: "text-[14px] leading-5 font-medium text-label", "数据统计" }
@@ -1382,6 +1400,9 @@ pub fn Workspace(
                         }
                     }
                 }
+            },
+            // 中栏正文：统计页 / 会话页
+            children: rsx! {
                 match view() {
                     View::Stats => rsx! { StatsView {} },
                     View::Chat => rsx! {
@@ -1411,7 +1432,6 @@ pub fn Workspace(
                         }
                     },
                 }
-            }
 
             // ⌘K 快速切换
             if show_quick_switcher() {
@@ -1482,15 +1502,8 @@ pub fn Workspace(
                     on_close: move |_| show_settings.set(false),
                 }
             }
+            },
         }
-    }
-}
-
-fn grid_cols(collapsed: bool, width: usize) -> String {
-    if collapsed {
-        "56px minmax(0,1fr)".to_string()
-    } else {
-        format!("{width}px minmax(0,1fr)")
     }
 }
 
