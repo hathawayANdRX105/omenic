@@ -164,10 +164,6 @@ pub struct SubagentProviderConfig {
     pub dispose_eof_grace_ms: Option<u64>,
 }
 
-/// One fallback LLM provider (`[[llm.fallbacks]]`), tried in listed order
-/// after the primary `[llm]` provider fails without emitting content.
-/// `max_tokens` absent = inherit nothing (the provider's request carries
-/// no `max_tokens`); set it explicitly to bound the fallback's output.
 /// One named credential profile.
 ///
 /// `api_key_env` names an environment variable to read the key from, so a
@@ -203,6 +199,10 @@ impl LlmProfileConfig {
     }
 }
 
+/// One fallback LLM provider (`[[llm.fallbacks]]`), tried in listed order
+/// after the primary `[llm]` provider fails without emitting content.
+/// `max_tokens` absent = inherit nothing (the provider's request carries
+/// no `max_tokens`); set it explicitly to bound the fallback's output.
 #[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
 pub struct LlmFallbackConfig {
     #[serde(default)]
