@@ -1264,6 +1264,10 @@ pub fn Workspace(
             parts: vec![],
             timestamp: "刚刚".into(),
             ts_epoch_ms: now,
+            // The picked images ride the message itself, so a refresh (which
+            // rebuilds the transcript from `session.messages`) still shows
+            // them instead of a text-only ghost of the turn.
+            attachments,
         };
         session_messages
             .write()
