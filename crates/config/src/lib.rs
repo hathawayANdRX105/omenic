@@ -13,6 +13,15 @@ use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
 
+/// A fully resolved primary credential: every field present.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedLlm {
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    pub max_tokens: Option<u32>,
+}
+
 /// Configuration for omenic.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -35,6 +44,12 @@ pub struct Config {
     /// Fallback LLM providers tried in order after the primary `[llm]`
     /// provider fails before emitting any content. Empty = no waterfall.
     pub llm_fallbacks: Vec<LlmFallbackConfig>,
+    /// Named credential profiles (`[[llm.profiles]]`). Switching provider
+    /// means switching `llm_active_profile`, not rewriting this file.
+    pub llm_profiles: Vec<LlmProfileConfig>,
+    /// Which profile supplies the primary credential. `None` = use the flat
+    /// `[llm]` fields as before.
+    pub llm_active_profile: Option<String>,
     /// External MCP servers to spawn for extra tools. Empty by default —
     /// MCP is opt-in and nothing is spawned unless the user lists a server.
     pub mcp_servers: Vec<McpServerConfig>,
@@ -153,6 +168,41 @@ pub struct SubagentProviderConfig {
 /// after the primary `[llm]` provider fails without emitting content.
 /// `max_tokens` absent = inherit nothing (the provider's request carries
 /// no `max_tokens`); set it explicitly to bound the fallback's output.
+/// One named credential profile.
+///
+/// `api_key_env` names an environment variable to read the key from, so a
+/// shared config file can carry a profile without carrying the secret; when
+/// it is set it wins over `api_key`.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct LlmProfileConfig {
+    /// Profile name, referenced by `[llm] active_profile`.
+    pub name: String,
+    /// Base URL without a `/v1` suffix (the call site appends it).
+    pub base_url: String,
+    /// Model name.
+    pub model: String,
+    /// Inline key. Prefer `api_key_env` in a shared file.
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Environment variable to read the key from.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    /// Per-profile max tokens; falls back to `[llm] max_tokens`.
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+}
+
+impl LlmProfileConfig {
+    /// The key to use: `api_key_env` when set (and set in the environment),
+    /// else the inline `api_key`.
+    pub fn resolve_api_key(&self) -> Option<String> {
+        self.api_key_env
+            .as_ref()
+            .and_then(|name| env::var(name).ok())
+            .or_else(|| self.api_key.clone())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
 pub struct LlmFallbackConfig {
     #[serde(default)]
@@ -229,6 +279,8 @@ impl Config {
             omp_path: PathBuf::from("omp"),
             data_dir: PathBuf::from("./.oi"),
             model: String::from("default"),
+            llm_profiles: Vec::new(),
+            llm_active_profile: None,
             llm_api_key: None,
             llm_base_url: None,
             llm_model: None,
@@ -291,6 +343,30 @@ impl Config {
         Ok(config)
     }
 
+    /// The primary LLM credential, in the order the daemon should prefer:
+    /// environment override, then the active profile, then the flat `[llm]`
+    /// fields. `None` when nothing is configured — the daemon then runs
+    /// without an orbit model rather than guessing.
+    pub fn active_llm(&self) -> Option<ResolvedLlm> {
+        if let Some(name) = self.llm_active_profile.as_ref() {
+            let Some(p) = self.llm_profiles.iter().find(|p| p.name == *name) else {
+                return None;
+            };
+            return Some(ResolvedLlm {
+                base_url: p.base_url.clone(),
+                api_key: p.resolve_api_key()?,
+                model: p.model.clone(),
+                max_tokens: p.max_tokens.or(self.llm_max_tokens),
+            });
+        }
+        Some(ResolvedLlm {
+            base_url: self.llm_base_url.clone()?,
+            api_key: self.llm_api_key.clone()?,
+            model: self.llm_model.clone()?,
+            max_tokens: self.llm_max_tokens,
+        })
+    }
+
     /// Daemon session working directory: the orbit engine searches this
     /// directory's ancestor chain for `AGENTS.md`. Defaults to the process
     /// working directory — the daemon startup dir — never to a silent
@@ -323,6 +399,19 @@ impl Config {
                 message: format!("'{}' does not exist", omp_str),
             });
         }
+        // active_profile must name a profile that exists. Silently falling
+        // back to the flat `[llm]` fields would hand the run a *different*
+        // provider than the file asked for — the worst possible failure for
+        // a credential typo.
+        if let Some(name) = &self.llm_active_profile {
+            if !self.llm_profiles.iter().any(|p| p.name == *name) {
+                return Err(ConfigError::Invalid {
+                    field: "llm.active_profile",
+                    message: format!("no such profile `{name}`"),
+                });
+            }
+        }
+
         // ponytail: not checking executable bit — OS will error at spawn with clear message.
 
         // data_dir: if exists, must be a dir; if not, parent must be creatable.

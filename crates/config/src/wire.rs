@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use crate::{Config, LlmFallbackConfig, McpServerConfig, SubagentProviderConfig};
+use crate::{Config, LlmFallbackConfig, LlmProfileConfig, McpServerConfig, SubagentProviderConfig};
 
 /// Internal TOML config struct for deserialization (all fields optional).
 #[derive(Debug, Default, serde::Deserialize)]
@@ -55,6 +55,11 @@ pub(crate) struct LlmToml {
     max_tokens: Option<u32>,
     #[serde(default)]
     fallbacks: Vec<LlmFallbackConfig>,
+    /// `[[llm.profiles]]` — named credentials.
+    #[serde(default)]
+    profiles: Vec<LlmProfileConfig>,
+    /// Name of the profile that supplies the primary credential.
+    active_profile: Option<String>,
 }
 
 /// `[mcp]` TOML section. `servers` is a list of `[[mcp.servers]]` tables.
@@ -94,6 +99,12 @@ impl TomlConfig {
         }
         if let Some(v) = self.llm.max_tokens {
             base.llm_max_tokens = Some(v);
+        }
+        if !self.llm.profiles.is_empty() {
+            base.llm_profiles = self.llm.profiles;
+        }
+        if let Some(v) = self.llm.active_profile {
+            base.llm_active_profile = Some(v);
         }
         // Same empty-does-not-override semantics as `mcp.servers`.
         if !self.llm.fallbacks.is_empty() {
