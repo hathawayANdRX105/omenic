@@ -243,10 +243,10 @@ fn restart_resumes_session_history_into_the_llm_request() {
             .session_create("s-b2a", "resume session")
             .expect("session.create");
         let _ = client
-            .session_append("s-b2a", SessionRole::User, RESUME_USER)
+            .session_append("s-b2a", SessionRole::User, RESUME_USER, &[])
             .expect("session.append (user)");
         let _ = client
-            .session_append("s-b2a", SessionRole::Assistant, RESUME_ASSISTANT)
+            .session_append("s-b2a", SessionRole::Assistant, RESUME_ASSISTANT, &[])
             .expect("session.append (assistant)");
 
         // First prompt on process 1: the engine was just spawned, so this

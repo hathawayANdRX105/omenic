@@ -48,6 +48,24 @@ use serde_json::Value;
 /// [`WorkerEvent::AgentEnd`] carries — `end_turn` / `max_tokens` / `aborted`
 /// / `error` / `max_turns` — so a clean turn end, an abort, an error and the
 /// turn cap stay distinguishable downstream.
+/// Build the user message the model sees: plain text when there are no
+/// attachments, otherwise a block list carrying the text first and the
+/// images after (OpenAI's multimodal ordering).
+fn user_message(text: &str, attachments: &[session::Attachment]) -> llm::Message {
+    if attachments.is_empty() {
+        return llm::Message::user_text(text);
+    }
+    let mut blocks = vec![llm::Block::Text { text: text.into() }];
+    blocks.extend(attachments.iter().map(|a| llm::Block::Image {
+        media_type: a.media_type.clone(),
+        data: a.data.clone(),
+    }));
+    llm::Message {
+        role: llm::Role::User,
+        content: llm::Content::Blocks(blocks),
+    }
+}
+
 fn turn_stop_to_string(s: &protocol::events::TurnStop) -> String {
     match s {
         protocol::events::TurnStop::EndTurn => "end_turn",
@@ -366,7 +384,7 @@ struct OrbitEngine {
     pull_push: std::sync::mpsc::Sender<WorkerEvent>,
     pull_queue: std::sync::mpsc::Receiver<WorkerEvent>,
     /// prompt → 专用 run 线程：LLM 调用不占 dispatch 锁，abort 随时可达
-    run_tx: std::sync::mpsc::Sender<String>,
+    run_tx: std::sync::mpsc::Sender<llm::Message>,
     /// `AGENTS.md` 发现根（orbit `LoopConfig::instruction_cwd`）。
     cwd: Option<std::sync::Arc<Path>>,
     /// 每轮 run 的 LLM 往返上限（orbit `LoopConfig::max_turns`）。
@@ -403,7 +421,7 @@ impl OrbitEngine {
                 },
         } = setup;
         let (pull_push, pull_queue) = std::sync::mpsc::channel();
-        let (run_tx, run_rx) = std::sync::mpsc::channel::<String>();
+        let (run_tx, run_rx) = std::sync::mpsc::channel::<llm::Message>();
         let abort_flag = std::sync::Arc::new(AtomicBool::new(false));
         // Catalog tools + shared MCP tools (each shimmed per spawn); abort
         // flag shared so an engine abort reaches both tool families.
@@ -455,7 +473,7 @@ impl OrbitEngine {
                     // 出现 agent_end 让消费端复位
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let mut ctx = run_ctx.lock().unwrap_or_else(|e| e.into_inner());
-                        ctx.messages.push(llm::Message::user_text(&message));
+                        ctx.messages.push(message);
                         // plan mode: recompute the system prompt per turn so a
                         // `/plan` flip lands on the next prompt. Empty section
                         // (plan mode off, or no provider) leaves `None` and
@@ -607,7 +625,7 @@ impl OrbitEngine {
             for m in messages.iter() {
                 match m.role {
                     session::SessionRole::User => {
-                        ctx.messages.push(llm::Message::user_text(m.text.clone()));
+                        ctx.messages.push(user_message(&m.text, &m.attachments));
                     }
                     session::SessionRole::Assistant => {
                         ctx.messages
@@ -782,15 +800,21 @@ impl Worker {
     ///
     /// Returns the response data.  The agent will subsequently emit events;
     /// read them via `read_event()` or push-subscribe via `subscribe()`.
-    pub fn prompt(&mut self, message: &str) -> Result<Value, super::client::RpcError> {
+    pub fn prompt(
+        &mut self,
+        message: &str,
+        attachments: &[session::Attachment],
+    ) -> Result<Value, super::client::RpcError> {
         if let Some(orbit) = self.orbit.as_mut() {
             // 事件经订阅管线推送；本调用立即返回 ack
             orbit
                 .run_tx
-                .send(message.to_string())
+                .send(user_message(message, attachments))
                 .map_err(|e| super::client::RpcError::Protocol(e.to_string()))?;
             return Ok(serde_json::json!({ "started": true }));
         }
+        // omp mode: the external worker owns its own wire format and takes a
+        // plain string, so images do not ride along there.
         let req = super::client::Request::new("prompt")
             .with_field("message", message)
             .done();

@@ -4466,6 +4466,7 @@ dependencies = [
  "ammonia",
  "dioxus",
  "pulldown-cmark",
+ "serde_json",
  "web-client",
  "web-state",
 ]

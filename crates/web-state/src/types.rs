@@ -27,6 +27,26 @@ pub enum MessagePart {
     Tool(ToolCall),
 }
 
+/// An image the user picked in the composer and has not sent yet.
+///
+/// `data` is base64 without a `data:` prefix, produced in the browser by the
+/// file-picker bridge in `bin/web/src/app.rs`; the daemon re-validates the
+/// media type and payload before it reaches a provider.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingAttachment {
+    pub name: String,
+    pub media_type: String,
+    pub data: String,
+}
+
+impl PendingAttachment {
+    /// Decoded size in bytes, for the composer's card.
+    pub fn size_bytes(&self) -> u64 {
+        // 4 base64 chars per 3 bytes; integer math keeps this allocation-free.
+        (self.data.len() as u64 * 3) / 4
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub id: String,
@@ -40,6 +60,9 @@ pub struct ChatMessage {
     /// 真实发生顺序的有序片段；为空时回退到 content + tool_calls 渲染。
     #[serde(default)]
     pub parts: Vec<MessagePart>,
+    /// 用户消息带的图片（从库读回时随消息还原，刷新后仍在）。
+    #[serde(default)]
+    pub attachments: Vec<PendingAttachment>,
     pub timestamp: String,
     /// Unix epoch milliseconds — 真实落库时间戳,用于渲染相对时间
     #[serde(default)]

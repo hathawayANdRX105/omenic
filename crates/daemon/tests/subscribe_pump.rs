@@ -83,7 +83,7 @@ fn subscribe_receives_prompt_event_sequence() {
     let mut worker = Worker::new(omp.to_str().unwrap(), None).expect("spawn mock omp");
 
     let rx = worker.subscribe("worker");
-    let resp = worker.prompt("hi").expect("prompt through pump");
+    let resp = worker.prompt("hi", &[]).expect("prompt through pump");
     assert_eq!(resp.get("success").and_then(|v| v.as_bool()), Some(true));
 
     let events: Vec<WorkerEvent> = (0..5).map(|_| recv(&rx)).collect();
@@ -116,7 +116,7 @@ fn dropped_receiver_is_unregistered_other_receiver_keeps_flowing() {
     let alive = worker.subscribe("worker");
     drop(dead); // receiver gone before any event -> pump must survive it
 
-    worker.prompt("hi").expect("prompt");
+    worker.prompt("hi", &[]).expect("prompt");
     let kinds: Vec<&str> = (0..5).map(|_| event_kind(&recv(&alive))).collect();
     assert_eq!(kinds.len(), 5, "tail of the stream kept flowing");
     assert_eq!(kinds[0], "agent_start");

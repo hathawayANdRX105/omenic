@@ -4,7 +4,7 @@
 use dioxus::prelude::*;
 use pulldown_cmark::{Options as MarkdownOptions, Parser, html};
 use web_client::{QuestionAnswer, QuestionItem};
-use web_state::types::{ChatMessage, MessagePart, StatusLine, ToolCall};
+use web_state::types::{ChatMessage, MessagePart, PendingAttachment, StatusLine, ToolCall};
 
 use crate::icons::{ArrowUp, ChevronRight, Paperclip, SquareCheck};
 use crate::ui::{Dropdown, IconButton, Spinner};
@@ -65,7 +65,8 @@ pub fn Chat(
     question: Option<QuestionItem>,
     /// 回答问题：(question_id, answer)。回答失败由页面层决定保留卡片
     on_answer: EventHandler<(String, QuestionAnswer)>,
-    on_send: EventHandler<String>,
+    /// Send: (text, images picked in the composer and not sent yet).
+    on_send: EventHandler<(String, Vec<PendingAttachment>)>,
     on_model_change: EventHandler<String>,
     on_toggle_thinking: EventHandler<()>,
     on_toggle_tasks: EventHandler<()>,
@@ -73,6 +74,11 @@ pub fn Chat(
     on_abort: EventHandler<()>,
 ) -> Element {
     let mut draft = use_signal(String::new);
+    // Images waiting on the send button. The browser bridge writes a JSON
+    // array into the hidden `#attachment-bridge` textarea (a plain `input`
+    // event is all LiveView needs to see it), so no file bytes round-trip
+    // through a form post.
+    let mut attachments = use_signal::<Vec<PendingAttachment>>(Vec::new);
     let model_items: Vec<(String, String)> = MODELS
         .iter()
         .map(|m| (m.to_string(), m.to_string()))
@@ -234,6 +240,45 @@ pub fn Chat(
                     // 不加 overflow-hidden：模型/思考菜单从工具行向上弹出，
                     // 裁剪会切掉卡片外的部分；圆角由卡片自身的 bg + radius 呈现
                     div { class: "pointer-events-auto w-full rounded-[22px] border border-b1 bg-input-bg shadow-lv2 flex flex-col transition-colors focus-within:border-b3",
+                        // Bridge: the file picker JS writes base64 JSON here.
+                        // Hidden from view, still a real textarea so
+                        // LiveView's `oninput` wiring works unchanged.
+                        textarea {
+                            id: "attachment-bridge",
+                            class: "hidden",
+                            value: "",
+                            oninput: move |e: FormEvent| {
+                                if e.value().trim().is_empty() {
+                                    return;
+                                }
+                                match serde_json::from_str::<Vec<PendingAttachment>>(&e.value()) {
+                                    Ok(picked) => attachments.set(picked),
+                                    Err(err) => eprintln!("chat: attachment bridge rejected payload: {err}"),
+                                }
+                            },
+                        }
+                        // 待发附件卡：名字 + 体积 + 移除。
+                        if !attachments().is_empty() {
+                            div { class: "flex flex-wrap gap-1.5 px-3 pt-2.5",
+                                for (idx, att) in attachments().into_iter().enumerate() {
+                                    div {
+                                        class: "flex items-center gap-1.5 rounded-[10px] border border-b1 bg-layer-1 px-2 py-1 text-[12px] text-label",
+                                        span { class: "max-w-[180px] truncate", "{att.name}" }
+                                        span { class: "text-caption font-mono", "{att.size_bytes() / 1024} KB" }
+                                        button {
+                                            r#type: "button",
+                                            class: "border-none bg-transparent text-caption hover:text-label cursor-pointer p-0",
+                                            title: "移除",
+                                            onclick: move |_| {
+                                                let mut cur = attachments.write();
+                                                cur.remove(idx);
+                                            },
+                                            span { class: "text-[13px] leading-none", "×" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         textarea {
                             id: "chat-input-area",
                             class: "w-full resize-none bg-transparent border-none outline-none text-[16px] leading-6 text-label placeholder:text-caption caret-brand px-4 pt-3 pb-1 min-h-[52px] max-h-[336px]",
@@ -245,7 +290,10 @@ pub fn Chat(
                                     e.prevent_default();
                                     let text = draft();
                                     if !text.trim().is_empty() && !is_streaming {
-                                        on_send.call(text.trim().to_string());
+                                        on_send.call((
+                                            text.trim().to_string(),
+                                            std::mem::take(&mut *attachments.write()),
+                                        ));
                                         draft.set(String::new());
                                     }
                                 }
@@ -253,10 +301,19 @@ pub fn Chat(
                         }
                         div { class: "flex items-center justify-between pl-1.5 pr-2 pb-1.5 pt-0.5",
                             div { class: "flex items-center gap-0.5",
-                                IconButton {
-                                    title: "附件（待接线）",
-                                    class: "bg-selector hover:bg-iactive",
-                                    disabled: true,
+                                // A <label for> opens the native picker without
+                                // any JS, so the button stays a plain element.
+                                label {
+                                    class: "flex items-center justify-center w-[26px] h-[26px] rounded-[8px] bg-selector hover:bg-iactive cursor-pointer",
+                                    title: "添加图片附件",
+                                    input {
+                                        id: "attachment-input",
+                                        r#type: "file",
+                                        accept: "image/png,image/jpeg,image/gif,image/webp",
+                                        multiple: "true",
+                                        class: "hidden",
+                                        onchange: move |_| {},
+                                    }
                                     Paperclip { size: 15 }
                                 }
                                 IconButton {
@@ -301,7 +358,10 @@ pub fn Chat(
                                         onclick: move |_| {
                                             let text = draft();
                                             if !text.trim().is_empty() && !is_streaming {
-                                                on_send.call(text.trim().to_string());
+                                                on_send.call((
+                                                    text.trim().to_string(),
+                                                    std::mem::take(&mut *attachments.write()),
+                                                ));
                                                 draft.set(String::new());
                                             }
                                         },
@@ -327,6 +387,19 @@ fn MessageItem(message: ChatMessage, streaming_tail: bool, id: Option<String>) -
         rsx! {
             div { class: "flex flex-col items-end gap-1 w-full group",
                 id: "{dom_id}",
+                // 用户带的图片：先图后气泡，与 freebuff 卡片顺序一致。
+                if !message.attachments.is_empty() {
+                    div { class: "flex flex-wrap justify-end gap-1.5 max-w-[525px]",
+                        for att in message.attachments.iter() {
+                            img {
+                                src: "data:{att.media_type};base64,{att.data}",
+                                alt: "{att.name}",
+                                title: "{att.name}",
+                                class: "max-h-[180px] rounded-[14px] border border-b1 object-cover",
+                            }
+                        }
+                    }
+                }
                 if !message.content.is_empty() {
                     div { class: "markdown-sm bg-bubble rounded-[22px] px-4 py-2.5 max-w-[525px]",
                         dangerous_inner_html: "{markdown_to_html(&message.content)}"

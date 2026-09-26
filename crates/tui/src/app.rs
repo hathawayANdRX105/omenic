@@ -892,6 +892,7 @@ fn user_message(text: &str) -> ChatMessage {
         parts: vec![MessagePart::Text(text.to_string())],
         timestamp: String::new(),
         ts_epoch_ms: now,
+        attachments: vec![],
     }
 }
 
@@ -908,6 +909,7 @@ fn local_message(text: &str) -> ChatMessage {
         parts: vec![MessagePart::Text(text.to_string())],
         timestamp: String::new(),
         ts_epoch_ms: now,
+        attachments: vec![],
     }
 }
 
@@ -1232,7 +1234,9 @@ fn spawn_prompt(
     std::thread::Builder::new()
         .name("oi-tui-prompt".into())
         .spawn(move || {
-            let res = client.worker_prompt_run(&sid, &run_id, &msg).map(|_| ());
+            let res = client
+                .worker_prompt_run(&sid, &run_id, &msg, &[])
+                .map(|_| ());
             let _ = tx.send(res);
         })?;
     Ok(())
