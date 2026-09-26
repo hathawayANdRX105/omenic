@@ -715,6 +715,10 @@ fn drive(
     // 搜索/复制全归终端）——inline 关闸，Ctrl+R 与 `/search` 都不产生
     // overlay，键位行为与合入前一致。
     app.disable_search();
+    // T12：消息操作（BackTab 聚焦 / r / e / c）同批关闸——inline 的 transcript
+    // 是写即定稿的 scrollback，截断后视图无从改写，聚焦操作与斜杠面板/搜索
+    // overlay 同口径熄火（route §3 T8 设计注记：回看/复制归终端）。
+    app.disable_message_ops();
     app.start_session(sid, Vec::new());
     app.set_model(footer::configured_model());
     if let Ok(summary) = client.stats_summary(STATS_RANGE) {

@@ -894,6 +894,33 @@ impl SessionDb {
         })
     }
 
+    /// Drop every message with `seq >= from_seq` for `session_id` and
+    /// return how many rows actually went away.
+    ///
+    /// This is the rewind primitive behind `session.truncate` (T12 retry /
+    /// edit): the caller truncates first, then appends the replacement, so
+    /// the tail is rewritten rather than copied. `from_seq <= 0` empties the
+    /// session; a `from_seq` past the tail deletes nothing and reports `0`
+    /// (idempotent — truncating twice is the same as truncating once).
+    /// Deleting from a session id that does not exist likewise reports `0`:
+    /// the returned count is the truth, never a fabricated success.
+    pub fn truncate_messages(&self, session_id: &str, from_seq: i64) -> Result<u64, SessionError> {
+        SessionError::invalid_id_if_blank(session_id)?;
+        let id_owned = session_id.to_string();
+
+        let guard = self.inner.conn.lock();
+        self.inner.runtime.block_on(async move {
+            let conn = &*guard;
+            let n = conn
+                .execute(
+                    "DELETE FROM messages WHERE session_id = ?1 AND seq >= ?2",
+                    libsql::params![id_owned.as_str(), from_seq],
+                )
+                .await?;
+            Ok(n)
+        })
+    }
+
     /// Load the most recent `limit` messages for `session_id`, returned in
     /// ascending `seq` order.
     ///

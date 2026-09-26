@@ -169,13 +169,15 @@ impl WebDaemon {
 
     /// 追加一条消息：`role_user` 为 true 是用户，否则 assistant。`attachments`
     /// 随用户消息一起落库，daemon 重启后 resume 才能把图还给模型。
+    /// 返回 ledger 分配的 `seq`——T12 的 retry/edit 靠它把本地投影里的
+    /// 出站消息回填成 `{sid}-{seq}` 口径（`load_messages` 同一套序号）。
     pub fn append_message(
         &self,
         sid: &str,
         role_user: bool,
         text: &str,
         attachments: &[PendingAttachment],
-    ) -> Result<(), ClientError> {
+    ) -> Result<i64, ClientError> {
         let role = if role_user {
             SessionRole::User
         } else {
@@ -192,8 +194,15 @@ impl WebDaemon {
                 data: a.data.clone(),
             })
             .collect();
-        self.client.session_append(sid, role, text, &stored)?;
-        Ok(())
+        let outcome = self.client.session_append(sid, role, text, &stored)?;
+        Ok(outcome.seq)
+    }
+
+    /// `session.truncate`：删掉该会话 `seq >= from_seq` 的全部消息，返回
+    /// 实际删除条数（0 = 范围内无消息，含会话不存在）。T12 retry/edit 的
+    /// 回退原语——先截断尾段再追加改文，历史不会被复制成两份。
+    pub fn truncate_session(&self, sid: &str, from_seq: i64) -> Result<u64, ClientError> {
+        self.client.session_truncate(sid, from_seq)
     }
 
     /// `worker.prompt`：把一条用户消息转交 daemon 的 omp worker（首次调用
