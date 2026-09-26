@@ -4,7 +4,8 @@
 //! 经 `web-client` 的 [`WebDaemon`] 订阅 worker 事件，独立泵线程进
 //! mpsc（[`pump`]）→ [`UiState::apply`] 投影 → 渲染器共用同一投影：
 //! linear 裸写 stdout（零 ESC 字节），enhanced 走 ratatui 全屏
-//! （[`app::run_enhanced`]，termguard 进出 + theme 样式 + dock 按键），
+//! （[`app::run_enhanced`]，termguard 进出 + theme 样式 + dock 按键 +
+//! T9 斜杠命令面板 [`slash`]），
 //! inline（T8 第四档）走原生 scrollback 轨（[`inline`]，写即定稿 + 底部
 //! 两行 dock）。
 //!
@@ -23,6 +24,7 @@ mod pump;
 pub mod app;
 pub mod inline;
 pub mod scroll;
+pub mod slash;
 pub mod termguard;
 pub mod theme;
 pub mod ui;
