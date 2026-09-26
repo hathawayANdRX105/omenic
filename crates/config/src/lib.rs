@@ -188,6 +188,28 @@ pub struct LlmProfileConfig {
     pub max_tokens: Option<u32>,
 }
 
+/// Whether a profile can actually produce a request. Decided locally, with
+/// no network call: a probe at daemon start would make startup depend on a
+/// third-party endpoint answering, which is exactly the failure a config
+/// check must not introduce.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProfileStatus {
+    /// Every field present; `active_llm` would resolve it.
+    Ready,
+    /// No usable key: neither `api_key` nor the `api_key_env` variable.
+    MissingKey,
+    /// `base_url` or `model` is blank.
+    Incomplete,
+}
+
+impl ProfileStatus {
+    /// True only for [`ProfileStatus::Ready`].
+    pub fn is_ready(self) -> bool {
+        matches!(self, Self::Ready)
+    }
+}
+
 impl LlmProfileConfig {
     /// The key to use: `api_key_env` when set (and set in the environment),
     /// else the inline `api_key`.
@@ -196,6 +218,17 @@ impl LlmProfileConfig {
             .as_ref()
             .and_then(|name| env::var(name).ok())
             .or_else(|| self.api_key.clone())
+    }
+
+    /// Can this profile serve a request right now?
+    pub fn status(&self) -> ProfileStatus {
+        if self.base_url.trim().is_empty() || self.model.trim().is_empty() {
+            return ProfileStatus::Incomplete;
+        }
+        match self.resolve_api_key() {
+            Some(k) if !k.trim().is_empty() => ProfileStatus::Ready,
+            _ => ProfileStatus::MissingKey,
+        }
     }
 }
 
@@ -352,6 +385,16 @@ impl Config {
     /// worse than ignoring the override. `None` when the active credential is
     /// incomplete: the daemon then runs without an orbit model rather than
     /// guessing.
+    /// Every profile with its status, in config order. The daemon logs this
+    /// at start so a broken profile is visible without having to select it
+    /// and discover the failure at request time.
+    pub fn profile_statuses(&self) -> Vec<(&str, ProfileStatus)> {
+        self.llm_profiles
+            .iter()
+            .map(|p| (p.name.as_str(), p.status()))
+            .collect()
+    }
+
     pub fn active_llm(&self) -> Option<ResolvedLlm> {
         if let Some(name) = self.llm_active_profile.as_ref() {
             let Some(p) = self.llm_profiles.iter().find(|p| p.name == *name) else {
