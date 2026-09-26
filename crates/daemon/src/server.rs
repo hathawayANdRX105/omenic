@@ -82,8 +82,10 @@ impl DaemonConfig {
     /// llm 三件套（base_url/api_key/model）在 `.oi/config.toml` 齐全时
     /// 构建 orbit 模型配置——设置页写该文件即生效。
     fn resolve_orbit_model(cfg: &config::Config) -> Option<llm::Model> {
-        // `active_llm` already applies the precedence (env > active profile >
-        // flat `[llm]` fields) and drops a profile whose key env var is unset.
+        // `active_llm` picks the active profile, else the flat `[llm]`
+        // fields (which `Config::load` has already let `OMENIC_LLM_*`
+        // override), and yields nothing when the chosen credential is
+        // incomplete.
         let resolved = cfg.active_llm()?;
         let base = resolved.base_url.trim();
         let key = resolved.api_key.trim();

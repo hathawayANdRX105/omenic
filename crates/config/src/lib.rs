@@ -48,7 +48,7 @@ pub struct Config {
     /// means switching `llm_active_profile`, not rewriting this file.
     pub llm_profiles: Vec<LlmProfileConfig>,
     /// Which profile supplies the primary credential. `None` = use the flat
-    /// `[llm]` fields as before.
+    /// `[llm]` fields, which then honor the `OMENIC_LLM_*` env overrides.
     pub llm_active_profile: Option<String>,
     /// External MCP servers to spawn for extra tools. Empty by default —
     /// MCP is opt-in and nothing is spawned unless the user lists a server.
@@ -343,10 +343,15 @@ impl Config {
         Ok(config)
     }
 
-    /// The primary LLM credential, in the order the daemon should prefer:
-    /// environment override, then the active profile, then the flat `[llm]`
-    /// fields. `None` when nothing is configured — the daemon then runs
-    /// without an orbit model rather than guessing.
+    /// The primary LLM credential: the active profile when one is named,
+    /// otherwise the flat `[llm]` fields.
+    ///
+    /// A profile is a *complete* credential, so the `OMENIC_LLM_*` env
+    /// overrides — which only reach the flat fields — do not apply once a
+    /// profile is active. Mixing an env key with a profile's model would be
+    /// worse than ignoring the override. `None` when the active credential is
+    /// incomplete: the daemon then runs without an orbit model rather than
+    /// guessing.
     pub fn active_llm(&self) -> Option<ResolvedLlm> {
         if let Some(name) = self.llm_active_profile.as_ref() {
             let Some(p) = self.llm_profiles.iter().find(|p| p.name == *name) else {

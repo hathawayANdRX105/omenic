@@ -91,6 +91,8 @@ api_key_env = "OI_TEST_PROFILE_KEY"
 }
 
 /// env 变量没设时退回 inline key，而不是变成"没凭据"或用别的档案。
+///
+/// （档案激活时 `OMENIC_LLM_*` 覆盖不参与：档案是一整套凭据，混用比忽略更糟。）
 #[test]
 fn missing_env_falls_back_to_inline_key() {
     let toml = r#"

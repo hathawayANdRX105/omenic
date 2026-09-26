@@ -3,13 +3,27 @@
 //! Red when: 档案被解析了但 daemon 仍读扁平字段（切档案不起作用），或档案
 //! 缺 key 时静默用上别的 provider。
 
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
 use daemon::{Daemon, DaemonConfig};
+
+/// `Config::load` reads `.oi/config.toml` relative to the *process* cwd, so
+/// these tests must not run concurrently — one test's temp config would be
+/// read as another's. Serialized here so the rest of the suite keeps its
+/// parallelism.
+fn cwd_lock() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
 
 fn config_from(toml: &str) -> (tempfile::TempDir, DaemonConfig) {
     let dir = tempfile::tempdir().expect("temp dir");
     let oi = dir.path().join(".oi");
     std::fs::create_dir_all(&oi).expect("create .oi");
     std::fs::write(oi.join("config.toml"), toml).expect("write config");
+    let _guard = cwd_lock();
     let original = std::env::current_dir().expect("cwd");
     std::env::set_current_dir(dir.path()).expect("switch cwd");
     let result = std::panic::catch_unwind(config::Config::load);
