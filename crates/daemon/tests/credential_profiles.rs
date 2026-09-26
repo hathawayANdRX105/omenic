@@ -102,7 +102,7 @@ api_key_env = "OI_ABSENT_PROFILE_KEY"
 
 #[test]
 fn daemon_starts_with_a_profile_only_config() {
-    let (_dir, cfg) = config_from(
+    let (dir, cfg) = config_from(
         r#"
 [llm]
 active_profile = "local"
@@ -115,8 +115,10 @@ api_key = "local-key"
 "#,
     );
     let mut cfg = cfg;
-    cfg.socket_path = Some(std::path::PathBuf::from(
-        cfg.data_dir.join("profile-daemon.sock"),
-    ));
+    // Point the daemon at the temp dir: the default `data_dir` is a path
+    // under the user's home, which a fresh CI runner has never created, and
+    // this test is about the credential shape, not about the default dir.
+    cfg.data_dir = dir.path().to_path_buf();
+    cfg.socket_path = Some(cfg.data_dir.join("profile-daemon.sock"));
     let _daemon = Daemon::start(cfg).expect("daemon starts on a profile-only config");
 }
