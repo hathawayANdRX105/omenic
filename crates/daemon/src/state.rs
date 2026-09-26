@@ -673,6 +673,13 @@ impl SessionState {
         self.inner.truncate_messages(session_id, from_seq)
     }
 
+    /// Snapshot every message with `seq >= from_seq` into the rewind backup
+    /// table, then drop it in the same transaction; returns how many rows
+    /// were backed up. Backs the `session.rewind` command (T13 turn rewind).
+    pub fn rewind_messages(&self, session_id: &str, from_seq: i64) -> Result<u64, SessionError> {
+        self.inner.rewind_messages(session_id, from_seq)
+    }
+
     pub fn load_messages(
         &self,
         session_id: &str,

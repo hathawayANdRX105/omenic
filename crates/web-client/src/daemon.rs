@@ -205,6 +205,14 @@ impl WebDaemon {
         self.client.session_truncate(sid, from_seq)
     }
 
+    /// `session.rewind`：把该会话 `seq >= from_seq` 的将丢弃段先复制进
+    /// 快照行（identity 标签）再删除，返回备份条数（0 = 范围内无消息，
+    /// 含会话不存在）。T13 逐轮回退的原语——与 [`Self::truncate_session`]
+    /// 同一 `from_seq` 边界，但快照与截断同事务：快照写不进就不截断。
+    pub fn rewind_session(&self, sid: &str, from_seq: i64) -> Result<u64, ClientError> {
+        self.client.session_rewind(sid, from_seq)
+    }
+
     /// `worker.prompt`：把一条用户消息转交 daemon 的 omp worker（首次调用
     /// 自动拉起 worker 进程）。返回 worker 的原始 rpc 响应值；实际回复内容
     /// 全部走 [`Self::subscribe_worker`] 的事件推送，调用方（page-workspace）

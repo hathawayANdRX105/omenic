@@ -16,14 +16,15 @@ use omenic_tui::slash;
 use omenic_tui::ui;
 use web_state::ui_state::AgentEvent;
 
-/// T9 首批五条 + T11 `/search`（顺序 = 面板默认顺序）。
-const FIRST_BATCH: [&str; 6] = [
+/// T9 首批五条 + T11 `/search` + T13 `/rewind`（顺序 = 面板默认顺序）。
+const FIRST_BATCH: [&str; 7] = [
     "/help",
     "/clear",
     "/model",
     "/sessions",
     "/theme",
     "/search",
+    "/rewind",
 ];
 
 fn key(code: KeyCode) -> KeyEvent {
@@ -120,7 +121,7 @@ fn palette_opens_only_at_line_start() {
     let mut app = App::new();
     type_str(&mut app, "/");
     assert!(app.slash_visible(), "行首 `/` 触发面板");
-    assert_eq!(app.slash_rows(), FIRST_BATCH.len() as u16, "起步全量六行");
+    assert_eq!(app.slash_rows(), FIRST_BATCH.len() as u16, "起步全量七行");
     app.handle_key(key(KeyCode::Backspace));
     assert!(!app.slash_visible(), "删掉行首 `/` 收起面板");
 
@@ -194,12 +195,17 @@ fn palette_navigation_and_escape_restore_composer() {
     assert_eq!(highlighted(&app), Some("/sessions"));
     app.handle_key(key(KeyCode::Down));
     assert_eq!(highlighted(&app), Some("/theme"));
-    // T11：`/search` 是表尾第 6 条，到底夹紧点随之后移一位。
+    // T11：`/search` 是表尾第 6 条；T13：`/rewind` 追加为第 7 条，到底
+    // 夹紧点随之再后移一位。
     app.handle_key(key(KeyCode::Down));
     assert_eq!(highlighted(&app), Some("/search"));
     app.handle_key(key(KeyCode::Down));
-    assert_eq!(highlighted(&app), Some("/search"), "到底夹紧不环绕");
+    assert_eq!(highlighted(&app), Some("/rewind"));
+    app.handle_key(key(KeyCode::Down));
+    assert_eq!(highlighted(&app), Some("/rewind"), "到底夹紧不环绕");
     app.handle_key(key(KeyCode::BackTab));
+    assert_eq!(highlighted(&app), Some("/search"));
+    app.handle_key(key(KeyCode::Up));
     assert_eq!(highlighted(&app), Some("/theme"));
     app.handle_key(key(KeyCode::Up));
     assert_eq!(highlighted(&app), Some("/sessions"));

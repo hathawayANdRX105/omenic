@@ -109,6 +109,16 @@ pub enum Command {
     /// behind T12 retry/edit: truncate the tail, then append the new text.
     #[serde(rename = "session.truncate")]
     SessionTruncate,
+    /// `session.rewind` — `{ session_id, from_seq }` → `{ snapshotted }`.
+    /// Snapshot-then-drop over the same `seq >= from_seq` range as
+    /// `session.truncate`, but the discarded tail is copied into the rewind
+    /// backup table (fixed identity label) before it is deleted, and both
+    /// halves share one transaction: a snapshot that cannot be written leaves
+    /// the messages untouched. The T13 turn-rewind primitive; `from_seq`
+    /// keeps truncate's boundary semantics (`<= 0` empties, past the tail is
+    /// a `0` no-op) and stays required, never defaulted.
+    #[serde(rename = "session.rewind")]
+    SessionRewind,
     /// `session.read_from_cursor` — `{ cursor }` → `{ runs, cursor }`.
     #[serde(rename = "session.read_from_cursor")]
     SessionReadFromCursor,

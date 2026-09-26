@@ -210,6 +210,14 @@ pub struct App {
     truncate_pending: Option<i64>,
     /// T12：待写出的 OSC52 剪贴板正文（`c` 入队，事件循环取出写 stdout）。
     copies: VecDeque<String>,
+    /// T13：rewind 确认态 `(from_seq, n)` = 已校验的回退点与待丢弃轮数——
+    /// **模态**：[`Self::handle_key`] 在它存在时拦截全部键（y/Enter 确认、
+    /// n/Esc/Ctrl+C 取消、其余忽略），状态行显示 `discard n turn(s)? [y/n]`。
+    rewind_confirm: Option<(i64, i64)>,
+    /// T13：确认后待执行的 `session.rewind(from_seq)` 动作（n 供结果状态行）
+    /// ——App 无 IO，事件循环 [`Self::take_rewind`] 消费（同 T12
+    /// [`Self::take_truncate`] 的分工）。
+    rewind_pending: Option<(i64, i64)>,
     /// T6/T11：最近一次 `ui::sync_viewport` 的 transcript 列宽（命中行
     /// 定位按这个宽度断行；0 = 尚未喂过几何，跳转 no-op）。
     view_width: u16,
@@ -488,6 +496,17 @@ impl App {
         self.truncate_pending.take()
     }
 
+    /// T13：确认态 `(from_seq, n)`（渲染/测试读；`None` = 不在确认态）。
+    pub fn rewind_confirm(&self) -> Option<(i64, i64)> {
+        self.rewind_confirm
+    }
+
+    /// T13：取走确认后的回退动作 `(from_seq, n)`（事件循环消费去发 RPC，
+    /// App 无 IO——同 [`Self::take_truncate`] 的分工）。
+    pub fn take_rewind(&mut self) -> Option<(i64, i64)> {
+        self.rewind_pending.take()
+    }
+
     /// T12：出站消息落库回执——把本地投影里刚推的那条 user 消息 id 回填成
     /// ledger 口径 `{session_id}-{seq}`（`message_to_chat` 同一套序号）。
     /// retry/edit 的 seq 只认这个口径：不回填就只认得历史回填的消息，
@@ -603,7 +622,12 @@ impl App {
     /// 出站资格。
     pub fn note_turn_end(&mut self) {
         self.running = false;
-        self.status.clear();
+        // T13：确认态的提示行（`discard n turn(s)? [y/n]`）不许被迟到的
+        // TurnEnd 清掉——模态问题面板还在等 y/n，清了就没提示可读了。
+        // 其余情形照旧清活动覆写（合入前逐字一致）。
+        if self.rewind_confirm.is_none() {
+            self.status.clear();
+        }
         self.run_started = None;
         self.current_run = None;
     }
@@ -628,6 +652,13 @@ impl App {
         self.queue_bytes = self.queue_bytes.saturating_sub(text.len());
         self.running = true;
         self.status.clear();
+        // T13：出站 = 转为运行中，确认态自动取消（route §3 触发裁决：
+        // 转为运行中时自动取消确认）。置位在 `status.clear()` 之后——取消
+        // 回执要留下可读；结构上不可达（模态盖键 + [`Self::start_rewind`]
+        // 已拒空队列），防守性落点：确认态绝不许跟到运行中的台上去。
+        if self.rewind_confirm.take().is_some() {
+            self.status = "rewind cancelled — turn running".to_string();
+        }
         self.run_started = Some(Instant::now());
         self.ui.push_message(user_message(&text));
         let session_id = self.session_id.clone();
@@ -796,6 +827,11 @@ impl App {
         self.focused = None;
         self.edit_pending = None;
         self.truncate_pending = None;
+        // T13：确认态/待执行回退同样是旧台的坐标（回退点 from_seq 属于
+        // 旧会话），随视图同批作废——留着会在新台按旧会话的 seq 回退错台
+        //（与 truncate_pending 同批口径）。
+        self.rewind_confirm = None;
+        self.rewind_pending = None;
         // T11：切台 = 视图整体更换——搜索命中/视口快照随旧台作废，overlay
         // 一并收掉（不走 [`Self::close_search`] 的还原语义：旧台的滚动
         // 位置没有意义，下面的 reset 才是新台基准）。
@@ -823,6 +859,14 @@ impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> KeyAction {
         if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
             return KeyAction::None;
+        }
+        // T13：rewind 确认态是**模态**（route §3 触发裁决）——先于一切路由
+        // 收口：搜索 overlay、斜杠面板、退出确认、中断、编辑键全部让位，
+        // 键只归 [`Self::rewind_confirm_key`]（y/Enter 确认、n/Esc/Ctrl+C
+        // 取消、其余一律忽略）。确认态不可能与 copy 短反馈同框（进确认态
+        // 时状态行已被 `discard ...` 覆写），故早于下面的短反馈清理。
+        if self.rewind_confirm.is_some() {
+            return self.rewind_confirm_key(key);
         }
         // T12：copy 短反馈只活到下一次按键（route §3 注记①「随下一次按键/
         // 状态事件恢复常态」）——先清再路由，本次按键该置的照置。
@@ -1004,17 +1048,11 @@ impl App {
         self.set_status("focused — r retry · e edit · c copy · esc clears");
     }
 
-    /// T12：retry/edit 的改写目标 =（消息下标, ledger seq, 可见文本）。只认
-    /// 聚焦的 **user** 消息，且 id 能解析出本会话序号——seq 口径 =
-    /// `{session_id}-{seq}`（[`Self::note_appended_seq`] 与 `message_to_chat`
-    /// 同一套）；解析不出 = 无从定位截断点，返回 `None`（不猜序号，宁可
-    /// 不动作也不截错段）。
-    fn rewrite_target(&self) -> Option<(usize, i64, String)> {
-        let i = self.focused?;
-        let msg = self.ui.messages.get(i)?;
-        if msg.role != "user" {
-            return None;
-        }
+    /// T12/T13：消息 id → ledger seq，口径 = `{session_id}-{seq}`
+    /// （[`Self::note_appended_seq`] 与 `message_to_chat` 同一套）；解析不出
+    /// 或非正数 = 无从定位序号，返回 `None`（不猜序号，宁可不动作也不截
+    /// 错段）。retry/edit 与 rewind 的回退点共用这一个解析。
+    fn message_seq(&self, msg: &ChatMessage) -> Option<i64> {
         let seq: i64 = msg
             .id
             .strip_prefix(&self.session_id)?
@@ -1024,6 +1062,19 @@ impl App {
         if seq <= 0 {
             return None;
         }
+        Some(seq)
+    }
+
+    /// T12：retry/edit 的改写目标 =（消息下标, ledger seq, 可见文本）。只认
+    /// 聚焦的 **user** 消息，且 id 能解析出本会话序号（[`Self::message_seq`]）
+    /// ——解析不出即 `None`，理由见该方法。
+    fn rewrite_target(&self) -> Option<(usize, i64, String)> {
+        let i = self.focused?;
+        let msg = self.ui.messages.get(i)?;
+        if msg.role != "user" {
+            return None;
+        }
+        let seq = self.message_seq(msg)?;
         Some((i, seq, visible_text(msg)))
     }
 
@@ -1118,6 +1169,119 @@ impl App {
         }
     }
 
+    // --- T13 逐轮回退（route §3 T13 设计注记②③④ + 触发裁决）：`/rewind [n]`
+    // 执行只进确认态，y/Enter 才产出动作；回退点复用 T12 的 id→seq 口径 ---
+
+    /// T13：`/rewind [n]` 执行入口（两段 Enter 的第二段走到这里）——互斥
+    /// 拒绝、解析 n、算回退点，全过了才进确认态；任何拒绝都显式报状态行、
+    /// **零动作**（不进确认态、不动视图、不挂 pending）。
+    fn start_rewind(&mut self, arg: &str) {
+        // 互斥（route §3 注记：T10 队列逐放期间 ledger 在变、回退点不可信）：
+        // running 或出站非空时执行即拒——fencing 思路同 T12 [`Self::message_key`]
+        // 的单点短路，但入口在斜杠执行路径，不是焦点键。
+        if self.running || !self.outgoing.is_empty() {
+            self.set_status("rewind unavailable while running or queued");
+            return;
+        }
+        // n 缺省 1；非整数 → 显式报错零动作。
+        let n: i64 = if arg.is_empty() {
+            1
+        } else {
+            match arg.parse() {
+                Ok(n) => n,
+                Err(_) => {
+                    self.set_status(format!(
+                        "rewind: expected an integer turn count, got {arg:?}"
+                    ));
+                    return;
+                }
+            }
+        };
+        let targets = self.user_message_seqs();
+        let count = targets.len() as i64;
+        if count == 0 {
+            self.set_status("rewind: no user turns in this session");
+            return;
+        }
+        // 校验 n ∈ [1, count]（route §3 注记②：越界/零 → 显式报错、零动作）。
+        if n < 1 || n > count {
+            self.set_status(format!("rewind: n must be between 1 and {count}"));
+            return;
+        }
+        // 回退点 = 倒数第 n 条 user 消息的 seq；确认态显示的轮数 = 已校验的 n。
+        let (_, from_seq) = targets[(count - n) as usize];
+        self.rewind_confirm = Some((from_seq, n));
+        self.set_status(format!("discard {n} turn(s)? [y/n]"));
+    }
+
+    /// T13：本会话可定位的 user 消息（视图顺序，`(下标, seq)`）——n 校验与
+    /// 回退点计算同源；`system` 本地输出与 id 解析不出 seq 的消息不计（同
+    /// T12 [`Self::rewrite_target`] 的宁缺勿错口径）。
+    fn user_message_seqs(&self) -> Vec<(usize, i64)> {
+        self.ui
+            .messages
+            .iter()
+            .enumerate()
+            .filter(|(_, msg)| msg.role == "user")
+            .filter_map(|(i, msg)| self.message_seq(msg).map(|seq| (i, seq)))
+            .collect()
+    }
+
+    /// T13：确认态 y/Enter——把**已校验**的 `(from_seq, n)` 转成动作（RPC
+    /// 归事件循环，App 无 IO），提示行让位给结果行（`rewound ...` /
+    /// `rewind failed: ...` 由回填置）。
+    fn confirm_rewind(&mut self) {
+        let Some(pending) = self.rewind_confirm.take() else {
+            return;
+        };
+        self.rewind_pending = Some(pending);
+        self.status.clear();
+    }
+
+    /// T13：确认态 n/Esc/Ctrl+C——取消**零动作**（回退点、视图、ledger 全都
+    /// 不动，只留一行可见的取消回执）。
+    fn cancel_rewind(&mut self) {
+        self.rewind_confirm = None;
+        self.set_status("rewind cancelled");
+    }
+
+    /// T13：确认态按键收口（[`Self::handle_key`] 最先分派，模态盖过搜索
+    /// overlay、斜杠面板与退出确认——route §3 触发裁决「其余键一律忽略」）：
+    /// y/Enter 确认、n/Esc/Ctrl+C 取消（Ctrl+C 的中断/退出语义在确认态让位
+    /// 给取消），其余键一律忽略（Ctrl+R 不开搜索、Ctrl+D 不退出、编辑键
+    /// 不落 composer）。
+    fn rewind_confirm_key(&mut self, key: KeyEvent) -> KeyAction {
+        let plain = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        match key.code {
+            KeyCode::Char('y' | 'Y') if plain => self.confirm_rewind(),
+            KeyCode::Char('n' | 'N') if plain => self.cancel_rewind(),
+            KeyCode::Enter => self.confirm_rewind(),
+            KeyCode::Esc => self.cancel_rewind(),
+            KeyCode::Char('c') if !plain => self.cancel_rewind(),
+            _ => {}
+        }
+        KeyAction::None
+    }
+
+    /// T13：`session.rewind` 成功回填——transcript 强制对齐回退后的 ledger：
+    /// 本地投影整体换成 `history`（走切会话同一条 [`Self::switch_session`]
+    /// 重载路径——视图/滚动/焦点/搜索快照同批重置），状态行
+    /// `rewound n turn(s)`。
+    pub fn note_rewind_ok(&mut self, n: i64, history: Vec<ChatMessage>) {
+        let sid = self.session_id.clone();
+        self.switch_session(&sid, history);
+        self.set_status(format!("rewound {n} turn(s)"));
+    }
+
+    /// T13：`session.rewind` 失败回填（真值安全）——状态行
+    /// `rewind failed: <reason>`，本地投影一个字节都不动：宁可见不一致，
+    /// 也不假装回退成功（route §3 注记④）。
+    pub fn note_rewind_failed(&mut self, reason: impl Into<String>) {
+        self.set_status(format!("rewind failed: {}", reason.into()));
+    }
+
     /// T9：面板可见时的短路键——返回 `Some` = 已拦截（[`Self::handle_key`]
     /// 早 return），`None` = 不归面板管，落回既有路由（编辑键、ctrl 键、
     /// 翻页键都在那一侧）。
@@ -1150,7 +1314,19 @@ impl App {
     fn slash_complete(&mut self) -> Option<KeyAction> {
         let matches = self.slash_matches();
         let selected = matches.get(self.slash_cursor(matches.len()))?;
-        self.input = selected.name.to_string();
+        // T13：补全保留参数尾巴（`/rewind 3` 第一段 Enter 后仍是
+        // `/rewind 3`，不把已敲的 n 抹掉）——无尾巴时补全到命令名本身，
+        // 行为与合入前逐字一致。
+        let tail = self
+            .input
+            .split_once(char::is_whitespace)
+            .map(|(_, rest)| rest.trim())
+            .unwrap_or("");
+        self.input = if tail.is_empty() {
+            selected.name.to_string()
+        } else {
+            format!("{} {tail}", selected.name)
+        };
         self.slash_suppressed = true;
         self.slash_selected = 0;
         Some(KeyAction::None)
@@ -1188,8 +1364,11 @@ impl App {
             return;
         }
         if self.slash_enabled {
-            if let Some(cmd) = slash::find(trimmed) {
-                self.run_command(cmd);
+            // T13：整行解析改走 [`slash::find_line`]——精确命中照旧（无参
+            // 命令语义与 T9 逐字一致），带参行（`/rewind 3`）拆出首 token
+            // 与参数尾巴一并交给执行。
+            if let Some((cmd, arg)) = slash::find_line(trimmed) {
+                self.run_command(cmd, arg);
                 return;
             }
             if trimmed.starts_with('/') {
@@ -1240,7 +1419,11 @@ impl App {
 
     /// T9：本地执行一条注册命令（首批全是本地/面板语义）：不入出站队列、
     /// 不碰 prompt 提交路径——命令执行不产生模型回合。
-    fn run_command(&mut self, cmd: &slash::Command) {
+    ///
+    /// T13：`arg` 是 [`slash::find_line`] 拆出的参数尾巴——无参命令恒为空串
+    /// （`/help extra` 这类带尾巴的无参行在 `find_line` 就落空，到不了这），
+    /// 只有 `/rewind [n]` 用它。
+    fn run_command(&mut self, cmd: &slash::Command, arg: &str) {
         match cmd.action {
             // 输出遍历注册表生成（面板与 /help 同源，见 `slash::help_text`）。
             Action::Help => self.push_local(&slash::help_text()),
@@ -1276,6 +1459,9 @@ impl App {
             // T11：转录搜索 overlay（与 Ctrl+R 同一落点——双入口等效由
             // `tests/search_overlay.rs` 钉；总闸关 = no-op）。
             Action::Search => self.open_search(),
+            // T13：执行只进确认态（互斥拒绝/解析 n/算回退点都在
+            // [`Self::start_rewind`]，任何拒绝零动作），y/Enter 才产出动作。
+            Action::Rewind => self.start_rewind(arg),
         }
     }
 
@@ -1579,6 +1765,26 @@ fn event_loop(
         while let Some(text) = app.take_copy() {
             write_osc52(&text)?;
         }
+        // T13：确认后的回退动作（`App` 无 IO，同 T12 [`Self::take_truncate`]
+        // 的分工）——先发 `session.rewind`（快照 + 截断单事务），成功再
+        // `load_messages` 重载 transcript；失败只置状态行，本地投影一个字节
+        // 都不动（真值安全，不假装回退成功，route §3 注记④）。
+        if let Some((from_seq, n)) = app.take_rewind() {
+            let sid = app.session_id().to_string();
+            match client.rewind_session(&sid, from_seq) {
+                Err(err) => app.note_rewind_failed(err.to_string()),
+                Ok(_snapshotted) => {
+                    match crate::ui::session_picker::load_history(client, &sid) {
+                        Ok(history) => app.note_rewind_ok(n, history),
+                        // 回退已落库、只是回读失败：轮数报真（ledger 确实
+                        // 裁了），重载失败单独明说，不静默装作全成功。
+                        Err(err) => app.set_status(format!(
+                            "rewound {n} turn(s) — transcript reload failed: {err}"
+                        )),
+                    }
+                }
+            }
+        }
         if let Some(delivery) = app.take_prompt() {
             // T12：retry/edit 的截断必须**先于**重发文落库（否则重发的那条
             // 自己也被删）。截断点只在 idle + 空队列时挂得上（`message_key`
@@ -1620,7 +1826,9 @@ fn event_loop(
                     // 搬进新会话，正是 T4 红线要防的事故）。T11：搜索 overlay
                     // 打开时也让位——overlay 短路了全部按键，Ctrl+K 不该绕过它
                     // 把 picker 叠上来（按键先落 `handle_key` 的 overlay 分派）。
-                    if switch_key(key) && !app.search_open() {
+                    // T13：rewind 确认态同批让位——模态盖过一切，Ctrl+K 不许绕过
+                    // 确认态开 picker（按键落 `handle_key` 的模态分派）。
+                    if switch_key(key) && !app.search_open() && app.rewind_confirm().is_none() {
                         if !app.is_running()
                             && let Some(picked) = crate::ui::session_picker::run_picker(client, "")?
                         {
