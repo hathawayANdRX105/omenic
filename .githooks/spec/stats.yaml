@@ -2,40 +2,40 @@
 # find 关键字全部取自 omenic rsx 源码中的稳定 class/字面量，由
 # bin/web/tests/ui_contract.rs 的「源码锚点抽查」测试自动核对。
 name: stats
-target: crates/web-page-stats/src/lib.rs
+target: crates/web-ui/src/views/stats.rs
 description: 数据统计页（StatsView）——KPI 五列卡、七列指标带、320/1fr/340 三列主体。
 anchors:
   - key: page-container
     find: 'max-w-[1200px] w-full mx-auto'
     expect: '页面内容限宽 1200 居中，px-10 留白。'
-    source: 'omenic: crates/web-page-stats/src/lib.rs:13'
+    source: 'omenic: crates/web-ui/src/views/stats.rs:13'
   - key: range-switch
     find: 'bg-layer-1 border border-b1 rounded-[10px] p-0.5'
     expect: '头部时间范围分段切换（1h–All）为 layer-1 底 r10 分段控件，激活项 bg-selector。'
-    source: 'omenic: crates/web-page-stats/src/lib.rs:20'
+    source: 'omenic: crates/web-ui/src/views/stats.rs:20'
   - key: kpi-grid
     find: 'grid grid-cols-5 gap-3.5'
     expect: 'KPI 卡五列网格。'
-    source: 'omenic: crates/web-page-stats/src/lib.rs:43'
+    source: 'omenic: crates/web-ui/src/views/stats.rs:43'
   - key: kpi-card
     find: 'bg-layer-1 border border-b1 rounded-xl px-4 py-4 flex flex-col gap-2'
     expect: 'KPI 卡 layer-1 底 r16，label 12 / 数值 26 mono / delta chip（success/danger）。'
-    source: 'omenic: crates/web-page-stats/src/lib.rs:94-97（KpiCardView）'
+    source: 'omenic: crates/web-ui/src/views/stats.rs:94-97（KpiCardView）'
   - key: metric-band
     find: 'grid grid-cols-7 gap-3 bg-layer-1 border border-b1 rounded-xl px-5 py-3.5'
     expect: '指标带七列（label 10px mono 大写 caption + 数值 15px mono）。'
-    source: 'omenic: crates/web-page-stats/src/lib.rs:50-54'
+    source: 'omenic: crates/web-ui/src/views/stats.rs:50-54'
   - key: body-3col
     find: 'grid grid-cols-[320px_1fr_340px] gap-4 items-stretch'
     expect: '主体三列：320px（Agent Token 分布）/ 1fr（吞吐趋势）/ 340px（请求 Feed）。'
-    source: 'omenic: crates/web-page-stats/src/lib.rs:60'
+    source: 'omenic: crates/web-ui/src/views/stats.rs:60'
   - key: throughput-brand
     find: 'stroke: "#679efe"'
     expect: '吞吐折线与数据点用品牌蓝 #679efe，1.5px 描边。'
-    source: 'omenic: crates/web-page-stats/src/lib.rs:154,169；dsh: business-primary（dark）= #679efe'
+    source: 'omenic: crates/web-ui/src/views/stats.rs:154,169；dsh: business-primary（dark）= #679efe'
   - key: agent-bar
     find: 'h-1.5 bg-layer-2 rounded-full overflow-hidden'
     expect: 'Agent Token 分布条 6px 圆角轨道，填充宽度随占比。'
-    source: 'omenic: crates/web-page-stats/src/lib.rs:113-115'
+    source: 'omenic: crates/web-ui/src/views/stats.rs:113-115'
 notes: |
   图表为内联 SVG polyline（无图表库），锚点锁 stroke 颜色与网格列数。

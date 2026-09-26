@@ -2,10 +2,10 @@
 //! 「模型与渠道」承载 LLM 配置表单；「MCP 服务器」承载 [[mcp.servers]]
 //! 的列表编辑；「关于」放版本与项目信息。
 
+use crate::components::icons::{Gear, Terminal, Trash, X};
+use crate::components::ui::{Button, ButtonSize, ButtonVariant, IconButton, Modal};
 use dioxus::prelude::*;
 use web_client::llm::{LlmFallbackForm, LlmRuntimeConfig, McpServerForm};
-use web_components::icons::{Gear, Terminal, Trash, X};
-use web_components::ui::{Button, ButtonSize, ButtonVariant, IconButton, Modal};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {

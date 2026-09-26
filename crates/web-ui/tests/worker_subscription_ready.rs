@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use web_page_workspace::ReadinessGate;
+use web_ui::views::workspace::ReadinessGate;
 
 #[test]
 fn action_runs_only_after_subscription_is_ready() {

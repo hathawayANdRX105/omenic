@@ -9,18 +9,19 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
+use crate::components::chat::Chat;
+use crate::components::sidebar::Sidebar;
+use crate::components::taskpanel::TaskPanel;
+use crate::components::ui::Modal;
+use crate::layouts::app_frame::AppFrame;
+use crate::views::config::SettingsModal;
+use crate::views::stats::StatsView;
 use dioxus::prelude::*;
 use web_client::ClientError;
 use web_client::QuestionAnswer;
 use web_client::QuestionItem;
 use web_client::daemon::WebDaemon;
 use web_client::llm::LlmRuntimeConfig;
-use web_components::chat::Chat;
-use web_components::sidebar::Sidebar;
-use web_components::taskpanel::TaskPanel;
-use web_components::ui::Modal;
-use web_page_config::SettingsModal;
-use web_page_stats::StatsView;
 use web_state::convert::{WireTranslator, infer_session_status};
 use web_state::title_from_first_message;
 use web_state::types::{
@@ -1328,10 +1329,13 @@ pub fn Workspace(
     let sidebar_sessions = merge_run_statuses(space_sessions.read().clone(), &run_status_cache());
 
     rsx! {
-        div { class: "grid h-screen w-screen bg-base overflow-hidden relative select-none",
-            style: "grid-template-columns: {grid_cols(sidebar_collapsed(), sidebar_width())};",
-            onmousemove: on_root_mousemove,
-            onmouseup: on_root_mouseup,
+        // 三列框架壳在 layouts/app_frame.rs：这里只喂侧栏、中栏头与正文。
+        AppFrame {
+            collapsed: sidebar_collapsed(),
+            width: sidebar_width(),
+            on_resize: Callback::new(on_root_mousemove),
+            on_resize_end: Callback::new(on_root_mouseup),
+            sidebar: rsx! {
             Sidebar {
                 spaces: spaces(),
                 space_sessions: sidebar_sessions,
@@ -1358,9 +1362,9 @@ pub fn Workspace(
                 on_open_stats: move |_| view.set(View::Stats),
                 on_open_settings: move |_| show_settings.set(true),
             }
-
+            },
             // 中栏：面包屑头 + 视图
-            div { class: "min-w-0 flex flex-col bg-base overflow-hidden",
+            header: rsx! {
                 div { class: "min-h-[44px] pl-7 pr-5 pt-3 pb-2 border-b border-b1 flex items-center gap-2 shrink-0",
                     if view() == View::Stats {
                         span { class: "text-[14px] leading-5 font-medium text-label", "数据统计" }
@@ -1382,6 +1386,9 @@ pub fn Workspace(
                         }
                     }
                 }
+            },
+            // 中栏正文：统计页 / 会话页
+            children: rsx! {
                 match view() {
                     View::Stats => rsx! { StatsView {} },
                     View::Chat => rsx! {
@@ -1411,7 +1418,6 @@ pub fn Workspace(
                         }
                     },
                 }
-            }
 
             // ⌘K 快速切换
             if show_quick_switcher() {
@@ -1482,15 +1488,8 @@ pub fn Workspace(
                     on_close: move |_| show_settings.set(false),
                 }
             }
+            },
         }
-    }
-}
-
-fn grid_cols(collapsed: bool, width: usize) -> String {
-    if collapsed {
-        "56px minmax(0,1fr)".to_string()
-    } else {
-        format!("{width}px minmax(0,1fr)")
     }
 }
 

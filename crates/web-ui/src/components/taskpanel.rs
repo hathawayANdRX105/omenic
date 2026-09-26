@@ -3,8 +3,8 @@
 use dioxus::prelude::*;
 use web_state::types::TaskItem;
 
-use crate::icons::X;
-use crate::ui::IconButton;
+use crate::components::icons::X;
+use crate::components::ui::IconButton;
 
 #[component]
 pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {

@@ -16,26 +16,45 @@ fn main() {
     // generated input must live inside the crate — we drop it next to the real
     // input and it is gitignored.
     let mut css = std::fs::read_to_string(&input).unwrap_or_default();
-    let my_src = manifest.join("src").to_string_lossy().replace('\\', "/");
-    let my_src_directive = format!("@source \"{my_src}/**/*.rs\";");
-    // Match a real directive line (anchored at line start), never prose that
-    // merely mentions the directive name.
-    let idx = css.find("\n@source").map(|i| i + 1).or_else(|| {
-        if css.starts_with("@source") {
-            Some(0)
+    // Every `@source` glob must be absolute. Tailwind v4.3 resolves a relative
+    // glob only when it carries an explicit `./` prefix, and resolves it
+    // against the INPUT file's directory — which is the generated input in the
+    // crate root, not assets/. A bare `../../..` glob silently matches nothing,
+    // which is how the web crates' rsx classes fell out of the stylesheet.
+    // Normalizing here makes the globs in assets/tailwind-input.css
+    // depth-independent.
+    let mut out = String::with_capacity(css.len());
+    let mut saw_source = false;
+    for line in css.split_inclusive('\n') {
+        let Some(rest) = line.trim_start().strip_prefix("@source ") else {
+            out.push_str(line);
+            continue;
+        };
+        let Some((glob, tail)) = rest
+            .split_once('"')
+            .and_then(|(g, t)| Some((g, t.split_once('"')?)))
+        else {
+            out.push_str(line);
+            continue;
+        };
+        saw_source = true;
+        let normalized = glob.trim_start_matches("./");
+        let abs = if normalized.starts_with('/') {
+            normalized.to_string()
         } else {
-            None
-        }
-    });
-    if let Some(idx) = idx {
-        // Replace the existing relative source directive with an absolute one.
-        let line_end = css[idx..].find('\n').map(|e| idx + e).unwrap_or(css.len());
-        // Guard: only rewrite a line that really is the directive.
-        if css[idx..line_end].contains("@source") {
-            css.replace_range(idx..line_end, &my_src_directive);
-        }
-    } else {
-        css.push_str(&format!("\n{my_src_directive}\n"));
+            manifest
+                .join(normalized)
+                .to_string_lossy()
+                .replace('\\', "/")
+        };
+        // tail.0 is the remainder of the glob inside the quotes, tail.1 the
+        // closing quote plus the line's own newline.
+        out.push_str(&format!("@source \"{abs}{}\"{}", tail.0, tail.1));
+    }
+    css = out;
+    if !saw_source {
+        let my_src = manifest.join("src").to_string_lossy().replace('\\', "/");
+        css.push_str(&format!("\n@source \"{my_src}/**/*.rs\";\n"));
     }
     let gen_input = manifest.join(".tailwind.gen-input.css");
     let _ = std::fs::write(&gen_input, &css);
@@ -85,5 +104,5 @@ fn main() {
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=build.rs");
     // rsx classes live in the web crates; their edits must re-run this script.
-    println!("cargo:rerun-if-changed=../../crates/web");
+    println!("cargo:rerun-if-changed=../../crates/web-ui");
 }

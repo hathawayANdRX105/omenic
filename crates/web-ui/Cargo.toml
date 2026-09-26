@@ -1,0 +1,16 @@
+[package]
+name = "web-ui"
+edition = "2024"
+version = "0.1.0"
+publish = false
+description = "omenic Web UI —— Dioxus LiveView 前端：components / views / layouts / utils"
+
+[dependencies]
+# 共享投影层与 daemon 客户端（tui 也用，故不在本 crate 内）
+web-client = { path = "../web-client" }
+web-state = { path = "../web-state" }
+dioxus = { version = "0.7" }
+pulldown-cmark = { workspace = true }
+ammonia = { workspace = true }
+serde_json = { workspace = true }
+tokio = { version = "1", default-features = false, features = ["sync"] }

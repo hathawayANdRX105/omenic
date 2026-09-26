@@ -2,7 +2,7 @@
 name = "web"
 version = "0.1.0"
 edition = "2024"
-description = "oi-web — Dioxus LiveView 壳入口（App/launch 在 src/app.rs；组件/页面/状态在 crates/web/）"
+description = "oi-web — Dioxus LiveView 壳入口（App/launch 在 src/app.rs；组件/页面/布局在 crates/web-ui/）"
 license = "MIT"
 build = "build.rs"
 
@@ -16,7 +16,7 @@ dioxus-liveview = { version = "0.7", features = ["axum"] }
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 web-client = { path = "../../crates/web-client" }
-web-page-workspace = { path = "../../crates/web-page-workspace" }
+web-ui = { path = "../../crates/web-ui" }
 
 # 仅测试用：解析 specs/ui/*.yaml 契约（见 tests/ui_contract.rs）
 [dev-dependencies]

@@ -3,9 +3,10 @@
 /* Scan Dioxus rsx source for class candidates (Rust macro strings).
    NOTE: build.rs rewrites the first source-directive line to an absolute
    path; keep this bin/web line first. The crates line is resolved relative
-   to the generated input (bin/web/.tailwind.gen-input.css) → repo/crates. */
+   to the generated input (bin/web/.tailwind.gen-input.css); build.rs absolutizes
+   every @source glob, so the relative depth written here does not matter. */
 @source "../src/**/*.rs";
-@source "../../crates/web/**/*.rs";
+@source "../../crates/web-ui/**/*.rs";
 
 /* ── dsh design tokens (dark theme), replicating ui-theme/design-platform.css ──
    static: neutral-bluish scale; brand: deepseek blues; alias: dark-mode values.

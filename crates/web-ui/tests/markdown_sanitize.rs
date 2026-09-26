@@ -1,7 +1,7 @@
 //! markdown_to_html 的 ammonia 清洗测试：透传的原始 HTML 必须被剥离，
 //! 正常 markdown 渲染不受影响（输出经 dangerous_inner_html 注入 DOM）。
 
-use web_components::chat::markdown_to_html;
+use web_ui::utils::markdown::markdown_to_html;
 
 #[test]
 fn raw_script_tag_is_stripped() {

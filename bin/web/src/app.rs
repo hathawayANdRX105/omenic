@@ -5,7 +5,7 @@
 
 use dioxus::prelude::*;
 use web_client::llm;
-use web_page_workspace::Workspace;
+use web_ui::Workspace;
 
 #[component]
 pub fn App() -> Element {

@@ -5,8 +5,8 @@ use dioxus::prelude::*;
 use std::collections::{HashMap, HashSet};
 use web_state::types::{Session, SessionStatus, WorkspaceSpace};
 
-use crate::icons::{Chart, Folder, Gear, PanelLeft, Plus, Search, Trash};
-use crate::ui::IconButton;
+use crate::components::icons::{Chart, Folder, Gear, PanelLeft, Plus, Search, Trash};
+use crate::components::ui::IconButton;
 
 fn status_dot_class(status: &SessionStatus) -> &'static str {
     match status {
@@ -85,7 +85,7 @@ pub fn Sidebar(
                                     on_create.call(path);
                                 }
                             },
-                            crate::icons::Wordmark {}
+                            crate::components::icons::Wordmark {}
                         }
                         IconButton { title: "收起侧边栏", onclick: move |_| on_toggle.call(()), PanelLeft { size: 16 } }
                     }
