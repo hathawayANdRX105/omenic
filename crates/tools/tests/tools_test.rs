@@ -63,6 +63,7 @@ fn default_catalog_has_every_builtin_tool() {
         "memory_append",
         "memory_search",
         "memory_list",
+        "mark_done",
     ] {
         assert!(names.iter().any(|n| n == expected), "missing {expected}");
     }

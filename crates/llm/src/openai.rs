@@ -228,6 +228,17 @@ pub fn is_retryable_transport(kind: ureq::ErrorKind) -> bool {
     )
 }
 
+/// 401/403: a rejected key or a forbidden grant. Retrying fails
+/// identically, so run-level continuation must hard-stop on these —
+/// unlike [`is_retryable_status`], which is about *this call*.
+/// ponytail: string-match on the message minted at `API {status}: {text}`
+/// below — one mint site, so the coupling stays local. `contains` (not
+/// `starts_with`) so the waterfall's terminal message, which embeds the
+/// last provider's error, keeps working.
+pub fn is_auth_failure(message: &str) -> bool {
+    message.contains("API 401:") || message.contains("API 403:")
+}
+
 /// A failed round-trip: what happened, and whether a retry could fix it.
 struct RoundFailure {
     message: String,

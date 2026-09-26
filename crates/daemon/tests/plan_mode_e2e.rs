@@ -15,7 +15,7 @@ mod common;
 use std::thread;
 use std::time::Duration;
 
-use common::{MockOpenAi, daemon_cfg, drain_events, one_text_turn, prompt, sse_tool_call};
+use common::{MockOpenAi, daemon_cfg, drain_events, prompt, sse_tool_call};
 use daemon::protocol::Command;
 use daemon::{Daemon, DaemonClient};
 use serde_json::{Value, json};
@@ -55,11 +55,12 @@ fn plan_mode_review_round_trip_through_the_daemon() {
             &json!({ "plan": "# The plan\n\n1. do the thing" }).to_string(),
             true,
         ),
-        // Turn 2 (after approval): the run wraps up.
-        one_text_turn("done"),
+        // Turn 2 (after approval): the run wraps up — the model marks the
+        // task done, which ends the run immediately (no bare continuation).
+        sse_tool_call("mark_done", "{}", true),
         // Turn 3 (a fresh prompt after approval): must run without the
         // plan:policy section — the approved exit landed at the boundary.
-        one_text_turn("wrapped"),
+        sse_tool_call("mark_done", "{}", true),
     ]);
     let mut daemon = Daemon::start(daemon_cfg(dir.path(), &mock, 4)).expect("daemon start");
     let client = DaemonClient::connect_to(daemon.socket_addr().path());

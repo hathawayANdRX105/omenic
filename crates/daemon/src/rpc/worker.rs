@@ -129,6 +129,12 @@ pub struct Worker {
     /// omenic 自家引擎模式（OMENIC_WORKER_MODE=orbit）：进程内跑 orbit
     /// agent 循环（C1），事件词汇与 omp 转发层完全一致。None = omp 模式。
     orbit: Option<OrbitEngine>,
+    /// Last `abort` was a user request (ESC), not a kill/teardown. The
+    /// event pump reads this when closing the run: a user-initiated stop
+    /// books the ledger as `"paused"` (resumable) instead of `"aborted"`
+    /// (killed). Only consulted on `stop_reason == "aborted"` frames, so a
+    /// stale value from an earlier prompt is harmless.
+    pub user_abort: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// One unit of work for the pump thread.
@@ -154,6 +160,12 @@ struct Pump {
 
 /// How long the pump blocks in one frame read before re-checking jobs.
 const PUMP_POLL: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// Explicit-completion guard: when the model stops without `mark_done`, the
+/// loop is forced to continue up to this many times per prompt before an
+/// unmarked stop is allowed. ponytail: grok's `max_fires_per_prompt=2`
+/// default; promote to config if a per-workspace tuning shows up.
+const MARK_GUARD_MAX_FIRES: u32 = 2;
 
 /// Queue of passive notifications for the running loop (background job
 /// completions and friends). Shared between the jobs registry's
@@ -506,6 +518,12 @@ impl OrbitEngine {
                                     &compaction,
                                 );
                             };
+                        // Explicit-completion guard (freebuff task_completed
+                        // shape): the run may end only after the model calls
+                        // `mark_done`. Per-prompt state, created in the loop
+                        // body so each prompt starts unmarked.
+                        let marked = std::cell::Cell::new(false);
+                        let fires = std::cell::Cell::new(0u32);
                         agent_loop::orbit::run_agent_streaming(
                             run_backend.as_ref(),
                             &run_model,
@@ -526,6 +544,19 @@ impl OrbitEngine {
                                     q.drain(..).collect::<Vec<_>>()
                                 }),
                                 get_follow_up: None,
+                                should_continue: Some(&|| {
+                                    if marked.get() {
+                                        return false;
+                                    }
+                                    let n = fires.get();
+                                    if n < MARK_GUARD_MAX_FIRES {
+                                        fires.set(n + 1);
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }),
+                                completion_tool: Some(&|name| name == "mark_done"),
                                 instruction_cwd: run_cwd.as_deref(),
                             },
                             &mut |ev| {
@@ -540,6 +571,9 @@ impl OrbitEngine {
                                         WorkerEvent::Reasoning { delta }
                                     }
                                     protocol::events::AgentEvent::ToolCall(spec) => {
+                                        if spec.name == "mark_done" {
+                                            marked.set(true);
+                                        }
                                         WorkerEvent::ToolExecutionStart {
                                             name: spec.name,
                                             input: spec.args,
@@ -646,6 +680,7 @@ impl Worker {
             client: Some(client),
             pump: None,
             orbit: None,
+            user_abort: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -657,6 +692,7 @@ impl Worker {
                 client: None,
                 pump: None,
                 orbit: Some(OrbitEngine::new(setup)),
+                user_abort: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             });
         }
         let client = super::client::Client::new(omp_path)?;
@@ -841,8 +877,10 @@ impl Worker {
 
     /// Abort the current agent session.
     pub fn abort(&mut self) -> Result<Value, super::client::RpcError> {
+        use std::sync::atomic::Ordering;
+        // A user-initiated abort books the run as paused, not killed.
+        self.user_abort.store(true, Ordering::SeqCst);
         if let Some(orbit) = self.orbit.as_ref() {
-            use std::sync::atomic::Ordering;
             orbit.abort_flag.store(true, Ordering::SeqCst);
             return Ok(serde_json::json!({ "aborted": true }));
         }

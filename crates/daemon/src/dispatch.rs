@@ -235,6 +235,8 @@ impl WorkerHandle {
         let bus = events.clone();
         let sessions = sessions.clone();
         let runs = runs.clone();
+        // ESC (user-requested abort) books the run as paused, not killed.
+        let user_abort = std::sync::Arc::clone(&w.user_abort);
         // Orbit runs end here, omp-compat runs end in `dispatch` when the
         // blocking prompt returns — the pump must not second-guess that
         // close (it would append a second TurnEnd per turn).
@@ -273,7 +275,8 @@ impl WorkerHandle {
                     && let WorkerEvent::AgentEnd { stop_reason } = &event
                     && let Some(run) = attributed.as_deref()
                 {
-                    close_run_on_agent_end(&runs, &sessions, run, stop_reason);
+                    let user_paused = user_abort.load(std::sync::atomic::Ordering::SeqCst);
+                    close_run_on_agent_end(&runs, &sessions, run, stop_reason, user_paused);
                     try_clear_active_run(&active_run, run);
                 }
                 let Ok(line) = serde_json::to_string(&frame) else {
@@ -297,6 +300,7 @@ fn close_run_on_agent_end(
     sessions: &SessionState,
     run_id: &str,
     stop_reason: &str,
+    user_paused: bool,
 ) {
     // Snapshot before finishing: the session id has to survive a concurrent
     // close of the same run, and a run that is already done is not ours to
@@ -307,7 +311,13 @@ fn close_run_on_agent_end(
     if record.finished_at_ms.is_some() {
         return;
     }
-    let status = crate::state::agent_end_status(stop_reason);
+    // A user-initiated stop (ESC) is resumable, not a kill: book it as
+    // "paused" so the board can distinguish it from a crashed/killed run.
+    let status = if user_paused && stop_reason == "aborted" {
+        "paused"
+    } else {
+        crate::state::agent_end_status(stop_reason)
+    };
     let ts_ms = crate::state::now_ms();
     if let Err(e) = runs.finish(run_id, ts_ms, status) {
         eprintln!("daemon: AgentEnd close failed for run {run_id}: {e}");

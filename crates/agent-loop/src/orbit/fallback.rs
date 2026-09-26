@@ -112,7 +112,7 @@ impl WaterfallLlm {
         signal: &AtomicBool,
         policy: RetryPolicy,
         emit: &mut dyn FnMut(&StreamEvent),
-    ) -> bool {
+    ) -> Result<(), String> {
         // Observe every event the per-provider call hands out: record
         // whether content leaked, whether the round ended in a clean abort,
         // and what the terminal event was — while forwarding every event
@@ -120,6 +120,9 @@ impl WaterfallLlm {
         // below.
         let mut leaked_content = false;
         let mut terminal = Terminal::None;
+        // The last terminal error text, so a 401/403 on the last provider
+        // survives the "all providers exhausted" summary.
+        let mut last_error: Option<String> = None;
         llm::openai::stream_cb_with_policy(
             &provider.to_model(),
             context,
@@ -135,7 +138,10 @@ impl WaterfallLlm {
                     StreamEvent::Done { .. } => {
                         terminal = Terminal::Done;
                     }
-                    StreamEvent::Error(_) => terminal = Terminal::Error,
+                    StreamEvent::Error(msg) => {
+                        terminal = Terminal::Error;
+                        last_error = Some(msg.clone());
+                    }
                 }
                 // A terminal Error with nothing leaked is withheld: it only
                 // means "this provider failed, try the next one", not "the
@@ -148,16 +154,16 @@ impl WaterfallLlm {
         );
         if terminal != Terminal::Error {
             // Clean `Done`: success (an abort is consumer intent, also done).
-            return true;
+            return Ok(());
         }
         if leaked_content {
             // Content leaked before the error: the failure was just emitted
             // and must not be replayed elsewhere. The waterfall stops here.
-            return true;
+            return Ok(());
         }
         // Error, no content leaked, round ended: the next provider may take
         // over — the caller decides (continue or final error).
-        false
+        Err(last_error.unwrap_or_else(|| "unknown error".into()))
     }
 
     /// Run the waterfall. After all providers fail, emit one terminal
@@ -173,18 +179,23 @@ impl WaterfallLlm {
         let providers = self.providers();
         let last = providers.len() - 1;
         for (i, provider) in providers.iter().enumerate() {
-            if Self::attempt_provider(provider, context, tools, signal, self.retry, emit) {
-                return;
+            match Self::attempt_provider(provider, context, tools, signal, self.retry, emit) {
+                Ok(()) => return,
+                Err(last_err) => {
+                    // This provider failed before leaking anything. The next
+                    // provider may still take over — only the last one's
+                    // failure is terminal, and it carries the original error
+                    // so a 401/403 survives the fallback chain.
+                    if i < last {
+                        continue;
+                    }
+                    emit(&StreamEvent::Error(format!(
+                        "llm provider {i} ({}) failed: all providers exhausted (last error: {last_err})",
+                        provider.model
+                    )));
+                    return;
+                }
             }
-            if i < last {
-                continue;
-            }
-            // Every provider failed before leaking anything.
-            emit(&StreamEvent::Error(format!(
-                "llm provider {i} ({}) failed: all providers exhausted",
-                provider.model
-            )));
-            return;
         }
     }
 }

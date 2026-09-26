@@ -333,10 +333,11 @@ pub struct StatsSummary {
     pub total_runs: u64,
     /// Runs whose terminal status is exactly `"ok"`.
     pub ok_runs: u64,
-    /// Terminal runs with any non-ok, non-aborted status (`"failed"`,
-    /// `"spawn_failed"`, …).
+    /// Terminal runs with any non-ok, non-aborted, non-paused status
+    /// (`"failed"`, `"spawn_failed"`, …).
     pub failed_runs: u64,
-    /// Terminal runs explicitly marked `"aborted"`.
+    /// Terminal runs explicitly marked `"aborted"` or `"paused"`
+    /// (user-initiated stops, not failures).
     pub aborted_runs: u64,
     /// Half-open runs (`finished_at_ms` is `None`) — still running, or
     /// orphaned by a crash.
@@ -441,7 +442,9 @@ pub fn aggregate_stats(runs: &[RunRecord], range: &str, now_ms: i64) -> StatsSum
             Some(fin) => {
                 match run.status.as_deref() {
                     Some("ok") => ok_runs += 1,
-                    Some("aborted") => aborted_runs += 1,
+                    // "paused" (user ESC) is an intentional stop, not a
+                    // failure: it buckets with aborted.
+                    Some("aborted") | Some("paused") => aborted_runs += 1,
                     _ => failed_runs += 1,
                 }
                 if fin >= run.started_at_ms {
