@@ -547,22 +547,6 @@ impl Daemon {
     /// CLI can never disagree about where todos live. `Store` is a stateless
     /// `PathBuf` wrapper (every `todo.list` / `goal.list` request builds its
     /// own), so one per daemon start is enough; no shared handle is needed.
-    /// One-line rendering of a finished job for the model's aside channel.
-    /// State and exit code go in verbatim: the model decides what it means
-    /// (a `failed` job it did not start needs different handling than one
-    /// it launched and expected to succeed).
-    fn job_done_aside(summary: &jobs::JobSummary) -> String {
-        let mut line = format!(
-            "[background] job {} ({}) {}",
-            summary.id, summary.state, summary.label
-        );
-        match summary.exit_code {
-            Some(code) => line.push_str(&format!(" — exit {code}")),
-            None => {}
-        }
-        line
-    }
-
     fn session_tools(
         data_dir: &std::path::Path,
         aside_queue: &crate::rpc::worker::AsideQueue,
@@ -584,6 +568,22 @@ impl Daemon {
             store::store::Store::new(data_dir),
         )));
         std::sync::Arc::new(session_tools)
+    }
+
+    /// One-line rendering of a finished job for the model's aside channel.
+    /// State and exit code go in verbatim: the model decides what it means
+    /// (a `failed` job it did not start needs different handling than one
+    /// it launched and expected to succeed).
+    fn job_done_aside(summary: &jobs::JobSummary) -> String {
+        let mut line = format!(
+            "[background] job {} ({}) {}",
+            summary.id, summary.state, summary.label
+        );
+        match summary.exit_code {
+            Some(code) => line.push_str(&format!(" — exit {code}")),
+            None => {}
+        }
+        line
     }
 
     /// Append synthetic `TurnEnd { aborted }` records for every run a prior
