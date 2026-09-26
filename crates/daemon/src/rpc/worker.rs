@@ -137,6 +137,11 @@ struct Pump {
 /// How long the pump blocks in one frame read before re-checking jobs.
 const PUMP_POLL: std::time::Duration = std::time::Duration::from_millis(20);
 
+/// Queue of passive notifications for the running loop (background job
+/// completions and friends). Shared between the jobs registry's
+/// `on_job_done` hook and the lazily-spawned engine.
+pub type AsideQueue = std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<llm::Message>>>;
+
 /// orbit-engine configuration resolved by the host (the daemon) from the
 /// assembled plugin container: the session cwd for `AGENTS.md` discovery,
 /// the turn cap, the compaction policy, and the tool catalog. Nothing here
@@ -179,6 +184,10 @@ pub struct OrbitConfig {
     /// mid-session lands on the next turn. `None` = always default build
     /// (pre-plan-mode behavior).
     pub plan_policy_section: Option<std::sync::Arc<dyn Fn() -> String + Send + Sync>>,
+    /// Asides queued for the loop: finished background jobs, etc.
+    /// Shared with the jobs registry's `on_job_done` hook so a completion
+    /// lands here even though the engine is spawned lazily.
+    pub aside_queue: AsideQueue,
 }
 
 /// orbit-mode construction bundle: the model, the streaming backend, and the
@@ -369,6 +378,10 @@ struct OrbitEngine {
     /// Steering queue for inter-turn user instructions. Drained by the
     /// loop's `get_steering` pull at the top of every round.
     steering_queue: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<llm::Message>>>,
+    /// Passive notifications (background job completions). Drained by the
+    /// loop's `get_aside` pull at the same boundary, but never extending
+    /// the run.
+    aside_queue: AsideQueue,
 }
 
 impl OrbitEngine {
@@ -386,6 +399,7 @@ impl OrbitEngine {
                     mcp_tools,
                     session_tools,
                     plan_policy_section,
+                    aside_queue,
                 },
         } = setup;
         let (pull_push, pull_queue) = std::sync::mpsc::channel();
@@ -416,6 +430,7 @@ impl OrbitEngine {
             steering_queue: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::VecDeque::new(),
             )),
+            aside_queue,
         };
         // 专用 run 线程：串行消费 prompt，LLM 调用不占 dispatch 锁，
         // abort 标志（Arc）随时可从别的连接置位
@@ -430,6 +445,7 @@ impl OrbitEngine {
         let run_compaction = std::sync::Arc::clone(&engine.compaction);
         let run_plan_section = engine.plan_policy_section.clone();
         let run_steering = std::sync::Arc::clone(&engine.steering_queue);
+        let run_aside = std::sync::Arc::clone(&engine.aside_queue);
         std::thread::Builder::new()
             .name("omenic-orbit-worker".into())
             .spawn(move || {
@@ -485,6 +501,10 @@ impl OrbitEngine {
                                 get_steering: Some(&|| {
                                     let mut q =
                                         run_steering.lock().unwrap_or_else(|e| e.into_inner());
+                                    q.drain(..).collect::<Vec<_>>()
+                                }),
+                                get_aside: Some(&|| {
+                                    let mut q = run_aside.lock().unwrap_or_else(|e| e.into_inner());
                                     q.drain(..).collect::<Vec<_>>()
                                 }),
                                 get_follow_up: None,

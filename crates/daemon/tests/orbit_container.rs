@@ -135,6 +135,7 @@ fn setup(doc: serde_json::Value, backend: Arc<Shared>) -> OrbitSetup {
             // list is exactly what it was before that family existed.
             session_tools: std::sync::Arc::new(Vec::new()),
             plan_policy_section: None,
+            aside_queue: Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
         },
     }
 }
