@@ -704,7 +704,7 @@ fn McpServerCard(
                         class: "{input_class} font-mono",
                         value: "{server.args}",
                         oninput: move |e| servers.write()[index].args = e.value(),
-                        placeholder: "-y, @modelcontextprotocol/server-filesystem",
+                        placeholder: "--root, /path/to/directory",
                     }
                 }
             }
