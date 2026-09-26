@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 
 /// Which START-TIME features a provider supports.
 ///
@@ -28,6 +29,11 @@ pub struct SubagentStartRequest {
     /// completed-turn prefix. Descriptive only for Phase 1 — the fork
     /// backend always starts the child fresh.
     pub inherits_parent_context: bool,
+    /// Mid-run inbox: messages pushed here reach the child at its next
+    /// step boundary, exactly like the main loop's steering queue. Created
+    /// by the caller (the runtime service keeps the matching handle) so a
+    /// message can arrive while the child is mid tool-call.
+    pub inbox: Option<Arc<Mutex<VecDeque<String>>>>,
 }
 
 /// Terminal outcome of a subagent run.
@@ -113,6 +119,18 @@ pub trait SubagentProvider: Send + Sync {
     ///
     /// Descriptive only for Phase 1 — the fork backend ignores the seed.
     fn inherits_parent_context(&self) -> bool;
+
+    /// Whether a message pushed into [`SubagentStartRequest::inbox`] while
+    /// the child runs actually reaches it.
+    ///
+    /// Run-time capability, so it lives here rather than in
+    /// [`SubagentCapabilities`] (which describes start-time features). Only
+    /// the in-process loop has a step boundary to drain at; an out-of-process
+    /// child that is not asked for a new turn would never read the inbox, so
+    /// claiming delivery for it would be a lie.
+    fn supports_mid_run_messages(&self) -> bool {
+        false
+    }
 
     /// Establish a ONE-SHOT child and return its handle after publication.
     fn start(&self, request: SubagentStartRequest) -> SubagentRun;
