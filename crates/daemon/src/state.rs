@@ -667,6 +667,12 @@ impl SessionState {
             .append_message(session_id, role, text, attachments)
     }
 
+    /// Drop every message with `seq >= from_seq`; returns how many rows
+    /// went away. Backs the `session.truncate` command (T12 retry/edit).
+    pub fn truncate_messages(&self, session_id: &str, from_seq: i64) -> Result<u64, SessionError> {
+        self.inner.truncate_messages(session_id, from_seq)
+    }
+
     pub fn load_messages(
         &self,
         session_id: &str,

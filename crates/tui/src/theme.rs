@@ -32,3 +32,10 @@ pub fn dim() -> Style {
 pub fn danger() -> Style {
     Style::default().fg(Color::LightRed)
 }
+
+/// T12：焦点消息行标记——焦点消息的首条可见行整体加下划线（route §3 T12
+/// 注记④「焦点消息行最小标记」）。不引入新颜色，标记靠字形属性，浅色/深色
+/// 终端同样可读（D11 口径）。
+pub fn focus() -> Style {
+    base().add_modifier(Modifier::UNDERLINED)
+}

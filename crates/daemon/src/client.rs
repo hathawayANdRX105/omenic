@@ -275,6 +275,17 @@ impl DaemonClient {
         self.call(Command::SessionSearch, params)
     }
 
+    /// `session.truncate` → how many messages with `seq >= from_seq` were
+    /// removed (`0` = nothing in range). Missing `from_seq` semantics are
+    /// server-side: the field is required there, never defaulted.
+    pub fn session_truncate(&self, session_id: &str, from_seq: i64) -> Result<u64, ClientError> {
+        let v: TruncateOutcome = self.call(
+            Command::SessionTruncate,
+            json!({ "session_id": session_id, "from_seq": from_seq }),
+        )?;
+        Ok(v.deleted)
+    }
+
     /// Read run records newer than `cursor` and return the next cursor.
     pub fn read_from_cursor(
         &self,
@@ -402,6 +413,11 @@ pub struct DaemonInfo {
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 struct DeleteOutcome {
     deleted: bool,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+struct TruncateOutcome {
+    deleted: u64,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]

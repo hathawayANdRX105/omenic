@@ -45,6 +45,11 @@ const STATS_RANGE: &str = "24h";
 /// `theme.rs` D11；`/theme` 切换是 T17 的活——编不到就不编，明说没有）。
 const THEME_LINE: &str = "theme: default — palette switching not available yet";
 
+/// T12：copy 的短反馈文案（dock 活动行覆写；随下一次按键或状态事件退场，
+/// 见 [`App::handle_key`] 开头的清理点）。OSC52 是否被终端采纳不可证，
+/// 这行字只陈述「本方已写入 stdout」这一已证明事实（route §3 T12 注记①）。
+const COPIED_STATUS: &str = "copied";
+
 // --- T10 运行中排队常数（route §3 T10；dh-rs `PromptQueue` 口径，任务书
 // §2 实录：`input_memory.rs:11` 的 MAX_QUEUE_ITEMS、`composer.rs:10` 的
 // 64KiB——字节上限按**队列总量**记账，不是单条上限） ---
@@ -187,6 +192,24 @@ pub struct App {
     /// 关闸——overlay 仅 enhanced，回看/搜索/复制归终端，同 `disable_slash`
     /// 口径）。
     search_enabled: bool,
+    /// T12：消息操作总闸（enhanced 恒开；inline 档
+    /// [`Self::disable_message_ops`] 关闸——inline 没有 transcript 重绘，
+    /// 截断后视图无从改写，回看/复制照 T8 归终端，同 `disable_slash` /
+    /// `disable_search` 口径）。
+    message_ops_enabled: bool,
+    /// T12：聚焦的消息下标（`ui.messages` 的下标；`None` = 无焦点）。
+    /// BackTab 前向环绕推进、Esc 清焦，渲染侧按它画焦点行标记。
+    focused: Option<usize>,
+    /// T12：改写挂起（聚焦 user 按 `e` 后的 `(消息下标, ledger seq)`）——
+    /// 回填不改历史，**提交才消费**：出站时截断 `seq >=` 该条并裁剪视图。
+    /// composer 被清空 = 放弃改写（见 [`Self::retire_stale_edit`]）。
+    edit_pending: Option<(usize, i64)>,
+    /// T12：下一次出站前要执行的 `session.truncate(from_seq)`——retry 在
+    /// 入队时置位、edit 在提交时置位，事件循环 [`Self::take_truncate`]
+    /// 消费（App 无 IO，RPC 归事件循环，同 T9 intent / T11 取数的分工）。
+    truncate_pending: Option<i64>,
+    /// T12：待写出的 OSC52 剪贴板正文（`c` 入队，事件循环取出写 stdout）。
+    copies: VecDeque<String>,
     /// T6/T11：最近一次 `ui::sync_viewport` 的 transcript 列宽（命中行
     /// 定位按这个宽度断行；0 = 尚未喂过几何，跳转 no-op）。
     view_width: u16,
@@ -197,10 +220,11 @@ impl App {
     pub fn new() -> Self {
         // T9：斜杠总闸默认开、T11：搜索 overlay 总闸默认开（`#[derive(Default)]`
         // 的 bool 落 false，这里显式翻开；inline 档随后 [`Self::disable_slash`] /
-        // [`Self::disable_search`] 关闸）。
+        // [`Self::disable_search`] 关闸）。T12：消息操作总闸同一批翻开。
         Self {
             slash_enabled: true,
             search_enabled: true,
+            message_ops_enabled: true,
             ..Self::default()
         }
     }
@@ -434,6 +458,47 @@ impl App {
     /// 的断行坐标；测试走同一入口，不绕开模型自己算宽度）。
     pub(crate) fn set_view_width(&mut self, width: u16) {
         self.view_width = width;
+    }
+
+    // --- T12 消息操作 retry / edit / copy（route §3 T12 设计注记五条定案；
+    // 操作路由在 [`Self::handle_key`]，本组只出观察缝与状态回填） ---
+
+    /// T12：聚焦消息下标（渲染画焦点行标记、测试读；`None` = 无焦点）。
+    pub fn focused_message(&self) -> Option<usize> {
+        self.focused
+    }
+
+    /// T12：inline 档关闸（route §3 T8 设计注记：回看/搜索/复制归终端——
+    /// inline 的 transcript 是写即定稿的 scrollback，截断后视图无从改写，
+    /// 聚焦操作在这里与斜杠面板/搜索 overlay 同批熄火，键位与合入前一致）。
+    pub fn disable_message_ops(&mut self) {
+        self.message_ops_enabled = false;
+    }
+
+    /// T12：取走一条待写出的 OSC52 正文（事件循环消费；`App` 无 IO，
+    /// 同 [`Self::take_intent`] / [`Self::take_answer`] 的分工）。
+    pub fn take_copy(&mut self) -> Option<String> {
+        self.copies.pop_front()
+    }
+
+    /// T12：取走下一次出站要执行的 `session.truncate(from_seq)`（事件循环
+    /// 在落库/订阅/prompt 之前消费——截断必须先于重发文落库，否则重发的
+    /// 消息自己也被删）。
+    pub fn take_truncate(&mut self) -> Option<i64> {
+        self.truncate_pending.take()
+    }
+
+    /// T12：出站消息落库回执——把本地投影里刚推的那条 user 消息 id 回填成
+    /// ledger 口径 `{session_id}-{seq}`（`message_to_chat` 同一套序号）。
+    /// retry/edit 的 seq 只认这个口径：不回填就只认得历史回填的消息，
+    /// 本轮刚发的那条反而截不断。
+    pub fn note_appended_seq(&mut self, seq: i64) {
+        let id = format!("{}-{}", self.session_id, seq);
+        if let Some(msg) = self.ui.messages.last_mut()
+            && msg.role == "user"
+        {
+            msg.id = id;
+        }
     }
 
     /// 本轮是否在跑。
@@ -725,6 +790,12 @@ impl App {
         self.status.clear();
         self.confirm_quit = false;
         self.scroll = 0;
+        // T12：焦点/改写挂起都是旧台的坐标，随视图与出站队列（上面的
+        // `outgoing.clear()` 连同 retry 的重发项一起丢弃）同批作废——留下
+        // 截断点会在新台出站时按旧会话的 seq 截错会话。
+        self.focused = None;
+        self.edit_pending = None;
+        self.truncate_pending = None;
         // T11：切台 = 视图整体更换——搜索命中/视口快照随旧台作废，overlay
         // 一并收掉（不走 [`Self::close_search`] 的还原语义：旧台的滚动
         // 位置没有意义，下面的 reset 才是新台基准）。
@@ -752,6 +823,11 @@ impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> KeyAction {
         if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
             return KeyAction::None;
+        }
+        // T12：copy 短反馈只活到下一次按键（route §3 注记①「随下一次按键/
+        // 状态事件恢复常态」）——先清再路由，本次按键该置的照置。
+        if self.status == COPIED_STATUS {
+            self.status.clear();
         }
         // T11：搜索 overlay 打开 = 整段短路（最前分派，早于斜杠面板与一切
         // composer/退出/滚动路由——overlay 期间没有 composer 语义，按键
@@ -798,8 +874,22 @@ impl App {
             }
             return KeyAction::None;
         }
+        // T12：聚焦态的 r/e/c 在这里收口（route §3 注记④入口仲裁）——聚焦
+        // 才拦、非聚焦原样落回 composer 路由（三键零打字干扰）；运行中/
+        // 队列非空的互斥短路只在 [`Self::message_key`] 一处。
+        if self.message_ops_enabled
+            && self.focused.is_some()
+            && !ctrl
+            && let Some(action) = self.message_key(key)
+        {
+            return action;
+        }
         match key.code {
             KeyCode::Enter => self.submit_line(),
+            // T12：Shift+Tab 前向环绕聚焦下一条 user/assistant 消息（正常
+            // 模式该键原本空闲；面板可见时已归 [`Self::slash_key`]）。Tab
+            // 照旧翻工具卡（route §3 注记④：Tab 不动）。
+            KeyCode::BackTab if self.message_ops_enabled => self.focus_next(),
             // T3：一个键全部展开/折叠工具卡（route §3；Tab 不进 composer）。
             KeyCode::Tab => self.tools_expanded = !self.tools_expanded,
             KeyCode::Backspace => {
@@ -832,19 +922,200 @@ impl App {
             }
             _ => {}
         }
+        // T12：composer 被清空 = 放弃改写挂起——edit 的截断只随提交消费，
+        // 半路清空不许在之后一次无关发送里把历史尾段截掉（route §3 注记③
+        // 只定了「提交时消费」，放弃这一半由这里补上判据）。
+        self.retire_stale_edit();
         KeyAction::None
     }
 
-    /// Esc / Ctrl+C：运行中 = Abort；空闲 = 第一下要确认、第二下才 Quit。
+    /// Esc / Ctrl+C：运行中 = Abort；焦点存在 = 清焦；空闲 = 第一下要确认、
+    /// 第二下才 Quit。
+    ///
+    /// T12 优先级（route §3 注记④）：搜索 overlay 与斜杠面板在
+    /// [`Self::handle_key`] 更早的分派里各自收口 Esc，落到这里的顺序是
+    /// **清焦 → 退出确认**——焦点在，第一下 Esc 只清焦、不进退出确认。
+    /// 运行中照旧 Abort（中断契约优先级高于清焦，焦点不改中断语义）。
     fn on_escape(&mut self) -> KeyAction {
         if self.running {
             return KeyAction::Abort;
+        }
+        if self.focused.take().is_some() {
+            return KeyAction::None;
         }
         if self.confirm_quit {
             return KeyAction::Quit;
         }
         self.confirm_quit = true;
         KeyAction::None
+    }
+
+    /// T12：聚焦态 `r`/`e`/`c` 的收口——返回 `Some` = 已拦截（聚焦时这三键
+    /// **永远不该落进 composer**，被互斥挡下也是吞键 no-op），`None` = 不归
+    /// 聚焦路由管（非 r/e/c、带修饰键），落回既有编辑键路由。
+    ///
+    /// 运行中/队列非空的互斥**只在这一处**（route §3 注记⑤）：重跑会打乱
+    /// T10 队列的逐条消费次序；copy 虽无状态变更也同禁（运行中活动行被
+    /// running 占用，`copied` 反馈无处安放）。单点 fencing 消除三键各查
+    /// 各的歧义，`tests/message_actions.rs` 钉死。
+    fn message_key(&mut self, key: KeyEvent) -> Option<KeyAction> {
+        let KeyCode::Char(c) = key.code else {
+            return None;
+        };
+        if !matches!(c, 'r' | 'e' | 'c')
+            || key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
+            return None;
+        }
+        if self.running || !self.outgoing.is_empty() {
+            return Some(KeyAction::None);
+        }
+        // 一次只许一笔改写挂起：edit 的截断点到提交才消费，半路再挂一笔会让
+        // 两个截断点互相覆盖。copy 不动历史，不受此限。
+        if self.edit_pending.is_some() && c != 'c' {
+            self.set_status("pending edit — enter submits, clear the composer to discard");
+            return Some(KeyAction::None);
+        }
+        match c {
+            'r' => self.retry_focused(),
+            'e' => self.edit_focused(),
+            _ => self.copy_focused(),
+        }
+        Some(KeyAction::None)
+    }
+
+    /// T12：BackTab 前向环绕聚焦（route §3 注记④）——只在 user/assistant
+    /// 消息间移动（本地 `system` 输出不是消息，不可操作）；无焦点时先落
+    /// **最新一条**（聚焦是为了操作刚读到的内容），到尾回绕到头。
+    fn focus_next(&mut self) {
+        let msgs = &self.ui.messages;
+        let n = msgs.len();
+        let eligible = |i: usize| matches!(msgs[i].role.as_str(), "user" | "assistant");
+        let found = match self.focused {
+            None => (0..n).rev().find(|&i| eligible(i)),
+            Some(i) => (i + 1..i + 1 + n).map(|k| k % n).find(|&i| eligible(i)),
+        };
+        let Some(next) = found else {
+            return;
+        };
+        self.focused = Some(next);
+        self.set_status("focused — r retry · e edit · c copy · esc clears");
+    }
+
+    /// T12：retry/edit 的改写目标 =（消息下标, ledger seq, 可见文本）。只认
+    /// 聚焦的 **user** 消息，且 id 能解析出本会话序号——seq 口径 =
+    /// `{session_id}-{seq}`（[`Self::note_appended_seq`] 与 `message_to_chat`
+    /// 同一套）；解析不出 = 无从定位截断点，返回 `None`（不猜序号，宁可
+    /// 不动作也不截错段）。
+    fn rewrite_target(&self) -> Option<(usize, i64, String)> {
+        let i = self.focused?;
+        let msg = self.ui.messages.get(i)?;
+        if msg.role != "user" {
+            return None;
+        }
+        let seq: i64 = msg
+            .id
+            .strip_prefix(&self.session_id)?
+            .strip_prefix('-')?
+            .parse()
+            .ok()?;
+        if seq <= 0 {
+            return None;
+        }
+        Some((i, seq, visible_text(msg)))
+    }
+
+    /// T12：`r` 重发聚焦 user 消息的原文（route §3 注记②）——原文**入既有
+    /// 出站队列**（复用 [`Self::take_prompt`] 起的 `PromptDelivery` 三元组，
+    /// 不新开发送路径），截断点同步挂给事件循环：出站时先
+    /// `session.truncate(from_seq)` 再落库，重发的那条才不会把自己删掉。
+    /// 视图尾段此刻裁掉（与 ledger 截断同界，见 [`Self::drop_tail_from`]）。
+    fn retry_focused(&mut self) {
+        let Some((keep, seq, text)) = self.rewrite_target() else {
+            self.set_status("retry: focus a user message of this session");
+            return;
+        };
+        if text.trim().is_empty() {
+            return;
+        }
+        if let Err(reason) = self.enqueue(&text) {
+            // 队列上限拒绝照 T10 口径可见（64KiB 超长原文重发会被拒）——
+            // 拒收就不挂截断点，历史原样保留。
+            self.set_status(reason);
+            return;
+        }
+        self.truncate_pending = Some(seq);
+        self.drop_tail_from(keep);
+    }
+
+    /// T12：`e` 改写聚焦 user 消息（route §3 注记③）——该条文本回填
+    /// composer（复用 composer 全部编辑能力，零新编辑 UI）。截断**不在**这
+    /// 一刻：`edit_pending` 挂着 `(下标, seq)`，提交才消费（见
+    /// [`Self::submit_line`]）；半路清空 composer 即放弃（见
+    /// [`Self::retire_stale_edit`]），历史不动。视图里那条留着（尚未截断），
+    /// 焦点让位给 composer 编辑。
+    fn edit_focused(&mut self) {
+        let Some((keep, seq, text)) = self.rewrite_target() else {
+            self.set_status("edit: focus a user message of this session");
+            return;
+        };
+        if text.trim().is_empty() {
+            return;
+        }
+        self.input = text;
+        self.history_pos = None;
+        self.edit_pending = Some((keep, seq));
+        self.focused = None;
+        self.set_status("edit — enter submits the revision");
+    }
+
+    /// T12：`c` 复制聚焦消息的可见文本（route §3 注记①：范围 = 单条
+    /// **assistant** 文本，选择模式已 Out of scope）——正文进 `copies` 队列，
+    /// 事件循环取出写 OSC52；反馈置 `copied`（只陈述「本方已写 stdout」这一
+    /// 已证明事实，终端是否采纳不可证）。
+    fn copy_focused(&mut self) {
+        let Some(msg) = self
+            .focused
+            .and_then(|i| self.ui.messages.get(i))
+            .filter(|m| m.role == "assistant")
+        else {
+            self.set_status("copy: focus an assistant message");
+            return;
+        };
+        let text = visible_text(msg);
+        if text.is_empty() {
+            self.set_status("nothing to copy");
+            return;
+        }
+        self.copies.push_back(text);
+        self.set_status(COPIED_STATUS);
+    }
+
+    /// T12：把本地投影裁到 `keep` 条——retry/edit 的视图侧与 ledger 截断
+    /// 同界（视图在按键/提交时裁，RPC 在出站时截，两步之间只隔一次事件
+    /// 循环迭代）。焦点随被裁消息作废，搜索命中/视口快照同步失效：与
+    /// [`Self::clear_view`] 共用同一个失效源 [`Self::forget_search`]，
+    /// 不另写一份清理。
+    fn drop_tail_from(&mut self, keep: usize) {
+        if self.ui.messages.len() > keep {
+            self.ui.messages.truncate(keep);
+            self.focused = None;
+            self.forget_search();
+        }
+    }
+
+    /// T12：composer 被清空 = 放弃改写挂起（[`Self::handle_key`] 每次按键
+    /// 末尾调）——edit 的截断只随提交消费，半路清空必须撤下挂起，否则之后
+    /// 一次无关发送会把历史尾段截掉（route §3 注记③只定了「提交时消费」，
+    /// 放弃这一半由这里补上判据）。retry 不受影响：它没挂 `edit_pending`
+    /// （截断点与已入队的重发绑定），本函数不碰。
+    fn retire_stale_edit(&mut self) {
+        if self.edit_pending.is_some() && self.input.is_empty() {
+            self.edit_pending = None;
+            self.set_status("edit discarded");
+        }
     }
 
     /// T9：面板可见时的短路键——返回 `Some` = 已拦截（[`Self::handle_key`]
@@ -936,6 +1207,14 @@ impl App {
             self.set_status(reason);
             return;
         }
+        // T12：edit 的改写在提交这一刻消费（route §3 注记③）——截断点挂给
+        // 事件循环（出站时先 truncate 再落库改文），视图同步裁到改写点。
+        // 只有真正入队成功才动历史：拒收时挂起保留（原文已退回 composer，
+        // 用户改完还能提交）。
+        if let Some((keep, seq)) = self.edit_pending.take() {
+            self.truncate_pending = Some(seq);
+            self.drop_tail_from(keep);
+        }
         self.history.push(text);
     }
 
@@ -1008,6 +1287,11 @@ impl App {
         // T11：命中行号与视口快照全部作废，overlay 一并收掉（视图清空后
         // 旧命中/旧快照都没有意义）。
         self.forget_search();
+        // T12：视图清空后焦点下标与改写挂起的坐标同样失效（截断点到下一次
+        // 提交才消费，留着会按已删掉的下标/seq 截没影的历史）。
+        self.focused = None;
+        self.edit_pending = None;
+        self.truncate_pending = None;
         self.viewport.reset();
     }
 
@@ -1116,6 +1400,89 @@ fn local_message(text: &str) -> ChatMessage {
     }
 }
 
+/// T12：消息的**可见文本**——copy 的正文与 retry 重发的原文同一口径，两者
+/// 必须一字不差（复制出去的就该是重发出去的）。`parts` 非空 = 结构化投影，
+/// 按 `MessagePart::Text` 顺序拼接（跳过 tool part：卡片是界面物，不是消息
+/// 文本）；为空则回退 `content`（`message_to_chat` 回填的消息只有 content）。
+/// 两者都拼会把同一篇正文复制两份（流式投影 content 与 parts 同源）。
+fn visible_text(msg: &ChatMessage) -> String {
+    if msg.parts.is_empty() {
+        return msg.content.clone();
+    }
+    let texts: Vec<&str> = msg
+        .parts
+        .iter()
+        .filter_map(|part| match part {
+            MessagePart::Text(text) => Some(text.as_str()),
+            MessagePart::Tool(_) => None,
+        })
+        .collect();
+    if texts.is_empty() {
+        msg.content.clone()
+    } else {
+        texts.join("\n")
+    }
+}
+
+// --- T12 OSC52 剪贴板写回（route §3 注记①定案：载体 = OSC52，终端原生、
+// 零 daemon 依赖、SSH 场景可用；系统剪贴板 Deferred） ---
+//
+// D11（`tests/theme_lint.rs` 扫全 `crates/tui/src`）：转义字面量与十六进制
+// 数值字面量都在禁令里（裸字节与文本形态同罚）——ESC、BEL 一律用十进制
+// const 拼装，base64 查表也只用十进制下标。
+
+/// ESC（十进制 27）：OSC 转义序列的开场字节。
+const OSC_ESC: u8 = 27;
+
+/// BEL（十进制 7）：OSC52 序列的终止字节。
+const OSC_BEL: u8 = 7;
+
+/// T12：正文 → OSC52 序列字节（`ESC ] 52 ; c ; <base64> BEL`，`c` = 剪贴板
+/// 选择，dsh/jcode 同款目标）。序列化为纯函数，测试直接钉字节形状。
+pub fn osc52_bytes(text: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len() + 16);
+    out.push(OSC_ESC);
+    out.extend_from_slice(b"]52;c;");
+    out.extend_from_slice(base64_std(text.as_bytes()).as_bytes());
+    out.push(OSC_BEL);
+    out
+}
+
+/// T12：把一条 copy 写到 stdout（事件循环消费 [`App::take_copy`]）——写完
+/// 刷缓冲，OSC52 才赶在下一帧重绘前进终端。
+fn write_osc52(text: &str) -> Result<(), TuiError> {
+    use std::io::Write as _;
+    let mut out = std::io::stdout().lock();
+    out.write_all(&osc52_bytes(text)).map_err(TuiError::Io)?;
+    out.flush().map_err(TuiError::Io)
+}
+
+/// 标准 base64（RFC 4648 含 padding）——OSC52 的载荷格式。手写是为了不给
+/// `Cargo.toml` 添依赖（route §1 白名单只放行改动文件，40 行的定长查表
+/// 换一个新 crate 不划算）。
+fn base64_std(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let n = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        out.push(ALPHABET[(n >> 18) as usize & 63] as char);
+        out.push(ALPHABET[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
 /// enhanced 全屏外壳（route §3 签名，不许改）。
 ///
 /// 行为契约：进 alternate screen + 启用鼠标捕获 + raw mode（[`TermGuard`]）；
@@ -1207,8 +1574,24 @@ fn event_loop(
         // 出站：user 消息先落库（T1 同序：daemon 不自动落），切台后先
         // 订阅当前 run 再起 prompt（先订阅后 prompt，避免丢帧），最后
         // prompt 线程阻塞到 turn 结束、不占事件循环线程。
+        // T12：copy 的 OSC52 写 stdout（`c` 只入队，App 无 IO）——写失败即
+        // 退出：不能假装复制成功（同 prompt 落库的真值口径）。
+        while let Some(text) = app.take_copy() {
+            write_osc52(&text)?;
+        }
         if let Some(delivery) = app.take_prompt() {
-            push_user_message(client, &delivery.session_id, &delivery.text)?;
+            // T12：retry/edit 的截断必须**先于**重发文落库（否则重发的那条
+            // 自己也被删）。截断点只在 idle + 空队列时挂得上（`message_key`
+            // 单点 fencing），命中的必然是本次出站的那条改写。
+            if let Some(from_seq) = app.take_truncate() {
+                client
+                    .truncate_session(&delivery.session_id, from_seq)
+                    .map_err(client_error)?;
+            }
+            let seq = push_user_message(client, &delivery.session_id, &delivery.text)?;
+            // T12：出站回执把本地投影里的这条 user 消息回填成 ledger 序号，
+            // 后续 retry/edit 才截得中它（`user-{ts}` 占位 id 解析不出 seq）。
+            app.note_appended_seq(seq);
             if app.run_scoped() {
                 run_rx = Some((
                     delivery.run_id.clone(),

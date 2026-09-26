@@ -230,12 +230,12 @@ fn resolve_session(daemon: &WebDaemon, opts: &TuiOptions) -> Result<String, TuiE
     Ok(sid)
 }
 
-/// user 消息落库（`role_user = true`），必须发生在 prompt 之前。
-fn push_user_message(daemon: &WebDaemon, sid: &str, text: &str) -> Result<(), TuiError> {
+/// user 消息落库（`role_user = true`），必须发生在 prompt 之前。返回
+/// ledger 分配的 `seq`——出站消息的序号由这里带回（T12 retry/edit 读它）。
+fn push_user_message(daemon: &WebDaemon, sid: &str, text: &str) -> Result<i64, TuiError> {
     daemon
         .append_message(sid, true, text, &[])
-        .map_err(client_error)?;
-    Ok(())
+        .map_err(client_error)
 }
 
 /// 本轮 assistant 正文落库（`role_user = false`）。回复同样不自动落库

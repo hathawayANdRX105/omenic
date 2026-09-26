@@ -102,6 +102,13 @@ pub enum Command {
     /// `session.search` — `{ query, scope?: id, limit }` → `[SessionMessage]`.
     #[serde(rename = "session.search")]
     SessionSearch,
+    /// `session.truncate` — `{ session_id, from_seq }` → `{ deleted }`.
+    /// Deletes every message with `seq >= from_seq` and reports how many
+    /// rows went away (`0` for an empty range or an unknown session — the
+    /// count is the truth, not a fabricated success). The rewrite primitive
+    /// behind T12 retry/edit: truncate the tail, then append the new text.
+    #[serde(rename = "session.truncate")]
+    SessionTruncate,
     /// `session.read_from_cursor` — `{ cursor }` → `{ runs, cursor }`.
     #[serde(rename = "session.read_from_cursor")]
     SessionReadFromCursor,

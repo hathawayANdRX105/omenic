@@ -22,6 +22,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 
 use crate::app::App;
+use crate::theme;
 
 /// 一帧的区域几何（T2 竖向切分 + T3 让位 + T9 斜杠面板让行 + T11 搜索
 /// overlay 让行）。[`draw`] 与 [`sync_viewport`] 共用同一计算——滚动模型
@@ -104,11 +105,58 @@ fn overlay_rect(area: Rect, boundary: u16, rows: u16, ceiling: u16) -> Rect {
 pub fn draw(frame: &mut Frame, app: &App) {
     let areas = areas(app, frame.area());
     transcript::render(frame, areas.transcript, app);
+    mark_focus(frame, areas.transcript, app);
     slash_palette::render(frame, areas.palette, app);
     footer::render(frame, areas.footer, app);
     app.questions().render(frame, areas.panel);
     dock::render(frame, areas.dock, app);
     search_overlay::render(frame, areas.search, app);
+}
+
+/// T12：焦点行标记（route §3 注记④「焦点消息行最小标记」）——transcript
+/// **只读消费**：行坐标 = [`transcript::total_lines`] + [`search_overlay::line_offset`]
+/// + 视口 `view_top`（与渲染同一套断行口径，行数只数一次，`transcript.rs`
+/// 内核零触碰）；标记 = 该消息首条**可见**行（滚动到首行之上时取窗口内
+/// 第一行）加 [`theme::focus`] 下划线，叠在本帧 buffer 上、下一帧由重绘
+/// 复原——聚焦是瞬时状态，不回写渲染数据。
+fn mark_focus(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(idx) = app.focused_message() else {
+        return;
+    };
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let Some(msg) = app.messages().get(idx) else {
+        return;
+    };
+    let width = area.width.max(1);
+    let height = area.height as usize;
+    let total = transcript::total_lines(app, width);
+    let top = app.viewport().view_top(total, height);
+    let first = search_overlay::line_offset(app.messages(), app.tools_expanded(), idx, width);
+    let rows = transcript::message_rows(msg, app.tools_expanded(), width as usize);
+    // 首条可见行：消息窗口 [first, first+rows) 与视口 [top, top+height) 的交集
+    // 起点；交不上 = 本帧看不到这条消息，不画。
+    let mark = first.max(top);
+    if mark >= (first + rows).min(top + height) {
+        return;
+    }
+    let y = area.y + (mark - top) as u16;
+    // 下划线到该行最后一个非空字符为止：整行（含行尾空白）下划线会读成
+    // 一条横线分隔，盖过消息内容本身。
+    let buf = frame.buffer_mut();
+    let last = (area.x..area.x + area.width).rev().find(|&x| {
+        buf.cell((x, y))
+            .is_some_and(|c| !c.symbol().trim().is_empty())
+    });
+    let Some(last) = last else {
+        return;
+    };
+    for x in area.x..=last {
+        if let Some(cell) = buf.cell_mut((x, y)) {
+            cell.set_style(theme::focus());
+        }
+    }
 }
 
 /// T6：本帧滚动几何同步——把 transcript 视口行数与内容总行数喂给
