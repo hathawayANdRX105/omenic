@@ -47,16 +47,18 @@ main `a49d755f`（Q1 附件 / Q7 aside / Q8 subagent 消息 / Q2 凭据档案 �
 
 session telemetry+OTel（~2–3 天）/ token-meter（~1 天，C8 裁定不做，token 卡「无数据则隐藏」已兜底）。
 
-附件全链路（#478 `a49d755f`：web composer 选图 → base64 随消息入队 → sqlite 落库 → resume 回放 → OpenAI 多模态 content 数组；daemon 侧白名单校验 media type / 严格 base64 / 体积上限）已落地。credentials（#485 `5a596807`：`[[llm.profiles]]` + `active_profile` 切换 + `api_key_env`，档案名拼错即加载失败）已落地第一档，identity 维度与设置页档案卡仍欠账。
+附件管线（#478 `a49d755f`：web composer 选图 → base64 随消息入队 → sqlite 落库 → resume 回放 → OpenAI 多模态 content 数组；daemon 侧白名单校验 media type / 严格 base64 / 体积上限）已落地，但**「全链路」只到管线**：composer 附件卡只做了待发一态，桥接失败只进控制台（无处理中态 / 错误态，无「附件处理中挡发送」）。credentials（#485 `5a596807`：`[[llm.profiles]]` + `active_profile` 切换 + `api_key_env`，档案名拼错即加载失败）已落地「单文件 + 切换」两件，**指纹与校验状态未做**，设置页档案卡与 identity 维度仍欠账。
 
 ### 本批落地（2026-09-26，refs 四项目对照后的四个缺口）
 
 | 项 | PR / commit | 落地内容 |
 |---|---|---|
 | Q1 附件 | #478 `a49d755f` | 选图 → 编码 → 入库 → resume → 模型；daemon 侧校验白名单 |
-| Q7 aside | #481 `1cac9b78` | `LoopConfig::get_aside` 通道 + jobs `on_job_done` 回调：作业完成以 aside 进上下文，**不延长 run** |
-| Q8 subagent | #483 `eb2d7b3b` | 每 run 信箱 + `subagent_control message`（step 边界投递，不打断在飞工具）；worker 拆除走 SIGTERM → 500ms → SIGKILL |
+| Q7 aside | #481 `1cac9b78` | `LoopConfig::get_aside` 通道 + jobs `on_job_done` 回调：作业完成以 aside 进上下文，**不延长 run**；走直接回调 + 共享队列（未走事件总线）|
+| Q8 subagent | #483 `eb2d7b3b` | 每 run 信箱 + `subagent_control message`（step 边界投递，不打断在飞工具）；worker 拆除走 SIGTERM → 500ms → SIGKILL。**subagent 完成通知进 aside 通道未做**（`on_job_done` 只接了 jobs）|
 | Q2 credentials | #485 `5a596807` | 命名凭据档案 + `active_profile`；`api_key_env` 让共享配置不带明文 key |
+
+对账补记（2026-09-26，cg + jev 复审）：Q1 UI 卡三态缺两态、Q2 指纹/校验状态缺两件、Q8 的 subagent 完成通知未做、Q7 未走事件总线——四项均已写进 `todo/q-roadmap/` 各 Q 文档的「落地结果 / 状态」节。
 
 审查期修掉的真问题：Q8 的控制工具对「不读 inbox 的 provider」（ACP 等）谎报投递成功 → 加 per-provider 能力位；Q1 合并 main 后新增的调用点（tui inline/local、workspace echo、kymic CLI 测试）漏改 → 补齐；Q7 的 `session_tools` 文档注释被新 helper 顶掉 → 复原。
 
