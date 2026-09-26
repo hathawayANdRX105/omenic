@@ -279,6 +279,20 @@ pub fn Chat(
                                 }
                             }
                         }
+                        // 处理中 / 错误两态由附件桥 JS 直接填（#attachment-reading /
+                        // #attachment-rejected）：读文件、类型/体积过滤都是浏览器侧的事，
+                        // Rust 渲染层只负责占位，JS 按 change 事件驱动这两块 DOM。
+                        div { class: "px-3",
+                            span {
+                                id: "attachment-reading",
+                                class: "hidden text-[11px] text-caption font-mono",
+                                "处理中…",
+                            }
+                            div {
+                                id: "attachment-rejected",
+                                class: "hidden flex-col gap-0.5 mt-1",
+                            }
+                        }
                         textarea {
                             id: "chat-input-area",
                             class: "w-full resize-none bg-transparent border-none outline-none text-[16px] leading-6 text-label placeholder:text-caption caret-brand px-4 pt-3 pb-1 min-h-[52px] max-h-[336px]",
