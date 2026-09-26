@@ -9,7 +9,7 @@
 
 ## 当前位置（2026-09-26）
 
-main `a49d755f`（Q1 附件 / Q7 aside / Q8 subagent 消息 / Q2 凭据档案 四项已合）。daemon / web / CLI / TUI（`oi tui`）**四入口**均可构建运行（CI 证实；TUI 真人 TTY 验证 2026-09-25 通过）；web 本地停用中，复起：`hub start omenic-daemon`（`./target/debug/daemon`，**cwd=仓库根**读 `.oi/config.toml`）+ `hub start oi-web`（`./target/debug/oi-web`，端口 8026；daemon 重启后先发一条预热消息避开 known-issue 1）。结构收口已落地：p3 #452（JSONL 原语提取 + God 文件拆分）与 p4 #457（fully-flat 26-crate 树，`crates/agent/orbit` → `crates/agent-loop/src/orbit`、`agent-loop/compaction|instruction` 拍平进父 crate）。
+main `e7fc982c`（Q1 附件 / Q7 aside / Q8 subagent / Q2 凭据档案 + 三件补账已合）。daemon / web / CLI / TUI（`oi tui`）**四入口**均可构建运行（CI 证实；TUI 真人 TTY 验证 2026-09-25 通过）；web 本地停用中，复起：`hub start omenic-daemon`（`./target/debug/daemon`，**cwd=仓库根**读 `.oi/config.toml`）+ `hub start oi-web`（`./target/debug/oi-web`，端口 8026；daemon 重启后先发一条预热消息避开 known-issue 1）。结构收口已落地：p3 #452（JSONL 原语提取 + God 文件拆分）与 p4 #457（fully-flat 26-crate 树，`crates/agent/orbit` → `crates/agent-loop/src/orbit`、`agent-loop/compaction|instruction` 拍平进父 crate）。
 
 ## 已实现（能力级）
 
@@ -55,11 +55,12 @@ session telemetry+OTel（~2–3 天）/ token-meter（~1 天，C8 裁定不做�
 |---|---|---|
 | Q1 附件 | #478 `a49d755f` | 选图 → 编码 → 入库 → resume → 模型；daemon 侧校验白名单 |
 | Q7 aside | #481 `1cac9b78` | `LoopConfig::get_aside` 通道 + jobs `on_job_done` 回调：作业完成以 aside 进上下文，**不延长 run**；走直接回调 + 共享队列（未走事件总线）|
-| Q8 subagent | #483 `eb2d7b3b` | 每 run 信箱 + `subagent_control message`（step 边界投递，不打断在飞工具）；worker 拆除走 SIGTERM → 500ms → SIGKILL。**subagent 完成通知进 aside 通道未做**（`on_job_done` 只接了 jobs）|
+| Q8 subagent | #483 `eb2d7b3b` | 每 run 信箱 + `subagent_control message`（step 边界投递，不打断在飞工具）；worker 拆除走 SIGTERM → 500ms → SIGKILL |
+| Q8 后台 run | #494 `e7fc982c` | `subagent` 加 `background` 开关：后台 run 完成后经 #481 的 aside 通道通知模型，`subagent_control result` 取回输出；同时让 `send_message` 真正可达 |
 | Q2 credentials 校验 | #490 `97ac9ac1` | `ProfileStatus`（Ready/MissingKey/Incomplete）+ `Config::profile_statuses()`；daemon 启动对不可用档案打一行日志（Ready 的保持安静） |
 | Q1 附件卡三态 | #491 `e2181266` | 处理中 + 错误两态（Dioxus 静态容器由 JS 填，文件名 HTML 转义）；待发态维持 #478 原样 |
 对账补记（2026-09-26，cg + jev 复审）：Q1 UI 卡三态缺两态、Q2 指纹/校验状态缺两件、Q8 的 subagent 完成通知未做、Q7 未走事件总线——四项均已写进 `todo/q-roadmap/` 各 Q 文档的「落地结果 / 状态」节。
-补记落地（#490 / #491）：Q2 校验状态与 Q1 卡片三态两项已补齐。Q8 的「subagent 完成通知进 aside」与「send_message 投递窗口」同根（缺 background run，工具阻塞在 `run.result()` 时两路都生产不可达），并成一项后做；Q2 指纹经裁定不做（单机定位）。
+补记落地（#490 / #491 / #494）：Q2 校验状态、Q1 卡片三态两项已补齐；Q8 的「subagent 完成通知进 aside」与「send_message 投递窗口」同根的那项（缺 background run）随 #494 落地——`subagent background` 让 run 活过工具调用，完成事件经 `set_on_settled` 进 aside 队列，`send_message` 也由此可达；Q2 指纹经裁定不做（单机定位）。
 
 审查期修掉的真问题：Q8 的控制工具对「不读 inbox 的 provider」（ACP 等）谎报投递成功 → 加 per-provider 能力位；Q1 合并 main 后新增的调用点（tui inline/local、workspace echo、kymic CLI 测试）漏改 → 补齐；Q7 的 `session_tools` 文档注释被新 helper 顶掉 → 复原。
 
