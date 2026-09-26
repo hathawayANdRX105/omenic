@@ -177,11 +177,18 @@ impl WaterfallLlm {
         emit: &mut dyn FnMut(&StreamEvent),
     ) {
         let providers = self.providers();
+        let last = providers.len() - 1;
         for (i, provider) in providers.iter().enumerate() {
             match Self::attempt_provider(provider, context, tools, signal, self.retry, emit) {
                 Ok(()) => return,
                 Err(last_err) => {
-                    // Every provider failed before leaking anything.
+                    // This provider failed before leaking anything. The next
+                    // provider may still take over — only the last one's
+                    // failure is terminal, and it carries the original error
+                    // so a 401/403 survives the fallback chain.
+                    if i < last {
+                        continue;
+                    }
                     emit(&StreamEvent::Error(format!(
                         "llm provider {i} ({}) failed: all providers exhausted (last error: {last_err})",
                         provider.model

@@ -861,11 +861,13 @@ fn bare_continue_extends_the_run_without_injecting_a_message() {
         messages: vec![Message::user_text("start")],
     };
     let mut events = Vec::new();
-    // Fire exactly once: force the second round, then allow the stop.
-    let fires = RefCell::new(0u32);
+    // Host grants exactly ONE bare continuation: the first model-stop is
+    // continued, the next is allowed to end. The loop consults the hook at
+    // every model-stop, so it is consulted twice and grants once.
+    let granted = RefCell::new(0u32);
     let cont = || {
-        let n = *fires.borrow();
-        *fires.borrow_mut() = n + 1;
+        let n = *granted.borrow();
+        *granted.borrow_mut() = n + 1;
         n == 0
     };
     run_agent_streaming(
@@ -886,7 +888,11 @@ fn bare_continue_extends_the_run_without_injecting_a_message() {
         seen.calls_made, 2,
         "bare continue must trigger a second round"
     );
-    assert_eq!(*fires.borrow(), 1, "the hook fired once, not per round");
+    assert_eq!(
+        *granted.borrow(),
+        2,
+        "the hook is consulted at every model stop"
+    );
     // No injection: round 2's context ends with round 1's own assistant
     // message, not a synthetic one.
     assert_eq!(
