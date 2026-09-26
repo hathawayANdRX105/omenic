@@ -111,6 +111,14 @@ impl DaemonConfig {
         let session_db_path = Some(cfg.session_db_path()?);
         let omp_path = cfg.omp_path.to_string_lossy().into_owned();
         let orbit_model = Self::resolve_orbit_model(cfg);
+        // A profile the user cannot select is invisible until a request
+        // fails, so say so at start instead. Ready profiles stay quiet —
+        // the common case should not produce log noise.
+        for (name, status) in cfg.profile_statuses() {
+            if !status.is_ready() {
+                eprintln!("daemon: llm profile `{name}` unusable: {status:?}");
+            }
+        }
         Ok(DaemonConfig {
             socket_path,
             omp_path,
