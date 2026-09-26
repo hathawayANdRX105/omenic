@@ -249,6 +249,32 @@ pub fn session_query_cmd(
 
 // ---------------- Daemon commands ----------------
 
+/// Locate the daemon binary: explicit override first, then the sibling of
+/// this executable (workspace layout: target/debug/{oi,daemon}).
+///
+/// Single source for the `OMENIC_DAEMON_PATH` / sibling rule — `oi daemon
+/// start` resolves through here, and so does the `oi tui` autostart gate
+/// (T14) in `cli.rs`; neither caller re-implements the lookup.
+pub fn resolve_daemon_bin() -> Result<std::path::PathBuf, String> {
+    let bin = match std::env::var_os("OMENIC_DAEMON_PATH") {
+        Some(p) => std::path::PathBuf::from(p),
+        None => {
+            let exe =
+                std::env::current_exe().map_err(|e| format!("cannot resolve own path: {e}"))?;
+            exe.parent()
+                .map(|d| d.join("daemon"))
+                .ok_or_else(|| "no executable directory".to_string())?
+        }
+    };
+    if !bin.is_file() {
+        return Err(format!(
+            "daemon binary not found at {} (set OMENIC_DAEMON_PATH to override; or build it with `cargo build --bin daemon`)",
+            bin.display()
+        ));
+    }
+    Ok(bin)
+}
+
 pub fn daemon_cmd_dispatch(sub: DaemonCmd, json: bool) -> Result<u8, String> {
     let client = daemon_client_from_config()?;
     match sub {
@@ -264,24 +290,10 @@ pub fn daemon_cmd_dispatch(sub: DaemonCmd, json: bool) -> Result<u8, String> {
                 }
                 return Ok(0);
             }
-            // Locate the daemon binary: explicit override first, then the
-            // sibling of this executable (workspace layout: target/debug/{oi,daemon}).
-            let bin = match std::env::var_os("OMENIC_DAEMON_PATH") {
-                Some(p) => std::path::PathBuf::from(p),
-                None => {
-                    let exe = std::env::current_exe()
-                        .map_err(|e| format!("cannot resolve own path: {e}"))?;
-                    exe.parent()
-                        .map(|d| d.join("daemon"))
-                        .ok_or_else(|| "no executable directory".to_string())?
-                }
-            };
-            if !bin.is_file() {
-                return Err(format!(
-                    "daemon binary not found at {} (set OMENIC_DAEMON_PATH to override; or build it with `cargo build --bin daemon`)",
-                    bin.display()
-                ));
-            }
+            // Binary lookup lives in `resolve_daemon_bin` (shared with the
+            // `oi tui` autostart gate); the ping check above must stay first
+            // so a running daemon never depends on a resolvable path.
+            let bin = resolve_daemon_bin()?;
             std::process::Command::new(&bin)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
