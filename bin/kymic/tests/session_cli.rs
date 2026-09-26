@@ -167,7 +167,7 @@ fn session_search_returns_messages_in_json() {
 
     let client = daemon::DaemonClient::connect_to(&sock);
     must!(client.session_create("s1", "t"));
-    must!(client.session_append("s1", session::SessionRole::User, "hello world"));
+    must!(client.session_append("s1", session::SessionRole::User, "hello world", &[]));
 
     let (stdout, _stderr, ok) = run_oi(
         dir.path(),
