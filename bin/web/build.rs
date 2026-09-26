@@ -15,49 +15,52 @@ fn main() {
     // `@import "tailwindcss"` from the INPUT FILE's directory hierarchy, so this
     // generated input must live inside the crate — we drop it next to the real
     // input and it is gitignored.
-    let mut css = std::fs::read_to_string(&input).unwrap_or_default();
+    let css = std::fs::read_to_string(&input).unwrap_or_default();
+    let crate_src = manifest.join("src").to_string_lossy().replace('\\', "/") + "/**/*.rs";
+    // repo root = two ancestors above bin/web; join from there so the glob has
+    // no `..` segments that Tailwind's matcher may not normalize.
+    let webui_src = manifest
+        .ancestors()
+        .nth(2)
+        .expect("bin/web lives at <repo>/bin/web")
+        .join("crates/web-ui/**/*.rs")
+        .to_string_lossy()
+        .replace('\\', "/");
     // Every `@source` glob must be absolute. Tailwind v4.3 resolves a relative
     // glob only when it carries an explicit `./` prefix, and resolves it
-    // against the INPUT file's directory — which is the generated input in the
-    // crate root, not assets/. A bare `../../..` glob silently matches nothing,
+    // against the INPUT file's directory — the generated input in the crate
+    // root, not assets/. The relative globs written in assets/tailwind-input.css
+    // use inconsistent bases and a bare `../../..` silently matches nothing,
     // which is how the web crates' rsx classes fell out of the stylesheet.
-    // Normalizing here makes the globs in assets/tailwind-input.css
-    // depth-independent.
-    let mut out = String::with_capacity(css.len());
-    let mut saw_source = false;
-    for line in css.split_inclusive('\n') {
-        let Some(rest) = line.trim_start().strip_prefix("@source ") else {
-            out.push_str(line);
-            continue;
-        };
-        let Some((glob, tail)) = rest
-            .split_once('"')
-            .and_then(|(g, t)| Some((g, t.split_once('"')?)))
-        else {
-            out.push_str(line);
-            continue;
-        };
-        saw_source = true;
-        let normalized = glob.trim_start_matches("./");
-        let abs = if normalized.starts_with('/') {
-            normalized.to_string()
-        } else {
-            manifest
-                .join(normalized)
-                .to_string_lossy()
-                .replace('\\', "/")
-        };
-        // tail.0 is the remainder of the glob inside the quotes, tail.1 the
-        // closing quote plus the line's own newline.
-        out.push_str(&format!("@source \"{abs}{}\"{}", tail.0, tail.1));
+    // So drop any `@source` line from the source CSS and emit two well-known
+    // absolute directives instead: this crate's src + the merged web-ui crate.
+    let mut body = String::with_capacity(css.len());
+    let mut injected = false;
+    for line in css.lines() {
+        if line.trim_start().starts_with("@source ") {
+            continue; // strip: we inject our own absolute directives below
+        }
+        body.push_str(line);
+        body.push('\n');
+        // Tailwind v4.3 only honors `@source` directives that sit near the top
+        // (after the `@import`, before the `@theme`/`@layer` rules); appended at
+        // the end they are silently ignored. Inject right after the import line.
+        if !injected && line.trim_start().starts_with("@import ") {
+            body.push_str(&format!(
+                "@source \"{crate_src}\";\n@source \"{webui_src}\";\n"
+            ));
+            injected = true;
+        }
     }
-    css = out;
-    if !saw_source {
-        let my_src = manifest.join("src").to_string_lossy().replace('\\', "/");
-        css.push_str(&format!("\n@source \"{my_src}/**/*.rs\";\n"));
+    if !injected {
+        // No `@import` found (shouldn't happen); fall back to a leading line.
+        body.insert_str(
+            0,
+            &format!("@source \"{crate_src}\";\n@source \"{webui_src}\";\n"),
+        );
     }
     let gen_input = manifest.join(".tailwind.gen-input.css");
-    let _ = std::fs::write(&gen_input, &css);
+    let _ = std::fs::write(&gen_input, &body);
 
     let local_bin = manifest.join("node_modules/.bin/tailwindcss");
 
