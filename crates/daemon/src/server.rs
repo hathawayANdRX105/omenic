@@ -495,6 +495,21 @@ impl Daemon {
         let aside_queue: crate::rpc::worker::AsideQueue =
             std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
         let session_tools = Self::session_tools(&cfg.data_dir, &aside_queue);
+        // A background subagent's completion reaches the model through the
+        // same aside channel as finished background jobs: the runtime's
+        // settle hook fires from the watcher thread the `subagent` tool
+        // spawns, and the daemon forwards the notice into the shared queue.
+        // Sync runs return their result inline, so they never fire the hook.
+        {
+            let queue = std::sync::Arc::clone(&aside_queue);
+            subagents.set_on_settled(std::sync::Arc::new(move |run_id, result| {
+                let msg = Self::subagent_done_aside(run_id, result);
+                queue
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push_back(msg);
+            }));
+        }
         // plan:policy provider: the engine recomputes the system prompt per
         // turn, so flipping plan mode mid-session takes effect on the next
         // prompt. The closure returns "" while plan mode is off — the engine
@@ -599,6 +614,26 @@ impl Daemon {
         line
     }
 
+    /// One-line rendering of a settled background subagent for the model's
+    /// aside channel (the Q7 `aside` path). The output is not inlined here
+    /// — a long subagent result would dwarf the model's attention — the
+    /// model fetches it with `subagent_control result <run_id>`.
+    fn subagent_done_aside(run_id: &str, result: &subagent::SubagentResult) -> llm::Message {
+        let line = match result {
+            subagent::SubagentResult::Completed { .. } => {
+                format!(
+                    "[background] subagent {run_id} completed; fetch output with subagent_control result {run_id}"
+                )
+            }
+            subagent::SubagentResult::Failed { error } => {
+                format!("[background] subagent {run_id} failed: {error}")
+            }
+            subagent::SubagentResult::Aborted => {
+                format!("[background] subagent {run_id} aborted")
+            }
+        };
+        llm::Message::user_text(line)
+    }
     /// Append synthetic `TurnEnd { aborted }` records for every run a prior
     /// process left open. Best-effort: a storage failure logs and skips that
     /// session rather than aborting the daemon start.

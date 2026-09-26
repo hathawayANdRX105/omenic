@@ -62,6 +62,10 @@ impl Tool for SubagentTool {
                     "provider": {
                         "type": "string",
                         "description": "Provider name to use (default: fork)."
+                    },
+                    "background": {
+                        "type": "boolean",
+                        "description": "Do not wait for the result. The run keeps going; its completion arrives as an aside and its output is fetched with `subagent_control` `result <run_id>`."
                     }
                 },
                 "required": ["prompt"]
@@ -78,6 +82,10 @@ impl Tool for SubagentTool {
             .get("provider")
             .and_then(Value::as_str)
             .unwrap_or(&self.provider_name);
+        let background = args
+            .get("background")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
         let signal = abort.flag();
         let request = SubagentStartRequest {
@@ -91,6 +99,30 @@ impl Tool for SubagentTool {
             .runtime
             .start_run(provider_name, request)
             .map_err(ToolError::Execute)?;
+
+        // Background: do not block. Watch for the result on a side thread and
+        // let the runtime's settle hook surface it to the model as an aside.
+        // `run` is `Send` (its channels and JoinHandle are), so moving it into
+        // the thread is sound; the provider's worker is already on its own
+        // thread.
+        if background {
+            let runtime = Arc::clone(&self.runtime);
+            let watch_id = run_id.clone();
+            std::thread::spawn(move || {
+                let result = run.result();
+                runtime.settle(&watch_id, &result);
+            });
+            let payload = serde_json::json!({
+                "status": "started",
+                "run_id": run_id,
+                "note": "completion arrives as an aside; fetch output with subagent_control result"
+            });
+            return Ok(ToolResult {
+                output: serde_json::to_string(&payload).unwrap_or_else(|_| format!("{payload:?}")),
+                is_error: false,
+            });
+        }
+
         let result = run.result();
         // The run has settled, win or lose — retire it so a later
         // `interrupt` cannot target a handle whose worker is already gone.
