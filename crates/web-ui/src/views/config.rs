@@ -318,7 +318,7 @@ fn ConfigForm(
                             class: "{input_class} font-mono",
                             value: "{data_dir}",
                             oninput: move |e| data_dir.set(e.value()),
-                            placeholder: "./.oi",
+                            placeholder: "~/.omenic",
                         }
                     }
                 }
