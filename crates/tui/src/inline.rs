@@ -603,7 +603,8 @@ pub fn composer_line(input: &str, cols: u16) -> String {
 
 /// dock 第 2 行：状态行 = **T5 footer 字段口径**（[`footer::line`] 原样
 /// 摊平：model · 耗时/运行状态等已核字段——真值安全禁则继续生效，无数据源
-/// 的 tokens/cost/context 不编造）+ 排队态标记（有队首 prompt 时追加）。
+/// 的 tokens/cost/context 不编造）+ 排队计数标记（队列非空时追加
+/// ` · queued: n`，route §3 T10 `queued: n` 与 enhanced dock 排队行同源）。
 pub fn status_line(app: &App) -> String {
     let line = footer::line(app);
     let mut text: String = line
@@ -612,7 +613,7 @@ pub fn status_line(app: &App) -> String {
         .map(|span| span.content.as_ref())
         .collect();
     if app.queued().is_some() {
-        text.push_str(" · queued");
+        text.push_str(&format!(" · queued: {}", app.queued_count()));
     }
     text
 }

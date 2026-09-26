@@ -44,6 +44,18 @@ const STATS_RANGE: &str = "24h";
 /// `theme.rs` D11；`/theme` 切换是 T17 的活——编不到就不编，明说没有）。
 const THEME_LINE: &str = "theme: default — palette switching not available yet";
 
+// --- T10 运行中排队常数（route §3 T10；dh-rs `PromptQueue` 口径，任务书
+// §2 实录：`input_memory.rs:11` 的 MAX_QUEUE_ITEMS、`composer.rs:10` 的
+// 64KiB——字节上限按**队列总量**记账，不是单条上限） ---
+
+/// 队列条数上限：满员再入队即拒收（dh-rs `enqueue_from` 的 `QueueFull`
+/// 同构），状态行明说、不静默丢（route §3）。
+const MAX_QUEUE_ITEMS: usize = 8;
+
+/// 队列字节**总量**上限：累计超过 64KiB 拒收（dh-rs `next_total >
+/// MAX_QUEUE_BYTES` 同款判据——入队前先算总量，不等溢出）。
+const MAX_QUEUE_BYTES: usize = 64 * 1024;
+
 // --- T7 鼠标滚轮归一化常数（route §3 T7；出处 grok-build refs
 // `xai-grok-pager-render/src/input/mouse.rs:63-76`，四常数与量纲由
 // `tests/wheel_scroll.rs::wheel_constants_snapshot` 钉死防漂移） ---
@@ -106,8 +118,12 @@ pub struct App {
     history: Vec<String>,
     /// 历史游标：`None` = 未在浏览；`Some(0)` = 最新一条。
     history_pos: Option<usize>,
-    /// 出站队列：空闲时头部即刻发，运行中整队等本轮 `TurnEnd`。
+    /// 出站队列（T10 FIFO：空闲时头部即刻发，运行中整队等本轮 `TurnEnd`
+    /// 逐条消费；上限 [`MAX_QUEUE_ITEMS`] 条 / [`MAX_QUEUE_BYTES`] 总字节）。
     outgoing: VecDeque<String>,
+    /// T10：队列字节总量记账（入队加、召回/出队同步减；`queued: n` 计数
+    /// 走 [`Self::queued_count`]，字节账没有渲染面——只喂上限判定）。
+    queue_bytes: usize,
     /// 本轮是否在跑（submit 置位、`TurnEnd` 清零）。
     running: bool,
     /// 退出确认未决（空闲第一下 Esc 置位，第二下才退）。
@@ -250,9 +266,16 @@ impl App {
         self.confirm_quit
     }
 
-    /// 队首待发 prompt（运行中 = 排队；dock 排队行消费）。
+    /// 队首待发 prompt（`None` = 队列空；dock 排队行显隐与 inline 状态行
+    /// 标记的判据，正文预览不渲染——排队行显示计数，见 [`Self::queued_count`]）。
     pub fn queued(&self) -> Option<&str> {
         self.outgoing.front().map(String::as_str)
+    }
+
+    /// T10：队列条数（dock/composer 状态行 `queued: n` 的 n，入队/召回/
+    /// 消费三点都从这里读——与上限判定同一数据源 [`Self::outgoing`]）。
+    pub fn queued_count(&self) -> usize {
+        self.outgoing.len()
     }
 
     /// 活动行覆写文案（空 = 由 running 派生 running/idle）。
@@ -355,6 +378,9 @@ impl App {
             return None;
         }
         let text = self.outgoing.pop_front()?;
+        // T10：出队即释放字节账（与入队 [`Self::enqueue`]、召回
+        // [`Self::recall_latest`] 的加减对称——总量上限才不会越记越紧）。
+        self.queue_bytes = self.queue_bytes.saturating_sub(text.len());
         self.running = true;
         self.status.clear();
         self.run_started = Some(Instant::now());
@@ -512,6 +538,8 @@ impl App {
             self.ui.push_message(msg);
         }
         self.outgoing.clear();
+        // T10：排队 prompt 不许跟着搬进新会话（连同字节账一起归零）。
+        self.queue_bytes = 0;
         self.running = false;
         self.current_run = None;
         self.status.clear();
@@ -582,17 +610,24 @@ impl App {
                 self.slash_edited();
                 self.history_pos = None;
             }
-            KeyCode::Up => self.history_back(),
-            KeyCode::Down => self.history_forward(),
             // T6：transcript 视口键（route §3 T6）。PgUp/PgDn/End 与 composer
             // 无关——单行输入没有翻页/到头语义（光标恒在行尾），不吞编辑；
             // Ctrl+U 半页只在 composer 为空时归滚动，有文本落回编辑语义
             // （现有编辑不认 Ctrl+U = 忽略不吞字，jcode 仲裁口径）。↑↓ 历史
-            // 行为不动（contract §3 键位仲裁第一条）。
+            // 行为照旧（contract §3 键位仲裁第一条），仅 T10 加一条前置分叉：
+            // 队列非空且 composer 为空时 ↑ 先召回排队最新项（[`Self::recall_latest`]）。
             KeyCode::PageUp => self.viewport.page_up(),
             KeyCode::PageDown => self.viewport.page_down(),
             KeyCode::End => self.viewport.to_end(),
             KeyCode::Char('u') if ctrl && self.input.is_empty() => self.viewport.half_up(),
+            // T10：首行 ↑ 召回（route §3）——队列非空且 composer 为空才召回，
+            // 否则原样落回历史导航（composer 非空 = 让位编辑/历史，不吞键）。
+            KeyCode::Up => {
+                if !self.recall_latest() {
+                    self.history_back();
+                }
+            }
+            KeyCode::Down => self.history_forward(),
             KeyCode::Char(c) if !ctrl => {
                 self.input.push(c);
                 self.slash_edited();
@@ -673,7 +708,8 @@ impl App {
     /// 整行 trim 后命中注册表 → **本地执行**（不进 prompt 提交路径、不产生
     /// 模型回合，route §3 T9）；行首未知 `/` → 状态行报未知命令、原文留在
     /// composer（同样不发消息）；其余照旧：非空进历史 + 出站队列，空行只清行
-    /// （route §3：Enter 空串不提交——空行误发由这里挡）。
+    /// （route §3：Enter 空串不提交——空行误发由这里挡）。T10：入队先过
+    /// 双上限（[`Self::enqueue`]），超限原文退回 composer + 状态行明说。
     fn submit_line(&mut self) {
         let text = std::mem::take(&mut self.input);
         self.history_pos = None;
@@ -696,8 +732,34 @@ impl App {
                 return;
             }
         }
-        self.history.push(text.clone());
-        self.outgoing.push_back(text);
+        if let Err(reason) = self.enqueue(&text) {
+            // T10：拒收不静默丢——原文退回 composer（dh-rs 超限保草稿同款）、
+            // 状态行明说原因；不进历史（没提交成功的东西不算已发）。
+            self.input = text;
+            self.set_status(reason);
+            return;
+        }
+        self.history.push(text);
+    }
+
+    /// T10：文本入出站队列（FIFO；dh-rs `PromptQueue::enqueue_from` 同构的
+    /// 双上限判定——条数 [`MAX_QUEUE_ITEMS`] 满员拒收、总量 [`MAX_QUEUE_BYTES`]
+    /// 超额拒收，先算后入不等溢出）。超限返回状态行文案，由调用方
+    /// [`Self::submit_line`] 把原文退回 composer 并落状态（route §3：
+    /// 上限拒绝要看得见，不许静默丢）。
+    fn enqueue(&mut self, text: &str) -> Result<(), String> {
+        if self.outgoing.len() >= MAX_QUEUE_ITEMS {
+            return Err(format!("queue full: {MAX_QUEUE_ITEMS} prompts max"));
+        }
+        if self.queue_bytes.saturating_add(text.len()) > MAX_QUEUE_BYTES {
+            return Err(format!(
+                "queue full: {}KiB total max",
+                MAX_QUEUE_BYTES / 1024
+            ));
+        }
+        self.outgoing.push_back(text.to_string());
+        self.queue_bytes += text.len();
+        Ok(())
     }
 
     /// T9：本地执行一条注册命令（首批全是本地/面板语义）：不入出站队列、
@@ -767,6 +829,22 @@ impl App {
         } else {
             self.ui.push_message(msg);
         }
+    }
+
+    /// T10：首行 ↑ 召回——取队列**最新项**（队尾，dh-rs `recall_latest`
+    /// 口径）放进编辑区，其余队列项保持 FIFO 顺序不重排，字节账同步减。
+    /// 条件 = 队列非空且 composer 为空（单行 composer 无多行，空即首行）；
+    /// 不满足返回 `false`，↑ 由 [`Self::handle_key`] 落回既有历史导航。
+    fn recall_latest(&mut self) -> bool {
+        if self.outgoing.is_empty() || !self.input.is_empty() {
+            return false;
+        }
+        let Some(text) = self.outgoing.pop_back() else {
+            return false;
+        };
+        self.queue_bytes = self.queue_bytes.saturating_sub(text.len());
+        self.input = text;
+        true
     }
 
     /// ↑：往回翻历史（首触时暂存草稿）；到最老一条停住，不越界。

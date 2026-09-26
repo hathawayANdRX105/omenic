@@ -883,11 +883,11 @@ fn status_line_flattens_footer_marks_running_and_queued() {
     assert!(app.queued().is_none());
     assert!(!inl::status_line(&app).contains("queued"));
 
-    // Enter 出站前 = 队首待发 → queued 标记。
+    // Enter 出站前 = 队首待发 → queued 计数标记（T10 `queued: n`）。
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(app.queued().is_some());
     assert!(
-        inl::status_line(&app).ends_with(" · queued"),
+        inl::status_line(&app).ends_with(" · queued: 1"),
         "{}",
         inl::status_line(&app)
     );
