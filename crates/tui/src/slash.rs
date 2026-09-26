@@ -30,6 +30,9 @@ pub enum Action {
     Theme,
     /// `/search`：开 T11 转录搜索 overlay（与 Ctrl+R 同一落点）。
     Search,
+    /// `/rewind [n]`：回退丢弃最近 n 轮（T13——执行只进确认态，y/Enter
+    /// 才产出动作，见 `App::start_rewind`）。
+    Rewind,
 }
 
 /// 需要事件循环做 IO 的命令意图（[`App`](crate::app::App) 是无 IO 纯状态：
@@ -86,6 +89,12 @@ pub const COMMANDS: &[Command] = &[
         description: "search the transcript (Ctrl+R)",
         action: Action::Search,
     },
+    // T13：表尾第 7 条，同 T11 口径（顺序即面板默认顺序，登记行同步 +1）。
+    Command {
+        name: "/rewind",
+        description: "rewind turns to an earlier point",
+        action: Action::Rewind,
+    },
 ];
 
 /// 精确命中：trim 后的整行 == 注册名（`/help extra` 不算）。
@@ -93,14 +102,38 @@ pub fn find(name: &str) -> Option<&'static Command> {
     COMMANDS.iter().find(|cmd| cmd.name == name)
 }
 
+/// T13：`submit_line` 的整行解析——先按 [`find`] 精确命中（无参命令语义
+/// 与 T9 逐字一致，`/help extra` 依旧算未知行）；再拆**首 token + 尾巴**，
+/// 只有带参命令（现仅 `/rewind [n]`）收下尾巴参数。返回 `(命令, 参数)`，
+/// 无参命令的参数恒为空串。
+pub fn find_line(line: &str) -> Option<(&'static Command, &str)> {
+    if let Some(cmd) = find(line) {
+        return Some((cmd, ""));
+    }
+    let (name, rest) = line.split_once(char::is_whitespace)?;
+    let cmd = find(name)?;
+    match cmd.action {
+        Action::Rewind => Some((cmd, rest.trim())),
+        _ => None,
+    }
+}
+
 /// 模糊过滤：`query` 是 composer 整行（行首 `/`），按 subsequence 顺序
 /// 匹配命令名（大小写不敏感、空白不参与匹配）；空查询 = 全量。
 /// 结果保持注册表顺序（面板高亮游标按这个顺序走）。
+///
+/// T13：带参行（`/rewind 3`）按**首 token**匹配——参数尾巴不参与模糊匹配
+/// （否则带参行永远无命中、两段 Enter 退化成一段）；无参行首 token == 整行，
+/// 行为与合入前逐字一致。
 pub fn filter(query: &str) -> Vec<&'static Command> {
     let query = query.trim();
+    let head = match query.split_once(char::is_whitespace) {
+        Some((head, _)) => head,
+        None => query,
+    };
     COMMANDS
         .iter()
-        .filter(|cmd| fuzzy_match(query, cmd.name))
+        .filter(|cmd| fuzzy_match(head, cmd.name))
         .collect()
 }
 

@@ -715,6 +715,29 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
             }
         }
 
+        Command::SessionRewind => {
+            let sid = match require_str(&req.params, "session_id") {
+                Ok(s) => s,
+                Err(m) => return Response::err(id, ResponseError::new("protocol", m)),
+            };
+            // Required, never defaulted — same reasoning as
+            // `session.truncate`: a missing `from_seq` falling back to 0
+            // would silently snapshot-and-empty the session.
+            let from_seq = match req.params.get("from_seq").and_then(Value::as_i64) {
+                Some(n) => n,
+                None => {
+                    return Response::err(
+                        id,
+                        ResponseError::new("protocol", "missing required numeric field `from_seq`"),
+                    );
+                }
+            };
+            match ctx.sessions.rewind_messages(sid, from_seq) {
+                Ok(snapshotted) => Response::ok(id, json!({ "snapshotted": snapshotted })),
+                Err(e) => session_error_response(id, "session.rewind", e),
+            }
+        }
+
         Command::SessionReadFromCursor => {
             let cursor = req
                 .params

@@ -32,6 +32,14 @@ use libsql::{Connection, TransactionBehavior};
 /// runaway caller from forcing the process to materialize a huge result set.
 pub const MAX_LIMIT: u32 = 1000;
 
+/// Fixed identity label stamped on every row [`SessionDb::rewind_messages`]
+/// backs up (T13 turn rewind). Same pattern as desktop turnrewind's
+/// `SNAPSHOT_IDENTITY`: a constant, not a per-call value, so every backup
+/// generation is attributable to this feature and auditable as one family —
+/// the ledger keeps history, this label says which rows were discarded and
+/// preserved.
+pub const SNAPSHOT_IDENTITY: &str = "OMENIC T13 Rewind";
+
 // -----------------------------------------------------------------------------
 // Errors
 // -----------------------------------------------------------------------------
@@ -326,7 +334,21 @@ async fn apply_schema(conn: &Connection) -> Result<(), SessionError> {
             PRIMARY KEY (session_id, seq),
             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
          );
-         CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);";
+         CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
+         CREATE TABLE IF NOT EXISTS message_snapshots (
+            id INTEGER PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            seq INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            text TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            attachments TEXT,
+            identity TEXT NOT NULL,
+            snapshotted_at INTEGER NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+         );
+         CREATE INDEX IF NOT EXISTS idx_message_snapshots_session
+            ON message_snapshots(session_id);";
     run_with_lock_retry(|| async {
         conn.execute_batch(sql).await?;
         Ok(())
@@ -918,6 +940,82 @@ impl SessionDb {
                 )
                 .await?;
             Ok(n)
+        })
+    }
+
+    /// Snapshot every message with `seq >= from_seq` into
+    /// `message_snapshots` (stamped [`SNAPSHOT_IDENTITY`]), then delete it —
+    /// both halves inside one transaction, so a snapshot insert that fails
+    /// rolls the delete back with it: no snapshot, no truncation.
+    ///
+    /// This is the primitive behind `session.rewind` (T13 turn rewind).
+    /// Boundary semantics are [`Self::truncate_messages`]`'` verbatim
+    /// (`from_seq <= 0` empties the session; a `from_seq` past the tail
+    /// touches nothing and reports `0`) — the TUI validates the rewind point
+    /// before calling, the store stays permissive. Returns how many rows were
+    /// backed up; that equals the rows dropped, since both statements read
+    /// the same range with no writes in between.
+    ///
+    /// Snapshot rows are append-only (`id` is a bare rowid): rewinding the
+    /// same range twice stacks a second backup instead of colliding with the
+    /// first, so the discarded generation stays auditable.
+    pub fn rewind_messages(&self, session_id: &str, from_seq: i64) -> Result<u64, SessionError> {
+        SessionError::invalid_id_if_blank(session_id)?;
+        let id_owned = session_id.to_string();
+
+        let guard = self.inner.conn.lock();
+        self.inner.runtime.block_on(async move {
+            let conn = &*guard;
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .await?;
+            let snapshotted = tx
+                .execute(
+                    "INSERT INTO message_snapshots \
+                     (session_id, seq, role, text, created_at, attachments, identity, snapshotted_at) \
+                     SELECT session_id, seq, role, text, created_at, attachments, ?2, ?3 \
+                     FROM messages WHERE session_id = ?1 AND seq >= ?4",
+                    libsql::params![id_owned.as_str(), SNAPSHOT_IDENTITY, now_ms(), from_seq],
+                )
+                .await?;
+            tx.execute(
+                "DELETE FROM messages WHERE session_id = ?1 AND seq >= ?2",
+                libsql::params![id_owned.as_str(), from_seq],
+            )
+            .await?;
+            // commit() consumes `tx`; on any error along the way the libsql
+            // Drop impl rolls the whole transaction back, so the backup and
+            // the delete can never land half-done.
+            tx.commit().await?;
+            Ok(snapshotted)
+        })
+    }
+
+    /// Rows the rewind backup holds for `session_id` **carrying
+    /// [`SNAPSHOT_IDENTITY`]**. Read-only audit seam: the write half of
+    /// [`Self::rewind_messages`]`'` transaction is the DELETE, so tests and
+    /// callers prove the backup happened through this count without reaching
+    /// into the database by hand.
+    pub fn rewind_snapshot_count(&self, session_id: &str) -> Result<u64, SessionError> {
+        SessionError::invalid_id_if_blank(session_id)?;
+        let id_owned = session_id.to_string();
+
+        let guard = self.inner.conn.lock();
+        self.inner.runtime.block_on(async move {
+            let conn = &*guard;
+            let mut rows = conn
+                .query(
+                    "SELECT COUNT(*) FROM message_snapshots \
+                     WHERE session_id = ?1 AND identity = ?2",
+                    libsql::params![id_owned.as_str(), SNAPSHOT_IDENTITY],
+                )
+                .await?;
+            let n = match rows.next().await? {
+                Some(row) => row.get::<i64>(0).unwrap_or(0),
+                None => 0,
+            };
+            drop(rows);
+            Ok(n.max(0) as u64)
         })
     }
 

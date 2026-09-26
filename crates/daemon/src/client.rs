@@ -286,6 +286,18 @@ impl DaemonClient {
         Ok(v.deleted)
     }
 
+    /// `session.rewind` → how many rows were copied into the rewind backup
+    /// before the same `seq >= from_seq` range was dropped (0 = nothing in
+    /// range). Same boundary semantics as [`Self::session_truncate`]; the
+    /// `from_seq` field is required server-side, never defaulted.
+    pub fn session_rewind(&self, session_id: &str, from_seq: i64) -> Result<u64, ClientError> {
+        let v: RewindOutcome = self.call(
+            Command::SessionRewind,
+            json!({ "session_id": session_id, "from_seq": from_seq }),
+        )?;
+        Ok(v.snapshotted)
+    }
+
     /// Read run records newer than `cursor` and return the next cursor.
     pub fn read_from_cursor(
         &self,
@@ -418,6 +430,11 @@ struct DeleteOutcome {
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 struct TruncateOutcome {
     deleted: u64,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+struct RewindOutcome {
+    snapshotted: u64,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
