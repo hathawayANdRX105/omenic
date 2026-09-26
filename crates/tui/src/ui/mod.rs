@@ -13,6 +13,7 @@ mod layout;
 pub mod panels;
 pub mod questions;
 pub mod session_picker;
+mod slash_palette;
 pub mod tool_card;
 mod transcript;
 
@@ -21,18 +22,19 @@ use ratatui::layout::Rect;
 
 use crate::app::App;
 
-/// 一帧的区域几何（T2 竖向切分 + T3 让位）。[`draw`] 与
+/// 一帧的区域几何（T2 竖向切分 + T3 让位 + T9 斜杠面板让行）。[`draw`] 与
 /// [`sync_viewport`] 共用同一计算——滚动模型与渲染看到的 transcript
 /// 视口永远是同一套，窗口不会漂移。
 struct Areas {
     transcript: Rect,
     footer: Rect,
     panel: Rect,
+    palette: Rect,
     dock: Rect,
 }
 
-/// 把整屏切成 transcript / footer / 问题面板 / dock 四块（语义与 T2/T3
-/// 逐条一致，只是抽出来给两条调用方共用）。
+/// 把整屏切成 transcript / 斜杠面板 / footer / 问题面板 / dock 五块
+///（语义与 T2/T3/T9 逐条一致，抽出来给两条调用方共用）。
 fn areas(app: &App, area: Rect) -> Areas {
     let (transcript, dock) = layout::split(area, app.queued().is_some());
     // footer：dock 之上恒 1 行（dock 压底时才有行可让）。
@@ -52,28 +54,40 @@ fn areas(app: &App, area: Rect) -> Areas {
         width: area.width,
         height: footer.y - panel_y,
     };
-    // transcript：吃掉 footer + 面板让出的行。
+    // T9 斜杠面板：问题面板之上、同样从 transcript 让行（0 行 = 关闭；
+    // 行数 = 面板候选数，无命中也留 1 行提示；小屏按 transcript 余量夹紧）。
+    let slash_rows = app.slash_rows().min(panel_y.saturating_sub(transcript.y));
+    let slash_y = panel_y.saturating_sub(slash_rows);
+    let palette = Rect {
+        x: area.x,
+        y: slash_y,
+        width: area.width,
+        height: panel_y - slash_y,
+    };
+    // transcript：吃掉斜杠面板 + footer + 面板让出的行。
     let transcript = Rect {
-        height: panel_y.saturating_sub(transcript.y),
+        height: slash_y.saturating_sub(transcript.y),
         ..transcript
     };
     Areas {
         transcript,
         footer,
         panel,
+        palette,
         dock,
     }
 }
 
-/// 画一帧（自上而下）：transcript → footer 状态条 → 问题面板（无题 0 行）
-/// → dock（活动 / 排队 / composer / 按键提示，恒压底——hints 仍是屏幕最
-/// 底一行，T2 布局契约不变）。
+/// 画一帧（自上而下）：transcript → 斜杠面板（T9，0 行不画）→ footer 状态条
+/// → 问题面板（无题 0 行）→ dock（活动 / 排队 / composer / 按键提示，恒压底
+/// ——hints 仍是屏幕最底一行，T2 布局契约不变）。
 ///
-/// footer 与面板的行从 transcript 底部让出：dock 几何仍由 [`layout::split`]
+/// footer 与两层面板的行从 transcript 底部让出：dock 几何仍由 [`layout::split`]
 /// 原样决定，不动 T2 的切分语义（route §1 T3 白名单外的 layout/dock 零改动）。
 pub fn draw(frame: &mut Frame, app: &App) {
     let areas = areas(app, frame.area());
     transcript::render(frame, areas.transcript, app);
+    slash_palette::render(frame, areas.palette, app);
     footer::render(frame, areas.footer, app);
     app.questions().render(frame, areas.panel);
     dock::render(frame, areas.dock, app);

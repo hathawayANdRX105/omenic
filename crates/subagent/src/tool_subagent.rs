@@ -84,6 +84,7 @@ impl Tool for SubagentTool {
             prompt: prompt.into(),
             signal,
             inherits_parent_context: false,
+            inbox: None,
         };
 
         let (run_id, run) = self

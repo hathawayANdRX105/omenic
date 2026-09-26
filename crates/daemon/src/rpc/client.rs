@@ -188,6 +188,49 @@ pub struct Client {
     max_retries: u32,
 }
 
+/// Grace between SIGTERM and SIGKILL when tearing the worker down (grok
+/// `TERM_GRACE`). A worker that traps SIGTERM — or whose child shell does —
+/// gets to flush and exit on its own; one that ignores it dies after the
+/// window. Without the grace, `Child::kill` is an unannounced SIGKILL and
+/// the worker tree never gets to release anything.
+const TERM_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Stop a worker process tree: SIGTERM the group, wait up to [`TERM_GRACE`]
+/// for exit, then SIGKILL the stragglers.
+///
+/// The child is spawned with `process_group(0)`, so its pgid equals its pid
+/// and the negative pid reaches the whole tree. Best-effort throughout: this
+/// runs from `Drop`, where blocking for long is not an option.
+fn terminate_worker_tree(child: &mut std::process::Child) {
+    let pid = child.id();
+    if pid == 0 {
+        return;
+    }
+    // SAFETY: `kill` takes a pid and a signal; a negative pid targets the
+    // process group. Both arguments are plain integers.
+    unsafe {
+        libc::kill(-(pid as i32), libc::SIGTERM);
+    }
+    let deadline = std::time::Instant::now() + TERM_GRACE;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => {}
+            Err(_) => break,
+        }
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    // SAFETY: as above; a group that is already gone makes this a no-op.
+    unsafe {
+        libc::kill(-(pid as i32), libc::SIGKILL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 impl Client {
     /// PID of the spawned omp worker process. Its process group id equals
     /// this pid (set via `process_group(0)`), so `kill -TERM -<pid>` stops
@@ -236,8 +279,7 @@ impl Client {
     /// Reconnect: kill the old process, spawn a new one, renegotiate.
     /// Resets chunk state and id counter.
     pub fn reconnect(&mut self) -> Result<(), RpcError> {
-        let _ = self.process.kill();
-        let _ = self.process.wait();
+        terminate_worker_tree(&mut self.process);
         let mut new = Self::spawn_omp(&self.omp_path, None)?;
         new.omp_path = self.omp_path.clone();
         new.timeout = self.timeout;
@@ -757,8 +799,7 @@ impl Drop for Client {
             .stdin
             .write_all(b"{\"id\":\"cancel\",\"type\":\"abort\"}\n");
         let _ = self.stdin.flush();
-        let _ = self.process.kill();
-        let _ = self.process.wait();
+        terminate_worker_tree(&mut self.process);
     }
 }
 /// Poll a reader's fd for readability for up to `dur`. `Ok(false)` means the

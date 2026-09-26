@@ -49,19 +49,24 @@ impl Tool for SubagentControlTool {
     fn spec(&self) -> protocol::ToolSpec {
         protocol::ToolSpec {
             name: self.name.clone(),
-            description: "List subagent providers, or interrupt a running subagent by run id."
-                .into(),
+            description:
+                "List subagent providers, interrupt a running subagent, or send a message to one."
+                    .into(),
             params_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["list", "interrupt"],
-                        "description": "Control action: list providers, or interrupt a run."
+                        "enum": ["list", "interrupt", "message"],
+                        "description": "Control action: list providers, interrupt a run, or message a running run."
                     },
                     "run_id": {
                         "type": "string",
-                        "description": "Required for `interrupt`: the run id returned by the subagent tool."
+                        "description": "Required for `interrupt` and `message`: the run id returned by the subagent tool."
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Required for `message`: the instruction to deliver to the running subagent."
                     }
                 },
                 "required": ["action"]
@@ -120,8 +125,35 @@ impl Tool for SubagentControlTool {
                     is_error: false,
                 })
             }
+            "message" => {
+                let run_id = args
+                    .get("run_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ToolError::Execute("missing string argument: run_id".into()))?;
+                let text = args
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ToolError::Execute("missing string argument: text".into()))?;
+                let payload = if self.runtime.send_message(run_id, text) {
+                    serde_json::json!({ "delivered": true, "run_id": run_id })
+                } else {
+                    // Deliberately not claiming a reason we cannot prove:
+                    // "no such run" and "this provider does not read an
+                    // inbox" both land here.
+                    serde_json::json!({
+                        "delivered": false,
+                        "run_id": run_id,
+                        "error": "no such run, or its provider does not accept mid-run messages",
+                    })
+                };
+                Ok(ToolResult {
+                    output: serde_json::to_string(&payload)
+                        .unwrap_or_else(|_| format!("{payload:?}")),
+                    is_error: false,
+                })
+            }
             other => Err(ToolError::Execute(format!(
-                "unsupported subagent control action: {other} (supported: list, interrupt)"
+                "unsupported subagent control action: {other} (supported: list, interrupt, message)"
             ))),
         }
     }

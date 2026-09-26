@@ -52,6 +52,12 @@ impl SubagentProvider for ForkProvider {
         false
     }
 
+    fn supports_mid_run_messages(&self) -> bool {
+        // The fork backend runs the in-process loop, which drains the inbox
+        // as steering at every step boundary.
+        true
+    }
+
     fn start(&self, request: SubagentStartRequest) -> crate::provider::SubagentRun {
         let tools = self.tools.clone();
         let backend = self.backend.clone();
@@ -59,6 +65,7 @@ impl SubagentProvider for ForkProvider {
         let signal = request.signal.clone();
         let prompt = request.prompt;
         let max_turns = self.max_turns;
+        let inbox = request.inbox.clone();
         let (tx, rx) = mpsc::channel();
 
         let join = thread::spawn(move || {
@@ -71,6 +78,7 @@ impl SubagentProvider for ForkProvider {
                 &signal,
                 0,
                 None,
+                inbox.as_deref(),
             );
             let result = match outcome {
                 Ok(output) => SubagentResult::Completed { output },
