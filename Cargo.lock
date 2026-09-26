@@ -2469,6 +2469,7 @@ name = "omenic-tui"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "config",
  "crossterm",
  "ratatui",
  "serde_json",

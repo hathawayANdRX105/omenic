@@ -721,6 +721,8 @@ fn drive(
     app.disable_message_ops();
     app.start_session(sid, Vec::new());
     app.set_model(footer::configured_model());
+    // T15：OSC9 开关启动读定（同 enhanced/linear：不热载，读不到按默认关）。
+    app.set_notify_osc9(crate::notify::osc9_from_config());
     if let Ok(summary) = client.stats_summary(STATS_RANGE) {
         app.set_in_flight(summary.in_flight_runs);
     }
@@ -810,6 +812,12 @@ fn drive(
                     ));
                 }
             }
+        }
+        // T15：批次完成通知写出（接线层旁路字节，BEL / 附 OSC9）——inline
+        // 的帧写由 apply_to 独占，通知单独 write + flush，不进 DEC 同步对。
+        while let Some(bytes) = app.take_notice() {
+            out.write_all(&bytes).map_err(TuiError::Io)?;
+            out.flush().map_err(TuiError::Io)?;
         }
         while let Ok(res) = prx.try_recv() {
             res.map_err(client_error)?;
