@@ -2,7 +2,9 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::provider::{RunDisposer, SubagentProvider, SubagentRun, SubagentStartRequest};
+use crate::provider::{
+    RunDisposer, SubagentProvider, SubagentResult, SubagentRun, SubagentStartRequest,
+};
 
 /// One run that has not settled yet: how to tear it down, and where its
 /// mid-run messages go.
@@ -25,6 +27,13 @@ pub struct SubagentRuntimeService {
     /// Live runs keyed by run id: the teardown handle plus the inbox a
     /// `subagent_control message` pushes into.
     runs: Mutex<HashMap<String, LiveRun>>,
+    /// Settled background runs, bounded so a long-lived daemon does not grow
+    /// this table without limit. Oldest first; [`Self::result`] looks up here.
+    settled: Mutex<VecDeque<(String, SubagentResult)>>,
+    /// Fired once when a background run settles. The daemon wires it to push
+    /// a completion notice into the model's aside channel; a sync run that
+    /// returned its result inline does not fire it.
+    on_settled: Mutex<Option<Arc<dyn Fn(&str, &SubagentResult) + Send + Sync>>>,
     run_seq: AtomicU64,
 }
 
@@ -113,6 +122,39 @@ impl SubagentRuntimeService {
     /// interruptable, so it leaves the table.
     pub fn finish_run(&self, run_id: &str) {
         self.runs.lock().unwrap().remove(run_id);
+    }
+
+    /// Register the hook fired when a background run settles. The daemon uses
+    /// it to push a completion notice into the model's aside channel.
+    pub fn set_on_settled(&self, hook: Arc<dyn Fn(&str, &SubagentResult) + Send + Sync>) {
+        *self.on_settled.lock().unwrap() = Some(hook);
+    }
+
+    /// Retire a settled background run: drop it from the live table, keep its
+    /// result for [`Self::result`], and fire the completion hook.
+    pub fn settle(&self, run_id: &str, result: &SubagentResult) {
+        self.runs.lock().unwrap().remove(run_id);
+        let mut settled = self.settled.lock().unwrap();
+        settled.push_back((run_id.to_string(), result.clone()));
+        if settled.len() > 64 {
+            settled.pop_front();
+        }
+        drop(settled);
+        if let Some(hook) = self.on_settled.lock().unwrap().as_ref() {
+            hook(run_id, result);
+        }
+    }
+
+    /// The result of a settled background run, or `None` if it has not
+    /// settled (or was evicted past the 64-run bound).
+    pub fn result(&self, run_id: &str) -> Option<SubagentResult> {
+        self.settled
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|(id, _)| id == run_id)
+            .map(|(_, r)| r.clone())
     }
 
     /// Ids of runs that are still in flight.

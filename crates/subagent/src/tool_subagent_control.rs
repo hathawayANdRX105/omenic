@@ -1,9 +1,10 @@
 //! Model-facing `subagent_control` tool plugin.
 //!
 //! Registers a `subagent_control` tool into the harness `ToolCatalog`.
-//! Reference: `dsh packages/subagent/tool-subagent-control`. Two actions:
-//! `list` reports the registered providers and their capabilities, and
-//! `interrupt` disposes a run that `subagent` started and has not settled on.
+//! Reference: `dsh packages/subagent/tool-subagent-control`. Actions:
+//! `list` reports the registered providers and their capabilities,
+//! `interrupt` disposes a run, `message` delivers a mid-run instruction, and
+//! `result` reads a settled background run's output.
 
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use protocol::Tool;
 use protocol::{AbortSignal, ToolError, ToolResult};
 use serde_json::Value;
 
+use crate::provider::SubagentResult;
 use crate::runtime::SubagentRuntimeService;
 
 /// Plugin that installs the `subagent_control` model-facing tool.
@@ -30,10 +32,10 @@ impl Default for ToolSubagentControlPlugin {
 /// The `subagent_control` tool the model calls.
 ///
 /// `list` is a snapshot of the provider registry; `interrupt` tears down a
-/// run whose id came back from the `subagent` tool. Interrupting an unknown
-/// or already-settled run is reported in the payload (`interrupted: false`),
-/// not as a tool error — a control query failing is information, not a
-/// broken call.
+/// run; `message` delivers a mid-run instruction to a live run; `result`
+/// reads the output of a settled background run. Interrupting or reading an
+/// unknown or already-settled run is reported in the payload, not as a tool
+/// error — a control query failing is information, not a broken call.
 pub struct SubagentControlTool {
     name: String,
     runtime: Arc<SubagentRuntimeService>,
@@ -50,19 +52,19 @@ impl Tool for SubagentControlTool {
         protocol::ToolSpec {
             name: self.name.clone(),
             description:
-                "List subagent providers, interrupt a running subagent, or send a message to one."
+                "List subagent providers, interrupt or message a running subagent, or read a settled background run's result."
                     .into(),
             params_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["list", "interrupt", "message"],
-                        "description": "Control action: list providers, interrupt a run, or message a running run."
+                        "enum": ["list", "interrupt", "message", "result"],
+                        "description": "Control action: list providers, interrupt a run, message a running run, or read a settled run's output."
                     },
                     "run_id": {
                         "type": "string",
-                        "description": "Required for `interrupt` and `message`: the run id returned by the subagent tool."
+                        "description": "Required for `interrupt`, `message`, and `result`: the run id returned by the subagent tool."
                     },
                     "text": {
                         "type": "string",
@@ -152,8 +154,42 @@ impl Tool for SubagentControlTool {
                     is_error: false,
                 })
             }
+            "result" => {
+                let run_id = args
+                    .get("run_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ToolError::Execute("missing string argument: run_id".into()))?;
+                // A background run that has not settled yet has no stored
+                // result; say so rather than block (the completion aside is
+                // the signal to call this again).
+                let payload = match self.runtime.result(run_id) {
+                    Some(SubagentResult::Completed { output }) => serde_json::json!({
+                        "status": "completed",
+                        "output": output,
+                        "run_id": run_id
+                    }),
+                    Some(SubagentResult::Failed { error }) => serde_json::json!({
+                        "status": "failed",
+                        "error": error,
+                        "run_id": run_id
+                    }),
+                    Some(SubagentResult::Aborted) => {
+                        serde_json::json!({ "status": "aborted", "run_id": run_id })
+                    }
+                    None => serde_json::json!({
+                        "status": "pending",
+                        "run_id": run_id,
+                        "note": "run has not settled yet; fetch again after its completion aside",
+                    }),
+                };
+                Ok(ToolResult {
+                    output: serde_json::to_string(&payload)
+                        .unwrap_or_else(|_| format!("{payload:?}")),
+                    is_error: false,
+                })
+            }
             other => Err(ToolError::Execute(format!(
-                "unsupported subagent control action: {other} (supported: list, interrupt, message)"
+                "unsupported subagent control action: {other} (supported: list, interrupt, message, result)"
             ))),
         }
     }
