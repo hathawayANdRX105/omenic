@@ -7,9 +7,9 @@
 > - 技术教训（会重复犯的错与规则）：[LESSONS.md](LESSONS.md)
 > - 编号体系：`C1–C8` 能力域 / `R1–R7` 并发路线 / `G1–G8` 整合门 / `B1–B3` dsh 对照批次 / `P0–P2` 体验批次 / `F1–F4` 审查遗留——均只见于历史 PR 标题，本文不再展开
 
-## 当前位置（2026-09-25）
+## 当前位置（2026-09-26）
 
-main `4cb52e7`。daemon / web / CLI / TUI（`oi tui`）**四入口**均可构建运行（CI 证实；TUI 真人 TTY 验证 2026-09-25 通过）；web 本地停用中，复起：`hub start omenic-daemon`（`./target/debug/daemon`，**cwd=仓库根**读 `.oi/config.toml`）+ `hub start oi-web`（`./target/debug/oi-web`，端口 8026；daemon 重启后先发一条预热消息避开 known-issue 1）。
+main `a49d755f`（Q1 附件 / Q7 aside / Q8 subagent 消息 / Q2 凭据档案 四项已合）。daemon / web / CLI / TUI（`oi tui`）**四入口**均可构建运行（CI 证实；TUI 真人 TTY 验证 2026-09-25 通过）；web 本地停用中，复起：`hub start omenic-daemon`（`./target/debug/daemon`，**cwd=仓库根**读 `.oi/config.toml`）+ `hub start oi-web`（`./target/debug/oi-web`，端口 8026；daemon 重启后先发一条预热消息避开 known-issue 1）。结构收口已落地：p3 #452（JSONL 原语提取 + God 文件拆分）与 p4 #457（fully-flat 26-crate 树，`crates/agent/orbit` → `crates/agent-loop/src/orbit`、`agent-loop/compaction|instruction` 拍平进父 crate）。
 
 ## 已实现（能力级）
 
@@ -20,13 +20,15 @@ main `4cb52e7`。daemon / web / CLI / TUI（`oi tui`）**四入口**均可构建
 | 事件流推 web | `AgentEvent` DTO + daemon 广播订阅 + web 断线退避重连 |
 | compaction + AGENTS.md 注入 | 插件化压缩与指令注入，**生产路径已生效**（非仅测试口径） |
 | web 界面全真数据 | 聊天流式 + tool 折叠卡 / 侧栏谱系树 / 任务看板 / 统计 / 设置页（TOML 往返） |
-| TUI（`oi tui`，第三 daemon 客户端） | `--tui auto\|enhanced\|linear` 探针门三档：linear 线性回显（管道 / dumb / 无色 / 复用器内自动回落）+ enhanced 全屏 alternate screen（transcript + composer dock + 历史/中断键）+ `--reduced-motion` 降动效；契约测试 19 条（`crates/tui/tests/`）。T1 #425、T2 #430/#438、T3 #447/#449、T4 #448/#451，T5 #453 文档收口 |
+| 附件（图片）全链路 | composer 选图 → base64 随消息入队 → sqlite 落库 → resume 回放 → OpenAI 多模态 content 数组；daemon 侧 media type 白名单 + 严格 base64 + 体积上限 |
+| TUI（`oi tui`，第三 daemon 客户端） | `--tui auto\|enhanced\|linear` 探针门三档：linear 线性回显（管道 / dumb / 无色 / 复用器内自动回落）+ enhanced 全屏 alternate screen（transcript + composer dock + 历史/中断键）+ `--reduced-motion` 降动效；契约测试 42 条（`crates/tui/tests/`，14 文件）。T1 #425、T2 #430/#438、T3 #447/#449、T4 #448/#451、T5 #453 文档收口、T6 #462 transcript 滚动 + tail follow、T7 #468 鼠标滚轮（归一化常数，出处 grok-build `mouse.rs` / jcode `navigation.rs`） |
 | 插件面 | 服务容器 + 事件总线 + 生命周期 + 注册表（重名拒绝）；`assemble()` 装配 Compaction/Instruction 两核心插件，daemon bind 前消费 |
 | MCP | stdio + Streamable HTTP 双传输、重连监督（指数退避 + 熔断）、per-server timeout/cwd |
 | session resume | daemon 重启后按 session 回放最近 50 条 user/assistant（dedupe + 切换清 ctx） |
 | LLM 路由 | `WaterfallLlm` fallback 按序切换 + 共享退避重试 + 已泄内容不切 provider；web Fallback 表单 |
-| jobs + terminal | 后台作业注册表 + 持久 PTY（drain 语义 read）；10 把模型工具接入 daemon |
-| subagent | fork 进程内后端 + ACP 出进程后端（两阶梯 dispose）+ interrupt + `[[subagent.providers]]` |
+| 凭据档案 | `[[llm.profiles]]` + `[llm] active_profile` 切 provider；`api_key_env` 让共享配置不带明文 key；档案名不存在即加载失败（不静默换 provider） |
+| jobs + terminal | 后台作业注册表 + 持久 PTY（drain 语义 read）；10 把模型工具接入 daemon；作业完成经 `on_job_done` 以 **aside** 进模型上下文（不延长 run） |
+| subagent | fork 进程内后端 + ACP 出进程后端（两阶梯 dispose）+ interrupt + `[[subagent.providers]]`；运行中发消息（`subagent_control message`，step 边界投递，不谎报给不读 inbox 的 provider）；worker 拆除 SIGTERM 宽限 |
 | todo + goal 全链路 | 5 把模型工具（todo_add/todo_update/todo_list/goal_add/goal_link）+ jsonl 存储 + `todo.list`/`goal.list` 读 RPC + web 看板投影（CLI 任务/模型 todo-goal/run 记录三类同板） |
 | session 自动标题 | 首条用户消息确定性截词（40 字符预算 + markdown 剥刺 + emoji 安全）+ `session.update_title` 增量 RPC |
 | plan-mode | `/plan` 家族在 turn 间切状态（daemon 拦截 worker.prompt）；`exit_plan_mode` 工具挂 review port，计划评审问题经 `user.question` 事件推送 + `user.answer`/`user.question.pending` RPC 回答；web 问题卡（composer 上方）；plan:policy 段按态注入 system prompt（orbit 引擎每轮重算） |
@@ -43,15 +45,28 @@ main `4cb52e7`。daemon / web / CLI / TUI（`oi tui`）**四入口**均可构建
 
 ### P2 — 明确延后（文字体验没稳住之前不排）
 
-附件全链路（~4–6 天）/ credentials+identity（~5–7 天）/ session telemetry+OTel（~2–3 天）/ token-meter（~1 天，C8 裁定不做，token 卡「无数据则隐藏」已兜底）。
+session telemetry+OTel（~2–3 天）/ token-meter（~1 天，C8 裁定不做，token 卡「无数据则隐藏」已兜底）。
+
+附件全链路（#478 `a49d755f`：web composer 选图 → base64 随消息入队 → sqlite 落库 → resume 回放 → OpenAI 多模态 content 数组；daemon 侧白名单校验 media type / 严格 base64 / 体积上限）已落地。credentials（#485 `5a596807`：`[[llm.profiles]]` + `active_profile` 切换 + `api_key_env`，档案名拼错即加载失败）已落地第一档，identity 维度与设置页档案卡仍欠账。
+
+### 本批落地（2026-09-26，refs 四项目对照后的四个缺口）
+
+| 项 | PR / commit | 落地内容 |
+|---|---|---|
+| Q1 附件 | #478 `a49d755f` | 选图 → 编码 → 入库 → resume → 模型；daemon 侧校验白名单 |
+| Q7 aside | #481 `1cac9b78` | `LoopConfig::get_aside` 通道 + jobs `on_job_done` 回调：作业完成以 aside 进上下文，**不延长 run** |
+| Q8 subagent | #483 `eb2d7b3b` | 每 run 信箱 + `subagent_control message`（step 边界投递，不打断在飞工具）；worker 拆除走 SIGTERM → 500ms → SIGKILL |
+| Q2 credentials | #485 `5a596807` | 命名凭据档案 + `active_profile`；`api_key_env` 让共享配置不带明文 key |
+
+审查期修掉的真问题：Q8 的控制工具对「不读 inbox 的 provider」（ACP 等）谎报投递成功 → 加 per-provider 能力位；Q1 合并 main 后新增的调用点（tui inline/local、workspace echo、kymic CLI 测试）漏改 → 补齐；Q7 的 `session_tools` 文档注释被新 helper 顶掉 → 复原。
 
 ### 批次余量（不阻塞，可随时捡）
 
 - **MCP**：tool-level filter、server-level env 注入
-- **session resume**：checkpoint flush 策略；回放跳过 `System`/`Tool` 行
+- **session resume**：checkpoint flush 策略（回放本就只取 user/assistant，无 System/Tool 行问题；`pending_titles` 重试随 #452 落地）
 - **LLM 路由**：全败 Error 不聚合各 provider 原始错误文本；statusline fallback 切换 `model` 显示口径
-- **jobs/terminal**：`onJobDone` 回调、pwsh 后端、dsh jobs 其余工具（`jobs_output` 等）
-- **subagent**：`send_message`/`report`、continuable/background run、session-seeding、SIGTERM 中间层、permission option kind、Codex/Claude Code/SDK 三进程外后端
+- **jobs/terminal**：pwsh 后端、dsh jobs 其余工具（`jobs_output` 等）（`onJobDone` 回调随 #481 落地，aside 通道已通）
+- **subagent**：`send_message`/`report`、continuable/background run、session-seeding、permission option kind、Codex/Claude Code/SDK 三进程外后端（`send_message` 与 SIGTERM 中间层随 #483 落地；ACP 消费 inbox 留后续）
 
 ## 不做（裁定，勿翻案）
 
@@ -68,11 +83,11 @@ main `4cb52e7`。daemon / web / CLI / TUI（`oi tui`）**四入口**均可构建
 
 以下路线修改面独立，可分别在 `.wt/<branch>` 推进：
 
-1. **Web 稳定性**：修复 daemon 重启后首条消息空 turn，以及首条消息标题更新失败无重试。两项集中在 daemon/web 边界，优先消除当前使用阻塞。
+1. **Web 稳定性**：修复 daemon 重启后首条消息空 turn，以及首条消息标题**跨页面刷新**的重试缺口（会话内重试已有，见 known-issue 2）。两项集中在 daemon/web 边界，优先消除当前使用阻塞。
 2. **Leptos 资源基线**：保持现有 Dioxus 路径不动，在独立应用中完成空载、单会话和流式消息场景的 CPU/内存对照。数据不足前不启动迁移。
 3. **代码结构治理**：扩展 `.githooks/spec/quality/` 的结构规则，优先覆盖超大文件、重复实现、模块聚合和无效包装。Gate 只消费规则，不重新承载项目策略。
-4. **Agent 能力缺口**：从现有队列中独立实现 MCP tool-level filter、session resume checkpoint flush，或 jobs/terminal 缺口。每条路线限制在一个能力域。
-5. **TUI 批次收口**（epic #423）：五阶段交付完毕——T1 #425、T2 #430/#438、T3 #447（`7729268`）/ #449（`5ec96c4`）、T4 #448（`79bc37f`）/ #451（`4cb52e7`）、T5 #453（文档收口）。遗留：TUI PTY smoke job 待授权后补 CI 级全屏断言（T2–T4 TTY 级证据欠账）。
+4. **Agent 能力缺口**：本批 Q1/Q2/Q7/Q8 已合（见上表）。下一批从队列里独立实现 MCP tool-level filter、session resume checkpoint flush、Q3 telemetry，或 jobs/terminal 的 pwsh 后端。每条路线限制在一个能力域。
+5. **TUI 批次收口**（epic #423）：七阶段交付完毕——T1 #425、T2 #430/#438、T3 #447（`7729268`）/ #449（`5ec96c4`）、T4 #448（`79bc37f`）/ #451（`4cb52e7`）、T5 #453 文档收口、T6 #462（transcript 滚动 + tail follow）、T7 #468（鼠标滚轮）、T8 #469（inline dock 原生回滚）、T9 #476（slash 命令面板）、T10 #479（飞行中提示队列 + recall）。遗留：TUI PTY smoke job 待授权后补 CI 级全屏断言（T2–T4 TTY 级证据欠账）。
 
 整合顺序：先合 Web 稳定性；Leptos 只产出基准结论；结构治理和 Agent 能力可并行，避免同时修改共享 composition/daemon 入口。
 
@@ -81,7 +96,7 @@ main `4cb52e7`。daemon / web / CLI / TUI（`oi tui`）**四入口**均可构建
 | # | 现象 | 根因位置 | 规避 / 前置 |
 |---|---|---|---|
 | 1 | 冷启动 daemon **首个 prompt 静默丢 run**：32ms 空 turn（`↑0 ↓0`）、UI 无错误提示，第二条起正常 | daemon worker 懒拉起与首 prompt 竞态 | daemon 重启后先发一条预热消息 |
-| 2 | 首条消息标题更新失败无重试：`is_first_message` 门控一次性，占位 `会话 <ts>` 无稳定字面量 | page-workspace `on_send` | 需先给占位加可识别前缀再加重试 |
+| 2 | 首条消息标题更新失败：会话内重试已落地（#452 `pending_titles`：落库失败后后续发送继续重试同一标题；本地标题已改则不覆盖），剩余缺口是**跨页面刷新无重试**（`pending_titles` 仅内存态，刷新后占位 `会话 <ts>` 重新派生） | page-workspace `on_send` + `pending_titles` | 占位加可识别前缀 + 刷新后从 daemon 侧补重试 |
 
 ## 工作约定
 
