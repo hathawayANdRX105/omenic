@@ -912,7 +912,8 @@ fn aside_arriving_mid_turn_reaches_the_next_model_call() {
             },
         ],
     ])));
-    let queue = RefCell::new(Vec::<Message>::new());
+    // The aside only exists from the second step boundary on — it "arrives"
+    // while the tool batch is in flight.
     let round = std::cell::Cell::new(0usize);
     let get = || {
         round.set(round.get() + 1);

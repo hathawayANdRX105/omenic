@@ -4,8 +4,8 @@
 //! Red when: 钩子在锁内跑（回调注册表即死锁），或终态多次触发（模型收到
 //! 重复的"作业完成"通知）。
 
+use std::sync::Arc;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use jobs::{JobOutput, JobRegistry, LocalJobRegistry};
