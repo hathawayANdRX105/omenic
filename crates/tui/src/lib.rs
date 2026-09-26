@@ -22,6 +22,7 @@ mod probe;
 mod pump;
 
 pub mod app;
+pub mod autostart;
 pub mod inline;
 pub mod scroll;
 pub mod search;

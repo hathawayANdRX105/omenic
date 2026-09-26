@@ -493,6 +493,20 @@ fn dispatch_sub(command: Command, json: bool) -> Result<u8, String> {
         Command::Session { sub } => session_cmd_dispatch(sub, json),
         Command::Daemon { sub } => daemon_cmd_dispatch(sub, json),
         Command::Tui(args) => {
+            // T14 autostart: probe / spawn / wait-ready before the render
+            // loop, so a cold start hands the TUI a daemon that already
+            // answers pings (the first prompt must not be silently dropped).
+            // Path resolution is the same helper `oi daemon start` uses.
+            if let Err(reason) = resolve_daemon_bin().and_then(|bin| {
+                tui::autostart::ensure_daemon_running(&bin).map_err(|e| e.to_string())
+            }) {
+                // Autostart could not produce a live daemon: the exact
+                // condition `tui::run` reports as DaemonUnreachable, so it
+                // keeps that exit code (3) — one stderr line, never a fake
+                // start into a TUI that cannot talk to anything.
+                eprintln!("omenic tui: {reason}");
+                return Ok(3);
+            }
             let opts = tui::TuiOptions {
                 mode: args.mode,
                 session: args.session,
