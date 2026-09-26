@@ -7,9 +7,9 @@
 > - 技术教训（会重复犯的错与规则）：[LESSONS.md](LESSONS.md)
 > - 编号体系：`C1–C8` 能力域 / `R1–R7` 并发路线 / `G1–G8` 整合门 / `B1–B3` dsh 对照批次 / `P0–P2` 体验批次 / `F1–F4` 审查遗留——均只见于历史 PR 标题，本文不再展开
 
-## 当前位置（2026-09-25）
+## 当前位置（2026-09-26）
 
-main `4cb52e7`。daemon / web / CLI / TUI（`oi tui`）**四入口**均可构建运行（CI 证实；TUI 真人 TTY 验证 2026-09-25 通过）；web 本地停用中，复起：`hub start omenic-daemon`（`./target/debug/daemon`，**cwd=仓库根**读 `.oi/config.toml`）+ `hub start oi-web`（`./target/debug/oi-web`，端口 8026；daemon 重启后先发一条预热消息避开 known-issue 1）。
+main `4b5c41a`。daemon / web / CLI / TUI（`oi tui`）**四入口**均可构建运行（CI 证实；TUI 真人 TTY 验证 2026-09-25 通过）；web 本地停用中，复起：`hub start omenic-daemon`（`./target/debug/daemon`，**cwd=仓库根**读 `.oi/config.toml`）+ `hub start oi-web`（`./target/debug/oi-web`，端口 8026；daemon 重启后先发一条预热消息避开 known-issue 1）。结构收口已落地：p3 #452（JSONL 原语提取 + God 文件拆分）与 p4 #457（fully-flat 26-crate 树，`crates/agent/orbit` → `crates/agent-loop/src/orbit`、`agent-loop/compaction|instruction` 拍平进父 crate）。
 
 ## 已实现（能力级）
 
@@ -20,7 +20,7 @@ main `4cb52e7`。daemon / web / CLI / TUI（`oi tui`）**四入口**均可构建
 | 事件流推 web | `AgentEvent` DTO + daemon 广播订阅 + web 断线退避重连 |
 | compaction + AGENTS.md 注入 | 插件化压缩与指令注入，**生产路径已生效**（非仅测试口径） |
 | web 界面全真数据 | 聊天流式 + tool 折叠卡 / 侧栏谱系树 / 任务看板 / 统计 / 设置页（TOML 往返） |
-| TUI（`oi tui`，第三 daemon 客户端） | `--tui auto\|enhanced\|linear` 探针门三档：linear 线性回显（管道 / dumb / 无色 / 复用器内自动回落）+ enhanced 全屏 alternate screen（transcript + composer dock + 历史/中断键）+ `--reduced-motion` 降动效；契约测试 19 条（`crates/tui/tests/`）。T1 #425、T2 #430/#438、T3 #447/#449、T4 #448/#451，T5 #453 文档收口 |
+| TUI（`oi tui`，第三 daemon 客户端） | `--tui auto\|enhanced\|linear` 探针门三档：linear 线性回显（管道 / dumb / 无色 / 复用器内自动回落）+ enhanced 全屏 alternate screen（transcript + composer dock + 历史/中断键）+ `--reduced-motion` 降动效；契约测试 42 条（`crates/tui/tests/`，14 文件）。T1 #425、T2 #430/#438、T3 #447/#449、T4 #448/#451、T5 #453 文档收口、T6 #462 transcript 滚动 + tail follow、T7 #468 鼠标滚轮（归一化常数，出处 grok-build `mouse.rs` / jcode `navigation.rs`） |
 | 插件面 | 服务容器 + 事件总线 + 生命周期 + 注册表（重名拒绝）；`assemble()` 装配 Compaction/Instruction 两核心插件，daemon bind 前消费 |
 | MCP | stdio + Streamable HTTP 双传输、重连监督（指数退避 + 熔断）、per-server timeout/cwd |
 | session resume | daemon 重启后按 session 回放最近 50 条 user/assistant（dedupe + 切换清 ctx） |
@@ -48,7 +48,7 @@ main `4cb52e7`。daemon / web / CLI / TUI（`oi tui`）**四入口**均可构建
 ### 批次余量（不阻塞，可随时捡）
 
 - **MCP**：tool-level filter、server-level env 注入
-- **session resume**：checkpoint flush 策略；回放跳过 `System`/`Tool` 行
+- **session resume**：checkpoint flush 策略（回放本就只取 user/assistant，无 System/Tool 行问题；`pending_titles` 重试随 #452 落地）
 - **LLM 路由**：全败 Error 不聚合各 provider 原始错误文本；statusline fallback 切换 `model` 显示口径
 - **jobs/terminal**：`onJobDone` 回调、pwsh 后端、dsh jobs 其余工具（`jobs_output` 等）
 - **subagent**：`send_message`/`report`、continuable/background run、session-seeding、SIGTERM 中间层、permission option kind、Codex/Claude Code/SDK 三进程外后端
@@ -68,11 +68,11 @@ main `4cb52e7`。daemon / web / CLI / TUI（`oi tui`）**四入口**均可构建
 
 以下路线修改面独立，可分别在 `.wt/<branch>` 推进：
 
-1. **Web 稳定性**：修复 daemon 重启后首条消息空 turn，以及首条消息标题更新失败无重试。两项集中在 daemon/web 边界，优先消除当前使用阻塞。
+1. **Web 稳定性**：修复 daemon 重启后首条消息空 turn，以及首条消息标题**跨页面刷新**的重试缺口（会话内重试已有，见 known-issue 2）。两项集中在 daemon/web 边界，优先消除当前使用阻塞。
 2. **Leptos 资源基线**：保持现有 Dioxus 路径不动，在独立应用中完成空载、单会话和流式消息场景的 CPU/内存对照。数据不足前不启动迁移。
 3. **代码结构治理**：扩展 `.githooks/spec/quality/` 的结构规则，优先覆盖超大文件、重复实现、模块聚合和无效包装。Gate 只消费规则，不重新承载项目策略。
 4. **Agent 能力缺口**：从现有队列中独立实现 MCP tool-level filter、session resume checkpoint flush，或 jobs/terminal 缺口。每条路线限制在一个能力域。
-5. **TUI 批次收口**（epic #423）：五阶段交付完毕——T1 #425、T2 #430/#438、T3 #447（`7729268`）/ #449（`5ec96c4`）、T4 #448（`79bc37f`）/ #451（`4cb52e7`）、T5 #453（文档收口）。遗留：TUI PTY smoke job 待授权后补 CI 级全屏断言（T2–T4 TTY 级证据欠账）。
+5. **TUI 批次收口**（epic #423）：七阶段交付完毕——T1 #425、T2 #430/#438、T3 #447（`7729268`）/ #449（`5ec96c4`）、T4 #448（`79bc37f`）/ #451（`4cb52e7`）、T5 #453 文档收口、T6 #462（transcript 滚动 + tail follow）、T7 #468（鼠标滚轮）。遗留：TUI PTY smoke job 待授权后补 CI 级全屏断言（T2–T4 TTY 级证据欠账）。
 
 整合顺序：先合 Web 稳定性；Leptos 只产出基准结论；结构治理和 Agent 能力可并行，避免同时修改共享 composition/daemon 入口。
 
@@ -81,7 +81,7 @@ main `4cb52e7`。daemon / web / CLI / TUI（`oi tui`）**四入口**均可构建
 | # | 现象 | 根因位置 | 规避 / 前置 |
 |---|---|---|---|
 | 1 | 冷启动 daemon **首个 prompt 静默丢 run**：32ms 空 turn（`↑0 ↓0`）、UI 无错误提示，第二条起正常 | daemon worker 懒拉起与首 prompt 竞态 | daemon 重启后先发一条预热消息 |
-| 2 | 首条消息标题更新失败无重试：`is_first_message` 门控一次性，占位 `会话 <ts>` 无稳定字面量 | page-workspace `on_send` | 需先给占位加可识别前缀再加重试 |
+| 2 | 首条消息标题更新失败：会话内重试已落地（#452 `pending_titles`：落库失败后后续发送继续重试同一标题；本地标题已改则不覆盖），剩余缺口是**跨页面刷新无重试**（`pending_titles` 仅内存态，刷新后占位 `会话 <ts>` 重新派生） | page-workspace `on_send` + `pending_titles` | 占位加可识别前缀 + 刷新后从 daemon 侧补重试 |
 
 ## 工作约定
 
