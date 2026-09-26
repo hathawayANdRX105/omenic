@@ -73,7 +73,7 @@ impl LlmBackend for Shared {
         _signal: &AtomicBool,
         emit: &mut dyn FnMut(&StreamEvent),
     ) {
-        let mut s = self.0.lock().expect("scripted backend lock");
+        let mut s = self.0.lock();
         s.seen.push(context.clone());
         let turn = match s.turns.get(s.calls) {
             Some(t) => t.clone(),
