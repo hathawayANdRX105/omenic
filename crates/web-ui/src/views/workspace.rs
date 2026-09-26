@@ -389,7 +389,10 @@ pub fn Workspace(
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             // 内层 spawn + join：保留 JoinError 的 panic 检测语义；外层 2s
-            // 有界等待：daemon 卡住时不阻塞首帧。
+            // 有界等待：daemon 卡住时不阻塞首帧。代价是有界的：`use_signal`
+            // 初始化只在挂载时跑一次，超时路径会滞留「探测线程 + relay 线程」
+            // 一对，卡住的 ping 一断（daemon 恢复 / socket 关闭）二者自然退出，
+            // 非永久泄漏。
             let _ = tx.send(
                 std::thread::spawn(|| WebDaemon::from_env_or_default().filter(|d| d.ping())).join(),
             );
