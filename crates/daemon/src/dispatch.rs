@@ -636,7 +636,11 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                     );
                 }
             };
-            match ctx.sessions.append_message(sid, role, text) {
+            let attachments = match crate::state::optional_attachments(&req.params) {
+                Ok(a) => a,
+                Err(m) => return Response::err(id, ResponseError::new("protocol", m)),
+            };
+            match ctx.sessions.append_message(sid, role, text, &attachments) {
                 Ok((seq, ts)) => Response::ok(id, json!({ "seq": seq, "created_at_ms": ts })),
                 Err(e) => session_error_response(id, "session.append", e),
             }
@@ -867,8 +871,12 @@ pub fn dispatch(ctx: &mut DispatchCtx<'_>, req: Request) -> Response {
                     }
                 }
             }
+            let attachments = match crate::state::optional_attachments(&req.params) {
+                Ok(a) => a,
+                Err(m) => return Response::err(id, ResponseError::new("protocol", m)),
+            };
             let w = ctx.worker.inner.as_mut().expect("ensured");
-            let resp = w.prompt(msg);
+            let resp = w.prompt(msg, &attachments);
             let finished = crate::state::now_ms();
             match &resp {
                 Ok(v) => {

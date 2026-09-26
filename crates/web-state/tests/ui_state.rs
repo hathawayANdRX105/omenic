@@ -45,6 +45,7 @@ fn streamed_sequence_builds_chronological_parts() {
         parts: vec![],
         timestamp: "刚刚".into(),
         ts_epoch_ms: 0,
+        attachments: vec![],
     });
 
     for ev in [

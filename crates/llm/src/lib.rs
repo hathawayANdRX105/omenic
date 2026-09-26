@@ -26,13 +26,22 @@ pub struct Model {
     pub max_tokens: Option<u32>,
 }
 
-/// Content block: text, tool invocation (assistant), tool result (user), or
-/// chain-of-thought reasoning (collapsed in UI).
+/// Content block: text, image, tool invocation (assistant), tool result
+/// (user), or chain-of-thought reasoning (collapsed in UI).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Block {
     Text {
         text: String,
+    },
+    /// Image block for user turns: the payload ships as a `data:` URL to
+    /// the model.
+    Image {
+        /// MIME type, e.g. "image/png". Callers pass validated
+        /// allow-listed values.
+        media_type: String,
+        /// Bare base64 payload, no "data:" prefix.
+        data: String,
     },
     ToolUse {
         id: String,

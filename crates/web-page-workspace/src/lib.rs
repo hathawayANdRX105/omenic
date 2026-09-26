@@ -23,7 +23,9 @@ use web_page_config::SettingsModal;
 use web_page_stats::StatsView;
 use web_state::convert::{WireTranslator, infer_session_status};
 use web_state::title_from_first_message;
-use web_state::types::{ChatMessage, Session, SessionStatus, StatusLine, TaskItem, WorkspaceSpace};
+use web_state::types::{
+    ChatMessage, PendingAttachment, Session, SessionStatus, StatusLine, TaskItem, WorkspaceSpace,
+};
 use web_state::ui_state::{AgentEvent, UiState};
 
 /// Worker 事件订阅就绪门。
@@ -613,7 +615,8 @@ pub fn Workspace(
                                 let sid_daemon = sid.clone();
                                 let d_turn = d_consumer.clone();
                                 std::thread::spawn(move || {
-                                    let _ = d_turn.append_message(&sid_daemon, false, &final_text);
+                                    let _ =
+                                        d_turn.append_message(&sid_daemon, false, &final_text, &[]);
                                 });
                             }
                             map.insert(sid.clone(), ui.messages);
@@ -1103,7 +1106,7 @@ pub fn Workspace(
 
     // ── 发送：内存即时上屏 + mock 模拟流；Daemon 模式追加持久化 ───────────
 
-    let on_send = move |text: String| {
+    let on_send = move |(text, attachments): (String, Vec<PendingAttachment>)| {
         // 无会话时先建一个；发送线程会再次幂等确保 daemon 行存在。
         if active_session_id().is_empty()
             || !space_sessions
@@ -1158,6 +1161,7 @@ pub fn Workspace(
         if let DataBackend::Daemon(d) = backend() {
             let sid_daemon = sid.clone();
             let text_daemon = text.clone();
+            let attachments_daemon = attachments.clone();
             let d_prompt = d.clone();
             // 订阅事件不带会话归属：消费端以 run_target_sid 为写回目标，
             // 必须在 prompt 发出前落定
@@ -1193,7 +1197,8 @@ pub fn Workspace(
                         if let Err(e) = ensured {
                             eprintln!("[web] session ensure failed: {e}");
                         }
-                        let _ = d.append_message(&sid_daemon, true, &text_daemon);
+                        let _ =
+                            d.append_message(&sid_daemon, true, &text_daemon, &attachments_daemon);
                         if let Some(title) = title_for_daemon {
                             let persisted =
                                 retry_update(|| d.update_session_title(&sid_daemon, &title));
@@ -1202,7 +1207,12 @@ pub fn Workspace(
                             }
                             let _ = title_tx.send(persisted.is_ok());
                         }
-                        d_prompt.worker_prompt_run(&sid_daemon, &run_id_prompt, &text_daemon)
+                        d_prompt.worker_prompt_run(
+                            &sid_daemon,
+                            &run_id_prompt,
+                            &text_daemon,
+                            &attachments_daemon,
+                        )
                     })
                     .and_then(|result| result.map_err(|_| ()))
                     .is_err()
@@ -1254,6 +1264,10 @@ pub fn Workspace(
             parts: vec![],
             timestamp: "刚刚".into(),
             ts_epoch_ms: now,
+            // The picked images ride the message itself, so a refresh (which
+            // rebuilds the transcript from `session.messages`) still shows
+            // them instead of a text-only ghost of the turn.
+            attachments,
         };
         session_messages
             .write()

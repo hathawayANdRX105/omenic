@@ -119,10 +119,10 @@ fn session_attach_shows_messages() {
     let client = daemon::DaemonClient::connect_to(&sock);
     client.session_create("alpha", "first").unwrap();
     client
-        .session_append("alpha", SessionRole::User, "hello daemon")
+        .session_append("alpha", SessionRole::User, "hello daemon", &[])
         .unwrap();
     client
-        .session_append("alpha", SessionRole::Assistant, "hi back")
+        .session_append("alpha", SessionRole::Assistant, "hi back", &[])
         .unwrap();
 
     let (stdout, stderr, ok) = run_oi(

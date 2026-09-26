@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 use session::{RunRecord, SessionMessage, SessionRole, SessionSummary};
 
-use crate::types::{ChatMessage, Session, SessionStatus, format_relative_time};
+use crate::types::{ChatMessage, PendingAttachment, Session, SessionStatus, format_relative_time};
 use crate::ui_state::AgentEvent;
 
 /// `SessionSummary` → 侧栏/快速切换用的 `Session`。
@@ -88,6 +88,15 @@ pub fn message_to_chat(m: &SessionMessage) -> ChatMessage {
         reasoning: String::new(),
         tool_calls: vec![],
         parts: vec![],
+        attachments: m
+            .attachments
+            .iter()
+            .map(|a| PendingAttachment {
+                name: a.name.clone(),
+                media_type: a.media_type.clone(),
+                data: a.data.clone(),
+            })
+            .collect(),
         timestamp: format_relative_time(ts),
         ts_epoch_ms: ts,
     }

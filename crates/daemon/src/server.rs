@@ -82,9 +82,14 @@ impl DaemonConfig {
     /// llm 三件套（base_url/api_key/model）在 `.oi/config.toml` 齐全时
     /// 构建 orbit 模型配置——设置页写该文件即生效。
     fn resolve_orbit_model(cfg: &config::Config) -> Option<llm::Model> {
-        let base = cfg.llm_base_url.as_ref()?.trim();
-        let key = cfg.llm_api_key.as_ref()?.trim();
-        let model = cfg.llm_model.as_ref()?.trim();
+        // `active_llm` picks the active profile, else the flat `[llm]`
+        // fields (which `Config::load` has already let `OMENIC_LLM_*`
+        // override), and yields nothing when the chosen credential is
+        // incomplete.
+        let resolved = cfg.active_llm()?;
+        let base = resolved.base_url.trim();
+        let key = resolved.api_key.trim();
+        let model = resolved.model.trim();
         if base.is_empty() || key.is_empty() || model.is_empty() {
             return None;
         }
@@ -96,7 +101,7 @@ impl DaemonConfig {
             api_key: key.to_string(),
             model: model.to_string(),
             base_url: Some(url),
-            max_tokens: cfg.llm_max_tokens,
+            max_tokens: resolved.max_tokens,
         })
     }
 
@@ -479,7 +484,9 @@ impl Daemon {
         // infra/daemon may bridge them, the catalog must not be polluted.
         let signal = std::sync::atomic::AtomicBool::new(false);
         let mcp_tools = Self::mcp_tools(cfg, &signal)?;
-        let session_tools = Self::session_tools(&cfg.data_dir);
+        let aside_queue: crate::rpc::worker::AsideQueue =
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+        let session_tools = Self::session_tools(&cfg.data_dir, &aside_queue);
         // plan:policy provider: the engine recomputes the system prompt per
         // turn, so flipping plan mode mid-session takes effect on the next
         // prompt. The closure returns "" while plan mode is off — the engine
@@ -504,6 +511,7 @@ impl Daemon {
                 mcp_tools,
                 session_tools,
                 plan_policy_section,
+                aside_queue,
             },
         })
     }
@@ -546,14 +554,41 @@ impl Daemon {
     /// own), so one per daemon start is enough; no shared handle is needed.
     fn session_tools(
         data_dir: &std::path::Path,
+        aside_queue: &crate::rpc::worker::AsideQueue,
     ) -> std::sync::Arc<Vec<std::sync::Arc<dyn tools::Tool>>> {
         let jobs = std::sync::Arc::new(jobs::LocalJobRegistry::new());
+        // A finished job reaches the model as an aside: the loop drains the
+        // queue at the step boundary and never extends a run because of it
+        // (omp `getAsideMessages`; grok `onJobDone` is the callback shape).
+        {
+            let queue = aside_queue.clone();
+            jobs.on_job_done(std::sync::Arc::new(move |summary| {
+                let mut q = queue.lock().unwrap_or_else(|e| e.into_inner());
+                q.push_back(llm::Message::user_text(Self::job_done_aside(summary)));
+            }));
+        }
         let terminals = std::sync::Arc::new(terminal::TerminalRegistry::new());
         let mut session_tools = tools::jobs_terminal::session_tools(jobs, terminals);
         session_tools.extend(tools::task::session_tools(std::sync::Arc::new(
             store::store::Store::new(data_dir),
         )));
         std::sync::Arc::new(session_tools)
+    }
+
+    /// One-line rendering of a finished job for the model's aside channel.
+    /// State and exit code go in verbatim: the model decides what it means
+    /// (a `failed` job it did not start needs different handling than one
+    /// it launched and expected to succeed).
+    fn job_done_aside(summary: &jobs::JobSummary) -> String {
+        let mut line = format!(
+            "[background] job {} ({}) {}",
+            summary.id, summary.state, summary.label
+        );
+        match summary.exit_code {
+            Some(code) => line.push_str(&format!(" — exit {code}")),
+            None => {}
+        }
+        line
     }
 
     /// Append synthetic `TurnEnd { aborted }` records for every run a prior

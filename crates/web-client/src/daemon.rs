@@ -14,7 +14,7 @@ use serde_json::Value;
 use session::SessionRole;
 use store::{Task, goal::Goal, todo::Todo};
 use web_state::convert::{message_to_chat, summary_to_session};
-use web_state::types::{ChatMessage, Session};
+use web_state::types::{ChatMessage, PendingAttachment, Session};
 
 /// daemon 侧的统计 DTO 原样转出，供 page-stats 直接消费——统计页没有
 /// 需要额外映射的展示形状（KPI 文案在页面里现算），再抄一层 UI DTO 只会
@@ -153,19 +153,32 @@ impl WebDaemon {
         Ok(())
     }
 
-    /// 追加一条消息：`role_user` 为 true 是用户，否则 assistant。
+    /// 追加一条消息：`role_user` 为 true 是用户，否则 assistant。`attachments`
+    /// 随用户消息一起落库，daemon 重启后 resume 才能把图还给模型。
     pub fn append_message(
         &self,
         sid: &str,
         role_user: bool,
         text: &str,
+        attachments: &[PendingAttachment],
     ) -> Result<(), ClientError> {
         let role = if role_user {
             SessionRole::User
         } else {
             SessionRole::Assistant
         };
-        self.client.session_append(sid, role, text)?;
+        // The composer speaks the UI-side shape; the daemon client speaks the
+        // store's. They are the same three fields, so bridge once here rather
+        // than making web-state depend on the session crate.
+        let stored: Vec<session::Attachment> = attachments
+            .iter()
+            .map(|a| session::Attachment {
+                name: a.name.clone(),
+                media_type: a.media_type.clone(),
+                data: a.data.clone(),
+            })
+            .collect();
+        self.client.session_append(sid, role, text, &stored)?;
         Ok(())
     }
 
@@ -186,20 +199,25 @@ impl WebDaemon {
     /// `session resume` 同一格式），刷新后 [`Self::runs_for_session`] 拿它
     /// 组装出 Active/Aborted。仅加调用入参，daemon 侧这两个字段本来就是
     /// 可选的，协议零改动。
+    /// `attachments` rides along so the worker can hand the images to the
+    /// model; an empty list keeps the request byte-identical to before.
     pub fn worker_prompt_run(
         &self,
         session_id: &str,
         run_id: &str,
         message: &str,
+        attachments: &[PendingAttachment],
     ) -> Result<Value, ClientError> {
-        self.client.call(
-            Command::WorkerPrompt,
-            serde_json::json!({
-                "message": message,
-                "session_id": session_id,
-                "run_id": run_id,
-            }),
-        )
+        let mut params = serde_json::json!({
+            "message": message,
+            "session_id": session_id,
+            "run_id": run_id,
+        });
+        if !attachments.is_empty() {
+            params["attachments"] =
+                serde_json::to_value(attachments).unwrap_or(serde_json::Value::Null);
+        }
+        self.client.call(Command::WorkerPrompt, params)
     }
 
     /// `event.subscribe("worker")`：worker 事件推送的专用长连接（C5.2b）。

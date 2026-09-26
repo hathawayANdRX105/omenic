@@ -64,6 +64,7 @@ fn user_msg(text: &str) -> ChatMessage {
         parts: vec![MessagePart::Text(text.to_string())],
         timestamp: String::new(),
         ts_epoch_ms: 0,
+        attachments: vec![],
     }
 }
 

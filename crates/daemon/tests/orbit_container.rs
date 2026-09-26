@@ -135,6 +135,7 @@ fn setup(doc: serde_json::Value, backend: Arc<Shared>) -> OrbitSetup {
             // list is exactly what it was before that family existed.
             session_tools: std::sync::Arc::new(Vec::new()),
             plan_policy_section: None,
+            aside_queue: Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
         },
     }
 }
@@ -186,7 +187,7 @@ fn agents_md_from_container_cwd_reaches_the_backend() {
     .expect("orbit worker");
 
     let rx = worker.subscribe("test");
-    worker.prompt("hello").expect("prompt accepted");
+    worker.prompt("hello", &[]).expect("prompt accepted");
     let events = drain_until_end(&rx);
     assert!(
         events
@@ -221,7 +222,7 @@ fn no_cwd_in_document_keeps_the_bare_profile() {
         daemon::rpc::worker::Worker::new("unused", Some(setup(json!({}), Arc::clone(&backend))))
             .expect("orbit worker");
     let rx = worker.subscribe("test");
-    worker.prompt("hi").unwrap();
+    worker.prompt("hi", &[]).unwrap();
     drain_until_end(&rx);
 
     let s = backend.0.lock().unwrap();
@@ -269,7 +270,7 @@ fn container_max_turns_caps_the_worker_run() {
     )
     .expect("orbit worker");
     let rx = worker.subscribe("test");
-    worker.prompt("keep going").unwrap();
+    worker.prompt("keep going", &[]).unwrap();
     let events = drain_until_end(&rx);
 
     let rounds = events

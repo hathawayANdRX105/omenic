@@ -11,7 +11,12 @@ use crate::backoff;
 use crate::sse::SseParser;
 use crate::{Block, Content, Context, Model, Role, StopReason, StreamEvent, ToolDef};
 
-pub(crate) fn context_to_openai_messages(context: &Context) -> Vec<Value> {
+/// Convert a unified [`Context`] into OpenAI chat-completions `messages`.
+///
+/// User messages that carry image blocks use OpenAI's multimodal
+/// content-array form (`image_url` parts with `data:` URLs). Image blocks
+/// on assistant messages are dropped: the model never sends images back.
+pub fn context_to_openai_messages(context: &Context) -> Vec<Value> {
     let mut messages = Vec::with_capacity(context.messages.len() + 1);
     if let Some(system) = &context.system_prompt {
         messages.push(json!({ "role": "system", "content": system }));
@@ -29,24 +34,45 @@ pub(crate) fn context_to_openai_messages(context: &Context) -> Vec<Value> {
                 // OpenAI 规范协议(不是 Anthropic blocks 格式):
                 // - tool_use    → 并入 assistant 消息的 `tool_calls` 数组
                 // - tool_result → 独立的 role:"tool" 消息,必须排在 assistant tool_calls 之后
+                // - image       → user 消息 content 数组里的 image_url part(data URL);assistant 侧丢弃。
                 // 做法:先把 ToolUse/Text 收集为 pending assistant,碰到 ToolResult(或 blocks 末尾)就落盘。
                 let mut pending_text = String::new();
                 let mut pending_reasoning = String::new();
                 let mut pending_calls: Vec<Value> = Vec::new();
+                let mut pending_images: Vec<Value> = Vec::new();
                 let flush_assistant =
                     |text: &mut String,
                      reasoning: &mut String,
                      calls: &mut Vec<Value>,
+                     images: &mut Vec<Value>,
                      messages: &mut Vec<Value>| {
-                        if text.is_empty() && calls.is_empty() && reasoning.is_empty() {
+                        if text.is_empty()
+                            && calls.is_empty()
+                            && reasoning.is_empty()
+                            && images.is_empty()
+                        {
                             return;
                         }
                         let mut msg = json!({ "role": role });
-                        msg["content"] = if text.is_empty() {
-                            Value::Null
+                        if !images.is_empty() {
+                            // Multimodal user message: content is an array of
+                            // text part(s) followed by image_url parts.
+                            let mut parts = Vec::new();
+                            if !text.is_empty() {
+                                parts.push(json!({
+                                    "type": "text",
+                                    "text": std::mem::take(text)
+                                }));
+                            }
+                            parts.extend(std::mem::take(images));
+                            msg["content"] = Value::Array(parts);
                         } else {
-                            json!(std::mem::take(text))
-                        };
+                            msg["content"] = if text.is_empty() {
+                                Value::Null
+                            } else {
+                                json!(std::mem::take(text))
+                            };
+                        }
                         // deepseek-reasoner: 思考链回写为消息级 reasoning_content
                         // （ref dsh llm/adapters/openai.rs:121-204）。
                         if !reasoning.is_empty() {
@@ -89,6 +115,7 @@ pub(crate) fn context_to_openai_messages(context: &Context) -> Vec<Value> {
                                 &mut pending_text,
                                 &mut pending_reasoning,
                                 &mut pending_calls,
+                                &mut pending_images,
                                 &mut messages,
                             );
                             messages.push(json!({
@@ -97,12 +124,28 @@ pub(crate) fn context_to_openai_messages(context: &Context) -> Vec<Value> {
                                 "content": content,
                             }));
                         }
+                        Block::Image { media_type, data } => {
+                            // The model never sends images back, so only user
+                            // turns carry them; assistant blocks are dropped
+                            // explicitly (no catch-all arm).
+                            if role == "user" {
+                                pending_images.push(json!({
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": format!(
+                                            "data:{media_type};base64,{data}"
+                                        ),
+                                    },
+                                }));
+                            }
+                        }
                     }
                 }
                 flush_assistant(
                     &mut pending_text,
                     &mut pending_reasoning,
                     &mut pending_calls,
+                    &mut pending_images,
                     &mut messages,
                 );
             }

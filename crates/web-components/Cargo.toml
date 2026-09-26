@@ -10,3 +10,4 @@ web-client = { path = "../web-client" }
 dioxus = { version = "0.7" }
 pulldown-cmark = { workspace = true }
 ammonia = { workspace = true }
+serde_json = { workspace = true }
