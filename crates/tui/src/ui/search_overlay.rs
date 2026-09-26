@@ -5,9 +5,9 @@
 //! [`App::search_rows`](crate::app::App::search_rows)
 //! 从 transcript 让行——渲染与让行同源，同斜杠面板口径）。
 //!
-//! [`line_offset] 把命中消息映射成 T6 视口坐标：断行原语**只读复用**
-//! `transcript::count_wrapped` 与 `tool_card::rows`（同一份断行核心，
-//! `transcript.rs` 渲染内核零改动——任务书 §1 禁改项）；[`excerpt_spans`]
+//! [`line_offset] 把命中消息映射成 T6 视口坐标：行数**直接调**
+//! `transcript::message_rows`（与渲染同一个函数、同一套分支口径，不存在
+//! 第二份数法）；[`excerpt_spans`]
 //! 按 [`match_ranges`](crate::search::match_ranges) 切高亮段（命中 = 唯一
 //! 的高亮来源，样式走 `crate::theme`，D11 零字面色）。
 
@@ -16,7 +16,7 @@ use ratatui::layout::{Position, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use web_state::types::{ChatMessage, MessagePart};
+use web_state::types::ChatMessage;
 
 use crate::app::App;
 use crate::search::{self, SearchState};
@@ -144,10 +144,9 @@ fn styled(matched: bool, text: String) -> Span<'static> {
 
 /// 命中行定位：`up_to` 条消息之前的渲染行数——T6 视口坐标系里的目标行。
 ///
-/// 行数原语复用 `transcript::count_wrapped` 与 `tool_card::rows`（与渲染
-/// 同一份断行核心，只读消费；分支形状与 `transcript::message_rows` 对齐，
-/// `tests/search_overlay.rs::line_offset_matches_transcript_total` 用
-/// `viewport().total()` 钉住两边同和，漂移即红）。
+/// 行数 = `transcript::message_rows` 单一直接调用（渲染同源、无第二份
+/// 实现；`tests/search_overlay.rs::line_offset_matches_transcript_total`
+/// 仍用 `viewport().total()` 钉两边同和）。
 pub fn line_offset(
     messages: &[ChatMessage],
     tools_expanded: bool,
@@ -158,24 +157,6 @@ pub fn line_offset(
     messages
         .iter()
         .take(up_to)
-        .map(|msg| message_rows(msg, tools_expanded, width))
-        .sum()
-}
-
-/// 一条消息的渲染行数（`transcript::message_rows` 的同形状副本——那边是
-/// 渲染内核私有函数，任务书 §1 禁改；同和断言见上）。
-fn message_rows(msg: &ChatMessage, tools_expanded: bool, width: usize) -> usize {
-    if msg.role == "user" {
-        return crate::ui::transcript::count_wrapped(&msg.content, width, "❯ ");
-    }
-    if msg.parts.is_empty() {
-        return crate::ui::transcript::count_wrapped(&msg.content, width, "");
-    }
-    msg.parts
-        .iter()
-        .map(|part| match part {
-            MessagePart::Text(text) => crate::ui::transcript::count_wrapped(text, width, ""),
-            MessagePart::Tool(tc) => crate::ui::tool_card::rows(tc, tools_expanded, width),
-        })
+        .map(|msg| super::transcript::message_rows(msg, tools_expanded, width))
         .sum()
 }

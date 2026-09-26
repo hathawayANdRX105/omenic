@@ -46,12 +46,14 @@ pub(super) fn total_lines(app: &App, width: u16) -> usize {
     let width = width.max(1) as usize;
     app.messages()
         .iter()
-        .map(|msg| message_rows(app, msg, width))
+        .map(|msg| message_rows(msg, app.tools_expanded(), width))
         .sum()
 }
 
-/// 一条消息的行数（与 [`push_message`] 逐分支同源，分叉即测试红）。
-fn message_rows(app: &App, msg: &ChatMessage, width: usize) -> usize {
+/// 一条消息的行数（与 [`push_message`] 逐分支同源，分叉即测试红）。行数的
+/// **单一出处**：渲染侧 [`total_lines`] / [`window`] 与检索侧
+/// [`crate::ui::search_overlay::line_offset`] 同吃本函数，两边不可能各数各的。
+pub(super) fn message_rows(msg: &ChatMessage, tools_expanded: bool, width: usize) -> usize {
     if msg.role == "user" {
         return count_wrapped(&msg.content, width, "❯ ");
     }
@@ -62,7 +64,7 @@ fn message_rows(app: &App, msg: &ChatMessage, width: usize) -> usize {
         .iter()
         .map(|part| match part {
             MessagePart::Text(text) => count_wrapped(text, width, ""),
-            MessagePart::Tool(tc) => super::tool_card::rows(tc, app.tools_expanded(), width),
+            MessagePart::Tool(tc) => super::tool_card::rows(tc, tools_expanded, width),
         })
         .sum()
 }
@@ -73,7 +75,7 @@ fn window(app: &App, width: usize, top: usize, height: usize) -> Vec<Line<'stati
     let mut out: Vec<Line<'static>> = Vec::with_capacity(height);
     let mut start = 0usize;
     for msg in app.messages() {
-        let rows = message_rows(app, msg, width);
+        let rows = message_rows(msg, app.tools_expanded(), width);
         let end = start + rows;
         if end <= top {
             // 整条在窗口之上（更旧）：跳过，不物化。
