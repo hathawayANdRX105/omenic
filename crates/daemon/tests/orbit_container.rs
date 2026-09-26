@@ -16,9 +16,10 @@
 //! 3. `harness.compaction` is resolved and drives the maintenance hook — a
 //!    >120k-char session compacts with the tool-pairing invariant intact.
 
+use parking_lot::Mutex;
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use agent_loop::orbit::{LlmBackend, LoopConfig, run_agent_streaming};
@@ -196,6 +197,7 @@ fn agents_md_from_container_cwd_reaches_the_backend() {
         "run must terminate"
     );
 
+    let s = backend.0.lock();
     // The scripted "ok" turn is a bare stop without mark_done, so the
     // host's completion guard may bare-continue it up to MARK_GUARD_MAX_FIRES
     // (2) times before the run ends unmarked: 1..=3 round-trips.
@@ -231,7 +233,7 @@ fn no_cwd_in_document_keeps_the_bare_profile() {
     worker.prompt("hi", &[]).unwrap();
     drain_until_end(&rx);
 
-    let s = backend.0.lock().unwrap();
+    let s = backend.0.lock();
     let prompt = s.seen[0].system_prompt.as_deref().unwrap_or("");
     assert!(
         !prompt.contains(MARKER),
@@ -292,7 +294,7 @@ fn container_max_turns_caps_the_worker_run() {
     );
     // The backend was called exactly max_turns times — the 4th round the
     // model asked for never happened.
-    assert_eq!(backend.0.lock().unwrap().calls, 3);
+    assert_eq!(backend.0.lock().calls, 3);
 }
 
 /// Loop-level assertion of the same wiring, where the exact stop reason is
