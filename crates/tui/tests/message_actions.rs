@@ -283,6 +283,10 @@ fn ops_are_noop_while_prompt_queued() {
 fn ops_are_noop_while_running() {
     let mut app = app_with_history();
     type_str(&mut app, "run me");
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(app.queued(), Some("run me"), "Enter 只入队，出站归事件循环");
+    // 出站 = 消费队首（事件循环每次迭代的那一步）：置 running、把 user
+    // 消息折进 transcript 投影（焦点就落在它上面）。
     assert!(app.next_to_send().is_some(), "出站即 running");
     assert!(app.is_running());
 
@@ -378,9 +382,19 @@ fn edit_discarded_when_composer_emptied() {
 
 /// OSC52 载荷 = `ESC ] 52 ; c ; <base64> BEL`（route §3 注记①定案：载体
 /// OSC52、终端原生、零 daemon 依赖）。字节全用十进制 const 拼装（D11）。
+/// base64 向量取 RFC 4648 §10（`f`/`fo`/`foo`/`fooba`/`foobar` 覆盖无 padding
+/// 与两级 padding）+ 一条 UTF-8 多字节正文（中文消息是常态输入）。
 #[test]
 fn osc52_bytes_match_known_base64_vectors() {
-    for (text, b64) in [("", ""), ("hi", "aGk="), ("abc", "YWJj"), ("Man", "TWE=")] {
+    for (text, b64) in [
+        ("", ""),
+        ("f", "Zg=="),
+        ("fo", "Zm8="),
+        ("foo", "Zm9v"),
+        ("fooba", "Zm9vYmE="),
+        ("foobar", "Zm9vYmFy"),
+        ("中文", "5Lit5paH"),
+    ] {
         let mut expect = vec![27u8];
         expect.extend_from_slice(b"]52;c;");
         expect.extend_from_slice(b64.as_bytes());
