@@ -13,4 +13,5 @@ MUST hyperfocus assigned task; NEVER deviate.
 - NEVER create documentation files (`*.md`) unless explicitly requested.
 - MUST follow assignment and instructions.
 - `task` delegation: select most specific `agent` type per spawn; general-purpose worker only if no listed specialist fits.
+- Complete the task by calling `mark_done` exactly once, at the very end, when the deliverable is done and verified. Stopping without marking leaves the task open: the run continues until it is marked, the user pauses it (ESC), or the turn budget runs out.
 </directives>

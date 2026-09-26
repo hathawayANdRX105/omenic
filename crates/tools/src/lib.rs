@@ -11,6 +11,7 @@ pub mod edit;
 pub mod glob;
 pub mod grep;
 pub mod jobs_terminal;
+pub mod mark_done;
 pub mod memory_tool;
 pub mod read;
 pub mod str_replace_editor;
@@ -361,8 +362,10 @@ pub fn builtin_tools_with_policy(policy: Policy) -> Vec<Box<dyn Tool>> {
         // Their gate is the default-off env switch resolved once per call
         // in memory_tool::memory_store.
         Box::new(memory_tool::MemoryAppendTool),
-        Box::new(memory_tool::MemorySearchTool),
-        Box::new(memory_tool::MemoryListTool),
+        // Completion mark: zero side effect, no command, nothing to gate.
+        // Registered unwrapped so it reaches every orbit run regardless of
+        // policy (the fork subagent allow-list simply omits it).
+        Box::new(mark_done::MarkDone),
     ]
 }
 /// Conservative headless policy for daemon worker.

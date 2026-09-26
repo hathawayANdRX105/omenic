@@ -106,6 +106,15 @@ pub struct LoopConfig<'a> {
     /// round) instead of ending it. `TurnEnd` fires only when both the
     /// model stopped and the queue is empty.
     pub get_follow_up: Option<&'a dyn Fn() -> Vec<Message>>,
+    /// Bare-continue decision (freebuff `task_completed` shape): when the
+    /// model stops calling tools and the follow-up pull is empty, the host
+    /// may still force one more LLM round with the context unchanged — no
+    /// message is recorded, the model is simply called again. Used as the
+    /// guard for explicit-completion tools: the run may end only after the
+    /// model marks the task done; a silent stop without the mark costs at
+    /// most this one extra round, then the run ends unmarked. `None`
+    /// (default) keeps the pre-hook behavior: empty follow-ups end the run.
+    pub should_continue: Option<&'a dyn Fn() -> bool>,
     /// Working directory whose ancestor chain is searched for `AGENTS.md`
     /// workspace instructions when the caller left `Context.system_prompt`
     /// unset (harness `instruction` crate, called directly here — plugin /
@@ -125,6 +134,12 @@ pub struct LoopConfig<'a> {
 /// letting a runaway model burn a provider budget silently.
 pub const DEFAULT_MAX_TURNS: usize = 64;
 
+/// Cap on consecutive rounds that fail with the *same* stream error
+/// before the loop gives up and emits `TurnEnd { Error }`.
+/// ponytail: a constant until someone needs per-workspace tuning —
+/// promote to `LoopConfig` then (same precedent as `runner::MAX_ATTEMPTS`).
+pub const MAX_SAME_ERROR: u32 = 10;
+
 impl Default for LoopConfig<'_> {
     fn default() -> Self {
         LoopConfig {
@@ -134,6 +149,7 @@ impl Default for LoopConfig<'_> {
             get_steering: None,
             get_aside: None,
             get_follow_up: None,
+            should_continue: None,
             instruction_cwd: None,
         }
     }
@@ -344,6 +360,10 @@ pub fn run_agent_streaming(
     }
 
     let mut turns_used = 0usize;
+    // Consecutive identical stream errors before the loop gives up; a
+    // different error resets the streak, a successful round clears it.
+    let mut last_stream_error: Option<String> = None;
+    let mut same_error_streak = 0u32;
     loop {
         turns_used += 1;
         if turns_used > config.max_turns {
@@ -378,7 +398,7 @@ pub fn run_agent_streaming(
         let mut text = String::new();
         let mut stop_reason = StopReason::EndTurn;
         let mut tool_calls: Vec<protocol::events::ToolCallSpec> = Vec::new();
-        let mut stream_failed = false;
+        let mut stream_failed: Option<String> = None;
 
         backend.stream_cb(model, context, &tool_defs, signal, &mut |ev| match ev {
             StreamEvent::TextDelta(delta) => {
@@ -401,18 +421,42 @@ pub fn run_agent_streaming(
                 tool_calls.push(tc.clone());
             }
             StreamEvent::Done { stop_reason: r } => stop_reason = *r,
-            StreamEvent::Error(_) => stream_failed = true,
+            StreamEvent::Error(msg) => stream_failed = Some(msg.clone()),
         });
 
-        if stream_failed {
+        if let Some(err) = stream_failed {
             // Invariant 3 analog: record assistant text without dangling calls.
             let msg = Message::assistant(text, &[]);
             record(context, config.context_log, msg);
-            emit(AgentEvent::TurnEnd {
-                stop_reason: TurnStop::Error,
-            });
-            return;
+            // Auth failures (401/403) fail identically on every retry —
+            // re-driving just burns rounds: hard stop, no continuation.
+            if llm::openai::is_auth_failure(&err) {
+                emit(AgentEvent::TurnEnd {
+                    stop_reason: TurnStop::Error,
+                });
+                return;
+            }
+            let streak_reset = last_stream_error.as_deref() != Some(err.as_str());
+            if streak_reset {
+                same_error_streak = 0;
+            }
+            last_stream_error = Some(err.clone());
+            if same_error_streak >= MAX_SAME_ERROR {
+                emit(AgentEvent::TurnEnd {
+                    stop_reason: TurnStop::Error,
+                });
+                return;
+            }
+            same_error_streak += 1;
+            // ponytail: bare re-round (freebuff task_completed shape) — no
+            // error note is injected; the streak cap above bounds the burn
+            // of a deterministic failure.
+            continue;
         }
+
+        // A clean round clears the error streak.
+        last_stream_error = None;
+        same_error_streak = 0;
 
         // 3. Abort mid-stream (invariant 3): record the assistant message
         // WITHOUT tool_use blocks — no results will follow, and a restored
@@ -463,6 +507,12 @@ pub fn run_agent_streaming(
         if tool_calls.is_empty() {
             let follow_ups = config.get_follow_up.map(|get| get()).unwrap_or_default();
             if follow_ups.is_empty() {
+                // Bare-continue guard: the host may force one more round
+                // with the context unchanged (explicit-completion tools —
+                // see `LoopConfig::should_continue`).
+                if config.should_continue.map(|f| f()).unwrap_or(false) {
+                    continue;
+                }
                 emit(AgentEvent::TurnEnd {
                     stop_reason: turn_stop(stop_reason),
                 });

@@ -33,5 +33,6 @@ pub const SCOUT: &str = include_str!("../prompts/agents/scout.md");
 /// Agent profile `security-reviewer.md` (verbatim from omp).
 pub const SECURITY_REVIEWER: &str = include_str!("../prompts/agents/security-reviewer.md");
 
-/// Agent profile `task.md` (verbatim from omp).
+/// Agent profile `task.md` (omp `task.md` + the omenic completion-mark
+/// directive: the run ends only on an active `mark_done`, not on silence).
 pub const TASK: &str = include_str!("../prompts/agents/task.md");

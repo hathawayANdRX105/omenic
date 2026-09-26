@@ -836,6 +836,195 @@ fn follow_up_extends_the_run_past_model_endturn() {
     );
 }
 
+/// Bare continue: the model stopped, the host says "one more round", and
+/// nothing is injected — the second round sees exactly what round one
+/// appended (its own assistant message), no synthetic user message.
+/// Red when: the hook leaks into the context as a message, or fires twice.
+#[test]
+fn bare_continue_extends_the_run_without_injecting_a_message() {
+    let backend = Shared(RefCell::new(Scripted::new(vec![
+        vec![
+            StreamEvent::TextDelta("one".into()),
+            StreamEvent::Done {
+                stop_reason: StopReason::EndTurn,
+            },
+        ],
+        vec![
+            StreamEvent::TextDelta("two".into()),
+            StreamEvent::Done {
+                stop_reason: StopReason::EndTurn,
+            },
+        ],
+    ])));
+    let mut ctx = Context {
+        system_prompt: Some("sys".into()),
+        messages: vec![Message::user_text("start")],
+    };
+    let mut events = Vec::new();
+    // Fire exactly once: force the second round, then allow the stop.
+    let fires = RefCell::new(0u32);
+    let cont = || {
+        let n = *fires.borrow();
+        *fires.borrow_mut() = n + 1;
+        n == 0
+    };
+    run_agent_streaming(
+        &backend,
+        &model(),
+        &mut ctx,
+        &[],
+        &sig(),
+        LoopConfig {
+            should_continue: Some(&cont),
+            ..LoopConfig::default()
+        },
+        &mut |e| events.push(e),
+    );
+
+    let seen = backend.0.borrow();
+    assert_eq!(
+        seen.calls_made, 2,
+        "bare continue must trigger a second round"
+    );
+    assert_eq!(*fires.borrow(), 1, "the hook fired once, not per round");
+    // No injection: round 2's context ends with round 1's own assistant
+    // message, not a synthetic one.
+    assert_eq!(
+        seen.seen_contexts[1].messages.last(),
+        Some(&Message::assistant("one".into(), &[]))
+    );
+    assert_eq!(
+        events.last(),
+        Some(&AgentEvent::TurnEnd {
+            stop_reason: TurnStop::EndTurn
+        })
+    );
+}
+
+/// Auth failures (401/403) are terminal: the loop must not retry them, not
+/// even when the host wants to continue. Red when: a 401 is retried, or the
+/// run ends anything but `TurnEnd { Error }`.
+#[test]
+fn auth_failure_hard_stops_the_run() {
+    let backend = Shared(RefCell::new(Scripted::new(vec![
+        vec![StreamEvent::Error("API 401: invalid api key".into())],
+        // A second turn must never be reached.
+        vec![
+            StreamEvent::TextDelta("never".into()),
+            StreamEvent::Done {
+                stop_reason: StopReason::EndTurn,
+            },
+        ],
+    ])));
+    let mut ctx = Context {
+        system_prompt: Some("sys".into()),
+        messages: vec![Message::user_text("start")],
+    };
+    let mut events = Vec::new();
+    run_agent_streaming(
+        &backend,
+        &model(),
+        &mut ctx,
+        &[],
+        &sig(),
+        LoopConfig {
+            // The host even begs to continue — a rejected key ignores it.
+            should_continue: Some(&|| true),
+            ..LoopConfig::default()
+        },
+        &mut |e| events.push(e),
+    );
+
+    let seen = backend.0.borrow();
+    assert_eq!(
+        seen.calls_made, 1,
+        "a 401 must never be retried by the loop"
+    );
+    assert_eq!(
+        events.last(),
+        Some(&AgentEvent::TurnEnd {
+            stop_reason: TurnStop::Error
+        })
+    );
+}
+
+/// Error resilience: the run keeps going through transient stream errors,
+/// stops on `MAX_SAME_ERROR` consecutive identical failures, and a
+/// *different* error resets the streak. Red when: the first error kills the
+/// run (pre-continuation behavior), or a distinct error is counted against
+/// the streak.
+#[test]
+fn same_error_stops_after_the_cap_and_a_different_one_resets() {
+    // Part 1: 10 consecutive identical failures, the 11th gives up.
+    let err = "API 503: upstream unavailable";
+    let turns: Vec<Vec<StreamEvent>> = (0..11)
+        .map(|_| vec![StreamEvent::Error(err.into())])
+        .collect();
+    let backend = Shared(RefCell::new(Scripted::new(turns)));
+    let mut ctx = Context {
+        system_prompt: Some("sys".into()),
+        messages: vec![Message::user_text("start")],
+    };
+    let mut events = Vec::new();
+    run_agent_streaming(
+        &backend,
+        &model(),
+        &mut ctx,
+        &[],
+        &sig(),
+        LoopConfig::default(),
+        &mut |e| events.push(e),
+    );
+    let seen = backend.0.borrow();
+    assert_eq!(
+        seen.calls_made, 11,
+        "the cap is 10 identical consecutive failures"
+    );
+    assert_eq!(
+        events.last(),
+        Some(&AgentEvent::TurnEnd {
+            stop_reason: TurnStop::Error
+        })
+    );
+
+    // Part 2: two *different* errors then a clean round — all survivable.
+    let backend2 = Shared(RefCell::new(Scripted::new(vec![
+        vec![StreamEvent::Error("API 502: gateway one".into())],
+        vec![StreamEvent::Error("API 503: gateway two".into())],
+        vec![
+            StreamEvent::TextDelta("ok".into()),
+            StreamEvent::Done {
+                stop_reason: StopReason::EndTurn,
+            },
+        ],
+    ])));
+    let mut ctx2 = Context {
+        system_prompt: Some("sys".into()),
+        messages: vec![Message::user_text("start")],
+    };
+    let mut events2 = Vec::new();
+    run_agent_streaming(
+        &backend2,
+        &model(),
+        &mut ctx2,
+        &[],
+        &sig(),
+        LoopConfig::default(),
+        &mut |e| events2.push(e),
+    );
+    let seen2 = backend2.0.borrow();
+    assert_eq!(
+        seen2.calls_made, 3,
+        "a different error resets the streak; the clean round ends the run"
+    );
+    assert_eq!(
+        events2.last(),
+        Some(&AgentEvent::TurnEnd {
+            stop_reason: TurnStop::EndTurn
+        })
+    );
+}
+
 /// Aside 与 steering 同一个 step 边界，但**不延长 run**：模型说完了就是
 /// 说完了，异步通知只是让它下次请求时知道发生了什么。
 ///
