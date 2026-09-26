@@ -90,6 +90,7 @@ fn mk_msg(id: String, role: &str, content: String) -> ChatMessage {
         reasoning: String::new(),
         tool_calls: vec![],
         parts: vec![],
+        attachments: vec![],
         timestamp: String::new(),
         ts_epoch_ms: 0,
     }
