@@ -48,14 +48,14 @@ pub fn ArchiveView(rev: Signal<u32>) -> Element {
     rsx! {
         div { class: "flex-1 overflow-y-auto flex flex-col gap-4 px-10 pt-8 pb-14 max-w-[860px] w-full mx-auto",
             // 头部
-            div { class: "pb-4 border-b border-b1",
-                h2 { class: "text-[18px] leading-7 font-semibold text-label", "{sh::LBL_ARCHIVE}" }
-                p { class: "text-[13px] leading-5 text-label-3 mt-1", "软删的会话存于此处（冷归档），可恢复回会话列表，或彻底删除。" }
+            div { class: "pb-4 border-b border-border",
+                h2 { class: "role-card", "{sh::LBL_ARCHIVE}" }
+                p { class: "role-caption mt-1", "软删的会话存于此处（冷归档），可恢复回会话列表，或彻底删除。" }
             }
             if items.read().is_none() {
-                div { class: "py-10 text-center text-[13px] leading-5 text-label-3", "未连接 daemon，暂无归档会话" }
+                div { class: "py-10 text-center role-caption", "未连接 daemon，暂无归档会话" }
             } else if list.is_empty() {
-                div { class: "py-10 text-center text-[13px] leading-5 text-label-3", "暂无归档会话" }
+                div { class: "py-10 text-center role-caption", "暂无归档会话" }
             } else {
                 div { class: "flex flex-col gap-1.5",
                     for s in list.iter().cloned() {
@@ -74,11 +74,11 @@ fn archive_row(s: Session, daemon: Signal<Option<WebDaemon>>, mut rev: Signal<u3
     let id_restore = s.id.clone();
     let id_purge = s.id.clone();
     rsx! {
-        div { key: "{s.id}", class: "group flex items-center gap-3 h-11 px-3 rounded-xl border border-b1 bg-layer-1 hover:border-b2 transition-colors",
-            span { class: "text-[14px] leading-5 text-label truncate min-w-0 flex-1", "{s.title}" }
-            span { class: "text-[12px] leading-5 text-label-3 tabular-nums shrink-0", "{s.last_active}" }
+        div { key: "{s.id}", class: "group flex items-center gap-3 h-11 px-3 rounded-xl border border-border bg-card hover:border-border transition-colors",
+            span { class: "role-hint text-foreground truncate min-w-0 flex-1", "{s.title}" }
+            span { class: "role-caption tabular-nums shrink-0", "{s.last_active}" }
             button {
-                class: "shrink-0 flex items-center justify-center w-7 h-7 rounded-lg text-label-3 hover:text-label hover:bg-selector transition-colors cursor-pointer bg-transparent border-none",
+                class: "shrink-0 flex items-center justify-center w-7 h-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary-hover transition-colors cursor-pointer bg-transparent border-none",
                 title: sh::BTN_RESTORE_SESSION,
                 onclick: move |_| {
                     let Some(d) = daemon() else { return };
@@ -89,7 +89,7 @@ fn archive_row(s: Session, daemon: Signal<Option<WebDaemon>>, mut rev: Signal<u3
                 IconUndo { size: 15 }
             }
             button {
-                class: "shrink-0 flex items-center justify-center w-7 h-7 rounded-lg text-label-3 hover:text-danger hover:bg-ihover-danger transition-colors cursor-pointer bg-transparent border-none",
+                class: "shrink-0 flex items-center justify-center w-7 h-7 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/15 transition-colors cursor-pointer bg-transparent border-none",
                 title: sh::BTN_PURGE_SESSION,
                 onclick: move |_| {
                     let Some(d) = daemon() else { return };

@@ -18,11 +18,11 @@ anchors:
     expect: 'KPI 卡五列网格。'
     source: 'kymido: crates/web-ui/src/views/stats.rs:43'
   - key: kpi-card
-    find: 'bg-layer-1 border border-b1 rounded-xl px-4 py-4 flex flex-col gap-2'
+    find: 'bg-card border border-border rounded-xl px-4 py-4 flex flex-col gap-2'
     expect: 'KPI 卡 layer-1 底 r16，label 12 / 数值 26 mono / delta chip（success/danger）。'
     source: 'kymido: crates/web-ui/src/views/stats.rs:94-97（KpiCardView）'
   - key: metric-band
-    find: 'grid grid-cols-7 gap-3 bg-layer-1 border border-b1 rounded-xl px-5 py-3.5'
+    find: 'grid grid-cols-7 gap-3 bg-card border border-border rounded-xl px-5 py-3.5'
     expect: '指标带七列（label 10px mono 大写 caption + 数值 15px mono）。'
     source: 'kymido: crates/web-ui/src/views/stats.rs:50-54'
   - key: body-3col
@@ -34,7 +34,7 @@ anchors:
     expect: '吞吐折线与数据点用品牌蓝 #679efe，1.5px 描边。'
     source: 'kymido: crates/web-ui/src/views/stats.rs:154,169；dsh: business-primary（dark）= #679efe'
   - key: agent-bar
-    find: 'h-1.5 bg-layer-2 rounded-full overflow-hidden'
+    find: 'h-1.5 bg-secondary rounded-full overflow-hidden'
     expect: 'Agent Token 分布条 6px 圆角轨道，填充宽度随占比。'
     source: 'kymido: crates/web-ui/src/views/stats.rs:113-115'
 notes: |

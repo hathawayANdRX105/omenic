@@ -84,7 +84,7 @@ pub fn SessionTreePanel(
                         let count = sessions_for_space.len();
                         rsx! {
                             // 项目行 h34
-                            div { class: "group h-[34px] mx-0 px-2 rounded-lg flex items-center gap-2 hover:bg-ihover cursor-pointer transition-colors",
+                            div { class: "group h-[34px] mx-0 px-2 rounded-lg flex items-center gap-2 hover:bg-muted cursor-pointer transition-colors",
                                 onclick: move |_| {
                                     let mut set = expanded_spaces.write();
                                     if set.contains(&space_path_toggle) {
@@ -95,10 +95,10 @@ pub fn SessionTreePanel(
                                     drop(set);
                                     on_select_space.call(space_path.clone());
                                 },
-                                IconFolder { size: 16, class: "shrink-0 text-label-3" }
-                                span { class: "text-[14px] leading-5 text-label truncate min-w-0 flex-1", "{space.name}" }
+                                IconFolder { size: 16, class: "shrink-0 text-muted-foreground" }
+                                span { class: "role-hint text-foreground truncate min-w-0 flex-1", "{space.name}" }
                                 button {
-                                    class: "shrink-0 flex items-center justify-center w-4 h-4 text-label-3 hover:text-label opacity-40 group-hover:opacity-100 transition-opacity cursor-pointer bg-transparent border-none",
+                                    class: "shrink-0 flex items-center justify-center w-4 h-4 text-muted-foreground hover:text-foreground opacity-40 group-hover:opacity-100 transition-opacity cursor-pointer bg-transparent border-none",
                                     title: sh::BTN_NEW_CHAT_IN_SPACE,
                                     onclick: move |e: MouseEvent| {
                                         e.stop_propagation();
@@ -106,10 +106,10 @@ pub fn SessionTreePanel(
                                     },
                                     IconPlus { size: 13 }
                                 }
-                                span { class: "text-[12px] leading-5 text-label-3 tabular-nums", "{count}" }
+                                span { class: "role-caption tabular-nums", "{count}" }
                                 // 移除项目钮：hover 行才出现，排在行最右
                                 button {
-                                    class: "shrink-0 flex items-center justify-center w-4 h-4 text-label-3 hover:text-danger opacity-40 group-hover:opacity-100 transition-opacity cursor-pointer bg-transparent border-none",
+                                    class: "shrink-0 flex items-center justify-center w-4 h-4 text-muted-foreground hover:text-destructive opacity-40 group-hover:opacity-100 transition-opacity cursor-pointer bg-transparent border-none",
                                     title: sh::BTN_REMOVE_SPACE,
                                     onclick: move |e: MouseEvent| {
                                         e.stop_propagation();

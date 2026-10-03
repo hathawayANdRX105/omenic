@@ -31,7 +31,7 @@ pub(crate) fn MenuPicker(
             trigger: rsx! {
                 button {
                     r#type: "button",
-                    class: "flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] text-label-2 hover:bg-selector transition-colors cursor-pointer border-none bg-transparent",
+                    class: "flex h-8 items-center gap-1.5 rounded-full px-3 role-caption hover:bg-secondary-hover transition-colors cursor-pointer border-none bg-transparent",
                     span { class: "{mono_class}", "{label}" }
                 }
             },

@@ -14,12 +14,12 @@ anchors:
     expect: '面板顶部对齐（pt-[14vh]）而非垂直居中，贴近 dsh command palette 形态。'
     source: 'kymido: crates/web-ui/src/views/workspace.rs:478 + crates/web-ui/src/components/ui.rs:253-257（Modal align）'
   - key: search-input
-    find: 'w-full h-11 rounded-xl bg-layer-1 border border-b2 px-4'
+    find: 'w-full h-11 rounded-xl bg-card border border-border px-4'
     expect: '搜索输入 h44、r12、layer-1 底，focus 时 brand 边框，autofocus。'
     source: 'kymido: crates/web-ui/src/views/workspace.rs:481'
   - key: session-row
     find: 'h-10 px-3 rounded-[10px] flex items-center justify-between'
-    expect: '会话行 h40、r10，激活项 bg-ihover 常亮，右侧 mono 会话 id。'
+    expect: '会话行 h40、r10，激活项 bg-accent 常亮，右侧 mono 会话 id。'
     source: 'kymido: crates/web-ui/src/views/workspace.rs:507-509'
   - key: row-status-dot
     find: 'w-2 h-2 rounded-full {dot} shrink-0'

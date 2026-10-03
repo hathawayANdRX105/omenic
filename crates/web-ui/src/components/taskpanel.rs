@@ -41,13 +41,13 @@ pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
         // 面板内部点击统一 stop_propagation：不冒泡到 chat 根节点的
         // 「点外关闭」（ainnotation 波3 #5），面板内交互（filter chip /
         // 任务卡展开 / 关闭钮）不误关自身。
-        div { class: "w-full rounded-2xl border border-binv bg-layer-2 shadow-lv2 overflow-hidden pointer-events-auto",
+        div { class: "w-full rounded-2xl border border-binv bg-secondary shadow-lv2 overflow-hidden pointer-events-auto",
             onclick: move |e: MouseEvent| e.stop_propagation(),
             // 头部
-            div { class: "flex items-center justify-between pl-4 pr-2 py-1.5 border-b border-b1",
+            div { class: "flex items-center justify-between pl-4 pr-2 py-1.5 border-b border-border",
                 div { class: "flex items-center gap-2.5",
-                    span { class: "text-[14px] leading-5 font-medium text-label", {sh::BTN_TASK_PANEL} }
-                    span { class: "text-[12px] leading-5 text-label-3", "{done_count}/{total_count} 完成" }
+                    span { class: "role-hint font-medium text-foreground", {sh::BTN_TASK_PANEL} }
+                    span { class: "role-caption", "{done_count}/{total_count} 完成" }
                 }
                 Button {
                     variant: ButtonVariant::Ghost,
@@ -58,11 +58,11 @@ pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
                 }
             }
             // 进度条
-            div { class: "h-1 bg-layer-3",
+            div { class: "h-1 bg-secondary-hover",
                 div { class: "h-full bg-brand transition-all", style: "width: {pct}%;" }
             }
             // 过滤 chips（dsh compact：h26 r7）
-            div { class: "flex flex-wrap gap-1 px-3 py-2 border-b border-b1",
+            div { class: "flex flex-wrap gap-1 px-3 py-2 border-b border-border",
                 FilterChip {
                     label: "全部 {total_count}",
                     active: selected_filter() == "all",
@@ -103,14 +103,14 @@ pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
                             _ => (sh::STATUS_OPEN, st::S_RAISED),
                         };
                         let priority_class = match task.priority {
-                            0 => "bg-chip-danger text-danger",
-                            1 => "bg-chip-warn text-warn-2",
-                            _ => "bg-layer-2 text-label-3",
+                            0 => "bg-chip-danger text-destructive",
+                            1 => "bg-warning text-warning-foreground",
+                            _ => "bg-secondary",
                         };
                         let card_class = if is_selected {
-                            "rounded-[10px] border border-brand bg-layer-1 px-3 py-2.5 cursor-pointer transition-colors"
+                            "rounded-[10px] border border-brand bg-card px-3 py-2.5 cursor-pointer transition-colors"
                         } else {
-                            "rounded-[10px] border border-b1 bg-layer-1 px-3 py-2.5 cursor-pointer transition-colors hover:border-b2"
+                            "rounded-[10px] border border-border bg-card px-3 py-2.5 cursor-pointer transition-colors hover:border-border"
                         };
                         let task_id = task.id.clone();
                         rsx! {
@@ -124,27 +124,27 @@ pub fn TaskPanel(tasks: Vec<TaskItem>, on_close: EventHandler<()>) -> Element {
                                 },
                                 div { class: "flex items-center justify-between mb-1",
                                     div { class: "flex items-center gap-1.5",
-                                        span { class: "{status_chip} px-1.5 py-px rounded-md text-[10px] leading-4 font-medium", "{status_label}" }
-                                        span { class: "font-mono text-[10px] leading-4 text-caption", "#{task.id}" }
+                                        span { class: "{status_chip} px-1.5 py-px rounded-md role-label text-foreground font-medium", "{status_label}" }
+                                        span { class: "font-mono role-label", "#{task.id}" }
                                     }
                                     div { class: "flex items-center gap-1.5",
-                                        span { class: "font-mono text-[10px] leading-4 uppercase text-label-3", "{task.kind}" }
-                                        span { class: "{priority_class} px-1.5 py-px rounded-md font-mono text-[10px] leading-4 font-semibold", "P{task.priority}" }
+                                        span { class: "font-mono role-overline", "{task.kind}" }
+                                        span { class: "{priority_class} px-1.5 py-px rounded-md font-mono role-label font-semibold", "P{task.priority}" }
                                     }
                                 }
-                                div { class: "text-[14px] leading-5 text-label", "{task.title}" }
+                                div { class: "role-hint text-foreground", "{task.title}" }
                                 if is_selected {
-                                    div { class: "mt-2 pt-2 border-t border-b1 flex flex-col gap-1.5",
+                                    div { class: "mt-2 pt-2 border-t border-border flex flex-col gap-1.5",
                                         if !task.description.is_empty() {
                                             div { class: "flex flex-col gap-0.5",
-                                                span { class: "text-[10px] leading-4 uppercase tracking-wide text-caption font-semibold", {sh::LBL_DESCRIPTION} }
-                                                p { class: "text-[12px] leading-[18px] text-label-2", "{task.description}" }
+                                                span { class: "role-overline", {sh::LBL_DESCRIPTION} }
+                                                p { class: "role-caption", "{task.description}" }
                                             }
                                         }
                                         if !task.acceptance.is_empty() {
                                             div { class: "flex flex-col gap-0.5",
-                                                span { class: "text-[10px] leading-4 uppercase tracking-wide text-caption font-semibold", {sh::LBL_ACCEPTANCE} }
-                                                p { class: "text-[12px] leading-[18px] text-label-2", "{task.acceptance}" }
+                                                span { class: "role-overline", {sh::LBL_ACCEPTANCE} }
+                                                p { class: "role-caption", "{task.acceptance}" }
                                             }
                                         }
                                     }

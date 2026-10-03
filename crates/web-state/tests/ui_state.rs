@@ -155,12 +155,7 @@ fn reasoning_segments_interleave_in_stream_order() {
     assert_eq!(text, "先想公理。再加结合律。");
     assert!(d1.is_some(), "closed segment must carry a duration");
     assert!(matches!(asst.parts[1], MessagePart::Tool(_)));
-    let MessagePart::Reasoning {
-        text,
-        duration_ms: d2,
-        ..
-    } = &asst.parts[2]
-    else {
+    let MessagePart::Reasoning { text, .. } = &asst.parts[2] else {
         panic!("parts[2]: expected second reasoning segment");
     };
     assert_eq!(text, "收尾检查。");

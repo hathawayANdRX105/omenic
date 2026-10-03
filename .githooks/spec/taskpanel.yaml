@@ -6,7 +6,7 @@ target: crates/web-ui/src/components/taskpanel.rs
 description: 任务看板 dock（TaskPanel / FilterChip）——r16 浮层卡、h1 进度条、h26 r7 filter chip、r10 任务卡。
 anchors:
   - key: dock-card
-    find: 'w-full rounded-2xl border border-binv bg-layer-2 shadow-lv2 overflow-hidden'
+    find: 'w-full rounded-2xl border border-binv bg-secondary shadow-lv2 overflow-hidden'
     expect: 'dock 卡 r16（rounded-2xl）、layer-2 底、lv2 阴影，宽度随父容器。'
     source: 'kymido: crates/web-ui/src/components/taskpanel.rs:37'
   - key: panel-click-outside-exempt
@@ -19,12 +19,12 @@ anchors:
     expect: 'dock 挂在 composer 悬浮列内，宽随消息列（max-w 780 之内），位于问题卡与输入卡之上；状态行在输入卡下方一行（ainnotation 波3 #4）。'
     source: 'kymido: crates/web-ui/src/components/chat.rs:149（dock 座位）,155（{dock} 槽位）'
   - key: panel-header
-    find: 'flex items-center justify-between pl-4 pr-2 py-1.5 border-b border-b1'
+    find: 'flex items-center justify-between pl-4 pr-2 py-1.5 border-b border-border'
     expect: '头部：任务看板标题 + n/m 完成计数 + 28px 圆形关闭钮。'
     source: 'kymido: crates/web-ui/src/components/taskpanel.rs:39-44'
   - key: progress-track
-    find: 'h-1 bg-layer-3'
-    expect: '进度条轨道高 1px（4px 视觉随层叠），bg-layer-3。'
+    find: 'h-1 bg-secondary-hover'
+    expect: '进度条轨道高 1px（4px 视觉随层叠），bg-secondary-hover。'
     source: 'kymido: crates/web-ui/src/components/taskpanel.rs:47'
   - key: progress-fill
     find: 'h-full bg-brand transition-all'
@@ -32,11 +32,11 @@ anchors:
     source: 'kymido: crates/web-ui/src/components/taskpanel.rs:48'
   - key: filter-chip
     file: crates/web-ui/src/components/filter_chip.rs
-    find: 'h-[26px] px-[7px] rounded-[7px] text-[12px] leading-[18px]'
-    expect: '过滤 chip h26、r7、12/18 文案，激活态 bg-ihover。'
+    find: 'h-[26px] px-[7px] rounded-[7px] role-caption'
+    expect: '过滤 chip h26、r7、12/18 文案，激活态 bg-accent。'
     source: 'kymido: crates/web-ui/src/components/filter_chip.rs:12-15（FilterChip，4146126 自 taskpanel.rs 拆出）；dsh: compact chip h26 r7'
   - key: task-card
-    find: 'rounded-[10px] border border-b1 bg-layer-1 px-3 py-2.5'
+    find: 'rounded-[10px] border border-border bg-card px-3 py-2.5'
     expect: '任务卡 r10、layer-1 底，选中态 brand 边框并展开描述/验收标准。'
     source: 'kymido: crates/web-ui/src/components/taskpanel.rs:97-99'
 notes: |

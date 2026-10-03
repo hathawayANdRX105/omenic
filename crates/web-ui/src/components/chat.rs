@@ -15,7 +15,7 @@ use ui_kit::icons::{
 use super::menu_picker::MenuPicker;
 use super::message::MessageItem;
 
-/// 工具类型的配色（dsh 状态色 400 字级，ainotation #4：去掉 chip 底/边框，
+/// 工具类型的配色（kit 状态 `*-foreground` 语义色，ainotation #4：去掉 chip 底/边框，
 /// kind 只渲染为 mono 大写小字文本）。
 ///
 /// `job` / `terminal` 复用 brand 家族：它们和 `bash` 一样是"跑命令"，
@@ -24,10 +24,10 @@ use super::message::MessageItem;
 pub(crate) fn kind_chip(kind: &str) -> &'static str {
     match kind {
         "bash" | "job" | "terminal" => "text-brand-300",
-        "edit" | "write" => "text-success-2",
-        "read" | "grep" | "glob" => "text-warn-2",
-        "delete" => "text-danger",
-        _ => "text-label-3",
+        "edit" | "write" => "text-success-foreground",
+        "read" | "grep" | "glob" => "text-warning-foreground",
+        "delete" => "text-destructive",
+        _ => "text-muted-foreground",
     }
 }
 
@@ -73,7 +73,7 @@ pub fn format_tool_output(_kind: &str, raw: &str) -> String {
 }
 
 /// 终端观感的错误行判定（ainotation 波2 #4②）：含 error/panic/fatal/failed
-/// 的行着 danger 色。故意放宽到 contains——真实日志的错误行形态太多，误染
+/// 的行着 destructive 色。故意放宽到 contains——真实日志的错误行形态太多，误染
 /// 一行普通文本好过整屏无色。
 pub(crate) fn line_is_error(line: &str) -> bool {
     let l = line.to_lowercase();
@@ -89,7 +89,7 @@ pub(crate) fn line_is_error(line: &str) -> bool {
 /// - delete → IconTrash；think → IconMoon；tool 及未知 → IconWrench
 #[component]
 pub(crate) fn KindIcon(kind: String) -> Element {
-    let class = "text-label-3 shrink-0";
+    let class = "text-muted-foreground shrink-0";
     match kind.as_str() {
         "bash" | "terminal" | "job" => rsx! { IconTerminal { size: 12, class } },
         "grep" => rsx! { IconSearch { size: 12, class } },
@@ -237,8 +237,8 @@ pub fn Chat(
                     if display_messages.is_empty() && !is_streaming {
                         div { class: "flex-1 flex flex-col items-center justify-center gap-2.5 text-center py-10 select-none relative",
                             div { class: "absolute w-[520px] h-[220px] rounded-full bg-brand/10 blur-[110px] -z-10" }
-                            div { class: "text-[26px] leading-8 font-semibold text-label", {sh::MSG_EMPTY_CHAT_TITLE} }
-                            div { class: "text-[14px] leading-[22px] text-label-3 max-w-[420px]",
+                            div { class: "role-title", {sh::MSG_EMPTY_CHAT_TITLE} }
+                            div { class: "role-hint max-w-[420px]",
                                 "在下方输入指令，Agent 将使用文件读写、bash 与代码编辑工具协助你完成。"
                             }
                         }
@@ -277,10 +277,10 @@ pub fn Chat(
                             div { class: "rounded-full bg-subtle cursor-pointer transition-all duration-150 ease-out minimap-bar",
                                 style: "height:4px; width:10px;",
                             }
-                            div { class: "absolute left-14 top-1/2 -translate-y-1/2 z-30 w-[230px] max-h-[150px] overflow-hidden rounded-xl border border-binv bg-menu px-3 py-2.5 shadow-lv3 pointer-events-none",
+                                div { class: "absolute left-14 top-1/2 -translate-y-1/2 z-30 w-[230px] max-h-[150px] overflow-hidden rounded-xl border border-binv bg-popover px-3 py-2.5 shadow-lv3 pointer-events-none",
                                 "data-tip": "",
                                 style: "display:none;",
-                                div { class: "text-[12px] leading-5 text-label-2 whitespace-pre-wrap break-words line-clamp-6", "{p}" }
+                                div { class: "role-caption whitespace-pre-wrap break-words line-clamp-6", "{p}" }
                             }
                         }
                     }
@@ -296,10 +296,10 @@ pub fn Chat(
                     // 用户问题卡（plan-mode review）：composer 上方、dock 之下。
                     // 选项即答案：Select { index } 直发，无中间态
                     if let Some((_, qsummary, _)) = &question_view {
-                        div { class: "pointer-events-auto w-full question-card rounded-[14px] border border-b1 bg-layer-1 shadow-lv2 px-4 py-3 flex flex-col gap-2.5",
+                        div { class: "pointer-events-auto w-full question-card rounded-[14px] border border-border bg-card shadow-lv2 px-4 py-3 flex flex-col gap-2.5",
                             div { class: "flex items-baseline gap-2",
-                                span { class: "text-[12px] leading-4 font-medium text-brand-300 shrink-0", {sh::LBL_PLAN_REVIEW} }
-                                span { class: "text-[13px] leading-5 text-label-2", "{qsummary}" }
+                                span { class: "role-caption font-medium text-brand-300 shrink-0", {sh::LBL_PLAN_REVIEW} }
+                                span { class: "role-caption", "{qsummary}" }
                             }
                             div { class: "flex items-center gap-2 flex-wrap",
                                 for (qid_btn, i, label) in question_buttons.clone() {
@@ -308,7 +308,7 @@ pub fn Chat(
                                         rsx! {
                                             button {
                                                 key: "{i}",
-                                                class: "h-7 px-3 rounded-lg bg-selector hover:bg-iactive text-[12px] leading-4 text-label transition-colors",
+                                                class: "h-7 px-3 rounded-lg bg-secondary hover:bg-secondary-hover role-caption text-foreground transition-colors",
                                                 onclick: move |_| {
                                                     on_answer.call((qid_click.clone(), QuestionAnswer::Select { index: i }));
                                                 },
@@ -323,7 +323,7 @@ pub fn Chat(
                     // 输入卡：r22 胶囊
                     // 不加 overflow-hidden：模型/思考菜单从工具行向上弹出，
                     // 裁剪会切掉卡片外的部分；圆角由卡片自身的 bg + radius 呈现
-                    div { class: "pointer-events-auto w-full rounded-[24px] border border-b1 bg-input-bg shadow-lv2 p-2.5 flex flex-col gap-1.5 transition-colors focus-within:border-b3",
+                    div { class: "pointer-events-auto w-full rounded-[24px] border border-border bg-background shadow-lv2 p-2.5 flex flex-col gap-1.5 transition-colors focus-within:border-b3",
                         // Bridge: the file picker JS writes base64 JSON here.
                         // Hidden from view, still a real textarea so
                         // LiveView's `oninput` wiring works unchanged.
@@ -346,18 +346,18 @@ pub fn Chat(
                             div { class: "flex flex-wrap gap-1.5 px-1 pt-0.5",
                                 for (idx, att) in attachments().into_iter().enumerate() {
                                     div {
-                                        class: "flex items-center gap-1.5 rounded-[10px] border border-b1 bg-layer-1 px-2 py-1 text-[12px] text-label",
+                                        class: "flex items-center gap-1.5 rounded-[10px] border border-border bg-card px-2 py-1 role-caption text-foreground",
                                         span { class: "max-w-[180px] truncate", "{att.name}" }
-                                        span { class: "text-caption font-mono", "{att.size_bytes() / 1024} KB" }
+                                        span { class: "font-mono text-muted-foreground", "{att.size_bytes() / 1024} KB" }
                                         button {
                                             r#type: "button",
-                                            class: "border-none bg-transparent text-caption hover:text-label cursor-pointer p-0",
+                                            class: "border-none bg-transparent text-muted-foreground hover:text-foreground cursor-pointer p-0",
                                             title: sh::BTN_REMOVE,
                                             onclick: move |_| {
                                                 let mut cur = attachments.write();
                                                 cur.remove(idx);
                                             },
-                                            span { class: "text-[13px] leading-none", "×" }
+                                            span { class: "role-caption", "×" }
                                         }
                                     }
                                 }
@@ -369,7 +369,7 @@ pub fn Chat(
                         div { class: "px-1",
                             span {
                                 id: "attachment-reading",
-                                class: "hidden text-[11px] text-caption font-mono",
+                                class: "hidden font-mono role-label",
                                 "处理中…",
                             }
                             div {
@@ -379,7 +379,7 @@ pub fn Chat(
                         }
                         textarea {
                             id: "chat-input-area",
-                            class: "w-full resize-none bg-transparent border-none outline-none text-[15px] leading-6 text-label placeholder:text-caption caret-brand px-3 pt-1.5 pb-1 min-h-[44px] max-h-[336px]",
+                            class: "w-full resize-none bg-transparent border-none outline-none role-desc text-foreground placeholder:text-muted-foreground caret-brand px-3 pt-1.5 pb-1 min-h-[44px] max-h-[336px]",
                             placeholder: "输入指令，Enter 发送，Shift+Enter 换行...",
                             value: "{draft}",
                             oninput: move |e: FormEvent| draft.set(e.value()),
@@ -406,7 +406,7 @@ pub fn Chat(
                                 // file input；附件桥 JS 缺元素自然不生效）。
                                 if image_input {
                                     label {
-                                        class: "flex items-center justify-center w-[32px] h-[32px] rounded-full text-label-2 hover:bg-selector transition-[background-color,color,scale] duration-150 active:scale-[0.96] cursor-pointer",
+                                        class: "flex items-center justify-center w-[32px] h-[32px] rounded-full text-muted-foreground hover:bg-secondary-hover transition-[background-color,color,scale] duration-150 active:scale-[0.96] cursor-pointer",
                                         title: sh::BTN_ADD_IMAGE,
                                         input {
                                             id: "attachment-input",
@@ -420,7 +420,7 @@ pub fn Chat(
                                     }
                                 } else {
                                     span {
-                                        class: "flex items-center justify-center w-[32px] h-[32px] rounded-full text-label-2 opacity-40 cursor-not-allowed",
+                                        class: "flex items-center justify-center w-[32px] h-[32px] rounded-full text-muted-foreground opacity-40 cursor-not-allowed",
                                         title: sh::MSG_NO_IMAGE_INPUT,
                                         IconPaperclip { size: 16 }
                                     }
@@ -428,7 +428,7 @@ pub fn Chat(
                                 // aui ghost 按钮对位：32px 圆形 ghost（纯元素，保留 toggle 语义）
                                 button {
                                     r#type: "button",
-                                    class: "flex items-center justify-center w-[32px] h-[32px] rounded-full text-label-2 hover:bg-selector transition-[background-color,color,scale] duration-150 active:scale-[0.96] cursor-pointer border-none bg-transparent",
+                                    class: "flex items-center justify-center w-[32px] h-[32px] rounded-full text-muted-foreground hover:bg-secondary-hover transition-[background-color,color,scale] duration-150 active:scale-[0.96] cursor-pointer border-none bg-transparent",
                                     title: sh::BTN_TASK_PANEL,
                                     // 点外关闭（ainnotation 波3）：开合钮保持纯 toggle 语义——
                                     // stop_propagation 挡住页面级 click 委托，开→关 / 关→开
@@ -468,7 +468,7 @@ pub fn Chat(
                                 } else if draft().trim().is_empty() {
                                     button {
                                         r#type: "button",
-                                        class: "w-[32px] h-[32px] rounded-full bg-selector text-label-3 flex items-center justify-center cursor-default border-none",
+                                        class: "w-[32px] h-[32px] rounded-full bg-secondary-hover flex items-center justify-center cursor-default border-none",
                                         title: sh::BTN_SEND,
                                         IconArrowUp { size: 16 }
                                     }
@@ -493,7 +493,7 @@ pub fn Chat(
                     }
                 }
                     // 状态行（dsh StatsLine：12/20 tertiary 居中）——在输入卡外下方
-                    div { class: "text-[12px] leading-5 text-label-3 text-center select-none",
+                    div { class: "role-caption text-center select-none",
                         "{statusline.model} · ↑{statusline.tokens_in} ↓{statusline.tokens_out} · ${statusline.cost_usd:.3} · context {statusline.context_pct:.0}%{elapsed_seg}{error_seg}"
                     }
             }

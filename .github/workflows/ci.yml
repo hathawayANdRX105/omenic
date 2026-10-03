@@ -36,8 +36,10 @@ jobs:
         run: |
           git config --global url."https://x-access-token:${UIKIT_PAT}@github.com/hathawayANdRX105/".insteadOf "ssh://git@github.com/hathawayANdRX105/"
           git config --global url."https://x-access-token:${UIKIT_PAT}@github.com/hathawayANdRX105/".insteadOf "https://github.com/hathawayANdRX105/"
-      - name: Install system deps (ripgrep for tools tests)
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Install system deps (ripgrep for tools tests, sccache for rustc-wrapper)
+        # .cargo/config.toml 钉了 rustc-wrapper = sccache（7ae8568 起本地
+        # 多会话编译缓存），runner 无 sccache 时 cargo 直接 exit 101。
+        run: sudo apt-get update && sudo apt-get install -y ripgrep sccache
       # `web` bin 的 build.rs 在 bin/web 跑 Tailwind CLI（`node_modules/.bin/
       # tailwindcss`），node_modules 不跟 git（CI 全新 checkout 没有）——不装则
       # Tailwind 产物 0 字节、护栏硬失败（run 36904776053：Can't resolve
@@ -215,8 +217,8 @@ jobs:
         run: |
           git config --global url."https://x-access-token:${UIKIT_PAT}@github.com/hathawayANdRX105/".insteadOf "ssh://git@github.com/hathawayANdRX105/"
           git config --global url."https://x-access-token:${UIKIT_PAT}@github.com/hathawayANdRX105/".insteadOf "https://github.com/hathawayANdRX105/"
-      - name: Install system deps (ripgrep for tools tests)
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Install system deps (ripgrep for tools tests, sccache for rustc-wrapper)
+        run: sudo apt-get update && sudo apt-get install -y ripgrep sccache
       # Plan-mode / Profile CLI / UI contract anchors used to be re-run here
       # as their own steps (~40s of duplicated work). The test job's reverse
       # dependency closure already guarantees they run whenever they can

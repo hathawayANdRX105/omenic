@@ -31,8 +31,8 @@ pub fn SettingsPage(
     let s = section();
     rsx! {
         div { class: "flex-1 min-h-0 flex flex-col",
-            div { class: "h-[54px] px-6 flex items-center justify-between border-b border-b1 shrink-0",
-                span { class: "text-[14px] leading-5 font-medium text-label", "{s.label()}" }
+            div { class: "h-[54px] px-6 flex items-center justify-between border-b border-border shrink-0",
+                span { class: "role-hint font-medium text-foreground", "{s.label()}" }
             }
             div { class: "flex-1 overflow-y-auto",
                 if s == SettingsSection::Models {
@@ -129,9 +129,9 @@ fn ConfigForm(
         ]
     });
 
-    let input_class = "w-full h-9 rounded-[10px] bg-layer-2 border border-b2 px-3 text-[14px] leading-[22px] text-label outline-none transition-colors focus:border-brand placeholder:text-caption";
-    let label_class = "text-[13px] leading-5 font-medium text-label-2";
-    let err_class = "text-[12px] leading-4 text-danger";
+    let input_class = "w-full h-9 rounded-[10px] bg-secondary border border-border px-3 role-hint text-foreground outline-none transition-colors focus:border-brand placeholder:text-muted-foreground";
+    let label_class = "role-caption font-medium";
+    let err_class = "role-caption text-destructive";
 
     // A stale success banner above a now-invalid form (user kept editing
     // after saving) misleads — hide it whenever validation fails. Pure
@@ -146,10 +146,10 @@ fn ConfigForm(
                 if let Some(res) = save_status.read().as_ref() {
                     match res {
                         Ok(msg) => rsx! {
-                            div { class: "px-4 py-2.5 rounded-[10px] text-[13px] leading-5 bg-chip-success text-success-2", "{msg}" }
+                            div { class: "px-4 py-2.5 rounded-[10px] role-caption bg-success text-success-foreground", "{msg}" }
                         },
                         Err(err) => rsx! {
-                            div { class: "px-4 py-2.5 rounded-[10px] text-[13px] leading-5 bg-chip-danger text-danger", "{err}" }
+                            div { class: "px-4 py-2.5 rounded-[10px] role-caption bg-chip-danger text-destructive", "{err}" }
                         },
                     }
                 }
@@ -158,12 +158,12 @@ fn ConfigForm(
             if let Some(res) = test_status.read().as_ref() {
                 match res {
                     Ok(list) => rsx! {
-                        div { class: "px-4 py-2.5 rounded-[10px] text-[13px] leading-5 bg-chip-success text-success-2",
+                        div { class: "px-4 py-2.5 rounded-[10px] role-caption bg-success text-success-foreground",
                             "连接成功：已探测到 {list.len()} 个可用模型"
                         }
                     },
                     Err(err) => rsx! {
-                        div { class: "px-4 py-2.5 rounded-[10px] text-[13px] leading-5 bg-chip-danger text-danger",
+                        div { class: "px-4 py-2.5 rounded-[10px] role-caption bg-chip-danger text-destructive",
                             "连接失败: {err}"
                         }
                     },
@@ -171,10 +171,10 @@ fn ConfigForm(
             }
 
             // 凭证与端点卡
-            div { class: "bg-layer-1 border border-b1 rounded-2xl px-6 py-5 flex flex-col gap-4",
-                div { class: "flex items-center justify-between pb-3 border-b border-b1",
-                    div { class: "text-[15px] leading-[22px] font-medium text-label", "LLM API 凭证与端点" }
-                    span { class: "text-[11px] leading-4 text-caption font-mono", "OpenAI-compatible" }
+            div { class: "bg-card border border-border rounded-2xl px-6 py-5 flex flex-col gap-4",
+                div { class: "flex items-center justify-between pb-3 border-b border-border",
+                    div { class: "role-desc font-medium text-foreground", "LLM API 凭证与端点" }
+                    span { class: "font-mono role-label", "OpenAI-compatible" }
                 }
 
                 div { class: "grid grid-cols-2 gap-4 gap-x-5",
@@ -335,9 +335,9 @@ fn ConfigForm(
 
             // Fallback 路由卡（providers.toml 的 provider 行 fallbacks 键，
             // 主 provider 无可用内容时按序瀑布切换）
-            div { class: "bg-layer-1 border border-b1 rounded-2xl px-6 py-5 flex flex-col gap-4",
-                div { class: "flex items-center justify-between pb-3 border-b border-b1",
-                    div { class: "text-[15px] leading-[22px] font-medium text-label", "Fallback 路由（主 provider 失败后按序切换）" }
+            div { class: "bg-card border border-border rounded-2xl px-6 py-5 flex flex-col gap-4",
+                div { class: "flex items-center justify-between pb-3 border-b border-border",
+                    div { class: "role-desc font-medium text-foreground", "Fallback 路由（主 provider 失败后按序切换）" }
                     Button {
                         variant: ButtonVariant::Outline,
                         size: ButtonSize::Sm,
@@ -347,18 +347,18 @@ fn ConfigForm(
                 }
 
                 if fallback_list.is_empty() {
-                    div { class: "bg-layer-1 border border-b1 rounded-xl px-4 py-6 flex flex-col items-center gap-1.5",
-                        span { class: "text-[13px] leading-5 text-label-3", "尚未配置 Fallback 路由" }
-                        span { class: "text-[12px] leading-4 text-caption", "主 provider 无可用内容时按列表顺序切换；每行一条「provider/model」路由，凭据继承目标 provider 行" }
+                    div { class: "bg-card border border-border rounded-xl px-4 py-6 flex flex-col items-center gap-1.5",
+                        span { class: "role-caption", "尚未配置 Fallback 路由" }
+                        span { class: "role-caption", "主 provider 无可用内容时按列表顺序切换；每行一条「provider/model」路由，凭据继承目标 provider 行" }
                     }
                 }
                 for (i, route) in fallback_list.iter().enumerate() {
                     // `{i}` key 前缀保证中间行删除时上方行不继承被删组件状态，
                     // 重复路由编辑期间键仍唯一。
                     div { key: "{i}", class: "flex items-center gap-2.5",
-                        span { class: "text-[12px] leading-5 text-caption font-mono w-[32px] text-right", "#{i + 1}" }
+                        span { class: "role-caption font-mono w-[32px] text-right", "#{i + 1}" }
                         input {
-                            class: "w-full h-9 rounded-[10px] bg-layer-2 border border-b2 px-3 text-[14px] leading-[22px] text-label font-mono outline-none transition-colors focus:border-brand placeholder:text-caption",
+                            class: "w-full h-9 rounded-[10px] bg-secondary border border-border px-3 role-hint text-foreground font-mono outline-none transition-colors focus:border-brand placeholder:text-muted-foreground",
                             value: "{route}",
                             oninput: move |e| fallbacks.write()[i] = e.value(),
                             placeholder: "other-provider/model-id",
@@ -380,10 +380,10 @@ fn ConfigForm(
             }
 
             // 在线模型卡
-            div { class: "bg-layer-1 border border-b1 rounded-2xl px-6 py-5 flex flex-col gap-4",
-                div { class: "flex items-center justify-between pb-3 border-b border-b1",
-                    div { class: "text-[15px] leading-[22px] font-medium text-label", "在线可用模型 ({models.len()})" }
-                    span { class: "text-[11px] leading-4 text-caption", "点击选用" }
+            div { class: "bg-card border border-border rounded-2xl px-6 py-5 flex flex-col gap-4",
+                div { class: "flex items-center justify-between pb-3 border-b border-border",
+                    div { class: "role-desc font-medium text-foreground", "在线可用模型 ({models.len()})" }
+                    span { class: "role-label", "点击选用" }
                 }
 
                 div { class: "grid grid-cols-2 gap-2.5",
@@ -392,16 +392,16 @@ fn ConfigForm(
                             let m_str = m.clone();
                             let is_current = *model.read() == *m;
                             let card_class = if is_current {
-                                "p-3 rounded-xl border border-brand bg-layer-2 cursor-pointer transition-colors"
+                                "p-3 rounded-xl border border-brand bg-secondary cursor-pointer transition-colors"
                             } else {
-                                "p-3 rounded-xl border border-b1 bg-layer-2 cursor-pointer transition-colors hover:border-b2"
+                                "p-3 rounded-xl border border-border bg-secondary cursor-pointer transition-colors hover:border-border"
                             };
                             rsx! {
                                 div { key: "{m}", class: "{card_class}",
                                     div { class: "flex items-center gap-2",
-                                        span { class: "text-brand-300 font-mono text-[13px] font-medium", "{m}" }
+                                        span { class: "text-brand-300 font-mono role-caption font-medium", "{m}" }
                                         if is_current {
-                                            span { class: "bg-chip-success text-success-2 px-1.5 py-px rounded-md text-[11px] font-semibold", "默认" }
+                                            span { class: "bg-success text-success-foreground px-1.5 py-px rounded-md role-label font-semibold", "默认" }
                                         }
                                     }
                                     div { class: "mt-2",
@@ -474,7 +474,7 @@ fn McpServersPane(
     };
     let is_form_valid = invalid_hint.is_none();
 
-    let err_class = "text-[12px] leading-4 text-danger";
+    let err_class = "role-caption text-destructive";
 
     // A stale success banner above a now-invalid form (user kept editing
     // after saving) misleads — hide it whenever validation fails. Pure
@@ -488,10 +488,10 @@ fn McpServersPane(
                 if let Some(res) = save_status.read().as_ref() {
                     match res {
                         Ok(msg) => rsx! {
-                            div { class: "px-4 py-2.5 rounded-[10px] text-[13px] leading-5 bg-chip-success text-success-2", "{msg}" }
+                            div { class: "px-4 py-2.5 rounded-[10px] role-caption bg-success text-success-foreground", "{msg}" }
                         },
                         Err(err) => rsx! {
-                            div { class: "px-4 py-2.5 rounded-[10px] text-[13px] leading-5 bg-chip-danger text-danger", "{err}" }
+                            div { class: "px-4 py-2.5 rounded-[10px] role-caption bg-chip-danger text-destructive", "{err}" }
                         },
                     }
                 }
@@ -500,8 +500,8 @@ fn McpServersPane(
             // 页头：说明 + 添加按钮
             div { class: "flex items-center justify-between gap-3",
                 div { class: "min-w-0 flex flex-col gap-0.5",
-                    div { class: "text-[15px] leading-[22px] font-medium text-label", "MCP 服务器" }
-                    span { class: "text-[12px] leading-4 text-caption",
+                    div { class: "role-desc font-medium text-foreground", "MCP 服务器" }
+                    span { class: "role-caption",
                         "stdio 子进程（command）或 HTTP 端点（url）；保存按 name 更新。env / reconnect 等高级键请直接编辑 .kymido/config.toml，不会被覆盖；删除仅移除编辑卡，不从配置文件删服务器。"
                     }
                 }
@@ -514,9 +514,9 @@ fn McpServersPane(
 
             // 服务器卡列表
             if list.is_empty() {
-                div { class: "bg-layer-1 border border-b1 rounded-2xl px-6 py-8 flex flex-col items-center gap-1.5",
-                    span { class: "text-[13px] leading-5 text-label-3", "尚未配置 MCP 服务器" }
-                    span { class: "text-[12px] leading-4 text-caption", "MCP 默认关闭：不添加服务器时 agent 不会启动任何外部工具进程" }
+                div { class: "bg-card border border-border rounded-2xl px-6 py-8 flex flex-col items-center gap-1.5",
+                    span { class: "role-caption", "尚未配置 MCP 服务器" }
+                    span { class: "role-caption", "MCP 默认关闭：不添加服务器时 agent 不会启动任何外部工具进程" }
                 }
             }
             for (i, server) in list.iter().enumerate() {
@@ -577,8 +577,8 @@ fn McpServerCard(
     index: usize,
     mut servers: Signal<Vec<McpServerForm>>,
 ) -> Element {
-    let input_class = "w-full h-9 rounded-[10px] bg-layer-2 border border-b2 px-3 text-[14px] leading-[22px] text-label outline-none transition-colors focus:border-brand placeholder:text-caption";
-    let label_class = "text-[13px] leading-5 font-medium text-label-2";
+    let input_class = "w-full h-9 rounded-[10px] bg-secondary border border-border px-3 role-hint text-foreground outline-none transition-colors focus:border-brand placeholder:text-muted-foreground";
+    let label_class = "role-caption font-medium";
 
     let transport = if !server.command.trim().is_empty() {
         format!("stdio · {}", server.command.trim())
@@ -587,17 +587,17 @@ fn McpServerCard(
     } else {
         "未配置启动方式".to_string()
     };
-    let card_class = "bg-layer-1 border border-b1 rounded-xl px-4 py-4 flex flex-col gap-3";
+    let card_class = "bg-card border border-border rounded-xl px-4 py-4 flex flex-col gap-3";
 
     rsx! {
         div { class: "{card_class}",
             // 卡头：name + 启动方式摘要 + 删除
             div { class: "flex items-center justify-between gap-3",
                 div { class: "min-w-0 flex flex-col gap-0.5",
-                    span { class: "text-[14px] leading-5 font-medium text-label truncate",
+                    span { class: "role-hint font-medium text-foreground truncate",
                         if server.name.trim().is_empty() { "（未命名服务器）" } else { "{server.name}" }
                     }
-                    span { class: "text-[12px] leading-4 text-caption font-mono truncate", "{transport}" }
+                    span { class: "role-caption font-mono truncate", "{transport}" }
                 }
                 Button {
                     variant: ButtonVariant::Ghost,
@@ -692,13 +692,13 @@ fn AboutPane() -> Element {
     rsx! {
         div { class: "px-6 py-6 flex flex-col gap-4 max-w-[520px]",
             div { class: "flex items-center gap-2",
-                span { class: "text-[18px] leading-6 font-semibold tracking-[0.04em] text-label", "kymido" }
-                span { class: "text-[12px] leading-5 text-label-3 font-mono px-2 py-0.5 rounded-full bg-layer-1 border border-b1", "v{version}" }
+                span { class: "role-card tracking-[0.04em]", "kymido" }
+                span { class: "role-caption font-mono px-2 py-0.5 rounded-full bg-card border border-border", "v{version}" }
             }
-            p { class: "text-[14px] leading-[22px] text-label-2",
+            p { class: "role-hint",
                 "agent harness 的 Rust 复刻（参考 DeepSeek Harness）：agent 循环、会话持久化、事件流与插件面。web UI 为 Dioxus LiveView，设计语言复刻 dsh web。"
             }
-            div { class: "flex flex-col gap-1.5 text-[13px] leading-5 text-label-3",
+            div { class: "flex flex-col gap-1.5 role-caption",
                 span { "路线与进度见仓库根 PROGRESS.md；技术教训见 LESSONS.md。" }
                 span { "web 数据来自 daemon 实时数据源（会话、事件流与统计均走真实 RPC）。" }
             }

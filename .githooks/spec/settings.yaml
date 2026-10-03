@@ -20,11 +20,11 @@ anchors:
     expect: 'Modal 卡片 r16（ui-kit token 系）：⌘K 快速切换弹窗仍用 ui.rs Modal 壳。'
     source: 'kymido: crates/web-ui/src/components/ui.rs（Modal）；设置弹窗形态退役后 Modal 仅剩快速切换消费'
   - key: section-header
-    find: 'h-[54px] px-6 flex items-center justify-between border-b border-b1'
+    find: 'h-[54px] px-6 flex items-center justify-between border-b border-border'
     expect: '设置页区头 54px：分区标题（settings_section.label）；关闭钮随弹窗删除。'
     source: 'kymido: crates/web-ui/src/views/config.rs（SettingsPage 区头）'
   - key: form-input
-    find: 'w-full h-9 rounded-[10px] bg-layer-2 border border-b2 px-3'
+    find: 'w-full h-9 rounded-[10px] bg-secondary border border-border px-3'
     expect: '表单输入统一 h36、r10、layer-2 底，focus 时 brand 边框。'
     source: 'kymido: crates/web-ui/src/views/config.rs（ConfigForm input_class）'
   - key: model-cards
@@ -40,7 +40,7 @@ anchors:
     expect: '「MCP 服务器」分区：侧栏二级菜单行文案与页内 pane 标题同源（LBL_MCP_SERVERS / pane 标题）。'
     source: 'kymido: shared.rs（LBL_MCP_SERVERS）+ config.rs（McpServersPane 页头）'
   - key: mcp-server-card
-    find: 'bg-layer-1 border border-b1 rounded-xl px-4 py-4 flex flex-col gap-3'
+    find: 'bg-card border border-border rounded-xl px-4 py-4 flex flex-col gap-3'
     expect: 'MCP 服务器卡容器：layer-1 底、r12 圆角、纵向 gap-3；卡头 name + stdio/http 摘要 + 删除钮，卡体两列字段网格。'
     source: 'kymido: crates/web-ui/src/views/config.rs（McpServerCard card_class）'
   - key: mcp-add-server

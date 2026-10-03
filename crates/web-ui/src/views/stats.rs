@@ -47,9 +47,9 @@ pub enum Tone {
 impl Tone {
     fn chip_class(self) -> &'static str {
         match self {
-            Tone::Good => "bg-chip-success text-success-2",
-            Tone::Bad => "bg-chip-danger text-danger",
-            Tone::Flat => "bg-layer-2 text-label-3",
+            Tone::Good => "bg-success text-success-foreground",
+            Tone::Bad => "bg-chip-danger text-destructive",
+            Tone::Flat => "bg-secondary",
         }
     }
 }
@@ -175,10 +175,10 @@ pub fn StatsView(mut range: Signal<String>) -> Element {
     rsx! {
         div { class: "flex-1 overflow-y-auto flex flex-col gap-6 px-10 pt-8 pb-14 max-w-[1200px] w-full mx-auto",
             // 头部
-            div { class: "flex items-center justify-between pb-5 border-b border-b1",
+            div { class: "flex items-center justify-between pb-5 border-b border-border",
                 div {
-                    h1 { class: "text-[22px] leading-7 font-semibold text-label tracking-tight m-0", "数据统计" }
-                    p { class: "text-[13px] leading-5 text-label-3 mt-1 m-0", "{subtitle}" }
+                    h1 { class: "role-heading font-semibold tracking-tight m-0", "数据统计" }
+                    p { class: "role-caption mt-1 m-0", "{subtitle}" }
                 }
                 // 分段切换换成 ui-kit SegmentedCapsule（统一胶囊分段语言，
                 // 附送滚轮循环切换）；active 为下标，映射回 RANGES 字符串。
@@ -198,35 +198,35 @@ pub fn StatsView(mut range: Signal<String>) -> Element {
             }
 
             // 指标带
-            div { class: "grid grid-cols-7 gap-3 bg-layer-1 border border-b1 rounded-xl px-5 py-3.5",
+            div { class: "grid grid-cols-7 gap-3 bg-card border border-border rounded-xl px-5 py-3.5",
                 for sm in band.iter() {
                     div { key: "{sm.label}", class: "flex flex-col gap-1",
-                        div { class: "text-[10px] leading-4 font-semibold text-caption font-mono uppercase tracking-wider", "{sm.label}" }
-                        div { class: "text-[15px] leading-5 font-semibold text-label font-mono", "{sm.value}" }
+                        div { class: "role-overline font-mono font-semibold", "{sm.label}" }
+                        div { class: "role-mono font-semibold text-foreground", "{sm.value}" }
                     }
                 }
             }
 
             // 主体三列
             div { class: "grid grid-cols-[320px_1fr_340px] gap-4 items-stretch",
-                div { class: "bg-layer-1 border border-b1 rounded-xl p-5 flex flex-col gap-4",
-                    h3 { class: "text-[14px] leading-5 font-medium text-label m-0", "运行状态分布" }
+                div { class: "bg-card border border-border rounded-xl p-5 flex flex-col gap-4",
+                    h3 { class: "role-hint font-medium text-foreground m-0", "运行状态分布" }
                     for bar in bars.iter() {
                         StatusBarRow { key: "{bar.label}", bar: bar.clone() }
                     }
-                    p { class: "text-[11px] leading-4 text-caption m-0", "{unavailable_note}" }
+                    p { class: "role-label m-0", "{unavailable_note}" }
                 }
 
-                div { class: "bg-layer-1 border border-b1 rounded-xl p-5 flex flex-col gap-4",
-                    h3 { class: "text-[14px] leading-5 font-medium text-label m-0", "吞吐趋势（运行数 · {range()}）" }
+                div { class: "bg-card border border-border rounded-xl p-5 flex flex-col gap-4",
+                    h3 { class: "role-hint font-medium text-foreground m-0", "吞吐趋势（运行数 · {range()}）" }
                     ThroughputChart { points: points.clone() }
                 }
 
-                div { class: "bg-layer-1 border border-b1 rounded-xl p-5 flex flex-col gap-4",
-                    h3 { class: "text-[14px] leading-5 font-medium text-label m-0", "最近运行 Feed" }
+                div { class: "bg-card border border-border rounded-xl p-5 flex flex-col gap-4",
+                    h3 { class: "role-hint font-medium text-foreground m-0", "最近运行 Feed" }
                     div { class: "flex flex-col gap-2 overflow-y-auto max-h-[320px]",
                         if feed.is_empty() {
-                            div { class: "text-[12px] leading-5 text-label-3", "窗口内没有运行记录" }
+                            div { class: "role-caption", "窗口内没有运行记录" }
                         }
                         for item in feed.iter() {
                             FeedRow { key: "{item.run_id}", item: item.clone() }
@@ -242,10 +242,10 @@ pub fn StatsView(mut range: Signal<String>) -> Element {
 fn KpiCardView(kpi: Kpi) -> Element {
     let delta_class = kpi.tone.chip_class();
     rsx! {
-        div { class: "bg-layer-1 border border-b1 rounded-xl px-4 py-4 flex flex-col gap-2 hover:border-b2 transition-colors",
-            div { class: "text-[12px] leading-5 text-label-3 font-medium", "{kpi.label}" }
-            div { class: "text-[26px] leading-7 font-semibold text-label font-mono", "{kpi.value}" }
-            span { class: "{delta_class} text-[11px] leading-4 font-semibold px-2 py-0.5 rounded-md w-fit font-mono", "{kpi.delta}" }
+        div { class: "bg-card border border-border rounded-xl px-4 py-4 flex flex-col gap-2 hover:border-border transition-colors",
+            div { class: "role-caption font-medium", "{kpi.label}" }
+            div { class: "role-value font-mono", "{kpi.value}" }
+            span { class: "{delta_class} role-label font-mono font-semibold px-2 py-0.5 rounded-md w-fit", "{kpi.delta}" }
         }
     }
 }
@@ -253,15 +253,15 @@ fn KpiCardView(kpi: Kpi) -> Element {
 #[component]
 fn StatusBarRow(bar: StatusBar) -> Element {
     rsx! {
-        div { class: "flex flex-col gap-2 px-2.5 py-2 bg-base border border-b1 rounded-lg",
-            div { class: "flex items-center justify-between text-[12px] leading-5",
-                span { class: "font-medium text-label", "{bar.label}" }
+        div { class: "flex flex-col gap-2 px-2.5 py-2 bg-background border border-border rounded-lg",
+            div { class: "flex items-center justify-between role-caption",
+                span { class: "font-medium text-foreground", "{bar.label}" }
                 div { class: "flex items-center gap-2",
-                    span { class: "text-label-3 font-mono text-[11px]", "{bar.count}" }
-                    span { class: "font-semibold text-brand font-mono text-[11px]", "{bar.pct:.1}%" }
+                    span { class: "font-mono role-label", "{bar.count}" }
+                    span { class: "font-semibold text-brand font-mono role-label", "{bar.pct:.1}%" }
                 }
             }
-            div { class: "h-1.5 bg-layer-2 rounded-full overflow-hidden",
+            div { class: "h-1.5 bg-secondary rounded-full overflow-hidden",
                 div { class: "h-full rounded-full", style: "width: {bar.pct}%; background: {bar.color}" }
             }
         }
@@ -331,13 +331,13 @@ fn ThroughputChart(points: Vec<Point>) -> Element {
 #[component]
 fn FeedRow(item: Feed) -> Element {
     rsx! {
-        div { class: "flex items-center justify-between px-3 py-2 bg-base border border-b1 rounded-lg text-[12px] hover:bg-ihover transition-colors",
+        div { class: "flex items-center justify-between px-3 py-2 bg-background border border-border rounded-lg role-caption hover:bg-muted transition-colors",
             div { class: "flex items-center gap-2 min-w-0",
-                span { class: "font-medium text-brand-300 font-mono text-[11px] truncate", "{item.run_id}" }
-                span { class: "text-[10px] text-label-3 bg-layer-2 px-1.5 py-px rounded-md truncate", "{item.session_id}" }
+                span { class: "font-medium text-brand-300 font-mono role-label truncate", "{item.run_id}" }
+                span { class: "role-label bg-secondary px-1.5 py-px rounded-md truncate", "{item.session_id}" }
             }
-            div { class: "flex items-center gap-2.5 font-mono text-[11px] shrink-0",
-                span { class: "text-label-3", "{item.duration}" }
+            div { class: "flex items-center gap-2.5 font-mono role-label shrink-0",
+                span { class: "text-muted-foreground", "{item.duration}" }
                 span { class: "{item.status_class} font-medium", "{item.status}" }
             }
         }
@@ -509,14 +509,14 @@ pub fn build_feed(s: Option<&StatsSummary>) -> Vec<Feed> {
             },
             status: r.status.clone(),
             status_class: match r.status.as_str() {
-                "ok" => "text-success-2".to_string(),
+                "ok" => "text-success-foreground".to_string(),
                 "running" => "text-brand".to_string(),
                 // 兜底是错误色而非中性色：除 ok/running 外 daemon 的终态
                 // （failed / aborted / spawn_failed / unknown）一律是非成功，
                 // 按错误展示是对的。这里有意不做日志——build_feed 在渲染路径
                 // 上每次重算都跑，未知态会刷屏；新增终态的兜底视觉就是错误色，
                 // 不会造成「成功被显示成失败」的反向误判。
-                _ => "text-danger".to_string(),
+                _ => "text-destructive".to_string(),
             },
         })
         .collect()

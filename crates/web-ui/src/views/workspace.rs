@@ -860,7 +860,7 @@ pub fn Workspace(
                 // 中栏头（面包屑）点击也视为「面板外」→ 关闭任务看板。
                 // 头 div 在本页（workspace.rs）撰写、作为 AppFrame 的 header 槽
                 // 传入，故无需改 app_frame.rs 即可覆盖「其他非面板区域」。
-                div { class: "min-h-[44px] pl-2 pr-5 pt-2.5 pb-2 border-b border-b1 flex items-center gap-2 shrink-0",
+                div { class: "min-h-[44px] pl-2 pr-5 pt-2.5 pb-2 border-b border-border flex items-center gap-2 shrink-0",
                     onclick: move |_| {
                         if show_tasks() {
                             show_tasks.set(false);
@@ -887,24 +887,24 @@ pub fn Workspace(
                         }
                     }
                     if view() == View::Stats {
-                        span { class: "text-[14px] leading-5 font-medium text-label", "{sh::TTL_STATS}" }
+                        span { class: "role-hint font-medium text-foreground", "{sh::TTL_STATS}" }
                     } else if view() == View::Archive {
-                        span { class: "text-[14px] leading-5 font-medium text-label", "{sh::LBL_ARCHIVE}" }
+                        span { class: "role-hint font-medium text-foreground", "{sh::LBL_ARCHIVE}" }
                     } else if view() == View::Settings {
-                        span { class: "text-[14px] leading-5 font-medium text-label", "设置" }
+                        span { class: "role-hint font-medium text-foreground", "设置" }
                     } else {
-                        span { class: "text-[14px] leading-5 font-medium text-label", "{active_space.name}" }
+                        span { class: "role-hint font-medium text-foreground", "{active_space.name}" }
                         if !active_space.branch.is_empty() {
-                            span { class: "text-caption", "/" }
-                            span { class: "text-[14px] leading-5 text-label-2 truncate max-w-[360px]", "{active_title}" }
-                            span { class: "font-mono text-[11px] leading-4 px-2 py-0.5 rounded-full bg-chip-brand text-brand-300 border border-b1 shrink-0",
+                            span { class: "text-muted-foreground", "/" }
+                            span { class: "role-hint truncate max-w-[360px]", "{active_title}" }
+                            span { class: "font-mono role-label px-2 py-0.5 rounded-full bg-chip-brand text-brand-300 border border-border shrink-0",
                                 "{active_space.branch}"
                             }
                         }
                     }
                     div { class: "flex-1" }
                     if active_session_running(space_sessions, active_session_id) {
-                        span { class: "flex items-center gap-1.5 text-[12px] leading-5 text-label-3",
+                        span { class: "flex items-center gap-1.5 role-caption",
                             ui_kit::Spinner { size: 10, class: "text-brand" }
                             "运行中"
                         }
@@ -965,7 +965,7 @@ pub fn Workspace(
                 Modal { width_class: "w-[560px]", top_aligned: true, on_close: move |_| show_quick_switcher.set(false),
                     div { class: "p-3 flex flex-col gap-2",
                         input {
-                            class: "w-full h-11 rounded-xl bg-layer-1 border border-b2 px-4 text-[14px] leading-5 text-label outline-none transition-colors focus:border-brand placeholder:text-caption",
+                            class: "w-full h-11 rounded-xl bg-card border border-border px-4 role-hint text-foreground outline-none transition-colors focus:border-brand placeholder:text-muted-foreground",
                             r#type: "text",
                             placeholder: "搜索会话名称或编号...",
                             value: "{search_query}",
@@ -984,13 +984,13 @@ pub fn Workspace(
                                     let id = session.id.clone();
                                     let is_active = session.id == active_session_id();
                                     let row_class = if is_active {
-                                        "h-10 px-3 rounded-[10px] flex items-center justify-between cursor-pointer transition-colors bg-ihover"
+                                        "h-10 px-3 rounded-[10px] flex items-center justify-between cursor-pointer transition-colors bg-muted"
                                     } else {
-                                        "h-10 px-3 rounded-[10px] flex items-center justify-between cursor-pointer transition-colors hover:bg-ihover"
+                                        "h-10 px-3 rounded-[10px] flex items-center justify-between cursor-pointer transition-colors hover:bg-muted"
                                     };
                                     let dot = match session.status {
                                         SessionStatus::Active => "bg-brand",
-                                        SessionStatus::Archived | SessionStatus::Aborted => "bg-danger/70",
+                                        SessionStatus::Archived | SessionStatus::Aborted => "bg-destructive/70",
                                         SessionStatus::Idle => "bg-dim",
                                     };
                                     rsx! {
@@ -1002,15 +1002,15 @@ pub fn Workspace(
                                             },
                                             div { class: "flex items-center gap-2.5 min-w-0",
                                                 span { class: "w-2 h-2 rounded-full {dot} shrink-0" }
-                                                span { class: "text-[14px] leading-5 text-label truncate", "{session.title}" }
+                                                span { class: "role-hint text-foreground truncate", "{session.title}" }
                                             }
-                                            span { class: "font-mono text-[11px] leading-4 text-caption shrink-0", "{session.id}" }
+                                            span { class: "font-mono role-label shrink-0", "{session.id}" }
                                         }
                                     }
                                 }
                             }
                         }
-                        div { class: "pt-2 border-t border-b1 flex items-center justify-between text-[12px] leading-4 text-caption",
+                        div { class: "pt-2 border-t border-border flex items-center justify-between role-caption",
                             span { "选择会话快速切换" }
                             div { class: "flex items-center gap-1.5",
                                 kbd { "ESC" }
@@ -1028,11 +1028,11 @@ pub fn Workspace(
                     on_close: move |_| show_create_project.set(false),
                     div { class: "p-4 flex flex-col gap-3",
                         div { class: "flex flex-col gap-1",
-                            label { class: "text-[14px] font-medium text-label", "创建项目（目录路径）" }
-                            p { class: "text-[12px] leading-5 text-caption", "输入一个已存在的目录路径，注册为新项目。同一路径重复注册会被拒绝。" }
+                            label { class: "role-hint font-medium text-foreground", "创建项目（目录路径）" }
+                            p { class: "role-caption", "输入一个已存在的目录路径，注册为新项目。同一路径重复注册会被拒绝。" }
                         }
                         input {
-                            class: "w-full h-11 rounded-xl bg-layer-1 border border-b2 px-4 text-[14px] leading-5 text-label outline-none transition-colors focus:border-brand placeholder:text-caption",
+                            class: "w-full h-11 rounded-xl bg-card border border-border px-4 role-hint text-foreground outline-none transition-colors focus:border-brand placeholder:text-muted-foreground",
                             r#type: "text",
                             placeholder: "~/projects/your-repo",
                             value: "{create_project_path}",
@@ -1050,12 +1050,12 @@ pub fn Workspace(
                         }
                         div { class: "flex justify-end gap-2",
                             button {
-                                class: "h-9 px-4 rounded-lg text-[13px] text-label-2 hover:bg-selector transition-colors cursor-pointer border-none bg-transparent",
+                                class: "h-9 px-4 rounded-lg role-caption hover:bg-secondary-hover transition-colors cursor-pointer border-none bg-transparent",
                                 onclick: move |_| show_create_project.set(false),
                                 "取消"
                             }
                             button {
-                                class: "h-9 px-4 rounded-lg text-[13px] font-medium text-bg bg-brand hover:opacity-90 transition-opacity cursor-pointer border-none",
+                                class: "h-9 px-4 rounded-lg role-caption font-medium text-primary-foreground bg-brand hover:opacity-90 transition-opacity cursor-pointer border-none",
                                 onclick: move |_| {
                                     let path = create_project_path().clone();
                                     add_space(sig, path);

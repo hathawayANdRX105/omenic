@@ -24,10 +24,10 @@ pub fn grid_cols(collapsed: bool) -> String {
 #[component]
 pub fn AppFrame(collapsed: bool, sidebar: Element, header: Element, children: Element) -> Element {
     rsx! {
-        div { class: "grid h-screen w-screen bg-base overflow-hidden relative select-none grid-rows-[minmax(0,1fr)]",
+        div { class: "grid h-screen w-screen bg-background overflow-hidden relative select-none grid-rows-[minmax(0,1fr)]",
             style: "grid-template-columns: {grid_cols(collapsed)};",
             {sidebar}
-            div { class: "min-w-0 flex flex-col bg-base overflow-hidden",
+            div { class: "min-w-0 flex flex-col bg-background overflow-hidden",
                 {header}
                 {children}
             }

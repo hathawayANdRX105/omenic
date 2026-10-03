@@ -22,14 +22,14 @@ pub(crate) fn SessionRow(
     let running = session.status == SessionStatus::Active;
 
     let row_class = if active {
-        "group h-8 px-2 rounded-lg flex items-center gap-2 bg-ihover cursor-pointer transition-colors"
+        "group h-8 px-2 rounded-lg flex items-center gap-2 bg-accent cursor-pointer transition-colors"
     } else {
-        "group h-8 px-2 rounded-lg flex items-center gap-2 hover:bg-ihover cursor-pointer transition-colors"
+        "group h-8 px-2 rounded-lg flex items-center gap-2 hover:bg-muted cursor-pointer transition-colors"
     };
     let title_class = if active {
-        "text-[14px] leading-5 text-label truncate min-w-0 flex-1"
+        "role-hint text-foreground truncate min-w-0 flex-1"
     } else {
-        "text-[14px] leading-5 text-label-2 truncate min-w-0 flex-1"
+        "role-hint truncate min-w-0 flex-1"
     };
 
     rsx! {
@@ -39,10 +39,10 @@ pub(crate) fn SessionRow(
                 ui_kit::Spinner { size: 12, class: "text-brand shrink-0" }
             }
             span { class: "{title_class}", "{session.title}" }
-            span { class: "text-[12px] leading-5 text-label-3 shrink-0", "{session.last_active}" }
+            span { class: "role-caption shrink-0", "{session.last_active}" }
             // 归档会话钮（软删：移入「归档」而非硬删）：hover 行才出现，排在行最右
             button {
-                class: "shrink-0 flex items-center justify-center w-4 h-4 text-label-3 hover:text-danger opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer bg-transparent border-none",
+                class: "shrink-0 flex items-center justify-center w-4 h-4 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer bg-transparent border-none",
                 title: sh::BTN_ARCHIVE_SESSION,
                 onclick: move |e: MouseEvent| {
                     e.stop_propagation();

@@ -11,8 +11,8 @@ anchors:
     source: 'kymido: crates/web-ui/src/components/chat.rs:92；dsh: ConversationRoot.module.css:22（--dsh-chat-content-width: 748px）'
   - key: user-bubble
     file: crates/web-ui/src/components/message.rs
-    find: 'bg-bubble rounded-[22px] px-4 py-2.5 max-w-[525px]'
-    expect: '用户气泡 bg-bubble（#2c2c2e）、r22、内边距 10/16、最大宽 525。'
+    find: 'bg-secondary rounded-[22px] px-4 py-2.5 max-w-[525px]'
+    expect: '用户气泡 bg-secondary（#2c2c2e）、r22、内边距 10/16、最大宽 525。'
     source: 'kymido: crates/web-ui/src/components/message.rs:47（4146126 自 chat.rs 拆出消息树）；dsh: MessageItem.module.css:17-27（bubble r22 pad 10/16 max-width 525）'
   - key: bubble-right-align
     file: crates/web-ui/src/components/message.rs
@@ -41,17 +41,17 @@ anchors:
     source: 'kymido: crates/web-ui/src/components/message.rs:209（ToolLine，4146126 自 chat.rs 拆出）；dsh: DisclosureRow.module.css:15（24px 头）'
   - key: tool-chip
     file: crates/web-ui/src/components/message.rs
-    find: 'font-mono text-[10px] font-semibold uppercase shrink-0'
+    find: 'font-mono role-overline shrink-0'
     expect: '工具 kind 标签：纯文本（无 chip 底/边框，ainotation #4-1）、mono 10px 大写、首字母大写显示（#4-2），颜色走 400 字级 token，shrink-0。'
     source: 'kymido: crates/web-ui/src/components/message.rs:215；dsh: 状态色 400 字规格'
   - key: tool-kind-icon
     file: crates/web-ui/src/components/message.rs
     find: 'KindIcon { kind: "{tool.kind}" }'
-    expect: 'kind 前挂一个 12px、text-label-3 的类型图标（ainotation #4-4；字形映射语义对齐 dsh GenericToolCard VARIANT_ICONS）。'
+    expect: 'kind 前挂一个 12px、text-muted-foreground 的类型图标（ainotation #4-4；字形映射语义对齐 dsh GenericToolCard VARIANT_ICONS）。'
     source: 'kymido: crates/web-ui/src/components/chat.rs:92-102（KindIcon 定义）+ message.rs:214（4146126 调用点自 chat.rs 拆出）；dsh: GenericToolCard.tsx VARIANT_ICONS'
   - key: tool-kind-sep
     file: crates/web-ui/src/components/message.rs
-    find: 'span { class: "text-[12px] leading-5 text-label-3 shrink-0", "·" }'
+    find: 'span { class: "role-caption shrink-0", "·" }'
     expect: 'kind 标签与命令标题之间插「·」分隔符（ainotation #4-3）。'
     source: 'kymido: crates/web-ui/src/components/message.rs:218；ainotation #4 第 3 条'
   - key: chip-kind-bash
@@ -59,28 +59,28 @@ anchors:
     expect: 'bash / job / terminal 类工具 kind 文本同为 brand-300 字色（三者都是「跑命令」，靠 kind 文字区分，不靠颜色；chip 底已按 #4-1 删除）。'
     source: 'kymido: crates/web-ui/src/components/chat.rs:25；dsh: kind→状态色 400 字映射'
   - key: chip-kind-edit
-    find: '"edit" | "write" => "text-success-2"'
+    find: '"edit" | "write" => "text-success-foreground"'
     expect: 'edit/write 类工具 kind 文本为 success-2 字色。'
     source: 'kymido: crates/web-ui/src/components/chat.rs:26；dsh: kind→状态色映射'
   - key: chip-kind-read
-    find: '"read" | "grep" | "glob" => "text-warn-2"'
+    find: '"read" | "grep" | "glob" => "text-warning-foreground"'
     expect: 'read/grep/glob 类工具 kind 文本为 warn-2 字色。'
     source: 'kymido: crates/web-ui/src/components/chat.rs:27；dsh: kind→状态色映射'
   - key: chip-kind-delete
-    find: '"delete" => "text-danger"'
+    find: '"delete" => "text-destructive"'
     expect: 'delete 类工具 kind 文本为 danger 字色。'
     source: 'kymido: crates/web-ui/src/components/chat.rs:28；dsh: kind→状态色映射'
   - key: statsline
-    find: 'text-[12px] leading-5 text-label-3 text-center select-none'
+    find: 'role-caption text-center select-none'
     expect: 'StatsLine 状态行 12/20 tertiary 居中：model · ↑in ↓out · $cost · context %；单行 12px 居中，置于输入卡下方一行（ainnotation 波3 #4 由卡上方移到下方）。'
     source: 'kymido: crates/web-ui/src/components/chat.rs:151；dsh: StatsLine.module.css:8-16（center 12px/20px tertiary）'
   - key: composer-card
-    find: 'rounded-[24px] border border-b1 bg-input-bg shadow-lv2'
+    find: 'rounded-[24px] border border-border bg-background shadow-lv2'
     expect: 'composer 输入卡 r24 胶囊（max-w 780 随消息列），focus-within 提亮边框。'
     source: 'kymido: crates/web-ui/src/components/chat.rs 输入卡段；dsh: InputBar.module.css（胶囊卡）'
   - key: send-button
     find: 'IconArrowUp { size: 16 }'
-    expect: '发送钮两态：空闲（输入空置灰 bg-selector cursor-default）/ 可发（32px 圆形 bg-brand + hover 提亮 + active 缩放），点击发送并清草稿。'
+    expect: '发送钮两态：空闲（输入空置灰 bg-secondary-hover cursor-default）/ 可发（32px 圆形 bg-brand + hover 提亮 + active 缩放），点击发送并清草稿。'
     source: 'kymido: crates/web-ui/src/components/chat.rs 发送钮段；dsh: InputBar.module.css（圆形发送钮）'
   - key: stop-button
     find: 'title: sh::BTN_STOP'
@@ -113,7 +113,7 @@ anchors:
     source: 'kymido: crates/web-ui/src/components/chat.rs:128 + bin/web/src/app.rs setupMinimap'
   - key: minimap-popover
     find: '"data-tip": ""'
-    expect: '每个 minimap 条容器内嵌一个服务端渲染的 prompt 文本 popover（r12 border bg-menu shadow-lv3、pointer-events-none、默认 display:none），hover 时由 app.rs minimap JS 显示（ainotation 波2 #3-1）。'
+    expect: '每个 minimap 条容器内嵌一个服务端渲染的 prompt 文本 popover（r12 border bg-popover shadow-lv3、pointer-events-none、默认 display:none），hover 时由 app.rs minimap JS 显示（ainotation 波2 #3-1）。'
     source: 'kymido: crates/web-ui/src/components/chat.rs minimap 段；bin/web/src/app.rs mouseover/mouseout'
   - key: minimap-click-jump
     file: bin/web/src/app.rs
@@ -126,8 +126,8 @@ anchors:
     source: 'kymido: crates/web-ui/src/components/chat.rs format_tool_output'
   - key: tool-output-block
     file: crates/web-ui/src/components/message.rs
-    find: 'tool-output bg-codeblock rounded-lg px-3 py-2 font-mono text-[12px] leading-[18px] text-label-2 whitespace-pre-wrap break-all'
-    expect: '工具输出体为等宽终端样式块（bg-codeblock、font-mono 12/18、真实换行 pre-wrap），逐行着色：diff +/- 绿红、@@ 蓝、$ 命令行高亮（text-label）、error/panic/fatal/failed 行 danger（ainotation 波2 #4-2/3）。'
+    find: 'tool-output bg-codeblock rounded-lg px-3 py-2 font-mono role-caption whitespace-pre-wrap break-all'
+    expect: '工具输出体为等宽终端样式块（bg-codeblock、font-mono 12/18、真实换行 pre-wrap），逐行着色：diff +/- 绿红、@@ 蓝、$ 命令行高亮（text-foreground）、error/panic/fatal/failed 行 danger（ainotation 波2 #4-2/3）。'
     source: 'kymido: crates/web-ui/src/components/message.rs:237（ToolLine 展开体，4146126 自 chat.rs 拆出）'
   - key: md-table-layout
     file: bin/web/assets/tailwind-input.css
@@ -135,11 +135,11 @@ anchors:
     expect: 'markdown 表格 display:block + width:max-content + overflow-x:auto：列宽按内容分配，超宽整表横滚，单元格不挤压；td vertical-align:top + overflow-wrap:anywhere（ainotation 波2 #5）。'
     source: 'kymido: bin/web/assets/tailwind-input.css .markdown-body table 块'
   - key: question-card
-    find: 'question-card rounded-[14px] border border-b1 bg-layer-1 shadow-lv2'
+    find: 'question-card rounded-[14px] border border-border bg-card shadow-lv2'
     expect: '用户问题卡（plan-mode review）：composer 上方、dock 之下，r14 卡片 + 品牌蓝「计划评审」标签 + 选项钮 h28 r8；无问题时整卡不渲染。'
     source: 'kymido: crates/web-ui/src/components/chat.rs（P1 plan-mode 批次新增；dsh 无对应组件，官方 packages/plan/plan-mode 的 review 卡为参考形态）'
   - key: empty-state
-    find: 'text-[26px] leading-8 font-semibold text-label'
+    find: 'sh::MSG_EMPTY_CHAT_TITLE'
     expect: '空会话态：26px semibold 标题（文案取 shared const MSG_EMPTY_CHAT_TITLE）+ 420px 限宽副文案 + 品牌光斑。'
     source: 'kymido: crates/web-ui/src/components/chat.rs:236（标题 class；文案 crates/web-ui/src/shared.rs:54 MSG_EMPTY_CHAT_TITLE 随 4146126 抽为 const）'
 notes: |

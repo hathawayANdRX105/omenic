@@ -208,12 +208,12 @@ fn feed_maps_status_to_color_classes() {
     ];
 
     let feed = build_feed(Some(&s));
-    assert_eq!(feed[0].status_class, "text-success-2");
+    assert_eq!(feed[0].status_class, "text-success-foreground");
     assert_eq!(feed[0].duration, "820ms");
     assert_eq!(feed[1].status_class, "text-brand");
     assert_eq!(feed[1].duration, "进行中");
     // Unrecognized terminal states render as errors, never as success.
-    assert_eq!(feed[2].status_class, "text-danger");
+    assert_eq!(feed[2].status_class, "text-destructive");
     assert_eq!(feed[2].duration, "5.0s");
 }
 

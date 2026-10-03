@@ -14,7 +14,7 @@ anchors:
     expect: '「会话」组经 DualPaneGroup.content 槽装自定义二级菜单（SessionTreePanel）：动态会话数据装不进静态 DualPaneChild，默认列表留给静态选项组（设置/统计）。'
     source: 'kymido: dual_sidebar.rs（DualSidebar groups）；ui-kit: layout/sidebar_dual.rs（content 槽）'
   - key: wordmark
-    find: 'text-[18px] leading-6 font-semibold tracking-[0.04em]'
+    find: 'role-card tracking-[0.04em]'
     file: crates/web-ui/src/views/config.rs
     expect: 'kymido 字标 18/24 semibold（品牌身份不进 ui-kit）；双栏侧栏 footer 槽被会话面板接管（2026-10 批注轮）后，字标现挂设置页 About 段。'
     source: 'kymido: crates/web-ui/src/views/config.rs（About 段字标，原挂 dual_sidebar footer 槽）'
@@ -33,7 +33,7 @@ anchors:
   - key: session-row
     file: crates/web-ui/src/components/session_row.rs
     find: 'group h-8 px-2 rounded-lg flex items-center gap-2'
-    expect: '会话行 h32、r8，激活态 bg-ihover 常亮；运行中会话左侧旋转指示；删除钮 hover 行才出现且排在行最右。'
+    expect: '会话行 h32、r8，激活态 bg-accent 常亮；运行中会话左侧旋转指示；删除钮 hover 行才出现且排在行最右。'
     source: 'kymido: crates/web-ui/src/components/session_row.rs（SessionRow）'
   - key: run-indicator
     file: crates/web-ui/src/components/session_row.rs

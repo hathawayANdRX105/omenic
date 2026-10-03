@@ -7,8 +7,8 @@ description: 工作区页（Workspace）——两列 grid 根容器（双栏侧�
 anchors:
   - key: root-grid
     file: crates/web-ui/src/layouts/app_frame.rs
-    find: 'grid h-screen w-screen bg-base overflow-hidden relative select-none grid-rows-[minmax(0,1fr)]'
-    expect: '根容器为占满全屏的 grid，bg-base（#151517）暗底，overflow-hidden 防滚动穿透；grid-rows-[minmax(0,1fr)] 锁行高为视口（内容超高时各列内部滚动，不再撑破 h-screen）。'
+    find: 'grid h-screen w-screen bg-background overflow-hidden relative select-none grid-rows-[minmax(0,1fr)]'
+    expect: '根容器为占满全屏的 grid，bg-background（#151517）暗底，overflow-hidden 防滚动穿透；grid-rows-[minmax(0,1fr)] 锁行高为视口（内容超高时各列内部滚动，不再撑破 h-screen）。'
     source: 'kymido: crates/web-ui/src/layouts/app_frame.rs（AppFrame 壳）；dsh: AppFrame 根框架'
   - key: grid-columns
     file: crates/web-ui/src/layouts/app_frame.rs
@@ -38,11 +38,11 @@ anchors:
     expect: '中栏顶层栏最左折叠钮（ui-kit NavTopBar 最左钮结构：data-testid=sidebar-collapse + ANIM_SCOPE），图标随展开态切换（展开=chevron-left 收起方向 / 折叠=chevron-right 展开方向，ui-kit icon-anim hover 微动效），点击切 sidebar_collapsed；取代旧侧栏 top 槽折叠钮。'
     source: 'kymido: workspace.rs（header 槽折叠钮，BTN_EXPAND/COLLAPSE_SIDEBAR 标题）'
   - key: breadcrumb-header
-    find: 'min-h-[44px] pl-2 pr-5 pt-2.5 pb-2 border-b border-b1'
+    find: 'min-h-[44px] pl-2 pr-5 pt-2.5 pb-2 border-b border-border'
     expect: '中栏顶部是 44px 面包屑头（最左折叠钮 + 项目名/会话名/分支 chip 或 统计/设置 页标题），非独立顶栏。'
     source: 'kymido: workspace.rs（header 槽）'
   - key: branch-chip
-    find: 'bg-chip-brand text-brand-300 border border-b1'
+    find: 'bg-chip-brand text-brand-300 border border-border'
     expect: '分支以 mono chip 呈现（chip-brand 底 + brand-300 字 + 1px 边）。'
     source: 'kymido: workspace.rs（会话页面包屑分支 chip）'
 notes: |
